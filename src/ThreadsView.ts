@@ -146,15 +146,8 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    this.threadInfoBar.createSpan({
-      cls: 'ct-thread-info-cwd',
-      text: thread.cwd || 'home directory',
-      attr: { title: thread.cwd },
-    });
-
     const summaryText = thread.summary || thread.recap;
     if (summaryText) {
-      this.threadInfoBar.createSpan({ cls: 'ct-thread-info-sep', text: '·' });
       this.threadInfoBar.createSpan({
         cls: 'ct-thread-info-recap',
         text: summaryText,
@@ -165,7 +158,7 @@ export class ThreadsView extends ItemView {
     if (this.plugin.settings.summarizationEnabled && thread.messages.length > 0) {
       const btn = this.threadInfoBar.createEl('button', {
         cls: 'ct-summarize-btn',
-        attr: { title: 'Summarize thread with local model' },
+        attr: { title: 'Summarize thread' },
       });
       setIcon(btn, 'brain-circuit');
       btn.addEventListener('click', () => this.summarizeThread(thread.id, btn));

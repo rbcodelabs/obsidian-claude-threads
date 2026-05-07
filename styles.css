@@ -46,38 +46,24 @@
 /* Thread info bar */
 .ct-thread-info-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
-  padding: 3px 10px;
+  padding: 4px 10px 4px 34px;
   background: var(--background-secondary);
   border-bottom: 1px solid var(--background-modifier-border);
   font-size: 11px;
   color: var(--text-faint);
-  min-height: 22px;
-  overflow: hidden;
-}
-
-.ct-thread-info-cwd {
-  font-family: var(--font-monospace);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
-  max-width: 40%;
-}
-
-.ct-thread-info-sep {
-  flex-shrink: 0;
-  opacity: 0.5;
 }
 
 .ct-thread-info-recap {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   font-style: italic;
   flex: 1;
   min-width: 0;
+  line-height: 1.4;
 }
 
 .ct-summarize-btn {
