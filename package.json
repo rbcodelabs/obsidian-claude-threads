@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-threads",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Multi-threaded Claude Code sessions in Obsidian",
   "main": "dist/main.js",
   "scripts": {
@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.132",
-    "@mlc-ai/web-llm": "^0.2.83",
     "node-llama-cpp": "^3.18.1"
   },
   "devDependencies": {

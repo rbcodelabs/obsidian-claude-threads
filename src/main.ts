@@ -259,10 +259,10 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Mode')
-      .setDesc('"In-process" runs a model inside Obsidian via WebGPU (no server needed, downloads model on first use). "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
+      .setDesc('"Claude (via CLI)" uses your existing Claude auth — same Bedrock/SSO setup, no extra config. "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
       .addDropdown((drop) =>
         drop
-          .addOption('inprocess', 'In-process (WebGPU / WebLLM)')
+          .addOption('inprocess', 'Claude (via CLI)')
           .addOption('endpoint', 'Remote endpoint (Ollama / LM Studio)')
           .setValue(this.plugin.settings.summarizationMode)
           .onChange(async (value) => {
@@ -272,14 +272,14 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('In-process model')
-      .setDesc('WebLLM model ID. Downloaded and cached on first use via WebGPU. See webllm.mlc.ai for available models.')
+      .setName('Claude summarization model')
+      .setDesc('Model alias passed to claude --model. Use "haiku" for fast/cheap, "sonnet" for higher quality.')
       .addText((text) =>
         text
-          .setPlaceholder('gemma-2-2b-it-q4f16_1-MLC')
+          .setPlaceholder('haiku')
           .setValue(this.plugin.settings.inprocessModel)
           .onChange(async (value) => {
-            this.plugin.settings.inprocessModel = value || 'gemma-2-2b-it-q4f16_1-MLC';
+            this.plugin.settings.inprocessModel = value || 'haiku';
             await this.plugin.saveSettings();
           }),
       );

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Modal, App, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Modal, App, setIcon, Notice } from 'obsidian';
 import type { Thread, ChatMessage, ToolCallRecord } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type ClaudeThreadsPlugin from './main';
@@ -176,7 +176,9 @@ export class ThreadsView extends ItemView {
     if (this.plugin.settings.summarizationMode === 'inprocess') {
       return this.plugin.inProcessSummarizer.summarize(
         messages,
+        this.plugin.settings.claudeBinaryPath,
         this.plugin.settings.inprocessModel,
+        this.plugin.settings.extraEnv,
         onProgress,
       );
     }
@@ -204,13 +206,17 @@ export class ThreadsView extends ItemView {
       thread.summary = summary;
       await this.plugin.saveSettings();
       this.statusBar.setText('');
+      btn.removeClass('ct-summarize-spinning');
+      setIcon(btn, 'brain-circuit');
+      btn.disabled = false;
       this.renderThreadInfo();
     } catch (err) {
+      console.error('[Claude Threads] summarize error:', err);
       this.statusBar.setText('');
-      btn.setAttribute('title', `Error: ${(err as Error).message}`);
       btn.removeClass('ct-summarize-spinning');
-      setIcon(btn, 'alert-circle');
+      setIcon(btn, 'brain-circuit');
       btn.disabled = false;
+      new Notice(`Summarization failed: ${(err as Error).message}`, 8000);
     }
   }
 
