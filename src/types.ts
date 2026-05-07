@@ -35,8 +35,10 @@ export interface PluginSettings {
   permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
   extraEnv: string;
   summarizationEnabled: boolean;
+  summarizationMode: 'endpoint' | 'inprocess';
   summarizationEndpoint: string;
   summarizationModel: string;
+  inprocessModel: string;
   autoSummarize: boolean;
   threads: Thread[];
 }
@@ -49,8 +51,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   permissionMode: 'acceptEdits',
   extraEnv: '',
   summarizationEnabled: false,
+  summarizationMode: 'inprocess',
   summarizationEndpoint: 'http://localhost:11434/v1/chat/completions',
   summarizationModel: 'llama3.2',
+  inprocessModel: 'Xenova/distilbart-cnn-12-6',
   autoSummarize: false,
   threads: [],
 };

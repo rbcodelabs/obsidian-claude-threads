@@ -3,6 +3,7 @@ import { ThreadsView, VIEW_TYPE } from './ThreadsView';
 import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
+import { InProcessSummarizer } from './InProcessSummarizer';
 import { type PluginSettings, DEFAULT_SETTINGS } from './types';
 import fs from 'fs';
 
@@ -27,6 +28,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   manager!: ThreadManager;
   persistence!: VaultPersistence;
   summarizer!: SummarizationService;
+  inProcessSummarizer!: InProcessSummarizer;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -36,6 +38,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager = new ThreadManager(this.settings);
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.summarizer = new SummarizationService();
+    this.inProcessSummarizer = new InProcessSummarizer();
 
     // Load persisted threads
     const savedThreads = this.settings.threads ?? [];
@@ -70,6 +73,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // Settings tab
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
+  }
+
+  getPluginResourceUrl(): string {
+    // Returns an app:// URL pointing to our plugin dist directory,
+    // where we copy the .wasm files at build time.
+    return this.app.vault.adapter.getResourcePath(
+      `${this.manifest.dir}/`,
+    );
   }
 
   getEffectiveCwd(): string {
@@ -244,6 +255,33 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           this.plugin.settings.autoSummarize = value;
           await this.plugin.saveSettings();
         }),
+      );
+
+    new Setting(containerEl)
+      .setName('Mode')
+      .setDesc('"In-process" runs a model inside Obsidian via Transformers.js (no server needed, downloads model on first use). "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('inprocess', 'In-process (Transformers.js)')
+          .addOption('endpoint', 'Remote endpoint (Ollama / LM Studio)')
+          .setValue(this.plugin.settings.summarizationMode)
+          .onChange(async (value) => {
+            this.plugin.settings.summarizationMode = value as 'inprocess' | 'endpoint';
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('In-process model')
+      .setDesc('HuggingFace model ID for in-process mode. Downloaded and cached on first use (~300 MB for the default).')
+      .addText((text) =>
+        text
+          .setPlaceholder('Xenova/distilbart-cnn-12-6')
+          .setValue(this.plugin.settings.inprocessModel)
+          .onChange(async (value) => {
+            this.plugin.settings.inprocessModel = value || 'Xenova/distilbart-cnn-12-6';
+            await this.plugin.saveSettings();
+          }),
       );
 
     new Setting(containerEl)

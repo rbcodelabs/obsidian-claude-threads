@@ -180,16 +180,32 @@ export class ThreadsView extends ItemView {
     setIcon(btn, 'loader');
     btn.addClass('ct-summarize-spinning');
 
+    const onProgress = (status: string) => {
+      this.statusBar.setText(status);
+    };
+
     try {
-      const summary = await this.plugin.summarizer.summarize(
-        thread.messages,
-        this.plugin.settings.summarizationEndpoint,
-        this.plugin.settings.summarizationModel,
-      );
+      let summary: string;
+      if (this.plugin.settings.summarizationMode === 'inprocess') {
+        summary = await this.plugin.inProcessSummarizer.summarize(
+          thread.messages,
+          this.plugin.getPluginResourceUrl(),
+          this.plugin.settings.inprocessModel,
+          onProgress,
+        );
+      } else {
+        summary = await this.plugin.summarizer.summarize(
+          thread.messages,
+          this.plugin.settings.summarizationEndpoint,
+          this.plugin.settings.summarizationModel,
+        );
+      }
       thread.summary = summary;
       await this.plugin.saveSettings();
+      this.statusBar.setText('');
       this.renderThreadInfo();
     } catch (err) {
+      this.statusBar.setText('');
       btn.setAttribute('title', `Error: ${(err as Error).message}`);
       btn.removeClass('ct-summarize-spinning');
       setIcon(btn, 'alert-circle');
