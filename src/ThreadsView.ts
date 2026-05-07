@@ -197,7 +197,9 @@ export class ThreadsView extends ItemView {
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
     const wrapper = parent.createDiv('ct-tools');
     for (const tool of tools) {
-      wrapper.createEl('span', { cls: 'ct-tool-pill', text: `⚙ ${tool.summary}` });
+      const pill = wrapper.createDiv('ct-tool-pill');
+      pill.createSpan({ text: '⚙ ' });
+      pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
   }
 
@@ -254,9 +256,14 @@ export class ThreadsView extends ItemView {
 
       case 'tool_use': {
         if (this.streamingEl) {
-          const pill = document.createElement('span');
+          const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
-          pill.textContent = `⚙ ${event.record.summary}`;
+          const icon = document.createElement('span');
+          icon.textContent = '⚙ ';
+          const label = document.createElement('span');
+          label.className = 'ct-tool-pill-text';
+          label.textContent = event.record.summary;
+          pill.append(icon, label);
           this.streamingEl.prepend(pill);
         }
         break;

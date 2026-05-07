@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter } from 'obsidian';
 import { ThreadsView, VIEW_TYPE } from './ThreadsView';
 import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
@@ -71,7 +71,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   getEffectiveCwd(): string {
     if (this.settings.defaultCwd) return this.settings.defaultCwd;
-    return (this.app.vault.adapter as unknown as { basePath?: string }).basePath ?? '';
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) return adapter.getBasePath();
+    return '';
   }
 
   async onunload(): Promise<void> {
@@ -159,7 +161,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setDesc('Default cwd for new threads. Leave empty to use vault root.')
       .addText((text) =>
         text
-          .setPlaceholder((this.app.vault.adapter as unknown as { basePath?: string }).basePath ?? '')
+          .setPlaceholder(this.plugin.getEffectiveCwd())
           .setValue(this.plugin.settings.defaultCwd)
           .onChange(async (value) => {
             this.plugin.settings.defaultCwd = value;

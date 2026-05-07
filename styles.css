@@ -240,25 +240,29 @@
 /* Tool calls */
 .ct-tools {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-direction: column;
+  gap: 3px;
   margin-bottom: 4px;
 }
 
 .ct-tool-pill {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   padding: 2px 7px;
   background: var(--background-secondary-alt);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
+  border-radius: 6px;
   font-size: var(--font-ui-smaller);
   font-family: var(--font-monospace);
   color: var(--text-muted);
-  max-width: 300px;
+  min-width: 0;
+}
+
+.ct-tool-pill-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .ct-tool-active {
