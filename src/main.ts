@@ -276,10 +276,10 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setDesc('WebLLM model ID. Downloaded and cached on first use via WebGPU. See webllm.mlc.ai for available models.')
       .addText((text) =>
         text
-          .setPlaceholder('Llama-3.2-1B-Instruct-q4f16_1-MLC')
+          .setPlaceholder('gemma-2-2b-it-q4f16_1-MLC')
           .setValue(this.plugin.settings.inprocessModel)
           .onChange(async (value) => {
-            this.plugin.settings.inprocessModel = value || 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+            this.plugin.settings.inprocessModel = value || 'gemma-2-2b-it-q4f16_1-MLC';
             await this.plugin.saveSettings();
           }),
       );
