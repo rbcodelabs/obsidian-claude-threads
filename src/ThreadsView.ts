@@ -16,6 +16,7 @@ export class ThreadsView extends ItemView {
 
   // DOM refs
   private tabBar!: HTMLElement;
+  private threadInfoBar!: HTMLElement;
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
@@ -71,6 +72,7 @@ export class ThreadsView extends ItemView {
     root.addClass('ct-root');
 
     this.tabBar = root.createDiv('ct-tab-bar');
+    this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     const main = root.createDiv('ct-main');
     this.messagesEl = main.createDiv('ct-messages');
@@ -107,12 +109,7 @@ export class ThreadsView extends ItemView {
         cls: `ct-tab ${thread.id === this.activeThreadId ? 'ct-tab-active' : ''}`,
       });
 
-      const tabMain = tab.createDiv('ct-tab-main');
-      const label = tabMain.createSpan({ cls: 'ct-tab-label', text: thread.title });
-
-      if (thread.recap) {
-        tab.createDiv({ cls: 'ct-tab-recap', text: thread.recap });
-      }
+      const label = tab.createSpan({ cls: 'ct-tab-label', text: thread.title });
 
       label.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -121,7 +118,7 @@ export class ThreadsView extends ItemView {
 
       tab.addEventListener('click', () => this.setActiveThread(thread.id));
 
-      const closeBtn = tabMain.createEl('button', { cls: 'ct-tab-close', text: '×' });
+      const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×' });
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.closeThread(thread.id);
@@ -139,7 +136,30 @@ export class ThreadsView extends ItemView {
   private setActiveThread(id: string): void {
     this.activeThreadId = id;
     this.renderTabs();
+    this.renderThreadInfo();
     this.renderMessages();
+  }
+
+  private renderThreadInfo(): void {
+    this.threadInfoBar.empty();
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (!thread) return;
+
+    this.threadInfoBar.createSpan({
+      cls: 'ct-thread-info-cwd',
+      text: thread.cwd || 'home directory',
+      attr: { title: thread.cwd },
+    });
+
+    if (thread.recap) {
+      this.threadInfoBar.createSpan({ cls: 'ct-thread-info-sep', text: '·' });
+      this.threadInfoBar.createSpan({
+        cls: 'ct-thread-info-recap',
+        text: thread.recap,
+        attr: { title: thread.recap },
+      });
+    }
   }
 
   private renderMessages(): void {
@@ -295,7 +315,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'recap': {
-        this.renderTabs();
+        this.renderThreadInfo();
         break;
       }
 
