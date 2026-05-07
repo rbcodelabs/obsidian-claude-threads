@@ -18,6 +18,7 @@ export class ThreadManager {
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
+  vaultRoot = '';
 
   constructor(settings: PluginSettings) {
     this.settings = settings;
@@ -96,6 +97,8 @@ export class ThreadManager {
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
 
+    const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
+
     await session.run(
       userText,
       thread.sessionId,
@@ -145,6 +148,7 @@ export class ThreadManager {
         },
         onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
       },
+      additionalDirs,
     );
   }
 

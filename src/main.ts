@@ -36,6 +36,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
+    this.manager.vaultRoot = this.getEffectiveCwd();
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.summarizer = new SummarizationService();
     this.inProcessSummarizer = new InProcessSummarizer();

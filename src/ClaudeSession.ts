@@ -25,6 +25,7 @@ export class ClaudeSession {
     permissionMode: Options['permissionMode'],
     extraEnvRaw: string,
     callbacks: SessionCallbacks,
+    additionalDirectories?: string[],
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
       console.log('[ClaudeThreads] canUseTool called:', { toolName, toolUseID: opts.toolUseID, title: opts.title, decisionReason: opts.decisionReason });
@@ -53,9 +54,8 @@ export class ClaudeSession {
       canUseTool,
       env: { ...process.env, ...parseExtraEnv(extraEnvRaw) },
     };
-    if (resumeSessionId) {
-      options.resume = resumeSessionId;
-    }
+    if (resumeSessionId) options.resume = resumeSessionId;
+    if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
 
     console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId });
 
