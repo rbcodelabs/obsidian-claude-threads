@@ -27,12 +27,22 @@ export class ClaudeSession {
     callbacks: SessionCallbacks,
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
-      const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
-      const title = opts.title ?? `${toolName}`;
-      const allowed = await callbacks.onPermissionRequest(title, detail);
-      return allowed
-        ? { behavior: 'allow', toolUseID: opts.toolUseID }
-        : { behavior: 'deny', message: 'Denied by user', toolUseID: opts.toolUseID };
+      console.log('[ClaudeThreads] canUseTool called:', { toolName, toolUseID: opts.toolUseID, title: opts.title, decisionReason: opts.decisionReason });
+      try {
+        const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
+        const title = opts.title ?? toolName;
+        const allowed = await callbacks.onPermissionRequest(title, detail);
+        const base = opts.toolUseID ? { toolUseID: opts.toolUseID } : {};
+        const result = allowed
+          ? { behavior: 'allow' as const, ...base }
+          : { behavior: 'deny' as const, message: 'Denied by user', ...base };
+        console.log('[ClaudeThreads] canUseTool returning:', result);
+        return result;
+      } catch (err) {
+        console.error('[ClaudeThreads] canUseTool error:', err);
+        const base = opts.toolUseID ? { toolUseID: opts.toolUseID } : {};
+        return { behavior: 'deny' as const, message: 'Permission handler error', ...base };
+      }
     };
 
     const options: Options = {
@@ -130,9 +140,10 @@ export class ClaudeSession {
       }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
-      console.error('[ClaudeThreads] session error:', e);
-      // Surface full error for diagnosis
-      callbacks.onError(new Error(`${e.message}\n\nStack: ${e.stack ?? 'none'}`));
+      // Log full ZodError detail including .issues if present
+      const zodIssues = (err as Record<string, unknown>).issues;
+      console.error('[ClaudeThreads] session error:', e, zodIssues ? JSON.stringify(zodIssues, null, 2) : '');
+      callbacks.onError(new Error(`${e.message}${zodIssues ? '\n\nZod issues: ' + JSON.stringify(zodIssues) : ''}\n\nStack: ${e.stack ?? 'none'}`));
     } finally {
       this.activeQuery = null;
     }
