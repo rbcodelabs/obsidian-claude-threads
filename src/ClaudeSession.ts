@@ -34,9 +34,9 @@ export class ClaudeSession {
         const allowed = await callbacks.onPermissionRequest(title, detail);
         const base = opts.toolUseID ? { toolUseID: opts.toolUseID } : {};
         const result = allowed
-          ? { behavior: 'allow' as const, ...base }
+          ? { behavior: 'allow' as const, ...base, ...(opts.suggestions ? { updatedPermissions: opts.suggestions } : {}) }
           : { behavior: 'deny' as const, message: 'Denied by user', ...base };
-        console.log('[ClaudeThreads] canUseTool returning:', result);
+        console.log('[ClaudeThreads] canUseTool returning:', result, 'suggestions:', opts.suggestions?.length);
         return result;
       } catch (err) {
         console.error('[ClaudeThreads] canUseTool error:', err);
