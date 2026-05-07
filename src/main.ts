@@ -259,10 +259,10 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Mode')
-      .setDesc('"In-process" runs a model inside Obsidian via Transformers.js (no server needed, downloads model on first use). "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
+      .setDesc('"In-process" runs a model inside Obsidian via WebGPU (no server needed, downloads model on first use). "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
       .addDropdown((drop) =>
         drop
-          .addOption('inprocess', 'In-process (Transformers.js)')
+          .addOption('inprocess', 'In-process (WebGPU / WebLLM)')
           .addOption('endpoint', 'Remote endpoint (Ollama / LM Studio)')
           .setValue(this.plugin.settings.summarizationMode)
           .onChange(async (value) => {
