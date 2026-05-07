@@ -1,0 +1,401 @@
+/* Claude Threads Plugin */
+
+/* ct-root IS the .view-content element — override Obsidian's default padding on it */
+.view-content.ct-root {
+  padding: 0;
+}
+
+.ct-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--background-primary);
+  font-size: var(--font-ui-small);
+}
+
+/* Tab bar */
+.ct-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 0;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: thin;
+}
+
+.ct-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--background-secondary-alt);
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  transition: background 0.1s, color 0.1s;
+  max-width: 140px;
+}
+
+.ct-tab:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-tab-active {
+  background: var(--background-primary);
+  border-color: var(--background-modifier-border);
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.ct-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+.ct-tab-rename-input {
+  width: 90px;
+  padding: 0 2px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--interactive-accent);
+  border-radius: 3px;
+}
+
+.ct-tab-close {
+  opacity: 0;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.ct-tab:hover .ct-tab-close {
+  opacity: 1;
+}
+
+.ct-tab-close:hover {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+.ct-tab-new {
+  background: none;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-left: 2px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.ct-tab-new:hover {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+
+/* Main area */
+.ct-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Messages */
+.ct-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scroll-behavior: smooth;
+}
+
+.ct-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  text-align: center;
+  gap: 4px;
+}
+
+.ct-empty p { margin: 0; }
+
+.ct-empty-sub {
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  opacity: 0.7;
+}
+
+/* Message bubbles */
+.ct-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+  animation: ct-fade-in 0.15s ease;
+}
+
+@keyframes ct-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ct-message-user {
+  align-items: flex-end;
+}
+
+.ct-message-user .ct-message-content {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 12px 12px 2px 12px;
+  padding: 8px 12px;
+  max-width: 85%;
+}
+
+.ct-message-user .ct-message-content p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ct-message-assistant .ct-message-content {
+  background: var(--background-secondary);
+  border-radius: 2px 12px 12px 12px;
+  padding: 8px 12px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ct-message-assistant .ct-message-content > *:first-child { margin-top: 0; }
+.ct-message-assistant .ct-message-content > *:last-child { margin-bottom: 0; }
+
+.ct-message-assistant .ct-message-content pre {
+  background: var(--code-background);
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-message-assistant .ct-message-content code:not(pre code) {
+  background: var(--code-background);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+/* Streaming state */
+.ct-streaming {
+  background: var(--background-secondary);
+  border-radius: 2px 12px 12px 12px;
+  padding: 8px 12px;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 32px;
+}
+
+.ct-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: var(--interactive-accent);
+  border-radius: 1px;
+  vertical-align: middle;
+  animation: ct-blink 0.8s step-end infinite;
+}
+
+@keyframes ct-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* Tool calls */
+.ct-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.ct-tool-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-tool-active {
+  border-color: var(--color-yellow);
+  color: var(--color-yellow);
+  animation: ct-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ct-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+/* Cost label */
+.ct-cost {
+  font-size: 10px;
+  color: var(--text-faint);
+  align-self: flex-end;
+  margin-top: -2px;
+}
+
+/* Error */
+.ct-error {
+  background: var(--background-modifier-error-rgb, rgba(200,0,0,0.1));
+  border: 1px solid var(--color-red);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.ct-error p { margin: 0; color: var(--color-red); }
+
+.ct-error-text {
+  margin: 0;
+  color: var(--color-red);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: var(--font-monospace);
+  background: none;
+  padding: 0;
+}
+
+/* Status bar */
+.ct-status-bar {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  padding: 2px 8px;
+  min-height: 18px;
+  font-style: italic;
+}
+
+/* Input row */
+.ct-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-input {
+  flex: 1;
+  resize: none;
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: var(--font-ui-small);
+  font-family: inherit;
+  color: var(--text-normal);
+  max-height: 150px;
+  min-height: 34px;
+  line-height: 1.5;
+  overflow-y: auto;
+  transition: border-color 0.1s;
+}
+
+.ct-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.ct-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ct-send-btn,
+.ct-stop-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+.ct-send-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-send-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ct-stop-btn {
+  background: var(--color-red);
+  color: white;
+}
+
+.ct-stop-btn:hover {
+  opacity: 0.85;
+}
+
+.ct-hidden {
+  display: none !important;
+}
+
+/* Prompt modal */
+.ct-prompt-input {
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text-normal);
+}
+
+.ct-prompt-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
