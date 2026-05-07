@@ -138,6 +138,7 @@ export class ThreadsView extends ItemView {
     this.renderTabs();
     this.renderThreadInfo();
     this.renderMessages();
+    this.setRunningState(this.manager.isRunning(id));
   }
 
   private renderThreadInfo(): void {
