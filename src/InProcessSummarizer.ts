@@ -5,6 +5,11 @@ import { parseExtraEnv } from './types';
 
 type ProgressCallback = (status: string) => void;
 
+export interface SummarizeResult {
+  title: string;
+  summary: string;
+}
+
 export class InProcessSummarizer {
   async summarize(
     messages: ChatMessage[],
@@ -12,7 +17,7 @@ export class InProcessSummarizer {
     modelAlias: string,
     extraEnv: string,
     onProgress?: ProgressCallback,
-  ): Promise<string> {
+  ): Promise<SummarizeResult> {
     const transcript = messages
       .slice(-20)
       .map((m) => `${m.role === 'user' ? 'User' : 'Claude'}: ${m.content.slice(0, 600)}`)
@@ -21,16 +26,16 @@ export class InProcessSummarizer {
 
     const prompt =
       'Below is a conversation transcript inside <transcript> tags. ' +
-      'Output a 2-3 sentence summary of it covering what is being worked on, key decisions, ' +
-      'and current status. Be specific about files, projects, or tasks mentioned. ' +
-      'Do not use any tools. Output only the summary — no preamble.\n\n' +
-      `<transcript>\n${transcript}\n</transcript>\n\nSummary:`;
+      'Output a JSON object with exactly two fields:\n' +
+      '- "title": a 3-5 word tab title for the conversation (be specific, e.g. "Fix auth middleware bug")\n' +
+      '- "summary": a 2-3 sentence summary covering what is being worked on, key decisions, and current status\n\n' +
+      'Output ONLY the JSON object, no markdown fences, no other text.\n\n' +
+      `<transcript>\n${transcript}\n</transcript>`;
 
     onProgress?.('Summarizing…');
 
-    let result = '';
+    let raw = '';
 
-    console.log('[Claude Threads] summarize: starting query, model=', modelAlias, 'transcript length=', transcript.length);
     for await (const msg of query({
       prompt,
       options: {
@@ -41,17 +46,29 @@ export class InProcessSummarizer {
         env: { ...process.env, ...parseExtraEnv(extraEnv) },
       },
     })) {
-      console.log('[Claude Threads] summarize msg.type:', msg.type);
       if (msg.type === 'assistant') {
         for (const block of msg.message.content) {
-          if (block.type === 'text') result = block.text;
+          if (block.type === 'text') raw = block.text;
         }
       }
     }
 
-    console.log('[Claude Threads] summarize result:', result.slice(0, 100));
-    return result.trim();
+    return parseJsonResult(raw.trim());
   }
 
   unload(): void {}
+}
+
+function parseJsonResult(text: string): SummarizeResult {
+  const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
+  try {
+    const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+    return {
+      title: String(parsed.title ?? '').trim(),
+      summary: String(parsed.summary ?? '').trim(),
+    };
+  } catch {
+    // Fallback: treat whole text as summary, no title
+    return { title: '', summary: text };
+  }
 }

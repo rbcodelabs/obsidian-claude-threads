@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, MarkdownRenderer, Modal, App, setIcon, Notice } from 'obsidian';
 import type { Thread, ChatMessage, ToolCallRecord } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
+import type { SummarizeResult } from './InProcessSummarizer';
 import type ClaudeThreadsPlugin from './main';
 
 export const VIEW_TYPE = 'claude-threads:chat';
@@ -179,7 +180,7 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<string> {
+  private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
     if (this.plugin.settings.summarizationMode === 'inprocess') {
       return this.plugin.inProcessSummarizer.summarize(
         messages,
@@ -209,13 +210,15 @@ export class ThreadsView extends ItemView {
     };
 
     try {
-      const summary = await this.runSummarize(thread.messages, onProgress);
-      thread.summary = summary;
+      const result = await this.runSummarize(thread.messages, onProgress);
+      thread.summary = result.summary;
+      if (result.title) this.applyAutoTitle(thread.id, result.title);
       await this.plugin.saveSettings();
       this.statusBar.setText('');
       btn.removeClass('ct-summarize-spinning');
       setIcon(btn, 'brain-circuit');
       btn.disabled = false;
+      this.renderTabs();
       this.renderThreadInfo();
     } catch (err) {
       console.error('[Claude Threads] summarize error:', err);
@@ -373,10 +376,14 @@ export class ThreadsView extends ItemView {
         if (this.plugin.settings.autoSummarize && this.plugin.settings.summarizationEnabled && this.activeThreadId) {
           const thread = this.manager.getThread(this.activeThreadId);
           if (thread) {
-            this.runSummarize(thread.messages).then((summary) => {
-              thread.summary = summary;
+            this.runSummarize(thread.messages).then((result) => {
+              thread.summary = result.summary;
+              if (result.title) this.applyAutoTitle(thread.id, result.title);
               this.plugin.saveSettings();
-              if (this.activeThreadId === thread.id) this.renderThreadInfo();
+              if (this.activeThreadId === thread.id) {
+                this.renderTabs();
+                this.renderThreadInfo();
+              }
             }).catch(() => { /* silent fail for auto */ });
           }
         }
@@ -470,6 +477,14 @@ export class ThreadsView extends ItemView {
     );
     await this.plugin.saveSettings();
     this.setActiveThread(thread.id);
+  }
+
+  private applyAutoTitle(threadId: string, title: string): void {
+    const thread = this.manager.getThread(threadId);
+    if (!thread || !title) return;
+    if (/^Thread \d+$/.test(thread.title)) {
+      this.manager.renameThread(threadId, title);
+    }
   }
 
   private closeThread(id: string): void {

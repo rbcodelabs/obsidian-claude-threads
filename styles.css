@@ -31,16 +31,17 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  background: var(--background-secondary-alt);
+  background: transparent;
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
   white-space: nowrap;
   font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
+  color: var(--text-faint);
   transition: background 0.1s, color 0.1s;
   max-width: 140px;
+  position: relative;
 }
 
 /* Thread info bar */
@@ -98,14 +99,17 @@
 
 .ct-tab:hover {
   background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  color: var(--text-muted);
 }
 
 .ct-tab-active {
   background: var(--background-primary);
   border-color: var(--background-modifier-border);
+  border-bottom-color: var(--background-primary);
   color: var(--text-normal);
   font-weight: 500;
+  margin-bottom: -1px;
+  z-index: 1;
 }
 
 .ct-tab-label {
