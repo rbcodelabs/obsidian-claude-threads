@@ -24,6 +24,7 @@ export interface Thread {
   updatedAt: number;
   noteFile?: string;
   recap?: string;
+  summary?: string;
 }
 
 export interface PluginSettings {
@@ -32,7 +33,11 @@ export interface PluginSettings {
   saveThreadsToVault: boolean;
   vaultFolder: string;
   permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
-  extraEnv: string; // KEY=VALUE lines, merged into process.env for spawned Claude process
+  extraEnv: string;
+  summarizationEnabled: boolean;
+  summarizationEndpoint: string;
+  summarizationModel: string;
+  autoSummarize: boolean;
   threads: Thread[];
 }
 
@@ -43,6 +48,10 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   vaultFolder: 'Claude',
   permissionMode: 'acceptEdits',
   extraEnv: '',
+  summarizationEnabled: false,
+  summarizationEndpoint: 'http://localhost:11434/v1/chat/completions',
+  summarizationModel: 'llama3.2',
+  autoSummarize: false,
   threads: [],
 };
 

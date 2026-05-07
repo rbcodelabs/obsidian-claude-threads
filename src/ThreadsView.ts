@@ -152,13 +152,48 @@ export class ThreadsView extends ItemView {
       attr: { title: thread.cwd },
     });
 
-    if (thread.recap) {
+    const summaryText = thread.summary || thread.recap;
+    if (summaryText) {
       this.threadInfoBar.createSpan({ cls: 'ct-thread-info-sep', text: '·' });
       this.threadInfoBar.createSpan({
         cls: 'ct-thread-info-recap',
-        text: thread.recap,
-        attr: { title: thread.recap },
+        text: summaryText,
+        attr: { title: summaryText },
       });
+    }
+
+    if (this.plugin.settings.summarizationEnabled && thread.messages.length > 0) {
+      const btn = this.threadInfoBar.createEl('button', {
+        cls: 'ct-summarize-btn',
+        attr: { title: 'Summarize thread with local model' },
+      });
+      setIcon(btn, 'brain-circuit');
+      btn.addEventListener('click', () => this.summarizeThread(thread.id, btn));
+    }
+  }
+
+  private async summarizeThread(threadId: string, btn: HTMLButtonElement): Promise<void> {
+    const thread = this.manager.getThread(threadId);
+    if (!thread || thread.messages.length === 0) return;
+
+    btn.disabled = true;
+    setIcon(btn, 'loader');
+    btn.addClass('ct-summarize-spinning');
+
+    try {
+      const summary = await this.plugin.summarizer.summarize(
+        thread.messages,
+        this.plugin.settings.summarizationEndpoint,
+        this.plugin.settings.summarizationModel,
+      );
+      thread.summary = summary;
+      await this.plugin.saveSettings();
+      this.renderThreadInfo();
+    } catch (err) {
+      btn.setAttribute('title', `Error: ${(err as Error).message}`);
+      btn.removeClass('ct-summarize-spinning');
+      setIcon(btn, 'alert-circle');
+      btn.disabled = false;
     }
   }
 
@@ -305,6 +340,20 @@ export class ThreadsView extends ItemView {
         this.appendMessage(event.message);
         this.scrollToBottom();
         this.plugin.saveSettings();
+        if (this.plugin.settings.autoSummarize && this.plugin.settings.summarizationEnabled && this.activeThreadId) {
+          const thread = this.manager.getThread(this.activeThreadId);
+          if (thread) {
+            this.plugin.summarizer.summarize(
+              thread.messages,
+              this.plugin.settings.summarizationEndpoint,
+              this.plugin.settings.summarizationModel,
+            ).then((summary) => {
+              thread.summary = summary;
+              this.plugin.saveSettings();
+              if (this.activeThreadId === thread.id) this.renderThreadInfo();
+            }).catch(() => { /* silent fail for auto */ });
+          }
+        }
         if (this.plugin.settings.saveThreadsToVault && this.activeThreadId) {
           const thread = this.manager.getThread(this.activeThreadId);
           if (thread) {

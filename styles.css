@@ -80,6 +80,38 @@
   min-width: 0;
 }
 
+.ct-summarize-btn {
+  background: none;
+  border: none;
+  padding: 1px 3px;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.ct-summarize-btn:hover {
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+}
+
+.ct-summarize-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+@keyframes ct-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.ct-summarize-spinning svg {
+  animation: ct-spin 1s linear infinite;
+}
+
 .ct-tab:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);

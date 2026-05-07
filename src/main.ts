@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapte
 import { ThreadsView, VIEW_TYPE } from './ThreadsView';
 import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
+import { SummarizationService } from './SummarizationService';
 import { type PluginSettings, DEFAULT_SETTINGS } from './types';
 import fs from 'fs';
 
@@ -25,6 +26,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   settings!: PluginSettings;
   manager!: ThreadManager;
   persistence!: VaultPersistence;
+  summarizer!: SummarizationService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -33,6 +35,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     this.manager = new ThreadManager(this.settings);
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
+    this.summarizer = new SummarizationService();
 
     // Load persisted threads
     const savedThreads = this.settings.threads ?? [];
@@ -217,6 +220,54 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.permissionMode = value as PluginSettings['permissionMode'];
             this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    containerEl.createEl('h3', { text: 'Thread summarization (local model)' });
+
+    new Setting(containerEl)
+      .setName('Enable summarization')
+      .setDesc('Show a summarize button in each thread using a local model')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.summarizationEnabled).onChange(async (value) => {
+          this.plugin.settings.summarizationEnabled = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Auto-summarize after response')
+      .setDesc('Automatically regenerate summary after each assistant turn')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.autoSummarize).onChange(async (value) => {
+          this.plugin.settings.autoSummarize = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Endpoint')
+      .setDesc('OpenAI-compatible chat completions URL (Ollama, LM Studio, etc.)')
+      .addText((text) =>
+        text
+          .setPlaceholder('http://localhost:11434/v1/chat/completions')
+          .setValue(this.plugin.settings.summarizationEndpoint)
+          .onChange(async (value) => {
+            this.plugin.settings.summarizationEndpoint = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Model')
+      .setDesc('Model name to use for summarization')
+      .addText((text) =>
+        text
+          .setPlaceholder('llama3.2')
+          .setValue(this.plugin.settings.summarizationModel)
+          .onChange(async (value) => {
+            this.plugin.settings.summarizationModel = value;
             await this.plugin.saveSettings();
           }),
       );

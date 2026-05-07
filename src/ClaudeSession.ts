@@ -13,6 +13,7 @@ export interface SessionCallbacks {
 
 export class ClaudeSession {
   private activeQuery: Query | null = null;
+  private recapEmitted = false;
 
   constructor(private claudePath: string) {}
 
@@ -50,8 +51,11 @@ export class ClaudeSession {
     const pendingToolCalls: ToolCallRecord[] = [];
     let streamingText = '';
 
+    const allToolCalls: ToolCallRecord[] = [];
+
     try {
       for await (const msg of q) {
+        console.log('[ClaudeThreads] msg.type:', msg.type, (msg as Record<string, unknown>).subtype ?? '');
         switch (msg.type) {
           case 'stream_event': {
             const evt = msg.event;
@@ -77,6 +81,7 @@ export class ClaudeSession {
                 );
                 const record: ToolCallRecord = { name: block.name, summary };
                 pendingToolCalls.push(record);
+                allToolCalls.push(record);
                 callbacks.onToolUse(record);
               }
             }
@@ -90,12 +95,18 @@ export class ClaudeSession {
           }
 
           case 'tool_use_summary': {
+            this.recapEmitted = true;
             callbacks.onRecap(msg.summary);
             break;
           }
 
           case 'result': {
             if (msg.subtype === 'success') {
+              // Fallback recap from tool calls if no tool_use_summary was emitted
+              if (allToolCalls.length > 0 && !this.recapEmitted) {
+                const names = [...new Set(allToolCalls.map(t => t.name))];
+                callbacks.onRecap(`Used ${names.join(', ')} (${allToolCalls.length} call${allToolCalls.length > 1 ? 's' : ''})`);
+              }
               callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
             } else {
               callbacks.onError(
