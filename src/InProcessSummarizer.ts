@@ -1,4 +1,5 @@
-import { spawn } from 'child_process';
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import os from 'os';
 import type { ChatMessage } from './types';
 import { parseExtraEnv } from './types';
 
@@ -7,7 +8,7 @@ type ProgressCallback = (status: string) => void;
 export class InProcessSummarizer {
   async summarize(
     messages: ChatMessage[],
-    claudeBinary: string,
+    claudeBinaryPath: string,
     modelAlias: string,
     extraEnv: string,
     onProgress?: ProgressCallback,
@@ -19,32 +20,37 @@ export class InProcessSummarizer {
       .slice(0, 3000);
 
     const prompt =
-      'Summarize this conversation in 2-3 sentences covering what is being worked on, ' +
-      'key decisions made, and current status. Be specific about files, projects, or tasks mentioned.\n\n' +
-      transcript;
+      'Below is a conversation transcript inside <transcript> tags. ' +
+      'Output a 2-3 sentence summary of it covering what is being worked on, key decisions, ' +
+      'and current status. Be specific about files, projects, or tasks mentioned. ' +
+      'Do not use any tools. Output only the summary — no preamble.\n\n' +
+      `<transcript>\n${transcript}\n</transcript>\n\nSummary:`;
 
     onProgress?.('Summarizing…');
 
-    return new Promise((resolve, reject) => {
-      const proc = spawn(claudeBinary, ['--print', '--model', modelAlias], {
+    let result = '';
+
+    console.log('[Claude Threads] summarize: starting query, model=', modelAlias, 'transcript length=', transcript.length);
+    for await (const msg of query({
+      prompt,
+      options: {
+        pathToClaudeCodeExecutable: claudeBinaryPath,
+        permissionMode: 'default',
+        model: modelAlias,
+        cwd: os.tmpdir(),
         env: { ...process.env, ...parseExtraEnv(extraEnv) },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      },
+    })) {
+      console.log('[Claude Threads] summarize msg.type:', msg.type);
+      if (msg.type === 'assistant') {
+        for (const block of msg.message.content) {
+          if (block.type === 'text') result = block.text;
+        }
+      }
+    }
 
-      let output = '';
-      let errOutput = '';
-
-      proc.stdout.on('data', (d: Buffer) => { output += d.toString(); });
-      proc.stderr.on('data', (d: Buffer) => { errOutput += d.toString(); });
-      proc.on('error', (err: Error) => reject(err));
-      proc.on('close', (code: number | null) => {
-        if (code === 0 && output.trim()) resolve(output.trim());
-        else reject(new Error(errOutput.trim() || `claude exited with code ${code}`));
-      });
-
-      proc.stdin.write(prompt);
-      proc.stdin.end();
-    });
+    console.log('[Claude Threads] summarize result:', result.slice(0, 100));
+    return result.trim();
   }
 
   unload(): void {}
