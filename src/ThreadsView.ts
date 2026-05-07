@@ -151,7 +151,6 @@ export class ThreadsView extends ItemView {
       this.threadInfoBar.createSpan({
         cls: 'ct-thread-info-recap',
         text: summaryText,
-        attr: { title: summaryText },
       });
     }
 

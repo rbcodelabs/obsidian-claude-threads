@@ -134,6 +134,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    // Migrate old WebLLM model IDs to claude alias
+    if (this.settings.inprocessModel.includes('-MLC') || this.settings.inprocessModel.includes('/')) {
+      this.settings.inprocessModel = 'haiku';
+    }
   }
 
   async saveSettings(): Promise<void> {
