@@ -107,7 +107,12 @@ export class ThreadsView extends ItemView {
         cls: `ct-tab ${thread.id === this.activeThreadId ? 'ct-tab-active' : ''}`,
       });
 
-      const label = tab.createSpan({ cls: 'ct-tab-label', text: thread.title });
+      const tabMain = tab.createDiv('ct-tab-main');
+      const label = tabMain.createSpan({ cls: 'ct-tab-label', text: thread.title });
+
+      if (thread.recap) {
+        tab.createDiv({ cls: 'ct-tab-recap', text: thread.recap });
+      }
 
       label.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -116,7 +121,7 @@ export class ThreadsView extends ItemView {
 
       tab.addEventListener('click', () => this.setActiveThread(thread.id));
 
-      const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×' });
+      const closeBtn = tabMain.createEl('button', { cls: 'ct-tab-close', text: '×' });
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.closeThread(thread.id);
@@ -284,6 +289,11 @@ export class ThreadsView extends ItemView {
             this.plugin.persistence?.saveThread(thread).catch(console.error);
           }
         }
+        break;
+      }
+
+      case 'recap': {
+        this.renderTabs();
         break;
       }
 

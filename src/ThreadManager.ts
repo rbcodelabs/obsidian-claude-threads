@@ -7,6 +7,7 @@ export type ThreadEvent =
   | { type: 'token'; text: string }
   | { type: 'tool_use'; record: ToolCallRecord }
   | { type: 'message'; message: ChatMessage }
+  | { type: 'recap'; summary: string }
   | { type: 'done' }
   | { type: 'error'; error: Error }
   | { type: 'streaming_start' };
@@ -108,6 +109,10 @@ export class ThreadManager {
         onToolUse: (record) => {
           pendingToolCalls.push(record);
           this.emit(threadId, { type: 'tool_use', record });
+        },
+        onRecap: (summary) => {
+          thread.recap = summary;
+          this.emit(threadId, { type: 'recap', summary });
         },
         onMessage: (content, toolCalls) => {
           streamingContent = '';

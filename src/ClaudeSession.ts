@@ -6,6 +6,7 @@ export interface SessionCallbacks {
   onToken: (text: string) => void;
   onToolUse: (record: ToolCallRecord) => void;
   onMessage: (content: string, toolCalls: ToolCallRecord[]) => void;
+  onRecap: (summary: string) => void;
   onDone: (sessionId: string, cost: number, numTurns: number) => void;
   onError: (err: Error) => void;
 }
@@ -85,6 +86,11 @@ export class ClaudeSession {
             }
             pendingToolCalls.length = 0;
             streamingText = '';
+            break;
+          }
+
+          case 'tool_use_summary': {
+            callbacks.onRecap(msg.summary);
             break;
           }
 

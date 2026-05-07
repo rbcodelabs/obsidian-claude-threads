@@ -28,19 +28,37 @@
 
 .ct-tab {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
   padding: 4px 10px;
   background: var(--background-secondary-alt);
   border: 1px solid transparent;
   border-bottom: none;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
-  white-space: nowrap;
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   transition: background 0.1s, color 0.1s;
-  max-width: 140px;
+  max-width: 180px;
+  min-width: 80px;
+}
+
+.ct-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ct-tab-recap {
+  font-size: 10px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+  padding-bottom: 1px;
 }
 
 .ct-tab:hover {

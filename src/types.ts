@@ -23,6 +23,7 @@ export interface Thread {
   createdAt: number;
   updatedAt: number;
   noteFile?: string;
+  recap?: string;
 }
 
 export interface PluginSettings {
