@@ -52,8 +52,8 @@ export class ThreadsView extends ItemView {
         modal.titleEl.setText(toolName);
         if (detail) modal.contentEl.createEl('p', { text: detail });
         const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
-        btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { modal.close(); done(false); };
-        btnRow.createEl('button', { text: 'Allow', cls: 'mod-cta' }).onclick = () => { modal.close(); done(true); };
+        btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { done(false); modal.close(); };
+        btnRow.createEl('button', { text: 'Allow', cls: 'mod-cta' }).onclick = () => { done(true); modal.close(); };
         modal.onClose = () => done(false);
         modal.open();
       });
