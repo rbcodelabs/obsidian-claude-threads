@@ -53,7 +53,7 @@ export class ThreadsView extends ItemView {
     if (threads.length > 0) {
       this.setActiveThread(threads[0].id);
     } else {
-      const thread = this.manager.createThread('Thread 1', this.plugin.settings.defaultCwd);
+      const thread = this.manager.createThread('Thread 1', this.plugin.getEffectiveCwd());
       await this.plugin.saveSettings();
       this.setActiveThread(thread.id);
     }
@@ -352,7 +352,7 @@ export class ThreadsView extends ItemView {
     const title = await promptText(this.app, 'Thread name', `Thread ${this.manager.getThreads().length + 1}`);
     const thread = this.manager.createThread(
       title || `Thread ${this.manager.getThreads().length}`,
-      this.plugin.settings.defaultCwd,
+      this.plugin.getEffectiveCwd(),
     );
     await this.plugin.saveSettings();
     this.setActiveThread(thread.id);

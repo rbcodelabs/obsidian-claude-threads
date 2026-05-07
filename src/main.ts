@@ -69,6 +69,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
   }
 
+  getEffectiveCwd(): string {
+    if (this.settings.defaultCwd) return this.settings.defaultCwd;
+    return (this.app.vault.adapter as unknown as { basePath?: string }).basePath ?? '';
+  }
+
   async onunload(): Promise<void> {
     this.manager?.destroy();
 
