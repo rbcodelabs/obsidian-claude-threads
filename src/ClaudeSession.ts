@@ -28,21 +28,16 @@ export class ClaudeSession {
     additionalDirectories?: string[],
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
-      console.log('[ClaudeThreads] canUseTool called:', { toolName, toolUseID: opts.toolUseID, title: opts.title, decisionReason: opts.decisionReason });
       try {
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;
         const allowed = await callbacks.onPermissionRequest(title, detail);
-        const base = opts.toolUseID ? { toolUseID: opts.toolUseID } : {};
-        const result = allowed
-          ? { behavior: 'allow' as const, ...base, ...(opts.suggestions ? { updatedPermissions: opts.suggestions } : {}) }
-          : { behavior: 'deny' as const, message: 'Denied by user', ...base };
-        console.log('[ClaudeThreads] canUseTool returning:', result, 'suggestions:', opts.suggestions?.length);
-        return result;
+        return allowed
+          ? { behavior: 'allow' as const, updatedInput: input, ...(opts.suggestions ? { updatedPermissions: opts.suggestions } : {}) }
+          : { behavior: 'deny' as const, message: 'Denied by user' };
       } catch (err) {
         console.error('[ClaudeThreads] canUseTool error:', err);
-        const base = opts.toolUseID ? { toolUseID: opts.toolUseID } : {};
-        return { behavior: 'deny' as const, message: 'Permission handler error', ...base };
+        return { behavior: 'deny' as const, message: 'Permission handler error' };
       }
     };
 
