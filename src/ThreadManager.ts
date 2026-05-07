@@ -17,6 +17,7 @@ export class ThreadManager {
   private sessions: Map<string, ClaudeSession> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
+  permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
 
   constructor(settings: PluginSettings) {
     this.settings = settings;
@@ -142,6 +143,7 @@ export class ThreadManager {
           this.sessions.delete(threadId);
           this.emit(threadId, { type: 'error', error: err });
         },
+        onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
       },
     );
   }

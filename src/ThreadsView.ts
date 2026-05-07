@@ -44,6 +44,17 @@ export class ThreadsView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
 
+    this.manager.permissionHandler = (toolName, detail) =>
+      new Promise((resolve) => {
+        const modal = new Modal(this.app);
+        modal.titleEl.setText(`Allow: ${toolName}`);
+        modal.contentEl.createEl('p', { text: detail });
+        const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+        btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { modal.close(); resolve(false); };
+        btnRow.createEl('button', { text: 'Allow', cls: 'mod-cta' }).onclick = () => { modal.close(); resolve(true); };
+        modal.open();
+      });
+
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);

@@ -1,4 +1,4 @@
-import { query, type Options, type Query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type Query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolCallRecord } from './types';
 import { parseExtraEnv } from './types';
 
@@ -9,6 +9,7 @@ export interface SessionCallbacks {
   onRecap: (summary: string) => void;
   onDone: (sessionId: string, cost: number, numTurns: number) => void;
   onError: (err: Error) => void;
+  onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
 }
 
 export class ClaudeSession {
@@ -25,11 +26,18 @@ export class ClaudeSession {
     extraEnvRaw: string,
     callbacks: SessionCallbacks,
   ): Promise<void> {
+    const canUseTool: CanUseTool = async (toolName, input, opts) => {
+      const detail = opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
+      const allowed = await callbacks.onPermissionRequest(toolName, detail);
+      return allowed ? { behavior: 'allow' } : { behavior: 'deny', message: 'Denied by user' };
+    };
+
     const options: Options = {
       pathToClaudeCodeExecutable: this.claudePath,
       permissionMode,
       cwd,
       includePartialMessages: true,
+      canUseTool,
       env: { ...process.env, ...parseExtraEnv(extraEnvRaw) },
     };
     if (resumeSessionId) {

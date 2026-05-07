@@ -230,6 +230,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       .addDropdown((drop) =>
         drop
           .addOption('acceptEdits', 'Accept edits automatically')
+          .addOption('bypassPermissions', 'Bypass all permissions (trusted directories only)')
           .addOption('default', 'Prompt for permissions')
           .setValue(this.plugin.settings.permissionMode)
           .onChange(async (value) => {
