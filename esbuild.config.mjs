@@ -9,37 +9,10 @@ const outdir = path.join(__dirname, 'dist');
 
 if (!fs.existsSync(outdir)) fs.mkdirSync(outdir, { recursive: true });
 
-// Stub native modules Transformers.js imports but never uses in Electron renderer:
-// - onnxruntime-node: not used because process.release.name === 'electron', not 'node'
-// - sharp: image processing lib, not needed for text summarization
-const stubNativeModules = {
-  name: 'stub-native-modules',
-  setup(build) {
-    const stubs = ['onnxruntime-node', 'sharp'];
-    for (const mod of stubs) {
-      build.onResolve({ filter: new RegExp(`^${mod}$`) }, () => ({
-        path: mod,
-        namespace: 'stub',
-      }));
-    }
-    build.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({
-      contents: 'module.exports = {};',
-      loader: 'js',
-    }));
-  },
-};
-
-// Copy WASM runtime files Transformers.js needs into dist/
-const wasmSrc = path.join(__dirname, 'node_modules/@xenova/transformers/dist');
-const wasmFiles = fs.readdirSync(wasmSrc).filter(f => f.endsWith('.wasm'));
-for (const f of wasmFiles) {
-  fs.copyFileSync(path.join(wasmSrc, f), path.join(outdir, f));
-}
-
 const ctx = await esbuild.context({
   entryPoints: ['src/main.ts'],
   bundle: true,
-  plugins: [stubNativeModules],
+  plugins: [],
   external: [
     'obsidian',
     'electron',

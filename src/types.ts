@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   summarizationMode: 'inprocess',
   summarizationEndpoint: 'http://localhost:11434/v1/chat/completions',
   summarizationModel: 'llama3.2',
-  inprocessModel: 'Xenova/distilbart-cnn-12-6',
+  inprocessModel: 'Llama-3.2-1B-Instruct-q4f16_1-MLC',
   autoSummarize: false,
   threads: [],
 };

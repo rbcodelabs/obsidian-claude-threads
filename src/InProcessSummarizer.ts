@@ -1,66 +1,70 @@
 import type { ChatMessage } from './types';
+import type { MLCEngine, InitProgressReport } from '@mlc-ai/web-llm';
 
 type ProgressCallback = (status: string) => void;
 
 export class InProcessSummarizer {
-  private pipe: ((text: string, opts: object) => Promise<Array<{ summary_text: string }>>) | null = null;
-  private loading = false;
+  private engine: MLCEngine | null = null;
+  private loadedModel: string | null = null;
   private loadPromise: Promise<void> | null = null;
 
-  // wasmBaseUrl must point to the directory containing the .wasm files (the plugin dist/).
-  async initialize(wasmBaseUrl: string, model: string, onProgress?: ProgressCallback): Promise<void> {
-    if (this.pipe) return;
-    if (this.loading) { await this.loadPromise; return; }
+  async initialize(modelId: string, onProgress?: ProgressCallback): Promise<void> {
+    if (this.engine && this.loadedModel === modelId) return;
+    if (this.loadPromise) { await this.loadPromise; return; }
 
-    this.loading = true;
     this.loadPromise = (async () => {
-      const { env, pipeline } = await import('@xenova/transformers');
+      const { CreateMLCEngine } = await import('@mlc-ai/web-llm');
+      onProgress?.(`Loading ${modelId} — downloading on first use, then cached…`);
 
-      // Point the WASM runtime at our bundled .wasm files so it doesn't
-      // need to fetch them from a CDN.
-      env.backends.onnx.wasm.wasmPaths = wasmBaseUrl;
-
-      onProgress?.(`Downloading model "${model}" — first-time only, may take a minute…`);
-
-      this.pipe = await pipeline('summarization', model, {
-        progress_callback: (info: { status: string; file?: string; progress?: number }) => {
-          if (info.status === 'downloading' || info.status === 'progress') {
-            const pct = info.progress != null ? ` ${Math.round(info.progress)}%` : '';
-            onProgress?.(`Downloading${pct}: ${info.file ?? model}`);
-          } else if (info.status === 'done') {
-            onProgress?.('Model ready');
-          }
+      this.engine = await CreateMLCEngine(modelId, {
+        initProgressCallback: (report: InitProgressReport) => {
+          const pct = report.progress > 0 ? ` ${Math.round(report.progress * 100)}%` : '';
+          onProgress?.(`${report.text}${pct}`);
         },
-      }) as typeof this.pipe;
+      });
+      this.loadedModel = modelId;
+      onProgress?.('Model ready');
     })();
 
     try {
       await this.loadPromise;
     } finally {
-      this.loading = false;
+      this.loadPromise = null;
     }
   }
 
   async summarize(
     messages: ChatMessage[],
-    wasmBaseUrl: string,
-    model: string,
+    modelId: string,
     onProgress?: ProgressCallback,
   ): Promise<string> {
-    await this.initialize(wasmBaseUrl, model, onProgress);
+    await this.initialize(modelId, onProgress);
 
-    const text = messages
+    const transcript = messages
       .slice(-20)
       .map((m) => `${m.role === 'user' ? 'User' : 'Claude'}: ${m.content.slice(0, 600)}`)
       .join('\n\n')
       .slice(0, 3000);
 
-    const result = await this.pipe!(text, {
-      max_length: 120,
-      min_length: 20,
-      no_repeat_ngram_size: 3,
+    const response = await this.engine!.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a concise summarizer. Respond with 2-3 sentences covering what is being worked on, key decisions made, and current status. Be specific about files, projects, or tasks mentioned.',
+        },
+        { role: 'user', content: `Summarize this conversation:\n\n${transcript}` },
+      ],
+      max_tokens: 150,
+      temperature: 0.3,
     });
 
-    return result[0].summary_text.trim();
+    return response.choices[0].message.content?.trim() ?? '';
+  }
+
+  unload(): void {
+    this.engine?.unload();
+    this.engine = null;
+    this.loadedModel = null;
   }
 }
