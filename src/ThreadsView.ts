@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, MarkdownRenderer, Modal, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer, Modal, App, setIcon } from 'obsidian';
 import type { Thread, ChatMessage, ToolCallRecord } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type ClaudeThreadsPlugin from './main';
@@ -176,9 +176,7 @@ export class ThreadsView extends ItemView {
   }
 
   private appendMessage(msg: ChatMessage): void {
-    const el = this.messagesEl.createDiv(
-      `ct-message ct-message-${msg.role}`,
-    );
+    const el = this.messagesEl.createDiv(`ct-message ct-message-${msg.role}`);
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       this.renderToolCalls(el, msg.toolCalls);
@@ -187,15 +185,19 @@ export class ThreadsView extends ItemView {
     const content = el.createDiv('ct-message-content');
     if (msg.role === 'assistant') {
       MarkdownRenderer.render(this.app, msg.content, content, '', this);
+      const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
+      setIcon(copyBtn, 'copy');
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(msg.content);
+        setIcon(copyBtn, 'check');
+        setTimeout(() => setIcon(copyBtn, 'copy'), 1500);
+      });
     } else {
       content.createEl('p', { text: msg.content });
     }
 
     if (msg.cost && msg.cost > 0) {
-      el.createEl('span', {
-        cls: 'ct-cost',
-        text: `$${msg.cost.toFixed(4)}`,
-      });
+      el.createEl('span', { cls: 'ct-cost', text: `$${msg.cost.toFixed(4)}` });
     }
   }
 

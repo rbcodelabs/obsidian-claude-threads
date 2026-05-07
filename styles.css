@@ -178,6 +178,7 @@
   gap: 4px;
   max-width: 100%;
   animation: ct-fade-in 0.15s ease;
+  position: relative;
 }
 
 @keyframes ct-fade-in {
@@ -209,6 +210,15 @@
   padding: 8px 12px;
   max-width: 100%;
   overflow-x: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.ct-message-user .ct-message-content {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .ct-message-assistant .ct-message-content > *:first-child { margin-top: 0; }
@@ -227,6 +237,51 @@
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.9em;
+}
+
+.ct-message-assistant .ct-message-content blockquote {
+  border-left: 3px solid var(--interactive-accent);
+  margin: 6px 0;
+  padding: 4px 10px;
+  background: var(--background-secondary-alt);
+  border-radius: 0 4px 4px 0;
+  color: var(--text-muted);
+}
+
+.ct-message-assistant .ct-message-content blockquote > p {
+  margin: 0;
+}
+
+/* Copy button */
+.ct-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  padding: 3px 5px;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1;
+  transition: opacity 0.1s, background 0.1s;
+  display: flex;
+  align-items: center;
+}
+
+.ct-copy-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ct-message:hover .ct-copy-btn {
+  opacity: 1;
+}
+
+.ct-copy-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
 }
 
 /* Streaming state */
