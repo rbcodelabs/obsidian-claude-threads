@@ -172,6 +172,21 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<string> {
+    if (this.plugin.settings.summarizationMode === 'inprocess') {
+      return this.plugin.inProcessSummarizer.summarize(
+        messages,
+        this.plugin.settings.inprocessModel,
+        onProgress,
+      );
+    }
+    return this.plugin.summarizer.summarize(
+      messages,
+      this.plugin.settings.summarizationEndpoint,
+      this.plugin.settings.summarizationModel,
+    );
+  }
+
   private async summarizeThread(threadId: string, btn: HTMLButtonElement): Promise<void> {
     const thread = this.manager.getThread(threadId);
     if (!thread || thread.messages.length === 0) return;
@@ -185,21 +200,7 @@ export class ThreadsView extends ItemView {
     };
 
     try {
-      let summary: string;
-      if (this.plugin.settings.summarizationMode === 'inprocess') {
-        summary = await this.plugin.inProcessSummarizer.summarize(
-          thread.messages,
-          this.plugin.getPluginResourceUrl(),
-          this.plugin.settings.inprocessModel,
-          onProgress,
-        );
-      } else {
-        summary = await this.plugin.summarizer.summarize(
-          thread.messages,
-          this.plugin.settings.summarizationEndpoint,
-          this.plugin.settings.summarizationModel,
-        );
-      }
+      const summary = await this.runSummarize(thread.messages, onProgress);
       thread.summary = summary;
       await this.plugin.saveSettings();
       this.statusBar.setText('');
@@ -359,11 +360,7 @@ export class ThreadsView extends ItemView {
         if (this.plugin.settings.autoSummarize && this.plugin.settings.summarizationEnabled && this.activeThreadId) {
           const thread = this.manager.getThread(this.activeThreadId);
           if (thread) {
-            this.plugin.summarizer.summarize(
-              thread.messages,
-              this.plugin.settings.summarizationEndpoint,
-              this.plugin.settings.summarizationModel,
-            ).then((summary) => {
+            this.runSummarize(thread.messages).then((summary) => {
               thread.summary = summary;
               this.plugin.saveSettings();
               if (this.activeThreadId === thread.id) this.renderThreadInfo();
