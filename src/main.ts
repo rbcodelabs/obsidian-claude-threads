@@ -186,6 +186,20 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Extra environment variables')
+      .setDesc('KEY=VALUE pairs (one per line) merged into the Claude process environment. Useful for AWS SSO: set AWS_PROFILE and AWS_REGION here.')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('AWS_PROFILE=my-sso-profile\nAWS_REGION=us-east-1')
+          .setValue(this.plugin.settings.extraEnv)
+          .onChange(async (value) => {
+            this.plugin.settings.extraEnv = value;
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Permission mode')
       .setDesc('How Claude handles tool permissions')
       .addDropdown((drop) =>

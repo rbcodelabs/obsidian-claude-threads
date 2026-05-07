@@ -1,5 +1,6 @@
 import { query, type Options, type Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolCallRecord } from './types';
+import { parseExtraEnv } from './types';
 
 export interface SessionCallbacks {
   onToken: (text: string) => void;
@@ -19,6 +20,7 @@ export class ClaudeSession {
     resumeSessionId: string | undefined,
     cwd: string,
     permissionMode: Options['permissionMode'],
+    extraEnvRaw: string,
     callbacks: SessionCallbacks,
   ): Promise<void> {
     const options: Options = {
@@ -26,6 +28,7 @@ export class ClaudeSession {
       permissionMode,
       cwd,
       includePartialMessages: true,
+      env: { ...process.env, ...parseExtraEnv(extraEnvRaw) },
     };
     if (resumeSessionId) {
       options.resume = resumeSessionId;

@@ -99,6 +99,7 @@ export class ThreadManager {
       thread.sessionId,
       thread.cwd,
       this.settings.permissionMode,
+      this.settings.extraEnv,
       {
         onToken: (text) => {
           streamingContent += text;
