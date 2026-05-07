@@ -27,9 +27,12 @@ export class ClaudeSession {
     callbacks: SessionCallbacks,
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
-      const detail = opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
-      const allowed = await callbacks.onPermissionRequest(toolName, detail);
-      return allowed ? { behavior: 'allow' } : { behavior: 'deny', message: 'Denied by user' };
+      const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
+      const title = opts.title ?? `${toolName}`;
+      const allowed = await callbacks.onPermissionRequest(title, detail);
+      return allowed
+        ? { behavior: 'allow', toolUseID: opts.toolUseID }
+        : { behavior: 'deny', message: 'Denied by user', toolUseID: opts.toolUseID };
     };
 
     const options: Options = {
