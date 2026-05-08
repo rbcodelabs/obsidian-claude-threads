@@ -10,6 +10,9 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-tab-bar');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
+    // Switch to the HipTrip thread which shows a markdown table
+    await page.getByText('HipTrip feature id').click();
+    await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });
 
