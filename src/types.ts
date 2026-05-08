@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   vaultFolder: 'Claude',
   permissionMode: 'acceptEdits',
   extraEnv: '',
-  summarizationEnabled: false,
+  summarizationEnabled: true,
   summarizationMode: 'inprocess',
   summarizationEndpoint: 'http://localhost:11434/v1/chat/completions',
   summarizationModel: 'llama3.2',
