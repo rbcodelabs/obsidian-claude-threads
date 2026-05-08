@@ -52,6 +52,8 @@ export interface PluginSettings {
   summarizationModel: string;
   inprocessModel: string;
   autoSummarize: boolean;
+  opusEscalationEnabled: boolean;
+  opusEscalationKeyword: string;
   threads: Thread[];
 }
 
@@ -68,6 +70,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   summarizationModel: 'llama3.2',
   inprocessModel: 'haiku',
   autoSummarize: false,
+  opusEscalationEnabled: true,
+  opusEscalationKeyword: '/opus',
   threads: [],
 };
 

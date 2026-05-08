@@ -436,6 +436,11 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'escalated': {
+        this.statusBar.setText(`⚡ Using ${event.model} for this turn`);
+        break;
+      }
+
       case 'token': {
         if (!this.streamingEl) {
           this.streamingEl = this.messagesEl.createDiv(

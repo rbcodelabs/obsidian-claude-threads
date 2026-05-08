@@ -27,6 +27,7 @@ export class ClaudeSession {
     extraEnvRaw: string,
     callbacks: SessionCallbacks,
     additionalDirectories?: string[],
+    model?: string,
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
       try {
@@ -58,8 +59,9 @@ export class ClaudeSession {
     };
     if (resumeSessionId) options.resume = resumeSessionId;
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
+    if (model) options.model = model;
 
-    console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId });
+    console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
     let q: Query;
     try {
