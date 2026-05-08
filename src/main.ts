@@ -72,6 +72,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'next-claude-thread',
+      name: 'Next Claude Thread',
+      hotkeys: [{ modifiers: ['Mod'], key: ']' }],
+      callback: () => this.getView()?.navigateTab(1),
+    });
+
+    this.addCommand({
+      id: 'prev-claude-thread',
+      name: 'Previous Claude Thread',
+      hotkeys: [{ modifiers: ['Mod'], key: '[' }],
+      callback: () => this.getView()?.navigateTab(-1),
+    });
+
+    for (let i = 1; i <= 9; i++) {
+      const n = i;
+      this.addCommand({
+        id: `claude-thread-${n}`,
+        name: `Switch to Claude Thread ${n}`,
+        hotkeys: [{ modifiers: ['Mod'], key: String(n) }],
+        callback: () => this.getView()?.switchToTabIndex(n - 1),
+      });
+    }
+
     // Settings tab
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
   }

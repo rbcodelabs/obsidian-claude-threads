@@ -9,9 +9,11 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.132",
+    "marked": "^18.0.3",
     "node-llama-cpp": "^3.18.1"
   },
   "devDependencies": {
+    "@types/marked": "^5.0.2",
     "@types/node": "^20.0.0",
     "esbuild": "^0.24.0",
     "obsidian": "^1.7.2",
