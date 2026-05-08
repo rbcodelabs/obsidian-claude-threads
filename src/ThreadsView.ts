@@ -124,6 +124,16 @@ export class ThreadsView extends ItemView {
         modal.open();
       });
 
+    this.manager.openNewTabHandler = async (title?: string, initialPrompt?: string) => {
+      const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, this.plugin.getEffectiveCwd());
+      await this.plugin.saveSettings();
+      this.setActiveThread(thread.id);
+      if (initialPrompt) {
+        this.inputEl.value = initialPrompt;
+      }
+      return { threadId: thread.id, title: thread.title };
+    };
+
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);

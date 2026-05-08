@@ -11,6 +11,7 @@ export interface SessionCallbacks {
   onError: (err: Error) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
+  onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
 }
 
 export class ClaudeSession {
@@ -35,6 +36,11 @@ export class ClaudeSession {
           const answers = await callbacks.onAskUserQuestion(questions);
           // Spread original input to preserve metadata/annotations, then override answers
           return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
+        }
+        if (toolName === 'OpenNewTab') {
+          const inp = input as { title?: string; initialPrompt?: string };
+          const result = await callbacks.onOpenNewTab(inp.title, inp.initialPrompt);
+          return { behavior: 'allow' as const, updatedInput: { ...input, result: JSON.stringify(result) } };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;
@@ -179,6 +185,8 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
       return `Fetch: ${input.url}`;
     case 'WebSearch':
       return `Search: ${input.query}`;
+    case 'OpenNewTab':
+      return `OpenNewTab: ${(input.title as string) ?? 'New Thread'}`;
     default:
       return name;
   }
