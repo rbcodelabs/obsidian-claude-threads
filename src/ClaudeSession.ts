@@ -1,5 +1,5 @@
 import { query, type Options, type Query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import type { ToolCallRecord } from './types';
+import type { ToolCallRecord, AskQuestion } from './types';
 import { parseExtraEnv } from './types';
 
 export interface SessionCallbacks {
@@ -10,6 +10,7 @@ export interface SessionCallbacks {
   onDone: (sessionId: string, cost: number, numTurns: number) => void;
   onError: (err: Error) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
+  onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
 }
 
 export class ClaudeSession {
@@ -29,6 +30,11 @@ export class ClaudeSession {
   ): Promise<void> {
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
       try {
+        if (toolName === 'AskUserQuestion') {
+          const questions = (input as { questions: import('./types').AskQuestion[] }).questions;
+          const answers = await callbacks.onAskUserQuestion(questions);
+          return { behavior: 'allow' as const, updatedInput: { questions, answers } };
+        }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;
         const allowed = await callbacks.onPermissionRequest(title, detail);

@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.25-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.26-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="380" alt="Main view showing a conversation with code blocks and multiple tabs" />

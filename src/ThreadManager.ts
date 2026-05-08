@@ -1,5 +1,5 @@
 import { ClaudeSession } from './ClaudeSession';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion } from './types';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -18,6 +18,7 @@ export class ThreadManager {
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
+  questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   vaultRoot = '';
 
   constructor(settings: PluginSettings) {
@@ -147,6 +148,7 @@ export class ThreadManager {
           this.emit(threadId, { type: 'error', error: err });
         },
         onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
+        onAskUserQuestion: (questions) => this.questionHandler(questions),
       },
       additionalDirs,
     );

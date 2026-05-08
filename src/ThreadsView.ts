@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, Modal, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
 import { marked } from 'marked';
-import type { Thread, ChatMessage, ToolCallRecord } from './types';
+import type { Thread, ChatMessage, ToolCallRecord, AskQuestion } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
 import fs from 'fs';
@@ -70,6 +70,60 @@ export class ThreadsView extends ItemView {
         modal.open();
       });
 
+    this.manager.questionHandler = (questions: AskQuestion[]) =>
+      new Promise((resolve) => {
+        const answers: Record<string, string[]> = {};
+        for (const q of questions) answers[q.question] = [];
+
+        const modal = new Modal(this.app);
+        modal.titleEl.setText('Claude needs your input');
+        modal.contentEl.addClass('ct-question-modal');
+
+        for (const q of questions) {
+          const qEl = modal.contentEl.createDiv({ cls: 'ct-question' });
+          if (q.header) qEl.createEl('h3', { cls: 'ct-question-header', text: q.header });
+          qEl.createEl('p', { cls: 'ct-question-text', text: q.question });
+
+          const optionsEl = qEl.createDiv({ cls: 'ct-question-options' });
+          for (const opt of q.options) {
+            const row = optionsEl.createDiv({ cls: 'ct-question-option' });
+            const inputEl = row.createEl('input', {
+              attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: opt.label },
+            });
+            const labelEl = row.createEl('label', { cls: 'ct-question-option-label' });
+            labelEl.createSpan({ cls: 'ct-question-opt-name', text: opt.label });
+            if (opt.description) {
+              labelEl.createSpan({ cls: 'ct-question-opt-desc', text: opt.description });
+            }
+            inputEl.addEventListener('change', () => {
+              if (q.multiSelect) {
+                if ((inputEl as HTMLInputElement).checked) answers[q.question].push(opt.label);
+                else answers[q.question] = answers[q.question].filter(v => v !== opt.label);
+              } else {
+                answers[q.question] = [opt.label];
+              }
+            });
+          }
+        }
+
+        const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+        const submit = btnRow.createEl('button', { text: 'Submit', cls: 'mod-cta' });
+        submit.onclick = () => {
+          const result: Record<string, string> = {};
+          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(', ');
+          resolve(result);
+          modal.close();
+        };
+
+        modal.onClose = () => {
+          const result: Record<string, string> = {};
+          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(', ');
+          resolve(result);
+        };
+
+        modal.open();
+      });
+
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
@@ -134,7 +188,7 @@ export class ThreadsView extends ItemView {
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault();
-          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex]);
+          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name);
           return;
         }
         if (e.key === 'Escape') {

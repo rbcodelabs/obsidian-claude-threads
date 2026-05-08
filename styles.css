@@ -580,3 +580,69 @@
   display: none !important;
 }
 
+/* AskUserQuestion modal */
+.ct-question-modal .ct-question + .ct-question {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ct-question-header {
+  margin: 0 0 6px;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-question-text {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ct-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.ct-question-option:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-question-option input[type="radio"],
+.ct-question-option input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ct-question-option-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.ct-question-opt-name {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.ct-question-opt-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
