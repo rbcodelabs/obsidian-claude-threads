@@ -20,6 +20,7 @@ export class ThreadManager {
   private settings: PluginSettings;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
+  openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
 
   constructor(settings: PluginSettings) {
@@ -184,6 +185,7 @@ export class ThreadManager {
         },
         onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
         onAskUserQuestion: (questions) => this.questionHandler(questions),
+        onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
       },
       additionalDirs,
       model,
