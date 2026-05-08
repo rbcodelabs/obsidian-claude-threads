@@ -1,5 +1,17 @@
 export type MessageRole = 'user' | 'assistant';
 
+export interface AskQuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface AskQuestion {
+  question: string;
+  header: string;
+  options: AskQuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface ToolCallRecord {
   name: string;
   summary: string;
