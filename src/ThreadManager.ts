@@ -38,7 +38,7 @@ export class ThreadManager {
   }
 
   getThreads(): Thread[] {
-    return Array.from(this.threads.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+    return Array.from(this.threads.values()).sort((a, b) => a.createdAt - b.createdAt);
   }
 
   getThread(id: string): Thread | undefined {
