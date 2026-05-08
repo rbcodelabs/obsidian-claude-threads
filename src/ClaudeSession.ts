@@ -33,7 +33,8 @@ export class ClaudeSession {
         if (toolName === 'AskUserQuestion') {
           const questions = (input as { questions: import('./types').AskQuestion[] }).questions;
           const answers = await callbacks.onAskUserQuestion(questions);
-          return { behavior: 'allow' as const, updatedInput: { questions, answers } };
+          // Spread original input to preserve metadata/annotations, then override answers
+          return { behavior: 'allow' as const, updatedInput: { ...input, answers } };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;

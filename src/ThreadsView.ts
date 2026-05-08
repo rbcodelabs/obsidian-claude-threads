@@ -110,14 +110,14 @@ export class ThreadsView extends ItemView {
         const submit = btnRow.createEl('button', { text: 'Submit', cls: 'mod-cta' });
         submit.onclick = () => {
           const result: Record<string, string> = {};
-          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(', ');
+          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
           resolve(result);
           modal.close();
         };
 
         modal.onClose = () => {
           const result: Record<string, string> = {};
-          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(', ');
+          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
           resolve(result);
         };
 
