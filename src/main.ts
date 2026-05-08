@@ -265,6 +265,33 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl('h3', { text: 'Opus expert escalation' });
+
+    new Setting(containerEl)
+      .setName('Enable Opus escalation')
+      .setDesc('When the escalation keyword is present in a message, route that turn to claude-opus instead of the default model.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.opusEscalationEnabled).onChange(async (value) => {
+          this.plugin.settings.opusEscalationEnabled = value;
+          this.plugin.manager.updateSettings(this.plugin.settings);
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Escalation keyword')
+      .setDesc('Word or phrase that triggers Opus. Include it anywhere in your message (e.g. "/opus"). It is stripped from the prompt before sending.')
+      .addText((text) =>
+        text
+          .setPlaceholder('/opus')
+          .setValue(this.plugin.settings.opusEscalationKeyword)
+          .onChange(async (value) => {
+            this.plugin.settings.opusEscalationKeyword = value || '/opus';
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
     containerEl.createEl('h3', { text: 'Thread summarization (local model)' });
 
     new Setting(containerEl)

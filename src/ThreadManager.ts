@@ -10,7 +10,8 @@ export type ThreadEvent =
   | { type: 'recap'; summary: string }
   | { type: 'done' }
   | { type: 'error'; error: Error }
-  | { type: 'streaming_start' };
+  | { type: 'streaming_start' }
+  | { type: 'escalated'; model: string };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -77,10 +78,40 @@ export class ThreadManager {
     return this.sessions.has(id);
   }
 
+  /**
+   * Detect whether the message triggers Opus escalation. Returns the model
+   * string to pass to ClaudeSession if escalation should occur, or undefined
+   * if the default model should be used.
+   */
+  private resolveModel(userText: string): string | undefined {
+    if (!this.settings.opusEscalationEnabled) return undefined;
+    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!keyword) return undefined;
+    // Match keyword anywhere in the message (case-insensitive)
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, 'i');
+    return re.test(userText) ? 'opus' : undefined;
+  }
+
+  /**
+   * Strip the escalation keyword from the message so it isn't passed to Claude verbatim.
+   */
+  private stripKeyword(userText: string): string {
+    if (!this.settings.opusEscalationEnabled) return userText;
+    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!keyword) return userText;
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'gi');
+    return userText.replace(re, ' ').replace(/\s{2,}/g, ' ').trim();
+  }
+
   async sendMessage(threadId: string, userText: string): Promise<void> {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) return;
+
+    const model = this.resolveModel(userText);
+    const promptText = model ? this.stripKeyword(userText) : userText;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -95,13 +126,17 @@ export class ThreadManager {
     this.sessions.set(threadId, session);
     this.emit(threadId, { type: 'streaming_start' });
 
+    if (model) {
+      this.emit(threadId, { type: 'escalated', model });
+    }
+
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
 
     await session.run(
-      userText,
+      promptText,
       thread.sessionId,
       thread.cwd,
       this.settings.permissionMode,
@@ -151,6 +186,7 @@ export class ThreadManager {
         onAskUserQuestion: (questions) => this.questionHandler(questions),
       },
       additionalDirs,
+      model,
     );
   }
 
