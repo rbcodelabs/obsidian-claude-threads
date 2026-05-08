@@ -4,6 +4,16 @@ A native Obsidian sidebar plugin for running multiple Claude Code sessions in pa
 
 ![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.25-blue)
 
+<p align="center">
+  <img src="docs/screenshot-main.png" width="380" alt="Main view showing a conversation with code blocks and multiple tabs" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-slash-commands.png" width="380" alt="Slash command autocomplete showing installed skills" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshot-permission.png" width="380" alt="Permission dialog for file writes" />
+</p>
+
 ## What it does
 
 Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
