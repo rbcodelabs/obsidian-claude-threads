@@ -531,6 +531,13 @@ export class ThreadsView extends ItemView {
       }
 
       case 'done': {
+        // Discard any partial streaming content (e.g. from a user-initiated interrupt)
+        if (this.streamingEl) {
+          this.streamingEl.remove();
+          this.streamingEl = null;
+          this.streamingContentEl = null;
+          this.clearStreamingState();
+        }
         this.setRunningState(false);
         if (this.activeThreadId) this.flushQueuedMessage(this.activeThreadId);
         break;

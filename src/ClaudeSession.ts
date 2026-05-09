@@ -17,6 +17,8 @@ export interface SessionCallbacks {
 export class ClaudeSession {
   private activeQuery: Query | null = null;
   private recapEmitted = false;
+  private interrupted = false;
+  private resumeSessionId: string | undefined = undefined;
 
   constructor(private claudePath: string) {}
 
@@ -30,6 +32,9 @@ export class ClaudeSession {
     additionalDirectories?: string[],
     model?: string,
   ): Promise<void> {
+    this.interrupted = false;
+    this.resumeSessionId = resumeSessionId;
+
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
       try {
         if (toolName === 'AskUserQuestion') {
@@ -149,17 +154,23 @@ export class ClaudeSession {
         }
       }
     } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      // Log full ZodError detail including .issues if present
-      const zodIssues = (err as Record<string, unknown>).issues;
-      console.error('[ClaudeThreads] session error:', e, zodIssues ? JSON.stringify(zodIssues, null, 2) : '');
-      callbacks.onError(new Error(`${e.message}${zodIssues ? '\n\nZod issues: ' + JSON.stringify(zodIssues) : ''}\n\nStack: ${e.stack ?? 'none'}`));
+      if (this.interrupted) {
+        // Clean cancellation — resume from the same session ID so context is preserved
+        callbacks.onDone(this.resumeSessionId ?? '', 0, 0);
+      } else {
+        const e = err instanceof Error ? err : new Error(String(err));
+        const zodIssues = (err as Record<string, unknown>).issues;
+        console.error('[ClaudeThreads] session error:', e, zodIssues ? JSON.stringify(zodIssues, null, 2) : '');
+        callbacks.onError(new Error(`${e.message}${zodIssues ? '\n\nZod issues: ' + JSON.stringify(zodIssues) : ''}\n\nStack: ${e.stack ?? 'none'}`));
+      }
     } finally {
+      this.interrupted = false;
       this.activeQuery = null;
     }
   }
 
   async interrupt(): Promise<void> {
+    this.interrupted = true;
     if (this.activeQuery) {
       await this.activeQuery.interrupt();
     }
