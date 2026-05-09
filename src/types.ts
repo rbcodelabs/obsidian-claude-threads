@@ -54,6 +54,7 @@ export interface PluginSettings {
   autoSummarize: boolean;
   opusEscalationEnabled: boolean;
   opusEscalationKeyword: string;
+  alwaysAllowedTools: string[];
   threads: Thread[];
 }
 
@@ -72,6 +73,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   autoSummarize: false,
   opusEscalationEnabled: true,
   opusEscalationKeyword: '/opus',
+  alwaysAllowedTools: [],
   threads: [],
 };
 

@@ -14,7 +14,9 @@ export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
   private activeThreadId: string | null = null;
+  private queuedMessages: Map<string, string> = new Map();
   private streamingEl: HTMLElement | null = null;
+  private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
   private streamingRenderTimer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -56,8 +58,9 @@ export class ThreadsView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
 
-    this.manager.permissionHandler = (toolName, detail) =>
-      new Promise((resolve) => {
+    this.manager.permissionHandler = (toolName, detail) => {
+      if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
+      return new Promise((resolve) => {
         let resolved = false;
         const done = (allow: boolean) => { if (!resolved) { resolved = true; resolve(allow); } };
         const modal = new Modal(this.app);
@@ -65,10 +68,17 @@ export class ThreadsView extends ItemView {
         if (detail) modal.contentEl.createEl('p', { text: detail });
         const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
         btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { done(false); modal.close(); };
-        btnRow.createEl('button', { text: 'Allow', cls: 'mod-cta' }).onclick = () => { done(true); modal.close(); };
+        btnRow.createEl('button', { text: 'Allow' }).onclick = () => { done(true); modal.close(); };
+        btnRow.createEl('button', { text: 'Always Allow', cls: 'mod-cta' }).onclick = async () => {
+          this.plugin.settings.alwaysAllowedTools.push(toolName);
+          await this.plugin.saveSettings();
+          done(true);
+          modal.close();
+        };
         modal.onClose = () => done(false);
         modal.open();
       });
+    };
 
     this.manager.questionHandler = (questions: AskQuestion[]) =>
       new Promise((resolve) => {
@@ -161,7 +171,16 @@ export class ThreadsView extends ItemView {
     root.empty();
     root.addClass('ct-root');
 
-    this.tabBar = root.createDiv('ct-tab-bar');
+    const tabRow = root.createDiv('ct-tab-row');
+    this.tabBar = tabRow.createDiv('ct-tab-bar');
+    this.tabBar.addEventListener('wheel', (e) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        this.tabBar.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+    const newBtn = tabRow.createEl('button', { cls: 'ct-tab-new', text: '+', attr: { title: 'New thread' } });
+    newBtn.addEventListener('click', () => this.openNewThread());
     this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
@@ -246,14 +265,12 @@ export class ThreadsView extends ItemView {
         e.stopPropagation();
         this.closeThread(thread.id);
       });
+
+      if (thread.id === this.activeThreadId) {
+        requestAnimationFrame(() => tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+      }
     }
 
-    const newBtn = this.tabBar.createEl('button', {
-      cls: 'ct-tab-new',
-      text: '+',
-      attr: { title: 'New thread' },
-    });
-    newBtn.addEventListener('click', () => this.openNewThread());
   }
 
   private setActiveThread(id: string): void {
@@ -338,6 +355,12 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  private createStreamingEl(): void {
+    this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
+    this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
+    this.streamingEl.createSpan({ cls: 'ct-cursor' });
+  }
+
   private async renderMessages(): Promise<void> {
     this.messagesEl.empty();
     this.clearStreamingState();
@@ -362,9 +385,7 @@ export class ThreadsView extends ItemView {
     }
 
     if (this.manager.isRunning(this.activeThreadId)) {
-      this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
-      const cursor = this.streamingEl.createSpan({ cls: 'ct-cursor' });
-      this.streamingEl.append(cursor);
+      this.createStreamingEl();
     }
 
     this.scrollToBottom();
@@ -412,6 +433,7 @@ export class ThreadsView extends ItemView {
       this.streamingRenderTimer = null;
     }
     this.streamingContent = '';
+    this.streamingContentEl = null;
   }
 
   private scheduleStreamingRender(): void {
@@ -423,11 +445,10 @@ export class ThreadsView extends ItemView {
   }
 
   private async renderStreamingContent(): Promise<void> {
-    if (!this.streamingEl) return;
+    if (!this.streamingEl || !this.streamingContentEl) return;
     const content = this.streamingContent;
-    this.streamingEl.empty();
-    this.streamingEl.appendChild(sanitizeHTMLToDom(await marked.parse(content)));
-    this.streamingEl.createSpan({ cls: 'ct-cursor' });
+    this.streamingContentEl.empty();
+    this.streamingContentEl.appendChild(sanitizeHTMLToDom(await marked.parse(content)));
     this.scrollToBottom();
   }
 
@@ -436,10 +457,7 @@ export class ThreadsView extends ItemView {
       case 'streaming_start': {
         this.streamingContent = '';
         if (!this.streamingEl) {
-          this.streamingEl = this.messagesEl.createDiv(
-            'ct-message ct-message-assistant ct-streaming',
-          );
-          this.streamingEl.createSpan({ cls: 'ct-cursor' });
+          this.createStreamingEl();
         }
         this.setRunningState(true);
         this.scrollToBottom();
@@ -453,9 +471,7 @@ export class ThreadsView extends ItemView {
 
       case 'token': {
         if (!this.streamingEl) {
-          this.streamingEl = this.messagesEl.createDiv(
-            'ct-message ct-message-assistant ct-streaming',
-          );
+          this.createStreamingEl();
         }
         this.streamingContent += event.text;
         this.scheduleStreamingRender();
@@ -516,6 +532,7 @@ export class ThreadsView extends ItemView {
 
       case 'done': {
         this.setRunningState(false);
+        if (this.activeThreadId) this.flushQueuedMessage(this.activeThreadId);
         break;
       }
 
@@ -532,6 +549,7 @@ export class ThreadsView extends ItemView {
         });
         this.setRunningState(false);
         this.scrollToBottom();
+        if (this.activeThreadId) this.queuedMessages.delete(this.activeThreadId);
         break;
       }
     }
@@ -541,14 +559,23 @@ export class ThreadsView extends ItemView {
     if (running) {
       this.sendBtn.addClass('ct-hidden');
       this.stopBtn.removeClass('ct-hidden');
-      this.inputEl.disabled = true;
-      this.statusBar.setText('Claude is thinking...');
+      this.updateStatusBar();
     } else {
       this.sendBtn.removeClass('ct-hidden');
       this.stopBtn.addClass('ct-hidden');
-      this.inputEl.disabled = false;
       this.statusBar.setText('');
       this.inputEl.focus();
+    }
+  }
+
+  private updateStatusBar(): void {
+    if (!this.activeThreadId) return;
+    const queued = this.queuedMessages.get(this.activeThreadId);
+    if (queued) {
+      const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
+      this.statusBar.setText(`Claude is thinking... · Queued: "${preview}"`);
+    } else {
+      this.statusBar.setText('Claude is thinking...');
     }
   }
 
@@ -559,7 +586,13 @@ export class ThreadsView extends ItemView {
   private async sendMessage(): Promise<void> {
     const text = this.inputEl.value.trim();
     if (!text || !this.activeThreadId) return;
-    if (this.manager.isRunning(this.activeThreadId)) return;
+
+    if (this.manager.isRunning(this.activeThreadId)) {
+      this.queuedMessages.set(this.activeThreadId, text);
+      this.inputEl.value = '';
+      this.updateStatusBar();
+      return;
+    }
 
     this.inputEl.value = '';
 
@@ -573,6 +606,26 @@ export class ThreadsView extends ItemView {
       const errEl = this.messagesEl.createDiv('ct-message ct-error');
       errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
       this.setRunningState(false);
+    }
+  }
+
+  private async flushQueuedMessage(threadId: string): Promise<void> {
+    const text = this.queuedMessages.get(threadId);
+    if (!text) return;
+    this.queuedMessages.delete(threadId);
+    if (threadId === this.activeThreadId) {
+      const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+      userEl.createDiv('ct-message-content').createEl('p', { text });
+      this.scrollToBottom();
+    }
+    try {
+      await this.manager.sendMessage(threadId, text);
+    } catch (err) {
+      if (threadId === this.activeThreadId) {
+        const errEl = this.messagesEl.createDiv('ct-message ct-error');
+        errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
+        this.setRunningState(false);
+      }
     }
   }
 

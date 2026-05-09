@@ -7,6 +7,8 @@
     "build": "node esbuild.config.mjs",
     "dev": "node esbuild.config.mjs --watch",
     "build:harness": "node test/harness/esbuild.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:screenshots": "npx playwright test",
     "test:screenshots:update": "npx playwright test --update-snapshots"
   },
@@ -21,6 +23,7 @@
     "@types/node": "^20.0.0",
     "esbuild": "^0.24.0",
     "obsidian": "^1.7.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5"
   }
 }

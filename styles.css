@@ -14,15 +14,22 @@
 }
 
 /* Tab bar */
+.ct-tab-row {
+  display: flex;
+  align-items: center;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-right: 4px;
+  flex-shrink: 0;
+}
+
 .ct-tab-bar {
   display: flex;
   align-items: center;
   gap: 2px;
   padding: 4px 4px 0;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
   overflow-x: auto;
-  flex-shrink: 0;
+  flex: 1;
   scrollbar-width: none;
 }
 
@@ -403,12 +410,6 @@
 
 /* Streaming state */
 .ct-streaming {
-  background: var(--background-secondary);
-  border-radius: 2px 12px 12px 12px;
-  padding: 8px 12px;
-  max-width: 100%;
-  white-space: pre-wrap;
-  word-break: break-word;
   min-height: 32px;
 }
 

@@ -265,6 +265,31 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    containerEl.createEl('h3', { text: 'Always allowed tools' });
+
+    const allowedList = containerEl.createDiv({ cls: 'ct-allowed-tools-list' });
+    const renderAllowedTools = () => {
+      allowedList.empty();
+      const tools = this.plugin.settings.alwaysAllowedTools;
+      if (tools.length === 0) {
+        allowedList.createEl('p', { text: 'No tools always allowed yet.', cls: 'ct-allowed-tools-empty' });
+      } else {
+        for (const tool of tools) {
+          new Setting(allowedList)
+            .setName(tool)
+            .addButton((btn) =>
+              btn.setButtonText('Remove').setWarning().onClick(async () => {
+                this.plugin.settings.alwaysAllowedTools =
+                  this.plugin.settings.alwaysAllowedTools.filter((t) => t !== tool);
+                await this.plugin.saveSettings();
+                renderAllowedTools();
+              }),
+            );
+        }
+      }
+    };
+    renderAllowedTools();
+
     containerEl.createEl('h3', { text: 'Opus expert escalation' });
 
     new Setting(containerEl)
