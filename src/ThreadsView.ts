@@ -14,7 +14,6 @@ export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
   private activeThreadId: string | null = null;
-  private queuedMessages: Map<string, string> = new Map();
   private streamingEl: HTMLElement | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
@@ -530,8 +529,19 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'queued': {
+        this.updateStatusBar();
+        break;
+      }
+
+      case 'dequeued': {
+        const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+        userEl.createDiv('ct-message-content').createEl('p', { text: event.text });
+        this.scrollToBottom();
+        break;
+      }
+
       case 'done': {
-        // Discard any partial streaming content (e.g. from a user-initiated interrupt)
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
@@ -539,7 +549,6 @@ export class ThreadsView extends ItemView {
           this.clearStreamingState();
         }
         this.setRunningState(false);
-        if (this.activeThreadId) this.flushQueuedMessage(this.activeThreadId);
         break;
       }
 
@@ -556,7 +565,6 @@ export class ThreadsView extends ItemView {
         });
         this.setRunningState(false);
         this.scrollToBottom();
-        if (this.activeThreadId) this.queuedMessages.delete(this.activeThreadId);
         break;
       }
     }
@@ -577,7 +585,7 @@ export class ThreadsView extends ItemView {
 
   private updateStatusBar(): void {
     if (!this.activeThreadId) return;
-    const queued = this.queuedMessages.get(this.activeThreadId);
+    const queued = this.manager.getQueuedMessage(this.activeThreadId);
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
       this.statusBar.setText(`Claude is thinking... · Queued: "${preview}"`);
@@ -594,18 +602,13 @@ export class ThreadsView extends ItemView {
     const text = this.inputEl.value.trim();
     if (!text || !this.activeThreadId) return;
 
-    if (this.manager.isRunning(this.activeThreadId)) {
-      this.queuedMessages.set(this.activeThreadId, text);
-      this.inputEl.value = '';
-      this.updateStatusBar();
-      return;
-    }
-
     this.inputEl.value = '';
 
-    const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
-    userEl.createDiv('ct-message-content').createEl('p', { text });
-    this.scrollToBottom();
+    if (!this.manager.isRunning(this.activeThreadId)) {
+      const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+      userEl.createDiv('ct-message-content').createEl('p', { text });
+      this.scrollToBottom();
+    }
 
     try {
       await this.manager.sendMessage(this.activeThreadId, text);
@@ -613,26 +616,6 @@ export class ThreadsView extends ItemView {
       const errEl = this.messagesEl.createDiv('ct-message ct-error');
       errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
       this.setRunningState(false);
-    }
-  }
-
-  private async flushQueuedMessage(threadId: string): Promise<void> {
-    const text = this.queuedMessages.get(threadId);
-    if (!text) return;
-    this.queuedMessages.delete(threadId);
-    if (threadId === this.activeThreadId) {
-      const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
-      userEl.createDiv('ct-message-content').createEl('p', { text });
-      this.scrollToBottom();
-    }
-    try {
-      await this.manager.sendMessage(threadId, text);
-    } catch (err) {
-      if (threadId === this.activeThreadId) {
-        const errEl = this.messagesEl.createDiv('ct-message ct-error');
-        errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
-        this.setRunningState(false);
-      }
     }
   }
 

@@ -11,11 +11,14 @@ export type ThreadEvent =
   | { type: 'done' }
   | { type: 'error'; error: Error }
   | { type: 'streaming_start' }
-  | { type: 'escalated'; model: string };
+  | { type: 'escalated'; model: string }
+  | { type: 'queued'; text: string }
+  | { type: 'dequeued'; text: string };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
+  private queuedMessages: Map<string, string> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
@@ -64,6 +67,7 @@ export class ThreadManager {
       session.close();
       this.sessions.delete(id);
     }
+    this.queuedMessages.delete(id);
     this.threads.delete(id);
   }
 
@@ -77,6 +81,10 @@ export class ThreadManager {
 
   isRunning(id: string): boolean {
     return this.sessions.has(id);
+  }
+
+  getQueuedMessage(id: string): string | undefined {
+    return this.queuedMessages.get(id);
   }
 
   /**
@@ -109,7 +117,11 @@ export class ThreadManager {
   async sendMessage(threadId: string, userText: string): Promise<void> {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
-    if (this.sessions.has(threadId)) return;
+    if (this.sessions.has(threadId)) {
+      this.queuedMessages.set(threadId, userText);
+      this.emit(threadId, { type: 'queued', text: userText });
+      return;
+    }
 
     const model = this.resolveModel(userText);
     const promptText = model ? this.stripKeyword(userText) : userText;
@@ -133,6 +145,7 @@ export class ThreadManager {
 
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
+    let completedSuccessfully = false;
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
 
@@ -177,10 +190,12 @@ export class ThreadManager {
             lastMsg.cost = cost;
           }
           this.sessions.delete(threadId);
+          completedSuccessfully = true;
           this.emit(threadId, { type: 'done' });
         },
         onError: (err) => {
           this.sessions.delete(threadId);
+          this.queuedMessages.delete(threadId);
           this.emit(threadId, { type: 'error', error: err });
         },
         onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
@@ -190,6 +205,15 @@ export class ThreadManager {
       additionalDirs,
       model,
     );
+
+    if (completedSuccessfully) {
+      const queued = this.queuedMessages.get(threadId);
+      if (queued) {
+        this.queuedMessages.delete(threadId);
+        this.emit(threadId, { type: 'dequeued', text: queued });
+        await this.sendMessage(threadId, queued);
+      }
+    }
   }
 
   async interrupt(threadId: string): Promise<void> {

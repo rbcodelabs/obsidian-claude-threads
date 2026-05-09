@@ -109,17 +109,43 @@ describe('send message → event flow', () => {
     expect(manager.isRunning(thread.id)).toBe(false);
   });
 
-  it('second sendMessage while running is a no-op', async () => {
+  it('second sendMessage while running queues and auto-fires after done', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
 
     const p1 = manager.sendMessage(thread.id, 'First');
-    const p2 = manager.sendMessage(thread.id, 'Second'); // should be ignored
-    await driveResponse('Reply');
-    await Promise.all([p1, p2]);
+    await manager.sendMessage(thread.id, 'Second'); // queues, returns immediately
 
-    // Only one user message (second was dropped)
-    expect(thread.messages.filter(m => m.role === 'user')).toHaveLength(1);
+    expect(events.find(e => e.type === 'queued')).toBeTruthy();
+    expect(manager.getQueuedMessage(thread.id)).toBe('Second');
+
+    // Capture first session's references before driving it
+    const firstCallbacks = mock.callbacks!;
+    const firstResolve = mock.resolve!;
+
+    // Drive first session to completion
+    firstCallbacks.onToken('Reply 1');
+    firstCallbacks.onMessage('Reply 1', []);
+    firstCallbacks.onDone('sess-1', 0.001, 1);
+    firstResolve();
+
+    // Wait for the queued message's session to start (microtasks need to settle)
+    await vi.waitFor(() => expect(mock.callbacks).not.toBe(firstCallbacks));
+
+    // Drive second session
+    mock.callbacks!.onToken('Reply 2');
+    mock.callbacks!.onMessage('Reply 2', []);
+    mock.callbacks!.onDone('sess-2', 0.001, 1);
+    mock.resolve!();
+
+    await p1;
+
+    expect(thread.messages.filter(m => m.role === 'user')).toHaveLength(2);
+    expect(thread.messages[0].content).toBe('First');
+    expect(thread.messages[2].content).toBe('Second');
+    expect(events.find(e => e.type === 'dequeued')).toBeTruthy();
   });
 
   it('emits error event and cleans up session on failure', async () => {
