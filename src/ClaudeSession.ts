@@ -1,5 +1,5 @@
-import { query, type Options, type Query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import type { ToolCallRecord, AskQuestion } from './types';
+import { query, type Options, type Query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 
 export interface SessionCallbacks {
@@ -12,6 +12,13 @@ export interface SessionCallbacks {
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
+  onStatus?: (status: 'compacting' | 'requesting' | null) => void;
+  onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean) => void;
+  onTaskProgress?: (taskId: string, description: string, lastToolName?: string) => void;
+  onTaskNotification?: (taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) => void;
+  onNotification?: (text: string, priority: 'low' | 'medium' | 'high' | 'immediate') => void;
+  onApiRetry?: (attempt: number, maxRetries: number, error: string) => void;
+  onRateLimit?: (status: 'allowed' | 'allowed_warning' | 'rejected', resetsAt?: number) => void;
 }
 
 export class ClaudeSession {
@@ -31,6 +38,7 @@ export class ClaudeSession {
     callbacks: SessionCallbacks,
     additionalDirectories?: string[],
     model?: string,
+    images?: ImageAttachment[],
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -74,9 +82,33 @@ export class ClaudeSession {
 
     console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
+    const promptArg: string | AsyncIterable<SDKUserMessage> =
+      images && images.length > 0
+        ? (async function* () {
+            yield {
+              type: 'user' as const,
+              parent_tool_use_id: null,
+              message: {
+                role: 'user' as const,
+                content: [
+                  { type: 'text' as const, text: prompt },
+                  ...images.map(img => ({
+                    type: 'image' as const,
+                    source: {
+                      type: 'base64' as const,
+                      media_type: img.mediaType,
+                      data: img.base64,
+                    },
+                  })),
+                ],
+              },
+            };
+          })()
+        : prompt;
+
     let q: Query;
     try {
-      q = query({ prompt, options });
+      q = query({ prompt: promptArg, options });
     } catch (initErr) {
       console.error('[ClaudeThreads] query() init failed:', initErr);
       callbacks.onError(initErr instanceof Error ? initErr : new Error(String(initErr)));
@@ -149,6 +181,60 @@ export class ClaudeSession {
                 new Error(`Claude session ended: ${(msg as { subtype: string }).subtype}`),
               );
             }
+            break;
+          }
+
+          case 'system': {
+            const sys = msg as Record<string, unknown>;
+            switch (sys.subtype) {
+              case 'status':
+                callbacks.onStatus?.(sys.status as 'compacting' | 'requesting' | null);
+                break;
+              case 'task_started':
+                callbacks.onTaskStarted?.(
+                  sys.task_id as string,
+                  sys.description as string,
+                  !!(sys.skip_transcript),
+                );
+                break;
+              case 'task_progress':
+                callbacks.onTaskProgress?.(
+                  sys.task_id as string,
+                  sys.description as string,
+                  sys.last_tool_name as string | undefined,
+                );
+                break;
+              case 'task_notification':
+                callbacks.onTaskNotification?.(
+                  sys.task_id as string,
+                  sys.status as 'completed' | 'failed' | 'stopped',
+                  sys.summary as string,
+                );
+                break;
+              case 'notification':
+                callbacks.onNotification?.(
+                  sys.text as string,
+                  sys.priority as 'low' | 'medium' | 'high' | 'immediate',
+                );
+                break;
+              case 'api_retry':
+                callbacks.onApiRetry?.(
+                  sys.attempt as number,
+                  sys.max_retries as number,
+                  sys.error as string,
+                );
+                break;
+            }
+            break;
+          }
+
+          case 'rate_limit_event': {
+            const rle = msg as Record<string, unknown>;
+            const info = rle.rate_limit_info as Record<string, unknown>;
+            callbacks.onRateLimit?.(
+              info.status as 'allowed' | 'allowed_warning' | 'rejected',
+              info.resetsAt as number | undefined,
+            );
             break;
           }
         }

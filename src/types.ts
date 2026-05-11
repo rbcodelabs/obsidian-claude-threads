@@ -1,5 +1,13 @@
 export type MessageRole = 'user' | 'assistant';
 
+export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+
+export interface ImageAttachment {
+  base64: string;
+  mediaType: ImageMediaType;
+  name: string;
+}
+
 export interface AskQuestionOption {
   label: string;
   description: string;

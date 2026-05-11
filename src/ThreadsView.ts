@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, Modal, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
 import { marked } from 'marked';
-import type { Thread, ChatMessage, ToolCallRecord, AskQuestion } from './types';
+import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
 import fs from 'fs';
@@ -26,9 +26,18 @@ export class ThreadsView extends ItemView {
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
+  private inputRowEl!: HTMLElement;
+  private pasteChipsEl!: HTMLElement;
   private sendBtn!: HTMLButtonElement;
   private stopBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
+
+  // Pending paste attachments
+  private pendingAttachment: string | null = null;
+  private pendingImages: ImageAttachment[] = [];
+
+  // Active subagent task pills: taskId → pill element
+  private taskPills: Map<string, HTMLElement> = new Map();
 
   // Slash command autocomplete
   private skills: { name: string; description: string }[] = [];
@@ -186,15 +195,18 @@ export class ThreadsView extends ItemView {
     this.messagesEl = this.mainEl.createDiv('ct-messages');
     this.statusBar = this.mainEl.createDiv('ct-status-bar');
 
-    const inputRow = this.mainEl.createDiv('ct-input-row');
+    this.inputRowEl = this.mainEl.createDiv('ct-input-row');
+    this.pasteChipsEl = this.inputRowEl.createDiv('ct-paste-chips ct-hidden');
+
+    const inputControls = this.inputRowEl.createDiv('ct-input-controls');
 
     this.loadSkills();
-    this.inputEl = inputRow.createEl('textarea', {
+    this.inputEl = inputControls.createEl('textarea', {
       cls: 'ct-input',
       attr: { placeholder: 'Message Claude... (Enter to send, Shift+Enter for newline)' },
     });
-    this.sendBtn = inputRow.createEl('button', { cls: 'ct-send-btn', text: '↵' });
-    this.stopBtn = inputRow.createEl('button', {
+    this.sendBtn = inputControls.createEl('button', { cls: 'ct-send-btn', text: '↵' });
+    this.stopBtn = inputControls.createEl('button', {
       cls: 'ct-stop-btn ct-hidden',
       text: '■',
       attr: { title: 'Stop' },
@@ -236,6 +248,33 @@ export class ThreadsView extends ItemView {
     });
     this.inputEl.addEventListener('blur', () => {
       setTimeout(() => this.hideSkillDropdown(), 150);
+    });
+    this.inputEl.addEventListener('paste', (e) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        imageFiles.forEach(f => this.addImageAttachment(f));
+        return;
+      }
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (text.length >= 500) {
+        e.preventDefault();
+        this.addPasteAttachment(text);
+      }
+    });
+    this.inputRowEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      this.inputRowEl.addClass('ct-drag-over');
+    });
+    this.inputRowEl.addEventListener('dragleave', () => {
+      this.inputRowEl.removeClass('ct-drag-over');
+    });
+    this.inputRowEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      this.inputRowEl.removeClass('ct-drag-over');
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      files.filter(f => f.type.startsWith('image/')).forEach(f => this.addImageAttachment(f));
     });
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
@@ -548,12 +587,93 @@ export class ThreadsView extends ItemView {
           this.streamingContentEl = null;
           this.clearStreamingState();
         }
+        this.taskPills.clear();
         this.setRunningState(false);
+        break;
+      }
+
+      case 'status': {
+        if (event.status === 'compacting') {
+          this.statusBar.setText('Compacting context...');
+        } else if (event.status === null) {
+          this.updateStatusBar();
+        }
+        break;
+      }
+
+      case 'task_started': {
+        if (!this.streamingEl) this.createStreamingEl();
+        const taskPill = document.createElement('div');
+        taskPill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
+        const taskIcon = document.createElement('span');
+        taskIcon.textContent = '⊕ ';
+        const taskLabel = document.createElement('span');
+        taskLabel.className = 'ct-tool-pill-text';
+        taskLabel.textContent = event.description;
+        taskPill.append(taskIcon, taskLabel);
+        this.streamingEl!.prepend(taskPill);
+        this.taskPills.set(event.taskId, taskPill);
+        break;
+      }
+
+      case 'task_progress': {
+        const progressPill = this.taskPills.get(event.taskId);
+        if (progressPill) {
+          const label = progressPill.querySelector('.ct-tool-pill-text');
+          if (label) {
+            const toolSuffix = event.lastToolName ? ` · ${event.lastToolName}` : '';
+            label.textContent = event.description + toolSuffix;
+          }
+        }
+        break;
+      }
+
+      case 'task_notification': {
+        const notifPill = this.taskPills.get(event.taskId);
+        if (notifPill) {
+          notifPill.classList.remove('ct-tool-active');
+          const icon = notifPill.querySelector('span:first-child');
+          const label = notifPill.querySelector('.ct-tool-pill-text');
+          if (event.status === 'completed') {
+            notifPill.classList.add('ct-task-done');
+            if (icon) icon.textContent = '✓ ';
+          } else {
+            notifPill.classList.add('ct-task-failed');
+            if (icon) icon.textContent = '✗ ';
+          }
+          if (label) label.textContent = event.summary;
+          this.taskPills.delete(event.taskId);
+        }
+        break;
+      }
+
+      case 'notification': {
+        if (event.priority === 'low') break;
+        new Notice(event.text, event.priority === 'immediate' ? 0 : 5000);
+        break;
+      }
+
+      case 'api_retry': {
+        this.statusBar.setText(`Retrying (${event.attempt}/${event.maxRetries})...`);
+        break;
+      }
+
+      case 'rate_limit': {
+        if (event.limitStatus === 'rejected') {
+          const resetMsg = event.resetsAt
+            ? ` Resets ${new Date(event.resetsAt).toLocaleTimeString()}.`
+            : '';
+          new Notice(`Rate limit reached.${resetMsg}`, 0);
+          this.statusBar.setText('Rate limited');
+        } else if (event.limitStatus === 'allowed_warning') {
+          this.statusBar.setText('Approaching rate limit');
+        }
         break;
       }
 
       case 'error': {
         this.clearStreamingState();
+        this.taskPills.clear();
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
@@ -598,20 +718,101 @@ export class ThreadsView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
+  private addPasteAttachment(content: string): void {
+    this.pendingAttachment = content;
+    this.renderPasteChips();
+  }
+
+  private addImageAttachment(file: File): void {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      this.pendingImages.push({
+        base64,
+        mediaType: file.type as ImageMediaType,
+        name: file.name || 'image',
+      });
+      this.renderPasteChips();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private renderPasteChips(): void {
+    this.pasteChipsEl.empty();
+    if (!this.pendingAttachment && this.pendingImages.length === 0) {
+      this.pasteChipsEl.addClass('ct-hidden');
+      return;
+    }
+    this.pasteChipsEl.removeClass('ct-hidden');
+
+    if (this.pendingAttachment) {
+      const chip = this.pasteChipsEl.createDiv('ct-paste-chip');
+      const firstLine = this.pendingAttachment.split('\n')[0].trim().slice(0, 40);
+      chip.createSpan({ cls: 'ct-paste-chip-icon', text: '📄' });
+      chip.createSpan({ cls: 'ct-paste-chip-label', text: firstLine || 'pasted text' });
+      chip.createSpan({ cls: 'ct-paste-chip-meta', text: `${this.pendingAttachment.length.toLocaleString()} chars` });
+      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
+      removeBtn.addEventListener('click', () => {
+        this.pendingAttachment = null;
+        this.renderPasteChips();
+      });
+    }
+
+    this.pendingImages.forEach((img, idx) => {
+      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
+      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
+      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
+      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
+      removeBtn.addEventListener('click', () => {
+        this.pendingImages.splice(idx, 1);
+        this.renderPasteChips();
+      });
+    });
+  }
+
   private async sendMessage(): Promise<void> {
-    const text = this.inputEl.value.trim();
-    if (!text || !this.activeThreadId) return;
+    const typed = this.inputEl.value.trim();
+    const attachment = this.pendingAttachment;
+    const images = this.pendingImages.slice();
+    if (!typed && !attachment && images.length === 0) return;
+    if (!this.activeThreadId) return;
 
     this.inputEl.value = '';
+    this.pendingAttachment = null;
+    this.pendingImages = [];
+    this.renderPasteChips();
+
+    let text = typed;
+    if (attachment) {
+      text = typed
+        ? `${typed}\n\n\`\`\`\n${attachment}\n\`\`\``
+        : `\`\`\`\n${attachment}\n\`\`\``;
+    }
 
     if (!this.manager.isRunning(this.activeThreadId)) {
       const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
-      userEl.createDiv('ct-message-content').createEl('p', { text });
+      const content = userEl.createDiv('ct-message-content');
+      if (typed) content.createEl('p', { text: typed });
+      if (attachment) {
+        const attachRow = content.createDiv('ct-message-attachment');
+        attachRow.createSpan({ text: '📄 ' });
+        attachRow.createSpan({ cls: 'ct-message-attachment-label', text: `${attachment.length.toLocaleString()} chars pasted` });
+      }
+      if (images.length > 0) {
+        const imgRow = content.createDiv('ct-message-images');
+        for (const img of images) {
+          const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
+          thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+          thumb.title = img.name;
+        }
+      }
       this.scrollToBottom();
     }
 
     try {
-      await this.manager.sendMessage(this.activeThreadId, text);
+      await this.manager.sendMessage(this.activeThreadId, text || ' ', images.length > 0 ? images : undefined);
     } catch (err) {
       const errEl = this.messagesEl.createDiv('ct-message ct-error');
       errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
@@ -696,7 +897,7 @@ export class ThreadsView extends ItemView {
     this.skillDropdownItems = matches;
     if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
     if (!this.skillDropdown) {
-      this.skillDropdown = this.mainEl.createDiv('ct-skill-dropdown');
+      this.skillDropdown = this.inputRowEl.createDiv('ct-skill-dropdown');
     }
     this.renderSkillDropdown();
   }
