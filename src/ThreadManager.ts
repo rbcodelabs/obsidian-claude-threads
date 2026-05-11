@@ -1,5 +1,5 @@
 import { ClaudeSession } from './ClaudeSession';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -13,7 +13,14 @@ export type ThreadEvent =
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
   | { type: 'queued'; text: string }
-  | { type: 'dequeued'; text: string };
+  | { type: 'dequeued'; text: string }
+  | { type: 'status'; status: 'compacting' | 'requesting' | null }
+  | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
+  | { type: 'task_progress'; taskId: string; description: string; lastToolName?: string }
+  | { type: 'task_notification'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
+  | { type: 'notification'; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
+  | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
+  | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -114,7 +121,7 @@ export class ThreadManager {
     return userText.replace(re, ' ').replace(/\s{2,}/g, ' ').trim();
   }
 
-  async sendMessage(threadId: string, userText: string): Promise<void> {
+  async sendMessage(threadId: string, userText: string, images?: ImageAttachment[]): Promise<void> {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) {
@@ -201,9 +208,17 @@ export class ThreadManager {
         onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
         onAskUserQuestion: (questions) => this.questionHandler(questions),
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
+        onStatus: (status) => this.emit(threadId, { type: 'status', status }),
+        onTaskStarted: (taskId, description, skipTranscript) => this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript }),
+        onTaskProgress: (taskId, description, lastToolName) => this.emit(threadId, { type: 'task_progress', taskId, description, lastToolName }),
+        onTaskNotification: (taskId, status, summary) => this.emit(threadId, { type: 'task_notification', taskId, status, summary }),
+        onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
+        onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
+        onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
       },
       additionalDirs,
       model,
+      images,
     );
 
     if (completedSuccessfully) {

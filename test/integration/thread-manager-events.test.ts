@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
   prompt: null as string | null,
   model: null as string | undefined,
+  images: null as import('../../src/types').ImageAttachment[] | undefined,
   resolve: null as (() => void) | null,
 }));
 
@@ -22,10 +23,12 @@ vi.mock('../../src/ClaudeSession', () => ({
       callbacks: SessionCallbacks,
       _dirs?: unknown,
       model?: string,
+      images?: import('../../src/types').ImageAttachment[],
     ): Promise<void> {
       mock.callbacks = callbacks;
       mock.prompt = prompt;
       mock.model = model;
+      mock.images = images;
       return new Promise<void>((res) => { mock.resolve = res; });
     }
     close() {}
@@ -53,6 +56,7 @@ beforeEach(() => {
   mock.callbacks = null;
   mock.prompt = null;
   mock.model = null;
+  mock.images = null;
   mock.resolve = null;
 });
 
@@ -315,5 +319,216 @@ describe('recap events', () => {
 
     expect(thread.recap).toBe('Used Write (2 calls)');
     expect(events.find(e => e.type === 'recap')).toBeTruthy();
+  });
+});
+
+describe('image attachments', () => {
+  it('passes images to session.run', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const images: import('../../src/types').ImageAttachment[] = [
+      { base64: 'abc123', mediaType: 'image/png', name: 'screenshot.png' },
+    ];
+
+    const sendPromise = manager.sendMessage(thread.id, 'Look at this', images);
+    await driveResponse('I see it');
+    await sendPromise;
+
+    expect(mock.images).toEqual(images);
+    expect(mock.prompt).toBe('Look at this');
+  });
+
+  it('passes undefined images when none provided', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    const sendPromise = manager.sendMessage(thread.id, 'No images here');
+    await driveResponse('OK');
+    await sendPromise;
+
+    expect(mock.images).toBeUndefined();
+  });
+
+  it('stores user message content as the text prompt regardless of images', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const images: import('../../src/types').ImageAttachment[] = [
+      { base64: 'xyz', mediaType: 'image/jpeg', name: 'photo.jpg' },
+    ];
+
+    const sendPromise = manager.sendMessage(thread.id, 'Describe this', images);
+    await driveResponse('Sure');
+    await sendPromise;
+
+    expect(thread.messages[0]).toMatchObject({ role: 'user', content: 'Describe this' });
+  });
+});
+
+describe('system events', () => {
+  it('emits status event when onStatus is called', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onStatus!('compacting');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const statusEvent = events.find(e => e.type === 'status') as { type: 'status'; status: string } | undefined;
+    expect(statusEvent?.status).toBe('compacting');
+  });
+
+  it('emits status null to clear compacting', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onStatus!(null);
+    await driveResponse('Done');
+    await sendPromise;
+
+    const statusEvent = events.find(e => e.type === 'status') as { type: 'status'; status: null } | undefined;
+    expect(statusEvent?.status).toBeNull();
+  });
+
+  it('emits task_started event', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskStarted!('task-1', 'Running security audit', false);
+    await driveResponse('Done');
+    await sendPromise;
+
+    const taskEvent = events.find(e => e.type === 'task_started') as
+      { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean } | undefined;
+    expect(taskEvent?.taskId).toBe('task-1');
+    expect(taskEvent?.description).toBe('Running security audit');
+    expect(taskEvent?.skipTranscript).toBe(false);
+  });
+
+  it('emits task_progress event', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskProgress!('task-1', 'Scanning files', 'Grep');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'task_progress') as
+      { type: 'task_progress'; taskId: string; description: string; lastToolName?: string } | undefined;
+    expect(evt?.taskId).toBe('task-1');
+    expect(evt?.lastToolName).toBe('Grep');
+  });
+
+  it('emits task_notification on completion', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskNotification!('task-1', 'completed', 'Found 3 issues');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'task_notification') as
+      { type: 'task_notification'; taskId: string; status: string; summary: string } | undefined;
+    expect(evt?.status).toBe('completed');
+    expect(evt?.summary).toBe('Found 3 issues');
+  });
+
+  it('emits task_notification on failure', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskNotification!('task-1', 'failed', 'Timed out');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'task_notification') as
+      { type: 'task_notification'; status: string } | undefined;
+    expect(evt?.status).toBe('failed');
+  });
+
+  it('emits notification event', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onNotification!('Deploy succeeded', 'high');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'notification') as
+      { type: 'notification'; text: string; priority: string } | undefined;
+    expect(evt?.text).toBe('Deploy succeeded');
+    expect(evt?.priority).toBe('high');
+  });
+
+  it('emits api_retry event', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onApiRetry!(1, 3, 'server_error');
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'api_retry') as
+      { type: 'api_retry'; attempt: number; maxRetries: number; error: string } | undefined;
+    expect(evt?.attempt).toBe(1);
+    expect(evt?.maxRetries).toBe(3);
+    expect(evt?.error).toBe('server_error');
+  });
+
+  it('emits rate_limit event for rejected status', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onRateLimit!('rejected', 1700000000000);
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'rate_limit') as
+      { type: 'rate_limit'; limitStatus: string; resetsAt?: number } | undefined;
+    expect(evt?.limitStatus).toBe('rejected');
+    expect(evt?.resetsAt).toBe(1700000000000);
+  });
+
+  it('emits rate_limit event for warning status without resetsAt', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onRateLimit!('allowed_warning', undefined);
+    await driveResponse('Done');
+    await sendPromise;
+
+    const evt = events.find(e => e.type === 'rate_limit') as
+      { type: 'rate_limit'; limitStatus: string; resetsAt?: number } | undefined;
+    expect(evt?.limitStatus).toBe('allowed_warning');
+    expect(evt?.resetsAt).toBeUndefined();
   });
 });

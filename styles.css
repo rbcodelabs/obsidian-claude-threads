@@ -195,9 +195,10 @@
 /* Slash command autocomplete */
 .ct-skill-dropdown {
   position: absolute;
-  bottom: 72px;
-  left: 6px;
-  right: 6px;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -462,6 +463,22 @@
   animation: ct-pulse 1.2s ease-in-out infinite;
 }
 
+.ct-task-pill {
+  border-style: dashed;
+}
+
+.ct-task-done {
+  border-color: var(--color-green);
+  color: var(--color-green);
+  border-style: solid;
+}
+
+.ct-task-failed {
+  border-color: var(--color-red);
+  color: var(--color-red);
+  border-style: solid;
+}
+
 @keyframes ct-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.6; }
@@ -510,11 +527,127 @@
 /* Input row */
 .ct-input-row {
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
+  flex-direction: column;
+  gap: 0;
   padding: 6px;
   border-top: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
+  position: relative;
+}
+
+.ct-input-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* Paste attachment chips */
+.ct-paste-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+
+.ct-paste-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  max-width: 280px;
+}
+
+.ct-paste-chip-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ct-paste-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-normal);
+}
+
+.ct-paste-chip-meta {
+  font-size: 10px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.ct-paste-chip-remove {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  border-radius: 3px;
+}
+
+.ct-paste-chip-remove:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* Attachment indicator in sent message */
+.ct-message-attachment {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 6px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 5px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-message-attachment-label {
+  opacity: 0.85;
+}
+
+/* Image thumbnails in sent message bubble */
+.ct-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.ct-message-img-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+/* Image chip in input area */
+.ct-paste-chip-image {
+  padding: 3px 6px 3px 4px;
+}
+
+.ct-paste-chip-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* Drag-over highlight */
+.ct-drag-over {
+  background: var(--background-modifier-hover);
+  border-top-color: var(--interactive-accent);
 }
 
 .ct-input {
