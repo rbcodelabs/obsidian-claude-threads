@@ -1,5 +1,6 @@
 import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter } from 'obsidian';
 import { ThreadsView, VIEW_TYPE } from './ThreadsView';
+import { AgentDashboard, AGENT_VIEW_TYPE } from './AgentDashboard';
 import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
@@ -45,12 +46,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
 
-    // Register the view
+    // Register the views
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
+    this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
 
-    // Ribbon icon
+    // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
       this.activateView();
+    });
+    this.addRibbonIcon('layout-dashboard', 'Agent Dashboard', () => {
+      this.activateAgentView();
     });
 
     // Commands
@@ -58,6 +63,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
       id: 'open-claude-threads',
       name: 'Open Claude Threads',
       callback: () => this.activateView(),
+    });
+
+    this.addCommand({
+      id: 'open-agent-dashboard',
+      name: 'Open Agent Dashboard',
+      callback: () => this.activateAgentView(),
     });
 
     this.addCommand({
@@ -149,6 +160,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
+  }
+
+  async activateAgentView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+      await leaf.setViewState({ type: AGENT_VIEW_TYPE, active: true });
+    }
+    workspace.revealLeaf(leaf);
+  }
+
+  async openThreadInChatView(threadId: string): Promise<void> {
+    await this.activateView();
+    const view = this.getView();
+    view?.focusThread(threadId);
+  }
+
+  async dispatchNewThread(text: string): Promise<void> {
+    const title = text.slice(0, 50).split('\n')[0].trim() || 'New Thread';
+    const thread = this.manager.createThread(title, this.getEffectiveCwd());
+    await this.saveSettings();
+    // Fire and forget — dashboard will show the running row via subscription
+    this.manager.sendMessage(thread.id, text).catch(console.error);
   }
 
   private getView(): ThreadsView | null {

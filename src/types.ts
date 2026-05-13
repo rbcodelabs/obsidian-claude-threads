@@ -45,6 +45,7 @@ export interface Thread {
   noteFile?: string;
   recap?: string;
   summary?: string;
+  lastError?: string;
 }
 
 export interface PluginSettings {

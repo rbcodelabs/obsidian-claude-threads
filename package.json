@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-threads",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "Multi-threaded Claude Code sessions in Obsidian",
   "main": "dist/main.js",
   "scripts": {
@@ -9,8 +9,11 @@
     "build:harness": "node test/harness/esbuild.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:screenshots": "node test/harness/esbuild.mjs",
+    "pretest:screenshots:update": "node test/harness/esbuild.mjs",
     "test:screenshots": "npx playwright test",
-    "test:screenshots:update": "npx playwright test --update-snapshots"
+    "test:screenshots:update": "npx playwright test --update-snapshots",
+    "posttest:screenshots:update": "cp test/screenshots/snapshots/ui.spec.ts-snapshots/main-view-chromium-darwin.png docs/screenshot-main.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/slash-commands-chromium-darwin.png docs/screenshot-slash-commands.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/permission-modal-chromium-darwin.png docs/screenshot-permission.png"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.132",

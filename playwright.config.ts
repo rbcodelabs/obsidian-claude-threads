@@ -7,6 +7,11 @@ export default defineConfig({
     viewport: { width: 420, height: 740 },
     deviceScaleFactor: 2,
   },
+  expect: {
+    toHaveScreenshot: {
+      scale: 'device',
+    },
+  },
   projects: [{ name: 'chromium', use: { channel: 'chromium' } }],
   snapshotDir: './test/screenshots/snapshots',
 });
