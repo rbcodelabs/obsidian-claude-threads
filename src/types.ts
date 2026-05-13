@@ -1,4 +1,4 @@
-export type MessageRole = 'user' | 'assistant';
+export type MessageRole = 'user' | 'assistant' | 'compact';
 
 export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
@@ -32,6 +32,8 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCallRecord[];
   cost?: number;
+  compactTrigger?: 'auto' | 'manual';
+  preTokens?: number;
 }
 
 export interface Thread {

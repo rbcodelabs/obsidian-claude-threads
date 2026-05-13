@@ -24,7 +24,7 @@
     "@playwright/test": "^1.59.1",
     "@types/marked": "^5.0.2",
     "@types/node": "^20.0.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.0",
     "obsidian": "^1.7.2",
     "typescript": "^5.0.0",
     "vitest": "^4.1.5"
