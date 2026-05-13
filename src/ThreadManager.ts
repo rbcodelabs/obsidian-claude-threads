@@ -23,7 +23,8 @@ export type ThreadEvent =
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
   | { type: 'thread_deleted' }
-  | { type: 'thread_created' };
+  | { type: 'thread_created' }
+  | { type: 'active_thread_changed' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -352,6 +353,10 @@ export class ThreadManager {
   subscribe(listener: ThreadStateListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  notifyActiveThreadChanged(threadId: string): void {
+    this.emit(threadId, { type: 'active_thread_changed' });
   }
 
   private emit(threadId: string, event: ThreadEvent): void {

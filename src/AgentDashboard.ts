@@ -19,6 +19,9 @@ export class AgentDashboard extends ItemView {
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
   private timeEls: Map<string, HTMLElement> = new Map();
+  // Row elements for active-thread highlighting
+  private rowEls: Map<string, HTMLElement> = new Map();
+  private activeThreadId: string | null = null;
 
   // Debounce full re-render on state changes
   private renderPending = false;
@@ -38,6 +41,7 @@ export class AgentDashboard extends ItemView {
   getIcon(): string { return 'layout-dashboard'; }
 
   async onOpen(): Promise<void> {
+    this.activeThreadId = this.plugin.getActiveThreadId();
     this.buildUI();
     this.render();
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
@@ -85,6 +89,10 @@ export class AgentDashboard extends ItemView {
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
+    if (event.type === 'active_thread_changed') {
+      this.setActiveRow(threadId);
+      return;
+    }
     const isStateChange =
       event.type === 'streaming_start' ||
       event.type === 'done' ||
@@ -102,6 +110,15 @@ export class AgentDashboard extends ItemView {
     ) {
       this.scheduleActivityRefresh(threadId);
     }
+  }
+
+  private setActiveRow(threadId: string): void {
+    // Remove active class from previous row
+    if (this.activeThreadId) {
+      this.rowEls.get(this.activeThreadId)?.removeClass('ct-agents-row-active');
+    }
+    this.activeThreadId = threadId;
+    this.rowEls.get(threadId)?.addClass('ct-agents-row-active');
   }
 
   private scheduleRender(): void {
@@ -129,6 +146,7 @@ export class AgentDashboard extends ItemView {
     this.listEl.empty();
     this.activityEls.clear();
     this.timeEls.clear();
+    this.rowEls.clear();
 
     const threads = this.manager.getThreads();
     const running: Thread[] = [];
@@ -173,7 +191,11 @@ export class AgentDashboard extends ItemView {
   }
 
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
-    const row = parent.createDiv({ cls: `ct-agents-row ct-agents-row-${state}` });
+    const isActive = thread.id === this.activeThreadId;
+    const row = parent.createDiv({
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}`,
+    });
+    this.rowEls.set(thread.id, row);
 
     const iconEl = row.createDiv('ct-agents-icon');
     this.applyStateIcon(iconEl, state);
