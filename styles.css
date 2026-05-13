@@ -1041,3 +1041,98 @@
   background: var(--interactive-accent-hover);
 }
 
+/* ── Project bar ─────────────────────────────────────────────────────────── */
+
+.ct-project-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.ct-project-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ct-project-bar.ct-hidden {
+  display: none;
+}
+
+.ct-project-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+
+.ct-project-pill:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+
+.ct-project-pill-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+  font-weight: 500;
+}
+
+.ct-project-pill-active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent-hover);
+}
+
+.ct-project-pill-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.ct-project-pill-name {
+  /* nothing extra needed */
+}
+
+.ct-project-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-project-pill-active .ct-project-pill-count {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Settings: project list and description text */
+.ct-settings-desc {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin: 0 0 8px;
+}
+
+.ct-projects-list {
+  margin-bottom: 8px;
+}
+

@@ -1,5 +1,5 @@
 import { ClaudeSession } from './ClaudeSession';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project } from './types';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -27,6 +27,7 @@ export type ThreadEvent =
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
+  private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
   private queuedMessages: Map<string, string> = new Map();
   private threadActivity: Map<string, string> = new Map();
@@ -45,6 +46,61 @@ export class ThreadManager {
     this.settings = settings;
   }
 
+  // ── Projects ────────────────────────────────────────────────────────────────
+
+  loadProjects(projects: Project[]): void {
+    for (const p of projects) {
+      this.projects.set(p.id, p);
+    }
+  }
+
+  getProjects(): Project[] {
+    return Array.from(this.projects.values()).sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  getProject(id: string): Project | undefined {
+    return this.projects.get(id);
+  }
+
+  createProject(name: string, vaultFolder: string, description?: string, cwdOverride?: string): Project {
+    const project: Project = {
+      id: crypto.randomUUID(),
+      name: name.trim() || 'Untitled Project',
+      description,
+      vaultFolder: vaultFolder.trim(),
+      cwdOverride,
+      createdAt: Date.now(),
+    };
+    this.projects.set(project.id, project);
+    return project;
+  }
+
+  updateProject(id: string, updates: Partial<Omit<Project, 'id' | 'createdAt'>>): void {
+    const project = this.projects.get(id);
+    if (project) Object.assign(project, updates);
+  }
+
+  deleteProject(id: string): void {
+    this.projects.delete(id);
+    // Detach threads that belonged to this project
+    for (const thread of this.threads.values()) {
+      if (thread.projectId === id) thread.projectId = undefined;
+    }
+  }
+
+  /**
+   * Returns the resolved filesystem cwd for a project. Uses cwdOverride if
+   * set, otherwise joins vaultRoot + vaultFolder.
+   */
+  getProjectCwd(project: Project): string {
+    if (project.cwdOverride) return project.cwdOverride;
+    if (!this.vaultRoot) return project.vaultFolder;
+    const path = require('path') as typeof import('path');
+    return path.join(this.vaultRoot, project.vaultFolder);
+  }
+
+  // ── Threads ──────────────────────────────────────────────────────────────────
+
   loadThreads(threads: Thread[]): void {
     for (const t of threads) {
       this.threads.set(t.id, t);
@@ -55,11 +111,17 @@ export class ThreadManager {
     return Array.from(this.threads.values()).sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  getThreadsByProject(projectId: string | null): Thread[] {
+    const all = this.getThreads();
+    if (projectId === null) return all;
+    return all.filter((t) => t.projectId === projectId);
+  }
+
   getThread(id: string): Thread | undefined {
     return this.threads.get(id);
   }
 
-  createThread(title: string, cwd?: string): Thread {
+  createThread(title: string, cwd?: string, projectId?: string): Thread {
     const thread: Thread = {
       id: crypto.randomUUID(),
       title: title || `Thread ${this.threads.size + 1}`,
@@ -67,6 +129,7 @@ export class ThreadManager {
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      projectId,
     };
     this.threads.set(thread.id, thread);
     this.emit(thread.id, { type: 'thread_created' });
@@ -304,3 +367,4 @@ export class ThreadManager {
     this.sessions.clear();
   }
 }
+

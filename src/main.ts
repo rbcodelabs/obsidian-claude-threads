@@ -5,7 +5,7 @@ import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
-import { type PluginSettings, DEFAULT_SETTINGS } from './types';
+import { type PluginSettings, DEFAULT_SETTINGS, type Project } from './types';
 import fs from 'fs';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
@@ -42,7 +42,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.summarizer = new SummarizationService();
     this.inProcessSummarizer = new InProcessSummarizer();
 
-    // Load persisted threads
+    // Load persisted projects + threads
+    this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
 
@@ -198,10 +199,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (this.settings.inprocessModel.includes('-MLC') || this.settings.inprocessModel.includes('/')) {
       this.settings.inprocessModel = 'haiku';
     }
+    // Ensure projects array exists for older data
+    this.settings.projects = this.settings.projects ?? [];
   }
 
   async saveSettings(): Promise<void> {
-    // Persist thread state (without streaming content)
+    // Persist projects + thread state (without streaming content)
+    this.settings.projects = this.manager?.getProjects() ?? [];
     this.settings.threads = this.manager?.getThreads() ?? [];
     await this.saveData(this.settings);
   }
@@ -213,6 +217,35 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     private plugin: ClaudeThreadsPlugin,
   ) {
     super(app, plugin);
+  }
+
+  private renderProjectRow(container: HTMLElement, project: Project, refresh: () => void): void {
+    const row = new Setting(container)
+      .setName(project.name)
+      .setDesc(`📁 ${project.vaultFolder}${project.description ? ' — ' + project.description : ''}`);
+
+    row.addText((text) =>
+      text
+        .setPlaceholder('Rename…')
+        .onChange(async (val) => {
+          if (val.trim()) {
+            this.plugin.manager.updateProject(project.id, { name: val.trim() });
+            await this.plugin.saveSettings();
+          }
+        }),
+    );
+
+    row.addButton((btn) =>
+      btn
+        .setIcon('trash')
+        .setWarning()
+        .setTooltip('Delete project (threads are kept)')
+        .onClick(async () => {
+          this.plugin.manager.deleteProject(project.id);
+          await this.plugin.saveSettings();
+          refresh();
+        }),
+    );
   }
 
   display(): void {
@@ -269,6 +302,60 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    // ── Projects ──────────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Projects' });
+    containerEl.createEl('p', {
+      text: 'Projects group threads and focus Claude on a specific vault sub-folder. When you open a thread inside a project, Claude\'s working directory is set to that folder.',
+      cls: 'ct-settings-desc',
+    });
+
+    const projectsListEl = containerEl.createDiv({ cls: 'ct-projects-list' });
+    const renderProjects = () => {
+      projectsListEl.empty();
+      const projects = this.plugin.manager.getProjects();
+      if (projects.length === 0) {
+        projectsListEl.createEl('p', { text: 'No projects yet.', cls: 'ct-allowed-tools-empty' });
+      } else {
+        for (const project of projects) {
+          this.renderProjectRow(projectsListEl, project, renderProjects);
+        }
+      }
+    };
+    renderProjects();
+
+    new Setting(containerEl)
+      .setName('New project')
+      .setDesc('Create a project scoped to a vault sub-folder')
+      .addText((text) =>
+        text.setPlaceholder('Project name').then((t) => {
+          (t as unknown as { inputEl: HTMLInputElement }).inputEl.id = 'ct-new-project-name';
+        }),
+      )
+      .addText((text) =>
+        text.setPlaceholder('Vault folder (e.g. Work/Acme)').then((t) => {
+          (t as unknown as { inputEl: HTMLInputElement }).inputEl.id = 'ct-new-project-folder';
+        }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText('Add').setCta().onClick(async () => {
+          const nameEl = containerEl.querySelector<HTMLInputElement>('#ct-new-project-name');
+          const folderEl = containerEl.querySelector<HTMLInputElement>('#ct-new-project-folder');
+          const name = nameEl?.value.trim() ?? '';
+          const folder = folderEl?.value.trim() ?? '';
+          if (!name || !folder) {
+            new (await import('obsidian')).Notice('Enter both a project name and vault folder.');
+            return;
+          }
+          this.plugin.manager.createProject(name, folder);
+          await this.plugin.saveSettings();
+          if (nameEl) nameEl.value = '';
+          if (folderEl) folderEl.value = '';
+          renderProjects();
+        }),
+      );
+
+    // ─────────────────────────────────────────────────────────────────────
 
     new Setting(containerEl)
       .setName('Extra environment variables')

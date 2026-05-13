@@ -49,6 +49,27 @@ export interface Thread {
   summary?: string;
   lastError?: string;
   model?: string;
+  projectId?: string;
+}
+
+/**
+ * A Project groups related threads and scopes Claude's context to a specific
+ * vault sub-folder. When a project is active, new threads use the project's
+ * filesystem path as their working directory, giving Claude focused access to
+ * just that folder's content.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  /** Vault-relative folder path (e.g. "Claude/my-project" or "Work/Acme"). */
+  vaultFolder: string;
+  /**
+   * Optional explicit filesystem cwd override. When absent the plugin derives
+   * the cwd automatically from vaultFolder + vault root.
+   */
+  cwdOverride?: string;
+  createdAt: number;
 }
 
 export interface PluginSettings {
@@ -68,6 +89,7 @@ export interface PluginSettings {
   opusEscalationKeyword: string;
   alwaysAllowedTools: string[];
   threads: Thread[];
+  projects: Project[];
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -87,6 +109,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   opusEscalationKeyword: '/opus',
   alwaysAllowedTools: [],
   threads: [],
+  projects: [],
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {
