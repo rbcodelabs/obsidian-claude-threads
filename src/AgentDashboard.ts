@@ -143,6 +143,13 @@ export class AgentDashboard extends ItemView {
       else empty.push(t);
     }
 
+    // Sort each group by most recently updated first
+    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
+    running.sort(byRecency);
+    idle.sort(byRecency);
+    errors.sort(byRecency);
+    empty.sort(byRecency);
+
     if (threads.length === 0) {
       const emptyEl = this.listEl.createDiv('ct-agents-empty');
       emptyEl.createDiv({ text: 'No threads yet.' });
