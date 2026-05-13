@@ -90,6 +90,7 @@ export interface PluginSettings {
   alwaysAllowedTools: string[];
   threads: Thread[];
   projects: Project[];
+  wakeLockEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -110,6 +111,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   alwaysAllowedTools: [],
   threads: [],
   projects: [],
+  wakeLockEnabled: true,
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {

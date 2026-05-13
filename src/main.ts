@@ -5,6 +5,7 @@ import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
+import { WakeLockService } from './WakeLockService';
 import { type PluginSettings, DEFAULT_SETTINGS, type Project } from './types';
 import fs from 'fs';
 
@@ -30,6 +31,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   persistence!: VaultPersistence;
   summarizer!: SummarizationService;
   inProcessSummarizer!: InProcessSummarizer;
+  wakeLock!: WakeLockService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -41,6 +43,24 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.summarizer = new SummarizationService();
     this.inProcessSummarizer = new InProcessSummarizer();
+
+    // Wake lock — keep computer awake while sessions are processing
+    this.wakeLock = new WakeLockService({ enabled: this.settings.wakeLockEnabled });
+    const statusBarItem = this.addStatusBarItem();
+    statusBarItem.style.display = 'none';
+    statusBarItem.setText('☕ Keeping awake');
+    statusBarItem.title = 'Claude Threads: keeping computer awake during active sessions';
+    this.wakeLock.onChange((isActive) => {
+      statusBarItem.style.display = isActive ? 'inline-block' : 'none';
+    });
+    const unsubWakeLock = this.manager.subscribe((_threadId, event) => {
+      if (event.type === 'streaming_start') {
+        this.wakeLock.acquire();
+      } else if (event.type === 'done' || event.type === 'error') {
+        this.wakeLock.release();
+      }
+    });
+    this.register(unsubWakeLock);
 
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
@@ -128,6 +148,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    this.wakeLock?.destroy();
     this.manager?.destroy();
 
     // Persist thread state
@@ -252,6 +273,17 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Claude Threads Settings' });
+
+    new Setting(containerEl)
+      .setName('Keep computer awake during active sessions')
+      .setDesc('Prevent the computer from sleeping while Claude is processing a response. Shows a ☕ indicator in the status bar when active.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.wakeLockEnabled).onChange(async (value) => {
+          this.plugin.settings.wakeLockEnabled = value;
+          this.plugin.wakeLock.setEnabled(value);
+          await this.plugin.saveSettings();
+        }),
+      );
 
     new Setting(containerEl)
       .setName('Claude binary path')
