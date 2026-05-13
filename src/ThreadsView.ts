@@ -45,6 +45,13 @@ export class ThreadsView extends ItemView {
   private skillDropdownItems: { name: string; description: string }[] = [];
   private skillDropdownIndex = 0;
 
+  private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
+    { name: 'compact', description: 'Summarize conversation history to free up context' },
+    { name: 'clear', description: 'Clear conversation history and start fresh' },
+    { name: 'model', description: 'View or switch the active model' },
+    { name: 'cost', description: 'Show token usage and cost for this session' },
+  ];
+
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -435,6 +442,16 @@ export class ThreadsView extends ItemView {
   }
 
   private async appendMessage(msg: ChatMessage): Promise<void> {
+    if (msg.role === 'compact') {
+      const divider = this.messagesEl.createDiv('ct-compact-divider');
+      const label = msg.compactTrigger === 'manual' ? 'Context compacted' : 'Context auto-compacted';
+      divider.createSpan({ cls: 'ct-compact-label', text: label });
+      if (msg.preTokens && msg.preTokens > 0) {
+        divider.createSpan({ cls: 'ct-compact-tokens', text: `${(msg.preTokens / 1000).toFixed(0)}k tokens` });
+      }
+      return;
+    }
+
     const el = this.messagesEl.createDiv(`ct-message ct-message-${msg.role}`);
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -602,6 +619,12 @@ export class ThreadsView extends ItemView {
         } else if (event.status === null) {
           this.updateStatusBar();
         }
+        break;
+      }
+
+      case 'compact': {
+        this.appendMessage(event.message).then(() => this.scrollToBottom());
+        this.plugin.saveSettings();
         break;
       }
 
@@ -896,7 +919,10 @@ export class ThreadsView extends ItemView {
   }
 
   private showSkillDropdown(query: string): void {
-    const matches = this.skills.filter(s => s.name.toLowerCase().startsWith(query.toLowerCase()));
+    const q = query.toLowerCase();
+    const builtins = ThreadsView.BUILTIN_COMMANDS.filter(c => c.name.startsWith(q));
+    const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
+    const matches = [...builtins, ...skills];
     if (matches.length === 0) { this.hideSkillDropdown(); return; }
     this.skillDropdownItems = matches;
     if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;

@@ -493,6 +493,29 @@
   margin-top: -2px;
 }
 
+/* Compaction divider */
+.ct-compact-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.ct-compact-divider::before,
+.ct-compact-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+
+.ct-compact-tokens {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
 /* Error */
 .ct-error {
   background: var(--background-modifier-error-rgb, rgba(200,0,0,0.1));
