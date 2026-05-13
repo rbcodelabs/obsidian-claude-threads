@@ -48,9 +48,17 @@ export class ThreadsView extends ItemView {
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
     { name: 'compact', description: 'Summarize conversation history to free up context' },
     { name: 'clear', description: 'Clear conversation history and start fresh' },
-    { name: 'model', description: 'View or switch the active model' },
     { name: 'cost', description: 'Show token usage and cost for this session' },
+    { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
   ];
+
+  private static readonly MODEL_ALIASES: Record<string, string | undefined> = {
+    opus: 'opus',
+    sonnet: 'sonnet',
+    haiku: 'haiku',
+    default: undefined,
+    reset: undefined,
+  };
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -342,6 +350,10 @@ export class ThreadsView extends ItemView {
         cls: 'ct-thread-info-recap',
         text: summaryText,
       });
+    }
+
+    if (thread.model) {
+      this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
     }
 
     if (this.plugin.settings.summarizationEnabled && thread.messages.length > 0) {
@@ -836,6 +848,34 @@ export class ThreadsView extends ItemView {
         }
       }
       this.scrollToBottom();
+    }
+
+    const modelMatch = typed.match(/^\/model(?:\s+(\S+))?$/i);
+    if (modelMatch) {
+      const arg = (modelMatch[1] ?? '').toLowerCase();
+      if (!arg) {
+        const thread = this.manager.getThread(this.activeThreadId);
+        const current = thread?.model ?? 'default';
+        const infoEl = this.messagesEl.createDiv('ct-compact-divider');
+        infoEl.createSpan({ cls: 'ct-compact-label', text: `Model: ${current}` });
+        this.scrollToBottom();
+        return;
+      }
+      if (!(arg in ThreadsView.MODEL_ALIASES)) {
+        const errEl = this.messagesEl.createDiv('ct-message ct-error');
+        errEl.createEl('p', { text: `Unknown model "${arg}". Use: opus, sonnet, haiku, default` });
+        this.scrollToBottom();
+        return;
+      }
+      const resolved = ThreadsView.MODEL_ALIASES[arg];
+      this.manager.setThreadModel(this.activeThreadId, resolved);
+      await this.plugin.saveSettings();
+      const label = resolved ? `Model set to ${resolved}` : 'Model reset to default';
+      const divider = this.messagesEl.createDiv('ct-compact-divider');
+      divider.createSpan({ cls: 'ct-compact-label', text: label });
+      this.renderThreadInfo();
+      this.scrollToBottom();
+      return;
     }
 
     try {

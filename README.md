@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.26-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.31-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="380" alt="Main view showing a conversation with code blocks and multiple tabs" />
@@ -25,7 +25,10 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Slash command autocomplete** — type `/` to browse your installed `~/.claude/skills/` with descriptions
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view
+- **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
+- **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
+- **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
@@ -72,15 +75,49 @@ Tabs are renamed automatically after the first exchange using the thread summari
 
 - **Enter** — send message
 - **Shift+Enter** — newline
-- **`/`** — opens skill autocomplete (browse `~/.claude/skills/`)
+- **`/`** — opens slash command autocomplete
 
-### Slash commands / Skills
+### Slash commands
 
-Type `/` in the input box to see all your installed Claude Code skills with descriptions. Select with arrow keys, Tab, or Enter — the skill name is inserted into your message and Claude handles it naturally via your `CLAUDE.md` configuration.
+Type `/` in the input box to see built-in context commands and your installed Claude Code skills. Navigate with arrow keys, Tab, or Enter.
+
+**Built-in commands** (handled by the plugin):
+
+| Command | What it does |
+|---|---|
+| `/model opus\|sonnet\|haiku` | Set a persistent model for this thread |
+| `/model default` | Reset thread model back to the global default |
+| `/model` | Show the current model for this thread |
+| `/compact` | Summarize conversation history to free up context window |
+| `/clear` | Clear conversation history and start a fresh session |
+| `/cost` | Show token usage and cost for the current session |
+
+**Skills** — any `.md` file (or directory) in `~/.claude/skills/` appears below the built-in commands. Selecting one inserts the skill name into your message, which Claude handles via your `CLAUDE.md` configuration.
+
+### Model switching
+
+`/model` sets the model for all subsequent turns in a thread:
+
+```
+/model opus     → uses Claude Opus for every turn in this thread
+/model sonnet   → switches to Sonnet
+/model haiku    → switches to Haiku
+/model default  → resets to whatever Claude Code's default is
+```
+
+The active model is shown as a badge in the thread info bar. You can also use `/opus` as a one-turn override (controlled by the Opus Escalation Keyword setting) — it applies only to that message, then the thread model resumes.
+
+### Context compaction
+
+When the context window fills up, Claude compacts the conversation automatically. You can also trigger it manually with `/compact`. Either way, a divider appears in the conversation showing when compaction happened and how many tokens were in context beforehand. Compaction markers are persisted and survive plugin reloads.
+
+### Agent dashboard
+
+Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance — which are running, what they're working on, and their last activity. You can send messages to any thread from the dashboard without switching tabs.
 
 ### Permissions
 
-When Claude needs to write a file or run a command, a dialog appears asking you to **Allow** or **Deny**. This mirrors Claude Code's permission system. You can change the default behavior in settings.
+When Claude needs to write a file or run a command, a dialog appears asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also change the default behavior globally in settings.
 
 ### Thread summaries
 
@@ -100,6 +137,7 @@ A summary bar above the messages shows what the thread is about. It updates auto
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
 | Mode | `Claude (via CLI)` uses your existing auth; `Remote endpoint` calls an OpenAI-compatible server |
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
+| Opus escalation keyword | Keyword that triggers Opus for a single turn (default: `/opus`) |
 
 ## Building from source
 
@@ -111,11 +149,13 @@ npm run build
 # Output is in dist/
 ```
 
-Symlink `dist/` into your vault's plugins folder for live development:
+To auto-sync builds to your local Obsidian vault during development, create a `.env.local` file in the project root:
 
-```bash
-ln -s $(pwd)/dist ~/.obsidian/plugins/claude-threads
 ```
+OBSIDIAN_PLUGIN_DIR=/path/to/your/vault/.obsidian/plugins/claude-threads
+```
+
+Then run `npm run dev` — every rebuild will copy `main.js`, `styles.css`, and `manifest.json` to your vault automatically.
 
 ## License
 
