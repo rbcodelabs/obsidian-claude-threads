@@ -20,7 +20,9 @@ export type ThreadEvent =
   | { type: 'task_notification'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
   | { type: 'notification'; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
-  | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number };
+  | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
+  | { type: 'thread_deleted' }
+  | { type: 'thread_created' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -66,6 +68,7 @@ export class ThreadManager {
       updatedAt: Date.now(),
     };
     this.threads.set(thread.id, thread);
+    this.emit(thread.id, { type: 'thread_created' });
     return thread;
   }
 
@@ -76,7 +79,9 @@ export class ThreadManager {
       this.sessions.delete(id);
     }
     this.queuedMessages.delete(id);
+    this.threadActivity.delete(id);
     this.threads.delete(id);
+    this.emit(id, { type: 'thread_deleted' });
   }
 
   renameThread(id: string, title: string): void {
