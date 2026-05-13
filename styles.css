@@ -1071,6 +1071,14 @@
   background: var(--background-modifier-hover);
 }
 
+.ct-agents-row-active {
+  background: var(--background-modifier-active-hover);
+}
+
+.ct-agents-row-active:hover {
+  background: var(--background-modifier-active-hover);
+}
+
 .ct-agents-icon {
   flex-shrink: 0;
   width: 18px;

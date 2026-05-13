@@ -218,6 +218,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.sendMessage(thread.id, text).catch(console.error);
   }
 
+  getActiveThreadId(): string | null {
+    return this.getView()?.getActiveThreadId() ?? null;
+  }
+
   private getView(): ThreadsView | null {
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     return leaf?.view instanceof ThreadsView ? leaf.view : null;

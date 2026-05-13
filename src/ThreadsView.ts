@@ -402,8 +402,13 @@ export class ThreadsView extends ItemView {
     this.setActiveThread(id);
   }
 
+  getActiveThreadId(): string | null {
+    return this.activeThreadId;
+  }
+
   private setActiveThread(id: string): void {
     this.activeThreadId = id;
+    this.manager.notifyActiveThreadChanged(id);
     this.renderTabs();
     this.renderThreadInfo();
     this.renderMessages();
