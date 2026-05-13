@@ -26,6 +26,7 @@ export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
   private queuedMessages: Map<string, string> = new Map();
+  private threadActivity: Map<string, string> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
@@ -94,6 +95,10 @@ export class ThreadManager {
     return this.queuedMessages.get(id);
   }
 
+  getThreadActivity(id: string): string | undefined {
+    return this.threadActivity.get(id);
+  }
+
   /**
    * Detect whether the message triggers Opus escalation. Returns the model
    * string to pass to ClaudeSession if escalation should occur, or undefined
@@ -129,6 +134,9 @@ export class ThreadManager {
       this.emit(threadId, { type: 'queued', text: userText });
       return;
     }
+
+    thread.lastError = undefined;
+    this.threadActivity.delete(threadId);
 
     const model = this.resolveModel(userText);
     const promptText = model ? this.stripKeyword(userText) : userText;
@@ -169,6 +177,7 @@ export class ThreadManager {
         },
         onToolUse: (record) => {
           pendingToolCalls.push(record);
+          this.threadActivity.set(threadId, record.summary);
           this.emit(threadId, { type: 'tool_use', record });
         },
         onRecap: (summary) => {
@@ -197,11 +206,15 @@ export class ThreadManager {
             lastMsg.cost = cost;
           }
           this.sessions.delete(threadId);
+          this.threadActivity.delete(threadId);
           completedSuccessfully = true;
           this.emit(threadId, { type: 'done' });
         },
         onError: (err) => {
+          thread.lastError = err.message;
+          thread.updatedAt = Date.now();
           this.sessions.delete(threadId);
+          this.threadActivity.delete(threadId);
           this.queuedMessages.delete(threadId);
           this.emit(threadId, { type: 'error', error: err });
         },
@@ -209,8 +222,15 @@ export class ThreadManager {
         onAskUserQuestion: (questions) => this.questionHandler(questions),
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
-        onTaskStarted: (taskId, description, skipTranscript) => this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript }),
-        onTaskProgress: (taskId, description, lastToolName) => this.emit(threadId, { type: 'task_progress', taskId, description, lastToolName }),
+        onTaskStarted: (taskId, description, skipTranscript) => {
+          this.threadActivity.set(threadId, description);
+          this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript });
+        },
+        onTaskProgress: (taskId, description, lastToolName) => {
+          const suffix = lastToolName ? ` · ${lastToolName}` : '';
+          this.threadActivity.set(threadId, description + suffix);
+          this.emit(threadId, { type: 'task_progress', taskId, description, lastToolName });
+        },
         onTaskNotification: (taskId, status, summary) => this.emit(threadId, { type: 'task_notification', taskId, status, summary }),
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),

@@ -311,6 +311,10 @@ export class ThreadsView extends ItemView {
 
   }
 
+  focusThread(id: string): void {
+    this.setActiveThread(id);
+  }
+
   private setActiveThread(id: string): void {
     this.activeThreadId = id;
     this.renderTabs();
