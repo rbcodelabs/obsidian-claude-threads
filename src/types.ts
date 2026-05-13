@@ -48,6 +48,7 @@ export interface Thread {
   recap?: string;
   summary?: string;
   lastError?: string;
+  model?: string;
 }
 
 export interface PluginSettings {

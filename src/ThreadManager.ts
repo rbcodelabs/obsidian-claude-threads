@@ -93,6 +93,14 @@ export class ThreadManager {
     }
   }
 
+  setThreadModel(id: string, model: string | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      thread.model = model;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   isRunning(id: string): boolean {
     return this.sessions.has(id);
   }
@@ -144,8 +152,9 @@ export class ThreadManager {
     thread.lastError = undefined;
     this.threadActivity.delete(threadId);
 
-    const model = this.resolveModel(userText);
-    const promptText = model ? this.stripKeyword(userText) : userText;
+    const keywordModel = this.resolveModel(userText);
+    const model = keywordModel ?? thread.model;
+    const promptText = keywordModel ? this.stripKeyword(userText) : userText;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
