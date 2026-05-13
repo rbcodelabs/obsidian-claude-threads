@@ -240,7 +240,7 @@ export class ThreadsView extends ItemView {
       cls: 'ct-input',
       attr: { placeholder: 'Message Claude... (Enter to send, Shift+Enter for newline)' },
     });
-    this.sendBtn = inputControls.createEl('button', { cls: 'ct-send-btn', text: '↵' });
+    this.sendBtn = inputControls.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
     this.stopBtn = inputControls.createEl('button', {
       cls: 'ct-stop-btn ct-hidden',
       text: '■',
@@ -385,7 +385,7 @@ export class ThreadsView extends ItemView {
 
       tab.addEventListener('click', () => this.setActiveThread(thread.id));
 
-      const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×' });
+      const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×', attr: { title: 'Close thread' } });
       closeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         this.closeThread(thread.id);
@@ -417,6 +417,12 @@ export class ThreadsView extends ItemView {
     if (!thread) return;
 
     const summaryText = thread.summary || thread.recap;
+    const hasSummarizeBtn = this.plugin.settings.summarizationEnabled && thread.messages.length > 0;
+    const hasContent = !!summaryText || hasSummarizeBtn;
+
+    // Hide the bar entirely when there's nothing to show
+    this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
+
     if (summaryText) {
       this.threadInfoBar.createSpan({
         cls: 'ct-thread-info-recap',
@@ -428,8 +434,10 @@ export class ThreadsView extends ItemView {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
     }
 
-    if (this.plugin.settings.summarizationEnabled && thread.messages.length > 0) {
-      const btn = this.threadInfoBar.createEl('button', {
+    // Right-aligned actions group: summarize button
+    if (hasSummarizeBtn) {
+      const actions = this.threadInfoBar.createDiv({ cls: 'ct-thread-info-actions' });
+      const btn = actions.createEl('button', {
         cls: 'ct-summarize-btn',
         attr: { title: 'Summarize thread' },
       });
@@ -491,7 +499,7 @@ export class ThreadsView extends ItemView {
   private createStreamingEl(): void {
     this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
     this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
-    this.streamingEl.createSpan({ cls: 'ct-cursor' });
+    this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
   }
 
   private async renderMessages(): Promise<void> {
@@ -505,11 +513,14 @@ export class ThreadsView extends ItemView {
 
     if (thread.messages.length === 0) {
       const empty = this.messagesEl.createDiv('ct-empty');
-      empty.createEl('p', { text: '👋 Start a conversation' });
-      empty.createEl('p', {
-        cls: 'ct-empty-sub',
-        text: `Working in: ${thread.cwd || 'home directory'}`,
-      });
+      const iconEl = empty.createDiv('ct-empty-icon');
+      setIcon(iconEl, 'message-square');
+      empty.createEl('p', { cls: 'ct-empty-title', text: 'Ask Claude anything' });
+      const cwdEl = empty.createDiv('ct-empty-sub');
+      const folderIcon = cwdEl.createSpan('ct-empty-sub-icon');
+      setIcon(folderIcon, 'folder');
+      cwdEl.createSpan({ text: thread.cwd || os.homedir() });
+      empty.createEl('p', { cls: 'ct-empty-hint', text: 'Enter to send · Shift+Enter for newline' });
       return;
     }
 
@@ -565,7 +576,7 @@ export class ThreadsView extends ItemView {
     const wrapper = parent.createDiv('ct-tools');
     for (const tool of tools) {
       const pill = wrapper.createDiv('ct-tool-pill');
-      pill.createSpan({ text: '⚙ ' });
+      pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
       pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
   }
@@ -592,6 +603,8 @@ export class ThreadsView extends ItemView {
     const content = this.streamingContent;
     this.streamingContentEl.empty();
     this.streamingContentEl.appendChild(sanitizeHTMLToDom(await marked.parse(content)));
+    // Keep cursor inside the bubble after each re-render
+    this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
     this.scrollToBottom();
   }
 
@@ -625,12 +638,13 @@ export class ThreadsView extends ItemView {
         if (this.streamingEl) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
-          const icon = document.createElement('span');
-          icon.textContent = '⚙ ';
+          const badge = document.createElement('span');
+          badge.className = 'ct-tool-pill-name';
+          badge.textContent = event.record.name.toLowerCase();
           const label = document.createElement('span');
           label.className = 'ct-tool-pill-text';
           label.textContent = event.record.summary;
-          pill.append(icon, label);
+          pill.append(badge, label);
           this.streamingEl.prepend(pill);
         }
         break;
@@ -716,12 +730,13 @@ export class ThreadsView extends ItemView {
         if (!this.streamingEl) this.createStreamingEl();
         const taskPill = document.createElement('div');
         taskPill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
-        const taskIcon = document.createElement('span');
-        taskIcon.textContent = '⊕ ';
+        const taskBadge = document.createElement('span');
+        taskBadge.className = 'ct-tool-pill-name';
+        taskBadge.textContent = 'task';
         const taskLabel = document.createElement('span');
         taskLabel.className = 'ct-tool-pill-text';
         taskLabel.textContent = event.description;
-        taskPill.append(taskIcon, taskLabel);
+        taskPill.append(taskBadge, taskLabel);
         this.streamingEl!.prepend(taskPill);
         this.taskPills.set(event.taskId, taskPill);
         break;
@@ -747,10 +762,10 @@ export class ThreadsView extends ItemView {
           const label = notifPill.querySelector('.ct-tool-pill-text');
           if (event.status === 'completed') {
             notifPill.classList.add('ct-task-done');
-            if (icon) icon.textContent = '✓ ';
+            if (icon) (icon as HTMLElement).textContent = '✓ ';
           } else {
             notifPill.classList.add('ct-task-failed');
-            if (icon) icon.textContent = '✗ ';
+            if (icon) (icon as HTMLElement).textContent = '✗ ';
           }
           if (label) label.textContent = event.summary;
           this.taskPills.delete(event.taskId);

@@ -23,15 +23,25 @@ if (fs.existsSync(envLocalPath)) {
 
 const pluginDir = process.env.OBSIDIAN_PLUGIN_DIR;
 
+// Additional vaults to sync to (real copies, not symlinks)
+const extraVaults = [
+  path.join(process.env.HOME, 'Documents/Personal/.obsidian/plugins/claude-threads'),
+  path.join(process.env.HOME, 'projects/PluginTesting/.obsidian/plugins/claude-threads'),
+];
+
 if (!fs.existsSync(outdir)) fs.mkdirSync(outdir, { recursive: true });
 
 function copyToObsidian() {
-  if (!pluginDir) return;
-  for (const file of ['main.js', 'styles.css', 'manifest.json']) {
-    const src = path.join(outdir, file);
-    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(pluginDir, file));
+  const dirs = [];
+  if (pluginDir) dirs.push(pluginDir);
+  for (const v of extraVaults) if (fs.existsSync(v)) dirs.push(v);
+  for (const dir of dirs) {
+    for (const file of ['main.js', 'styles.css', 'manifest.json']) {
+      const src = path.join(outdir, file);
+      if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, file));
+    }
+    console.log(`Copied to ${dir}`);
   }
-  console.log(`Copied to ${pluginDir}`);
 }
 
 const syncPlugin = {
