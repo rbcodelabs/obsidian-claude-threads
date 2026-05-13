@@ -13,6 +13,7 @@ export interface SessionCallbacks {
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
   onStatus?: (status: 'compacting' | 'requesting' | null) => void;
+  onCompact?: (trigger: 'auto' | 'manual', preTokens: number) => void;
   onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean) => void;
   onTaskProgress?: (taskId: string, description: string, lastToolName?: string) => void;
   onTaskNotification?: (taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) => void;
@@ -190,6 +191,11 @@ export class ClaudeSession {
               case 'status':
                 callbacks.onStatus?.(sys.status as 'compacting' | 'requesting' | null);
                 break;
+              case 'compact_boundary': {
+                const meta = sys.compact_metadata as { trigger: 'auto' | 'manual'; pre_tokens: number } | undefined;
+                callbacks.onCompact?.(meta?.trigger ?? 'auto', meta?.pre_tokens ?? 0);
+                break;
+              }
               case 'task_started':
                 callbacks.onTaskStarted?.(
                   sys.task_id as string,

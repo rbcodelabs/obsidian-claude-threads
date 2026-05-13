@@ -15,6 +15,7 @@ export type ThreadEvent =
   | { type: 'queued'; text: string }
   | { type: 'dequeued'; text: string }
   | { type: 'status'; status: 'compacting' | 'requesting' | null }
+  | { type: 'compact'; message: ChatMessage }
   | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
   | { type: 'task_progress'; taskId: string; description: string; lastToolName?: string }
   | { type: 'task_notification'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
@@ -227,6 +228,19 @@ export class ThreadManager {
         onAskUserQuestion: (questions) => this.questionHandler(questions),
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
+        onCompact: (trigger, preTokens) => {
+          const compactMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'compact',
+            content: '',
+            timestamp: Date.now(),
+            compactTrigger: trigger,
+            preTokens,
+          };
+          thread.messages.push(compactMsg);
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'compact', message: compactMsg });
+        },
         onTaskStarted: (taskId, description, skipTranscript) => {
           this.threadActivity.set(threadId, description);
           this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript });
