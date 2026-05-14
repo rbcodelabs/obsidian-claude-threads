@@ -33,6 +33,10 @@ export class ThreadsView extends ItemView {
   private stopBtn!: HTMLButtonElement;
   private moreBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
+  private editedFilesEl!: HTMLElement;
+
+  // Files edited in the active thread (rebuilt on thread switch, updated live)
+  private editedFilesSet: Set<string> = new Set();
 
   // Pending paste attachments
   private pendingAttachment: string | null = null;
@@ -231,6 +235,7 @@ export class ThreadsView extends ItemView {
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
     this.statusBar = this.mainEl.createDiv('ct-status-bar');
+    this.editedFilesEl = this.mainEl.createDiv('ct-edited-files ct-hidden');
 
     this.inputRowEl = this.mainEl.createDiv('ct-input-row');
     this.pasteChipsEl = this.inputRowEl.createDiv('ct-paste-chips ct-hidden');
@@ -429,6 +434,70 @@ export class ThreadsView extends ItemView {
     this.renderMessages();
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
+    this.syncEditedFiles();
+  }
+
+  /** Rebuild the edited-files set from saved message history for the active thread. */
+  private syncEditedFiles(): void {
+    this.editedFilesSet.clear();
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    if (thread) {
+      for (const msg of thread.messages) {
+        for (const tool of msg.toolCalls ?? []) {
+          if (tool.name === 'Write' || tool.name === 'Edit') {
+            const filePath = tool.summary.replace(/^[^:]+: /, '');
+            if (filePath) this.editedFilesSet.add(filePath);
+          }
+        }
+      }
+    }
+    this.renderEditedFilesCard();
+  }
+
+  /** Render (or hide) the edited-files card below the chat area. */
+  private renderEditedFilesCard(): void {
+    this.editedFilesEl.empty();
+    if (this.editedFilesSet.size === 0) {
+      this.editedFilesEl.addClass('ct-hidden');
+      return;
+    }
+    this.editedFilesEl.removeClass('ct-hidden');
+
+    const header = this.editedFilesEl.createDiv('ct-edited-files-header');
+    const iconEl = header.createSpan('ct-edited-files-icon');
+    setIcon(iconEl, 'file-edit');
+    header.createSpan({ text: 'Files edited' });
+
+    const list = this.editedFilesEl.createDiv('ct-edited-files-list');
+    for (const filePath of this.editedFilesSet) {
+      const chip = list.createDiv({ cls: 'ct-edited-file-chip', attr: { title: filePath } });
+      const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
+      setIcon(fileIcon, 'file');
+      chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      chip.addEventListener('click', () => this.openEditedFile(filePath));
+    }
+  }
+
+  /** Open a file path — vault files open inside Obsidian, others via the OS. */
+  private async openEditedFile(filePath: string): Promise<void> {
+    try {
+      const adapter = this.app.vault.adapter as { basePath?: string };
+      const vaultBase = adapter.basePath ?? '';
+      if (vaultBase && filePath.startsWith(vaultBase + path.sep)) {
+        const rel = filePath.slice(vaultBase.length + 1);
+        const file = this.app.vault.getAbstractFileByPath(rel);
+        if (file) {
+          const leaf = this.app.workspace.getLeaf(false);
+          await (leaf as any).openFile(file);
+          return;
+        }
+      }
+      // Non-vault file — open with the OS default application
+      const { shell } = require('electron') as { shell: { openPath: (p: string) => Promise<string> } };
+      await shell.openPath(filePath);
+    } catch (err) {
+      new Notice(`Could not open file: ${(err as Error).message}`);
+    }
   }
 
   private updateProjectIndicator(): void {
@@ -530,6 +599,7 @@ export class ThreadsView extends ItemView {
   private createStreamingEl(): void {
     this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
     this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
+    this.streamingContentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
     this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
   }
 
@@ -677,6 +747,13 @@ export class ThreadsView extends ItemView {
           label.textContent = event.record.summary;
           pill.append(badge, label);
           this.streamingEl.prepend(pill);
+        }
+        if (event.record.name === 'Write' || event.record.name === 'Edit') {
+          const filePath = event.record.summary.replace(/^[^:]+: /, '');
+          if (filePath) {
+            this.editedFilesSet.add(filePath);
+            this.renderEditedFilesCard();
+          }
         }
         break;
       }

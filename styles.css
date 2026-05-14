@@ -563,6 +563,14 @@
   min-height: 32px;
 }
 
+/* "Claude is thinking " label shown before first token arrives */
+.ct-thinking-label {
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 /* Slim animated cursor — replaces block blink */
 .ct-cursor {
   display: inline-block;
@@ -748,6 +756,80 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* Edited-files card */
+.ct-edited-files {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ct-edited-files-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.ct-edited-files-header .ct-edited-files-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.ct-edited-files-header .ct-edited-files-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ct-edited-files-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ct-edited-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+  max-width: 220px;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-edited-file-chip:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+  border-color: var(--interactive-accent);
+}
+
+.ct-edited-file-chip-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-edited-file-chip-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.ct-edited-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Input row */
