@@ -113,7 +113,15 @@ When the context window fills up, Claude compacts the conversation automatically
 
 ### Agent dashboard
 
-Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance — which are running, what they're working on, and their last activity. You can send messages to any thread from the dashboard without switching tabs.
+Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance. Each thread appears as a row showing its name, working directory, current model, and status.
+
+**Live activity (running threads):** While a thread is actively processing, the dashboard shows a live one-line summary of the current tool call or step — so you can see "Reading src/components/Header.tsx" or "Running npm test" without switching to that tab.
+
+**Auto-generated summaries (idle threads):** After each completed response, the summarizer runs in a lightweight background process (a separate Claude Code instance using a small model) and writes a multi-sentence recap of what that thread worked on. This summary is shown in the dashboard row so you can re-orient yourself to any thread at a glance — what it accomplished, what files it touched, what's left to do.
+
+This combination means you can dispatch several threads in parallel, switch to other work, then return to the dashboard to understand the state of every agent without reading through each conversation.
+
+You can also send messages to any thread directly from the dashboard without switching tabs.
 
 ### Permissions
 
