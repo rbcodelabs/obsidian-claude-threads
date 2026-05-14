@@ -8,6 +8,7 @@ export interface SessionCallbacks {
   onMessage: (content: string, toolCalls: ToolCallRecord[]) => void;
   onRecap: (summary: string) => void;
   onDone: (sessionId: string, cost: number, numTurns: number) => void;
+  onInterrupted: (sessionId: string) => void;
   onError: (err: Error) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
@@ -251,8 +252,8 @@ export class ClaudeSession {
       }
     } catch (err) {
       if (this.interrupted) {
-        // Clean cancellation — resume from the same session ID so context is preserved
-        callbacks.onDone(this.resumeSessionId ?? '', 0, 0);
+        // Clean cancellation — notify the manager so it can roll back the orphaned user message
+        callbacks.onInterrupted(this.resumeSessionId ?? '');
       } else {
         const e = err instanceof Error ? err : new Error(String(err));
         const zodIssues = (err as Record<string, unknown>).issues;
