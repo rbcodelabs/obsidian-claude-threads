@@ -226,6 +226,24 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
   return tpl.content;
 }
 
+export class Menu {
+  addItem(cb: (item: MenuItem) => void): this {
+    const item = new MenuItem();
+    cb(item);
+    return this;
+  }
+  addSeparator(): this { return this; }
+  showAtMouseEvent(_event: MouseEvent): void {}
+  showAtPosition(_pos: { x: number; y: number }): void {}
+}
+
+class MenuItem {
+  setTitle(_title: string): this { return this; }
+  setIcon(_icon: string): this { return this; }
+  onClick(cb: () => void): this { this._cb = cb; return this; }
+  private _cb?: () => void;
+}
+
 export class Notice {
   constructor(_msg: string, _duration?: number) {}
 }

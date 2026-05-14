@@ -267,7 +267,8 @@ export class AgentDashboard extends ItemView {
     const text = this.dispatchInput.value.trim();
     if (text.length < 2) return;
     this.dispatchInput.value = '';
-    await this.plugin.dispatchNewThread(text);
+    const threadId = await this.plugin.dispatchNewThread(text);
+    await this.plugin.openThreadInChatView(threadId);
     this.render();
   }
 }
