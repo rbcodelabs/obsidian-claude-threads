@@ -476,6 +476,13 @@ export class ThreadsView extends ItemView {
     setIcon(iconEl, 'file-edit');
     header.createSpan({ text: 'Files edited' });
 
+    const focusBtn = header.createEl('button', {
+      cls: 'ct-focus-files-btn',
+      attr: { title: 'Open only these files (close other tabs)' },
+    });
+    setIcon(focusBtn, 'focus');
+    focusBtn.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
+
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
     for (const filePath of this.editedFilesSet) {
       const chip = list.createDiv({ cls: 'ct-edited-file-chip', attr: { title: filePath } });
@@ -484,6 +491,42 @@ export class ThreadsView extends ItemView {
       chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
+  }
+
+  /** Close all markdown tabs and reopen only the files edited in this thread. */
+  private async focusEditedFiles(): Promise<void> {
+    const workspace = this.app.workspace;
+    const adapter = this.app.vault.adapter as { basePath?: string };
+    const vaultBase = adapter.basePath ?? '';
+
+    const relPaths: string[] = [];
+    for (const filePath of this.editedFilesSet) {
+      if (vaultBase && filePath.startsWith(vaultBase + path.sep)) {
+        relPaths.push(filePath.slice(vaultBase.length + 1));
+      }
+    }
+
+    if (relPaths.length === 0) {
+      new Notice('No vault files to focus.');
+      return;
+    }
+
+    // Close all existing markdown leaves
+    const leavesToDetach: any[] = [];
+    workspace.iterateAllLeaves((leaf: any) => {
+      if (leaf.view?.getViewType() === 'markdown') leavesToDetach.push(leaf);
+    });
+    for (const leaf of leavesToDetach) leaf.detach();
+
+    // Open each file in a new tab
+    for (let i = 0; i < relPaths.length; i++) {
+      const file = this.app.vault.getAbstractFileByPath(relPaths[i]);
+      if (!file) continue;
+      const leaf = workspace.getLeaf(i === 0 ? false : 'tab');
+      await (leaf as any).openFile(file);
+    }
+
+    new Notice(`Focused ${relPaths.length} file${relPaths.length === 1 ? '' : 's'}`);
   }
 
   /** Open a file path — vault files open inside Obsidian, others via the OS. */
