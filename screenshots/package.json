@@ -6,8 +6,9 @@
     "studio": "remotion studio src/index.ts",
     "shot:main":   "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-main.png --frame=0",
     "shot:slash":  "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-slash-commands.png --frame=60",
-    "shot:stream": "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-streaming.png --frame=120",
-    "shots": "npm run shot:main && npm run shot:slash && npm run shot:stream"
+    "shot:stream":      "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-streaming.png --frame=120",
+    "shot:permission":  "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-permission.png --frame=180",
+    "shots": "npm run shot:main && npm run shot:slash && npm run shot:stream && npm run shot:permission"
   },
   "dependencies": {
     "@remotion/cli": "4.0.252",

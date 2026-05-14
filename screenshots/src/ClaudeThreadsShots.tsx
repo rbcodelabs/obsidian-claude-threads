@@ -827,6 +827,137 @@ function AgentDashboard({ scene }: { scene: number }) {
   )
 }
 
+// ─── Scene 4: CT panel background for permission scene ───────────────────────
+function CTPanel_Permission() {
+  return (
+    <div style={{
+      width: CT_W, background: CT_BG, height: '100%',
+      display: 'flex', flexDirection: 'column',
+      borderRight: `1px solid ${CT_BORDER}`,
+    }}>
+      <CTTabBar activeIdx={0} />
+      <div style={{
+        padding: '5px 12px', background: CT_CARD,
+        borderBottom: `1px solid ${CT_BORDER}`,
+        fontFamily: SANS, fontSize: 11.5, color: CT_MUTED,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={CT_MUTED} strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+        <span>Refactoring permission handler</span>
+        <div style={{ marginLeft: 'auto' }}>
+          <span style={{
+            fontFamily: MONO, fontSize: 10.5,
+            background: 'rgba(88,166,255,0.12)', border: `1px solid rgba(88,166,255,0.2)`,
+            borderRadius: 4, padding: '1px 6px', color: CT_BLUE,
+          }}>sonnet</span>
+        </div>
+      </div>
+      <div style={{ flex: 1, padding: '14px 12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <CTMessage role="user" content="Can you refactor the permission handler to support per-tool allowlist entries and persist them across restarts?" />
+        <CTMessage
+          role="assistant"
+          toolCalls={[
+            { icon: '📖', text: 'Read: src/ThreadsView.ts' },
+            { icon: '📖', text: 'Read: src/types.ts' },
+          ]}
+          content="Got it — I'll add a per-tool allowlist to the settings schema and wire it into the handler. Updating ThreadsView.ts now."
+        />
+        {/* Pending tool call row — Claude is waiting for permission */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '5px 9px', background: 'rgba(234,146,138,0.07)',
+          borderRadius: 6, border: `1px solid rgba(234,146,138,0.2)`,
+          marginTop: 4,
+        }}>
+          <span style={{ fontSize: 11 }}>✏️</span>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: CW_ACCENT, flex: 1 }}>Edit: src/ThreadsView.ts</span>
+          <span style={{ fontFamily: SANS, fontSize: 10, color: CW_ACCENT, opacity: 0.8 }}>waiting…</span>
+        </div>
+      </div>
+      <CTInputBar />
+    </div>
+  )
+}
+
+// ─── Obsidian permission modal overlay ───────────────────────────────────────
+const CW_MODAL_BG      = '#303030'   // --background-primary-alt (dark)
+const CW_BTN_NORMAL    = '#343533'   // --interactive-normal
+const CW_DANGER_BG     = 'rgba(234,146,138,0.12)'
+const CW_DANGER_BORDER = 'rgba(234,146,138,0.35)'
+const CW_DANGER_TEXT   = '#f2a29a'   // --text-error
+
+function PermissionModal() {
+  const btnBase: React.CSSProperties = {
+    fontFamily: SANS, fontSize: 13.5, fontWeight: 500,
+    padding: '7px 16px', borderRadius: 8,
+    border: 'none', cursor: 'pointer',
+  }
+  return (
+    /* Full-content overlay — sits on top of the 3-panel layout */
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 100,
+    }}>
+      <div style={{
+        background: CW_MODAL_BG,
+        border: `1px solid ${CW_BORDER}`,
+        borderRadius: 16,
+        boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
+        padding: '24px 28px 20px',
+        width: 420,
+        display: 'flex', flexDirection: 'column', gap: 0,
+      }}>
+        {/* Title — tool name */}
+        <div style={{
+          fontFamily: SANS, fontSize: 17, fontWeight: 600,
+          color: CW_TEXT, marginBottom: 10,
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 18 }}>✏️</span>
+          str_replace_editor
+        </div>
+
+        {/* Detail */}
+        <div style={{
+          fontFamily: SANS, fontSize: 13.5, color: CW_TEXT_MUTED,
+          lineHeight: 1.55, marginBottom: 20,
+        }}>
+          Claude wants to edit{' '}
+          <code style={{
+            fontFamily: MONO, fontSize: 12.5,
+            background: 'rgba(229,229,226,0.08)', padding: '1px 6px',
+            borderRadius: 4, color: CW_TEXT,
+          }}>src/ThreadsView.ts</code>
+          {' '}— update the permission handler to support per-tool allowlist entries (lines 100–125).
+        </div>
+
+        {/* Button row */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button style={{
+            ...btnBase,
+            background: CW_DANGER_BG,
+            border: `1px solid ${CW_DANGER_BORDER}`,
+            color: CW_DANGER_TEXT,
+          }}>Deny</button>
+          <button style={{
+            ...btnBase,
+            background: CW_BTN_NORMAL,
+            border: `1px solid ${CW_BORDER}`,
+            color: CW_TEXT,
+          }}>Allow</button>
+          <button style={{
+            ...btnBase,
+            background: CW_ACCENT,
+            color: CW_ON_ACCENT,
+          }}>Always Allow</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Layout constants for floating window ────────────────────────────────────
 const MARGIN  = 28                       // desktop padding around window
 const WIN_W   = 1920 - MARGIN * 2       // 1864
@@ -836,19 +967,23 @@ const SCALE   = 1.25                    // zoom: content × 1.25 fills window ex
 // ─── Main composition ─────────────────────────────────────────────────────────
 export function ClaudeThreadsShots() {
   const frame = useCurrentFrame()
-  const scene = frame < 60 ? 0 : frame < 120 ? 1 : 2
+  const scene = frame < 60 ? 0 : frame < 120 ? 1 : frame < 180 ? 2 : 3
 
   const ctPanel = scene === 0
     ? <CTPanel_Main />
     : scene === 1
     ? <CTPanel_Slash />
-    : <CTPanel_Stream />
+    : scene === 2
+    ? <CTPanel_Stream />
+    : <CTPanel_Permission />
 
   const editorTitle = scene === 0
     ? 'claude-threads-spec'
     : scene === 1
     ? 'HipTrip-user-interviews.md'
-    : 'claude-threads-reddit-marketing'
+    : scene === 2
+    ? 'claude-threads-reddit-marketing'
+    : 'ThreadsView.ts'
 
   return (
     <AbsoluteFill style={{
@@ -872,6 +1007,7 @@ export function ClaudeThreadsShots() {
           width: W, height: H,
           zoom: SCALE,
           display: 'flex', flexDirection: 'column',
+          position: 'relative',
         }}>
           <TitleBar />
           <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
@@ -880,6 +1016,8 @@ export function ClaudeThreadsShots() {
             <AgentDashboard scene={scene} />
           </div>
           <StatusBar />
+          {/* Permission modal overlay — scene 3 only */}
+          {scene === 3 && <PermissionModal />}
         </div>
       </div>
     </AbsoluteFill>
