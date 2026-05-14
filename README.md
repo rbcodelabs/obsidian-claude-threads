@@ -5,13 +5,15 @@ A native Obsidian sidebar plugin for running multiple Claude Code sessions in pa
 ![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.1.31-blue)
 
 <p align="center">
-  <img src="docs/screenshot-main.png" width="380" alt="Main view showing a conversation with code blocks and multiple tabs" />
+  <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-slash-commands.png" width="380" alt="Slash command autocomplete showing installed skills" />
-  &nbsp;&nbsp;
-  <img src="docs/screenshot-permission.png" width="380" alt="Permission dialog for file writes" />
+  <img src="docs/screenshot-slash-commands.png" width="800" alt="Slash command autocomplete showing installed skills from ~/.claude/skills/" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshot-streaming.png" width="800" alt="Streaming response with live tool call visibility" />
 </p>
 
 ## What it does
