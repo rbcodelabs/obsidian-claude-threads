@@ -212,12 +212,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
-  async dispatchNewThread(text: string): Promise<void> {
+  async dispatchNewThread(text: string): Promise<string> {
     const title = text.slice(0, 50).split('\n')[0].trim() || 'New Thread';
     const thread = this.manager.createThread(title, this.getEffectiveCwd());
     await this.saveSettings();
     // Fire and forget — dashboard will show the running row via subscription
     this.manager.sendMessage(thread.id, text).catch(console.error);
+    return thread.id;
   }
 
   getActiveThreadId(): string | null {

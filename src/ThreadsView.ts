@@ -45,6 +45,11 @@ export class ThreadsView extends ItemView {
   private projectIndicatorEl!: HTMLElement;
 
   // Slash command autocomplete
+  // Tab overflow / new-thread button (combined)
+  private newThreadBtn!: HTMLButtonElement;
+  private threadAccessTimes: Map<string, number> = new Map();
+  private static readonly MAX_VISIBLE_TABS = 4;
+
   private skills: { name: string; description: string }[] = [];
   private skillDropdown: HTMLElement | null = null;
   private skillDropdownItems: { name: string; description: string }[] = [];
@@ -182,7 +187,12 @@ export class ThreadsView extends ItemView {
 
     const threads = this.manager.getThreads();
     if (threads.length > 0) {
-      this.setActiveThread(threads[0].id);
+      // Respect a pre-set activeThreadId (e.g. focusThread called before buildUI in a race),
+      // otherwise default to the most recently created thread rather than the oldest.
+      const targetId = (this.activeThreadId && this.manager.getThread(this.activeThreadId))
+        ? this.activeThreadId
+        : threads[threads.length - 1].id;
+      this.setActiveThread(targetId);
     } else {
       const thread = this.manager.createThread('Thread 1', this.plugin.getEffectiveCwd());
       await this.plugin.saveSettings();
@@ -205,9 +215,8 @@ export class ThreadsView extends ItemView {
 
     const tabRow = root.createDiv('ct-tab-row');
     this.tabBar = tabRow.createDiv('ct-tab-bar');
-    // No wheel-scroll listener — tabs compress rather than scroll (native Obsidian behavior)
-    const newBtn = tabRow.createEl('button', { cls: 'ct-tab-new', text: '+', attr: { title: 'New thread' } });
-    newBtn.addEventListener('click', (e) => this.openNewThread(e));
+    this.newThreadBtn = tabRow.createEl('button', { cls: 'ct-tab-new', text: '+', attr: { title: 'New thread' } });
+    this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
     this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
@@ -224,17 +233,18 @@ export class ThreadsView extends ItemView {
       cls: 'ct-input',
       attr: { placeholder: 'Message Claude... (Enter to send, Shift+Enter for newline)' },
     });
-    this.sendBtn = inputControls.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
-    this.stopBtn = inputControls.createEl('button', {
+    const inputActions = inputControls.createDiv('ct-input-actions');
+    this.sendBtn = inputActions.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
+    this.stopBtn = inputActions.createEl('button', {
       cls: 'ct-stop-btn ct-hidden',
       text: '■',
       attr: { title: 'Stop' },
     });
-    this.moreBtn = inputControls.createEl('button', {
+    this.moreBtn = inputActions.createEl('button', {
       cls: 'ct-more-btn',
       attr: { title: 'More actions' },
     });
-    setIcon(this.moreBtn, 'more-horizontal');
+    setIcon(this.moreBtn, 'menu');
     this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
 
     this.inputEl.addEventListener('keydown', (e) => {
@@ -311,32 +321,79 @@ export class ThreadsView extends ItemView {
     this.tabBar.empty();
     const threads = this.manager.getThreads();
 
-    for (const thread of threads) {
-      const tab = this.tabBar.createEl('button', {
-        cls: `ct-tab ${thread.id === this.activeThreadId ? 'ct-tab-active' : ''}`,
-      });
+    const { visible, hidden } = this.computeTabOverflow(threads);
 
-      const label = tab.createSpan({ cls: 'ct-tab-label', text: thread.title });
-
-      label.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        this.renameThread(thread.id, label);
-      });
-
-      tab.addEventListener('click', () => this.setActiveThread(thread.id));
-
-      const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×', attr: { title: 'Close thread' } });
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.closeThread(thread.id);
-      });
-
-      if (thread.id === this.activeThreadId) {
-        requestAnimationFrame(() => tab.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
-      }
+    for (const thread of visible) {
+      this.renderSingleTab(thread);
     }
 
+    // When threads overflow, show a count badge and accent colour on the button
+    if (hidden.length > 0) {
+      this.newThreadBtn.textContent = `+${hidden.length}`;
+      this.newThreadBtn.setAttribute('title', `${hidden.length} hidden thread${hidden.length > 1 ? 's' : ''} · click for all options`);
+      this.newThreadBtn.addClass('ct-has-overflow');
+    } else {
+      this.newThreadBtn.textContent = '+';
+      this.newThreadBtn.setAttribute('title', 'New thread');
+      this.newThreadBtn.removeClass('ct-has-overflow');
+    }
   }
+
+  /** Splits threads into visible (tab bar) and hidden (overflow menu), preserving creation
+   *  order for visible tabs so positions stay stable as you switch between threads. */
+  private computeTabOverflow(threads: Thread[]): { visible: Thread[]; hidden: Thread[] } {
+    if (threads.length <= ThreadsView.MAX_VISIBLE_TABS) {
+      return { visible: threads, hidden: [] };
+    }
+
+    // Rank by recency: max of last-message time and last-accessed time
+    const byRecency = [...threads].sort(
+      (a, b) => this.getThreadRecency(b) - this.getThreadRecency(a),
+    );
+
+    // Active thread always gets a slot; fill remaining slots with most-recent others
+    const active = byRecency.find(t => t.id === this.activeThreadId);
+    const others = byRecency.filter(t => t.id !== this.activeThreadId);
+    const slotsForOthers = ThreadsView.MAX_VISIBLE_TABS - (active ? 1 : 0);
+
+    const visibleIds = new Set([
+      ...(active ? [active.id] : []),
+      ...others.slice(0, slotsForOthers).map(t => t.id),
+    ]);
+
+    // Visible tabs stay in their original creation order (stable positions)
+    const visible = threads.filter(t => visibleIds.has(t.id));
+    // Overflow menu shows most-recently-active threads first
+    const hidden = others.slice(slotsForOthers);
+
+    return { visible, hidden };
+  }
+
+  private getThreadRecency(thread: Thread): number {
+    return Math.max(thread.updatedAt, this.threadAccessTimes.get(thread.id) ?? 0);
+  }
+
+  private renderSingleTab(thread: Thread): void {
+    const tab = this.tabBar.createEl('button', {
+      cls: `ct-tab ${thread.id === this.activeThreadId ? 'ct-tab-active' : ''}`,
+    });
+
+    const label = tab.createSpan({ cls: 'ct-tab-label', text: thread.title });
+
+    label.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      this.renameThread(thread.id, label);
+    });
+
+    tab.addEventListener('click', () => this.setActiveThread(thread.id));
+
+    const closeBtn = tab.createEl('button', { cls: 'ct-tab-close', text: '×', attr: { title: 'Close thread' } });
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeThread(thread.id);
+    });
+  }
+
 
   focusThread(id: string): void {
     this.setActiveThread(id);
@@ -355,6 +412,8 @@ export class ThreadsView extends ItemView {
 
   private setActiveThread(id: string): void {
     this.activeThreadId = id;
+    this.threadAccessTimes.set(id, Date.now());
+    if (!this.tabBar) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTabs();
     this.renderThreadInfo();
@@ -394,18 +453,16 @@ export class ThreadsView extends ItemView {
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
-    const menu = new Menu();
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    if (!thread) return;
 
-    if (this.plugin.settings.summarizationEnabled && thread && thread.messages.length > 0) {
-      menu.addItem(item =>
-        item
-          .setTitle('Summarize thread')
-          .setIcon('brain-circuit')
-          .onClick(() => this.summarizeThread(thread.id))
-      );
-    }
-
+    const menu = new Menu();
+    menu.addItem(item =>
+      item
+        .setTitle('Summarize thread')
+        .setIcon('brain-circuit')
+        .onClick(() => this.summarizeThread(thread.id))
+    );
     menu.showAtMouseEvent(event);
   }
 
@@ -445,7 +502,7 @@ export class ThreadsView extends ItemView {
       await this.plugin.saveSettings();
       this.statusBar.setText('');
       this.moreBtn.removeClass('ct-summarize-spinning');
-      setIcon(this.moreBtn, 'more-horizontal');
+      setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
       this.renderTabs();
       this.renderThreadInfo();
@@ -455,7 +512,7 @@ export class ThreadsView extends ItemView {
       console.error('[Claude Threads] summarize error:', err);
       this.statusBar.setText('');
       this.moreBtn.removeClass('ct-summarize-spinning');
-      setIcon(this.moreBtn, 'more-horizontal');
+      setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
       new Notice(`Summarization failed: ${(err as Error).message}`, 8000);
     }
@@ -946,27 +1003,50 @@ export class ThreadsView extends ItemView {
   }
 
   async openNewThread(event?: MouseEvent): Promise<void> {
+    const threads = this.manager.getThreads();
+    const { hidden } = this.computeTabOverflow(threads);
     const projects = this.manager.getProjects();
 
-    if (projects.length === 0) {
+    // Nothing to put in a menu — create directly
+    if (hidden.length === 0 && projects.length === 0) {
       await this.createThreadWithProject(null);
       return;
     }
 
     const menu = new Menu();
+
+    // Overflow threads at the top, most-recently-active first
+    if (hidden.length > 0) {
+      for (const thread of hidden) {
+        menu.addItem(item =>
+          item
+            .setTitle(thread.title)
+            .setIcon(this.manager.isRunning(thread.id) ? 'loader' : 'message-square')
+            .onClick(() => this.setActiveThread(thread.id)),
+        );
+      }
+      menu.addSeparator();
+    }
+
+    // New chat — no project
     menu.addItem(item =>
-      item.setTitle('No project')
-        .setIcon('home')
+      item.setTitle('New chat')
+        .setIcon('square-pen')
         .onClick(() => this.createThreadWithProject(null)),
     );
-    menu.addSeparator();
-    for (const project of projects) {
-      menu.addItem(item =>
-        item.setTitle(project.name)
-          .setIcon('folder')
-          .onClick(() => this.createThreadWithProject(project.id)),
-      );
+
+    // New chat — per project
+    if (projects.length > 0) {
+      menu.addSeparator();
+      for (const project of projects) {
+        menu.addItem(item =>
+          item.setTitle(project.name)
+            .setIcon('folder')
+            .onClick(() => this.createThreadWithProject(project.id)),
+        );
+      }
     }
+
     if (event) menu.showAtMouseEvent(event);
     else menu.showAtPosition({ x: 0, y: 0 });
   }
