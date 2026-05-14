@@ -6,7 +6,7 @@ import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
 import { WakeLockService } from './WakeLockService';
-import { type PluginSettings, DEFAULT_SETTINGS, type Project } from './types';
+import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity } from './types';
 import fs from 'fs';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
@@ -222,7 +222,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return this.getView()?.getActiveThreadId() ?? null;
   }
 
-  private getView(): ThreadsView | null {
+  getView(): ThreadsView | null {
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     return leaf?.view instanceof ThreadsView ? leaf.view : null;
   }
@@ -257,7 +257,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
   private renderProjectRow(container: HTMLElement, project: Project, refresh: () => void): void {
     const row = new Setting(container)
       .setName(project.name)
-      .setDesc(`📁 ${project.vaultFolder}${project.description ? ' — ' + project.description : ''}`);
+      .setDesc(`📁 ${project.vaultFolder}`);
 
     row.addText((text) =>
       text
@@ -281,12 +281,43 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           refresh();
         }),
     );
+
+    new Setting(container)
+      .setName('Project context')
+      .setDesc('Injected into Claude\'s system prompt for every message in this project.')
+      .addTextArea((area) => {
+        area
+          .setPlaceholder('Describe this project: goals, conventions, key files, anything Claude should always know…')
+          .setValue(project.description ?? '')
+          .onChange(async (val) => {
+            this.plugin.manager.updateProject(project.id, { description: val });
+            await this.plugin.saveSettings();
+          });
+        area.inputEl.rows = 4;
+        area.inputEl.style.width = '100%';
+      });
   }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Claude Threads Settings' });
+
+    new Setting(containerEl)
+      .setName('Layout density')
+      .setDesc('Controls how compact or spacious the conversation view feels.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('compact', 'Compact')
+          .addOption('comfortable', 'Comfortable (default)')
+          .addOption('spacious', 'Spacious')
+          .setValue(this.plugin.settings.layoutDensity ?? 'comfortable')
+          .onChange(async (value) => {
+            this.plugin.settings.layoutDensity = value as LayoutDensity;
+            await this.plugin.saveSettings();
+            this.plugin.getView()?.applyDensity();
+          }),
+      );
 
     new Setting(containerEl)
       .setName('Keep computer awake during active sessions')
