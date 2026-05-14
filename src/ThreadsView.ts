@@ -86,6 +86,8 @@ export class ThreadsView extends ItemView {
     this.buildUI();
 
     this.manager.permissionHandler = (toolName, detail) => {
+      // First-party Obsidian MCP tools are always trusted — no prompt needed.
+      if (toolName.startsWith('obsidian_')) return Promise.resolve(true);
       if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
       return new Promise((resolve) => {
         let resolved = false;

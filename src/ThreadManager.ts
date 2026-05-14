@@ -1,5 +1,6 @@
 import { ClaudeSession } from './ClaudeSession';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project } from './types';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -34,6 +35,7 @@ export class ThreadManager {
   private threadActivity: Map<string, string> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
+  mcpServers: Record<string, McpServerConfig> | undefined = undefined;
   permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -334,6 +336,7 @@ export class ThreadManager {
       model,
       images,
       appendSystemPrompt,
+      this.mcpServers,
     );
 
     if (completedSuccessfully) {
