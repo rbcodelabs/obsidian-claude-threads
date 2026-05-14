@@ -437,16 +437,24 @@ export class ThreadsView extends ItemView {
     this.syncEditedFiles();
   }
 
-  /** Rebuild the edited-files set from saved message history for the active thread. */
+  /** Rebuild the edited-files set from saved thread state for the active thread. */
   private syncEditedFiles(): void {
     this.editedFilesSet.clear();
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     if (thread) {
-      for (const msg of thread.messages) {
-        for (const tool of msg.toolCalls ?? []) {
-          if (tool.name === 'Write' || tool.name === 'Edit') {
-            const filePath = tool.summary.replace(/^[^:]+: /, '');
-            if (filePath) this.editedFilesSet.add(filePath);
+      if (thread.editedFiles && thread.editedFiles.length > 0) {
+        // Preferred path: dedicated field populated by ThreadManager on every tool use.
+        for (const filePath of thread.editedFiles) {
+          this.editedFilesSet.add(filePath);
+        }
+      } else {
+        // Fallback for older threads that were saved before editedFiles was introduced.
+        for (const msg of thread.messages) {
+          for (const tool of msg.toolCalls ?? []) {
+            if (tool.name === 'Write' || tool.name === 'Edit') {
+              const filePath = tool.summary.replace(/^[^:]+: /, '');
+              if (filePath) this.editedFilesSet.add(filePath);
+            }
           }
         }
       }
@@ -961,9 +969,9 @@ export class ThreadsView extends ItemView {
     const queued = this.manager.getQueuedMessage(this.activeThreadId);
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
-      this.statusBar.setText(`Claude is thinking... · Queued: "${preview}"`);
+      this.statusBar.setText(`Queued: "${preview}"`);
     } else {
-      this.statusBar.setText('Claude is thinking...');
+      this.statusBar.setText('');
     }
   }
 

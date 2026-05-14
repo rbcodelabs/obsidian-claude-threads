@@ -53,6 +53,8 @@ export interface Thread {
   model?: string;
   projectId?: string;
   reviewed?: boolean;
+  /** Paths of files written or edited during this thread's lifetime. */
+  editedFiles?: string[];
 }
 
 /**

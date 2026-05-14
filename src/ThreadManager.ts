@@ -262,6 +262,14 @@ export class ThreadManager {
         onToolUse: (record) => {
           pendingToolCalls.push(record);
           this.threadActivity.set(threadId, record.summary);
+          // Persist file paths for Write/Edit tools so they survive tab switches.
+          if (record.name === 'Write' || record.name === 'Edit') {
+            const filePath = record.summary.replace(/^[^:]+: /, '');
+            if (filePath) {
+              if (!thread.editedFiles) thread.editedFiles = [];
+              if (!thread.editedFiles.includes(filePath)) thread.editedFiles.push(filePath);
+            }
+          }
           this.emit(threadId, { type: 'tool_use', record });
         },
         onRecap: (summary) => {
