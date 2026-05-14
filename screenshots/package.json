@@ -1,0 +1,23 @@
+{
+  "name": "obsidian-claude-threads-screenshots",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "shot:main":   "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-main.png --frame=0",
+    "shot:slash":  "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-slash-commands.png --frame=60",
+    "shot:stream": "remotion still src/index.ts ClaudeThreadsShots ../docs/screenshot-streaming.png --frame=120",
+    "shots": "npm run shot:main && npm run shot:slash && npm run shot:stream"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.252",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "remotion": "4.0.252"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "typescript": "^5.0.0"
+  }
+}
