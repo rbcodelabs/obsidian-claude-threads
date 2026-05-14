@@ -1218,6 +1218,28 @@
   color: var(--text-muted);
 }
 
+.ct-agents-group-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.ct-agents-row-unreviewed {
+  border-left: 2px solid var(--interactive-accent);
+  padding-left: 6px;
+}
+
 .ct-agents-row {
   display: flex;
   align-items: flex-start;

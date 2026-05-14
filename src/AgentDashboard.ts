@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
@@ -93,6 +93,15 @@ export class AgentDashboard extends ItemView {
       this.setActiveRow(threadId);
       return;
     }
+    // When a thread finishes a new run, mark it unreviewed so it surfaces in "New"
+    if (event.type === 'done') {
+      const thread = this.manager.getThread(threadId);
+      if (thread) {
+        thread.reviewed = false;
+        this.plugin.saveSettings();
+      }
+    }
+
     const isStateChange =
       event.type === 'streaming_start' ||
       event.type === 'done' ||
@@ -150,21 +159,25 @@ export class AgentDashboard extends ItemView {
 
     const threads = this.manager.getThreads();
     const running: Thread[] = [];
-    const idle: Thread[] = [];
+    const unreviewed: Thread[] = [];
+    const reviewed: Thread[] = [];
     const errors: Thread[] = [];
     const empty: Thread[] = [];
 
     for (const t of threads) {
       if (this.manager.isRunning(t.id)) running.push(t);
       else if (t.lastError) errors.push(t);
-      else if (t.messages.length > 0) idle.push(t);
-      else empty.push(t);
+      else if (t.messages.length > 0) {
+        if (t.reviewed) reviewed.push(t);
+        else unreviewed.push(t);
+      } else empty.push(t);
     }
 
     // Sort each group by most recently updated first
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
     running.sort(byRecency);
-    idle.sort(byRecency);
+    unreviewed.sort(byRecency);
+    reviewed.sort(byRecency);
     errors.sort(byRecency);
     empty.sort(byRecency);
 
@@ -175,16 +188,21 @@ export class AgentDashboard extends ItemView {
     }
 
     if (running.length > 0) this.renderGroup('Working', running, 'running');
-    if (idle.length > 0) this.renderGroup('Completed', idle, 'idle');
+    if (unreviewed.length > 0) this.renderGroup('New', unreviewed, 'idle', unreviewed.length);
+    if (reviewed.length > 0) this.renderGroup('Reviewed', reviewed, 'idle');
     if (errors.length > 0) this.renderGroup('Failed', errors, 'error');
     if (empty.length > 0) this.renderGroup('Ready', empty, 'empty');
 
     this.updateHeader(threads.length, running.length);
   }
 
-  private renderGroup(label: string, threads: Thread[], state: RowState): void {
+  private renderGroup(label: string, threads: Thread[], state: RowState, badge?: number): void {
     const group = this.listEl.createDiv('ct-agents-group');
-    group.createDiv({ cls: 'ct-agents-group-label', text: label });
+    const labelEl = group.createDiv('ct-agents-group-label');
+    labelEl.createSpan({ text: label });
+    if (badge !== undefined) {
+      labelEl.createSpan({ cls: 'ct-agents-group-badge', text: String(badge) });
+    }
     for (const thread of threads) {
       this.renderRow(thread, state, group);
     }
@@ -192,8 +210,9 @@ export class AgentDashboard extends ItemView {
 
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
+    const isUnreviewed = state === 'idle' && !thread.reviewed;
     const row = parent.createDiv({
-      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}`,
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}`,
     });
     this.rowEls.set(thread.id, row);
 
@@ -220,7 +239,10 @@ export class AgentDashboard extends ItemView {
       meta.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
-    row.addEventListener('click', () => this.plugin.openThreadInChatView(thread.id));
+    row.addEventListener('click', () => {
+      if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
+      this.plugin.openThreadInChatView(thread.id);
+    });
   }
 
   private applyStateIcon(el: HTMLElement, state: RowState): void {
@@ -261,6 +283,29 @@ export class AgentDashboard extends ItemView {
     } else {
       this.headerCountEl.setText(`${total} thread${total !== 1 ? 's' : ''}`);
     }
+  }
+
+  private markReviewed(id: string): void {
+    const thread = this.manager.getThread(id);
+    if (!thread) return;
+    thread.reviewed = true;
+    this.plugin.saveSettings();
+    this.scheduleRender();
+  }
+
+  /** Open the most recently completed unreviewed thread and mark it reviewed.
+   *  Can be called repeatedly to triage through the queue. */
+  public jumpToLatestUnreviewed(): void {
+    const candidate = this.manager.getThreads()
+      .filter(t => !this.manager.isRunning(t.id) && !t.lastError && t.messages.length > 0 && !t.reviewed)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+
+    if (!candidate) {
+      new Notice('No unreviewed completed agents');
+      return;
+    }
+    this.markReviewed(candidate.id);
+    this.plugin.openThreadInChatView(candidate.id);
   }
 
   private async dispatch(): Promise<void> {

@@ -52,6 +52,7 @@ export interface Thread {
   lastError?: string;
   model?: string;
   projectId?: string;
+  reviewed?: boolean;
 }
 
 /**

@@ -140,6 +140,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
       });
     }
 
+    this.addCommand({
+      id: 'jump-to-latest-unreviewed',
+      name: 'Jump to latest unreviewed completed agent',
+      callback: () => {
+        const dashboard = this.getAgentDashboard();
+        if (dashboard) {
+          dashboard.jumpToLatestUnreviewed();
+        } else {
+          // Dashboard not open — open it then jump
+          this.activateAgentView().then(() => {
+            this.getAgentDashboard()?.jumpToLatestUnreviewed();
+          });
+        }
+      },
+    });
+
     // Settings tab
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
   }
