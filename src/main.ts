@@ -7,6 +7,7 @@ import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
 import { WakeLockService } from './WakeLockService';
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity } from './types';
+import { createObsidianMcpServer } from './ObsidianTools';
 import fs from 'fs';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
@@ -49,6 +50,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
+    this.manager.mcpServers = { obsidian: createObsidianMcpServer(this.app) };
     this.manager.vaultRoot = this.getEffectiveCwd();
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.summarizer = new SummarizationService();
@@ -225,6 +227,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
   getView(): ThreadsView | null {
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     return leaf?.view instanceof ThreadsView ? leaf.view : null;
+  }
+
+  getAgentDashboard(): AgentDashboard | null {
+    const leaf = this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
+    return leaf?.view instanceof AgentDashboard ? leaf.view : null;
   }
 
   async loadSettings(): Promise<void> {

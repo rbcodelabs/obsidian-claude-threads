@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
 import { marked } from 'marked';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
@@ -21,6 +21,7 @@ export class ThreadsView extends ItemView {
   private unsubscribe: (() => void) | null = null;
 
   // DOM refs
+  private rootEl!: HTMLElement;
   private tabBar!: HTMLElement;
   private threadInfoBar!: HTMLElement;
   private mainEl!: HTMLElement;
@@ -30,6 +31,7 @@ export class ThreadsView extends ItemView {
   private pasteChipsEl!: HTMLElement;
   private sendBtn!: HTMLButtonElement;
   private stopBtn!: HTMLButtonElement;
+  private moreBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
 
   // Pending paste attachments
@@ -39,9 +41,8 @@ export class ThreadsView extends ItemView {
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
-  // Project filtering
-  private activeProjectId: string | null = null;
-  private projectBar!: HTMLElement;
+  // Project indicator pill (near input)
+  private projectIndicatorEl!: HTMLElement;
 
   // Slash command autocomplete
   private skills: { name: string; description: string }[] = [];
@@ -86,6 +87,8 @@ export class ThreadsView extends ItemView {
     this.buildUI();
 
     this.manager.permissionHandler = (toolName, detail) => {
+      // First-party Obsidian MCP tools are always trusted — no prompt needed.
+      if (toolName.startsWith('obsidian_')) return Promise.resolve(true);
       if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
       return new Promise((resolve) => {
         let resolved = false;
@@ -162,15 +165,8 @@ export class ThreadsView extends ItemView {
       });
 
     this.manager.openNewTabHandler = async (title?: string, initialPrompt?: string) => {
-      let cwd = this.plugin.getEffectiveCwd();
-      let projectId: string | undefined;
-      if (this.activeProjectId) {
-        const project = this.manager.getProject(this.activeProjectId);
-        if (project) { cwd = this.manager.getProjectCwd(project); projectId = project.id; }
-      }
-      const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, cwd, projectId);
+      const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, this.plugin.getEffectiveCwd());
       await this.plugin.saveSettings();
-      this.renderProjectBar();
       this.setActiveThread(thread.id);
       if (initialPrompt) {
         this.inputEl.value = initialPrompt;
@@ -179,10 +175,6 @@ export class ThreadsView extends ItemView {
     };
 
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
-      // Keep project badge counts up to date
-      if (event.type === 'thread_created' || event.type === 'thread_deleted') {
-        this.renderProjectBar();
-      }
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
       }
@@ -197,7 +189,6 @@ export class ThreadsView extends ItemView {
       this.setActiveThread(thread.id);
     }
 
-    this.renderProjectBar();
     this.renderTabs();
   }
 
@@ -207,23 +198,16 @@ export class ThreadsView extends ItemView {
 
   private buildUI(): void {
     const root = this.containerEl.children[1] as HTMLElement;
+    this.rootEl = root;
     root.empty();
     root.addClass('ct-root');
-
-    // Project selector bar (above the thread tab row)
-    this.projectBar = root.createDiv('ct-project-bar');
-    this.renderProjectBar();
+    root.setAttribute('data-density', this.plugin.settings.layoutDensity ?? 'comfortable');
 
     const tabRow = root.createDiv('ct-tab-row');
     this.tabBar = tabRow.createDiv('ct-tab-bar');
-    this.tabBar.addEventListener('wheel', (e) => {
-      if (e.deltaY !== 0) {
-        e.preventDefault();
-        this.tabBar.scrollLeft += e.deltaY;
-      }
-    }, { passive: false });
+    // No wheel-scroll listener — tabs compress rather than scroll (native Obsidian behavior)
     const newBtn = tabRow.createEl('button', { cls: 'ct-tab-new', text: '+', attr: { title: 'New thread' } });
-    newBtn.addEventListener('click', () => this.openNewThread());
+    newBtn.addEventListener('click', (e) => this.openNewThread(e));
     this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
@@ -246,6 +230,12 @@ export class ThreadsView extends ItemView {
       text: '■',
       attr: { title: 'Stop' },
     });
+    this.moreBtn = inputControls.createEl('button', {
+      cls: 'ct-more-btn',
+      attr: { title: 'More actions' },
+    });
+    setIcon(this.moreBtn, 'more-horizontal');
+    this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
 
     this.inputEl.addEventListener('keydown', (e) => {
       if (this.skillDropdown) {
@@ -313,63 +303,13 @@ export class ThreadsView extends ItemView {
     });
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
-  }
 
-  private renderProjectBar(): void {
-    this.projectBar.empty();
-    const projects = this.manager.getProjects();
-
-    // "All" pill
-    const allPill = this.projectBar.createEl('button', {
-      cls: `ct-project-pill ${this.activeProjectId === null ? 'ct-project-pill-active' : ''}`,
-      text: 'All',
-    });
-    allPill.addEventListener('click', () => {
-      this.activeProjectId = null;
-      this.renderProjectBar();
-      this.renderTabs();
-    });
-
-    for (const project of projects) {
-      const pill = this.projectBar.createEl('button', {
-        cls: `ct-project-pill ${this.activeProjectId === project.id ? 'ct-project-pill-active' : ''}`,
-      });
-      pill.createSpan({ cls: 'ct-project-pill-icon', text: '📁' });
-      pill.createSpan({ cls: 'ct-project-pill-name', text: project.name });
-
-      const threadCount = this.manager.getThreadsByProject(project.id).length;
-      if (threadCount > 0) {
-        pill.createSpan({ cls: 'ct-project-pill-count', text: String(threadCount) });
-      }
-
-      pill.setAttribute('title', project.vaultFolder + (project.description ? '\n' + project.description : ''));
-
-      pill.addEventListener('click', () => {
-        this.activeProjectId = project.id;
-        this.renderProjectBar();
-        this.renderTabs();
-        // If the current active thread isn't in this project, switch to first project thread
-        const currentThread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-        if (!currentThread || currentThread.projectId !== project.id) {
-          const projectThreads = this.manager.getThreadsByProject(project.id);
-          if (projectThreads.length > 0) {
-            this.setActiveThread(projectThreads[0].id);
-          }
-        }
-      });
-    }
-
-    // Only show the bar if there are projects
-    if (projects.length === 0) {
-      this.projectBar.addClass('ct-hidden');
-    } else {
-      this.projectBar.removeClass('ct-hidden');
-    }
+    this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
   }
 
   private renderTabs(): void {
     this.tabBar.empty();
-    const threads = this.manager.getThreadsByProject(this.activeProjectId);
+    const threads = this.manager.getThreads();
 
     for (const thread of threads) {
       const tab = this.tabBar.createEl('button', {
@@ -402,6 +342,13 @@ export class ThreadsView extends ItemView {
     this.setActiveThread(id);
   }
 
+  /** Update the density data-attribute live when the user changes the setting. */
+  applyDensity(): void {
+    if (this.rootEl) {
+      this.rootEl.setAttribute('data-density', this.plugin.settings.layoutDensity ?? 'comfortable');
+    }
+  }
+
   getActiveThreadId(): string | null {
     return this.activeThreadId;
   }
@@ -413,6 +360,20 @@ export class ThreadsView extends ItemView {
     this.renderThreadInfo();
     this.renderMessages();
     this.setRunningState(this.manager.isRunning(id));
+    this.updateProjectIndicator();
+  }
+
+  private updateProjectIndicator(): void {
+    this.projectIndicatorEl.empty();
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const project = thread?.projectId ? this.manager.getProject(thread.projectId) : null;
+    if (project) {
+      this.projectIndicatorEl.removeClass('ct-hidden');
+      this.projectIndicatorEl.createSpan({ cls: 'ct-project-indicator-icon', text: '📁' });
+      this.projectIndicatorEl.createSpan({ cls: 'ct-project-indicator-name', text: project.name });
+    } else {
+      this.projectIndicatorEl.addClass('ct-hidden');
+    }
   }
 
   private renderThreadInfo(): void {
@@ -421,34 +382,31 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    const summaryText = thread.summary || thread.recap;
-    const hasSummarizeBtn = this.plugin.settings.summarizationEnabled && thread.messages.length > 0;
-    const hasContent = !!summaryText || hasSummarizeBtn;
+    // Summary/recap lives in the Agent Dashboard — only show model badge here
+    const hasContent = !!thread.model;
 
     // Hide the bar entirely when there's nothing to show
     this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
 
-    if (summaryText) {
-      this.threadInfoBar.createSpan({
-        cls: 'ct-thread-info-recap',
-        text: summaryText,
-      });
-    }
-
     if (thread.model) {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
     }
+  }
 
-    // Right-aligned actions group: summarize button
-    if (hasSummarizeBtn) {
-      const actions = this.threadInfoBar.createDiv({ cls: 'ct-thread-info-actions' });
-      const btn = actions.createEl('button', {
-        cls: 'ct-summarize-btn',
-        attr: { title: 'Summarize thread' },
-      });
-      setIcon(btn, 'brain-circuit');
-      btn.addEventListener('click', () => this.summarizeThread(thread.id, btn));
+  private toggleMoreMenu(event: MouseEvent): void {
+    const menu = new Menu();
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+
+    if (this.plugin.settings.summarizationEnabled && thread && thread.messages.length > 0) {
+      menu.addItem(item =>
+        item
+          .setTitle('Summarize thread')
+          .setIcon('brain-circuit')
+          .onClick(() => this.summarizeThread(thread.id))
+      );
     }
+
+    menu.showAtMouseEvent(event);
   }
 
   private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
@@ -468,13 +426,13 @@ export class ThreadsView extends ItemView {
     );
   }
 
-  private async summarizeThread(threadId: string, btn: HTMLButtonElement): Promise<void> {
+  private async summarizeThread(threadId: string): Promise<void> {
     const thread = this.manager.getThread(threadId);
     if (!thread || thread.messages.length === 0) return;
 
-    btn.disabled = true;
-    setIcon(btn, 'loader');
-    btn.addClass('ct-summarize-spinning');
+    this.moreBtn.disabled = true;
+    setIcon(this.moreBtn, 'loader');
+    this.moreBtn.addClass('ct-summarize-spinning');
 
     const onProgress = (status: string) => {
       this.statusBar.setText(status);
@@ -486,17 +444,19 @@ export class ThreadsView extends ItemView {
       if (result.title) this.applyAutoTitle(thread.id, result.title);
       await this.plugin.saveSettings();
       this.statusBar.setText('');
-      btn.removeClass('ct-summarize-spinning');
-      setIcon(btn, 'brain-circuit');
-      btn.disabled = false;
+      this.moreBtn.removeClass('ct-summarize-spinning');
+      setIcon(this.moreBtn, 'more-horizontal');
+      this.moreBtn.disabled = false;
       this.renderTabs();
       this.renderThreadInfo();
+      // Refresh the Agent Dashboard so the new summary appears there immediately
+      this.plugin.getAgentDashboard()?.render();
     } catch (err) {
       console.error('[Claude Threads] summarize error:', err);
       this.statusBar.setText('');
-      btn.removeClass('ct-summarize-spinning');
-      setIcon(btn, 'brain-circuit');
-      btn.disabled = false;
+      this.moreBtn.removeClass('ct-summarize-spinning');
+      setIcon(this.moreBtn, 'more-horizontal');
+      this.moreBtn.disabled = false;
       new Notice(`Summarization failed: ${(err as Error).message}`, 8000);
     }
   }
@@ -985,25 +945,44 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  async openNewThread(): Promise<void> {
-    let cwd = this.plugin.getEffectiveCwd();
-    let projectId: string | undefined;
+  async openNewThread(event?: MouseEvent): Promise<void> {
+    const projects = this.manager.getProjects();
 
-    if (this.activeProjectId) {
-      const project = this.manager.getProject(this.activeProjectId);
-      if (project) {
-        cwd = this.manager.getProjectCwd(project);
-        projectId = project.id;
-      }
+    if (projects.length === 0) {
+      await this.createThreadWithProject(null);
+      return;
     }
 
+    const menu = new Menu();
+    menu.addItem(item =>
+      item.setTitle('No project')
+        .setIcon('home')
+        .onClick(() => this.createThreadWithProject(null)),
+    );
+    menu.addSeparator();
+    for (const project of projects) {
+      menu.addItem(item =>
+        item.setTitle(project.name)
+          .setIcon('folder')
+          .onClick(() => this.createThreadWithProject(project.id)),
+      );
+    }
+    if (event) menu.showAtMouseEvent(event);
+    else menu.showAtPosition({ x: 0, y: 0 });
+  }
+
+  private async createThreadWithProject(projectId: string | null): Promise<void> {
+    let cwd = this.plugin.getEffectiveCwd();
+    if (projectId) {
+      const project = this.manager.getProject(projectId);
+      if (project) cwd = this.manager.getProjectCwd(project);
+    }
     const thread = this.manager.createThread(
-      `Thread ${this.manager.getThreadsByProject(this.activeProjectId).length + 1}`,
+      `Thread ${this.manager.getThreads().length + 1}`,
       cwd,
-      projectId,
+      projectId ?? undefined,
     );
     await this.plugin.saveSettings();
-    this.renderProjectBar(); // update thread count badges
     this.setActiveThread(thread.id);
   }
 

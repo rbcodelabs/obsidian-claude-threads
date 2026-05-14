@@ -1,5 +1,7 @@
 export type MessageRole = 'user' | 'assistant' | 'compact';
 
+export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
+
 export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
 export interface ImageAttachment {
@@ -91,6 +93,7 @@ export interface PluginSettings {
   threads: Thread[];
   projects: Project[];
   wakeLockEnabled: boolean;
+  layoutDensity: LayoutDensity;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -112,6 +115,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   threads: [],
   projects: [],
   wakeLockEnabled: true,
+  layoutDensity: 'comfortable',
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {
