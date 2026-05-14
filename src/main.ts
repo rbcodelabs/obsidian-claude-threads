@@ -229,6 +229,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return leaf?.view instanceof ThreadsView ? leaf.view : null;
   }
 
+  getAgentDashboard(): AgentDashboard | null {
+    const leaf = this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
+    return leaf?.view instanceof AgentDashboard ? leaf.view : null;
+  }
+
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);

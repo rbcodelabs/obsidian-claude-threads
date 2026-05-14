@@ -5,6 +5,15 @@
   padding: 0;
 }
 
+/* Obsidian's button:not(.clickable-icon) global rule injects box-shadow and a
+   background-color on every button. Reset both for our plugin — individual
+   button styles (send, stop, etc.) re-apply their own backgrounds after. */
+.ct-root button,
+.ct-tab-row button {
+  box-shadow: none;
+  background: transparent;
+}
+
 .ct-root {
   display: flex;
   flex-direction: column;
@@ -16,48 +25,47 @@
   padding-bottom: var(--status-bar-height, 0px);
 }
 
-/* Tab bar */
+/* Tab bar — matches native Obsidian workspace-tab-header-container.
+   align-items: flex-end puts tabs at the container's bottom edge so that
+   margin-bottom: -1px on the tab bar bleeds 1px below the border line —
+   the active tab's white background then covers that border segment. */
 .ct-tab-row {
   display: flex;
-  align-items: center;
-  background: var(--background-secondary);
+  align-items: flex-end;
+  background: var(--tab-container-background, var(--background-secondary));
   border-bottom: 1px solid var(--background-modifier-border);
-  padding-right: 4px;
+  padding: 0 8px;
+  height: 40px;
   flex-shrink: 0;
 }
 
+/* margin-bottom: -1px lets the tab bar extend 1px below the container border.
+   No overflow: hidden — flex shrink handles compression without scroll. */
 .ct-tab-bar {
   display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 4px 4px 0;
-  overflow-x: auto;
   flex: 1;
-  scrollbar-width: none;
-}
-
-.ct-tab-bar::-webkit-scrollbar {
-  display: none;
+  min-width: 0;
+  margin-bottom: -1px;
 }
 
 .ct-tab {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  padding-top: 6px;
+  padding: 1px 8px 3.5px;
+  height: 33px;
   background: transparent;
   border: none;
-  border-top: 2px solid transparent;
-  border-radius: 4px 4px 0 0;
+  /* Rounded top corners only — flat bottom blends into content area */
+  border-radius: 6px 6px 0 0;
   cursor: pointer;
-  white-space: nowrap;
   font-size: var(--font-ui-smaller);
-  color: var(--text-faint);
-  opacity: 0.7;
-  transition: opacity 0.1s, color 0.1s;
-  max-width: 140px;
-  position: relative;
+  color: var(--tab-text-color, var(--text-muted));
+  transition: background 0.1s, color 0.1s;
+  /* Compress to fit — like native Obsidian tabs */
+  flex: 1 1 0px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Thread info bar */
@@ -149,22 +157,26 @@
 }
 
 .ct-tab:hover {
-  opacity: 1;
-  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  color: var(--tab-text-color-focused, var(--text-normal));
 }
 
-.ct-tab-active {
+/* Active tab: white background with outward 1px box-shadow — exactly matches
+   how Obsidian's own .workspace-tab-header.is-active renders.
+   The outward shadow + the -1px bleed on the tab bar means the active tab's
+   white fill covers the container's bottom border at that position, creating
+   the "tab flows into content" visual. */
+.ct-tab.ct-tab-active {
   background: var(--background-primary);
-  border-top: 2px solid var(--interactive-accent);
-  color: var(--text-normal);
-  font-weight: 500;
-  opacity: 1;
+  color: var(--tab-text-color-focused, var(--text-normal));
+  box-shadow: 0 0 0 1px var(--background-modifier-border);
 }
 
 .ct-tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100px;
+  flex: 1;
+  min-width: 0;
 }
 
 .ct-tab-rename-input {
@@ -218,6 +230,8 @@
   color: var(--text-faint);
   flex-shrink: 0;
   margin-left: 2px;
+  /* Stay centered vertically even though .ct-tab-row uses align-items: flex-end */
+  align-self: center;
   transition: background 0.1s, color 0.1s;
 }
 
@@ -300,7 +314,7 @@
   padding: 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 /* ── Empty state ──────────────────────────────────────────────── */
@@ -362,7 +376,7 @@
   margin: 2px 0 0 !important;
 }
 
-/* Message bubbles */
+/* Messages */
 .ct-message {
   display: flex;
   flex-direction: column;
@@ -393,18 +407,19 @@
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.55;
 }
 
 .ct-message-assistant .ct-message-content {
-  background: var(--background-secondary);
-  border-radius: 4px 12px 12px 12px;
-  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
-  padding: 8px 12px;
   max-width: 100%;
   overflow-x: auto;
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  font-size: calc(var(--font-text-size, 15px) + 1px);
+  line-height: 1.65;
+  padding: 0 10px;
 }
 
 .ct-message-user .ct-message-content {
@@ -413,17 +428,9 @@
   cursor: text;
 }
 
-/* Consecutive same-speaker: tighten gap, soften continuation corner */
-.ct-message-assistant + .ct-message-assistant {
-  margin-top: -4px;
-}
-
-.ct-message-assistant + .ct-message-assistant .ct-message-content {
-  border-top-left-radius: 4px;
-}
-
+/* Consecutive user bubbles: tighten gap, soften continuation corner */
 .ct-message-user + .ct-message-user {
-  margin-top: -4px;
+  margin-top: -6px;
 }
 
 .ct-message-user + .ct-message-user .ct-message-content {
@@ -433,12 +440,19 @@
 .ct-message-assistant .ct-message-content > *:first-child { margin-top: 0; }
 .ct-message-assistant .ct-message-content > *:last-child { margin-bottom: 0; }
 
+.ct-message-assistant .ct-message-content p {
+  margin: 0 0 0.45em;
+  line-height: inherit;
+}
+
 .ct-message-assistant .ct-message-content pre {
   background: var(--code-background);
   border-radius: 6px;
   padding: 8px 12px;
   overflow-x: auto;
   font-size: var(--font-ui-smaller);
+  font-family: var(--font-monospace);
+  line-height: 1.5;
 }
 
 .ct-message-assistant .ct-message-content code:not(pre code) {
@@ -446,6 +460,7 @@
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.9em;
+  font-family: var(--font-monospace);
 }
 
 .ct-message-assistant .ct-message-content table {
@@ -911,6 +926,36 @@
   opacity: 0.85;
 }
 
+.ct-more-btn {
+  width: 28px;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-muted);
+  transition: background 0.1s;
+}
+
+.ct-more-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-more-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ct-more-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .ct-hidden {
   display: none !important;
 }
@@ -1129,6 +1174,18 @@
   color: var(--text-normal);
 }
 
+.ct-agents-row-summary {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin-top: 3px;
+  /* Show up to 3 lines then clip */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .ct-agents-row-activity {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
@@ -1226,88 +1283,28 @@
   background: var(--interactive-accent-hover);
 }
 
-/* ── Project bar ─────────────────────────────────────────────────────────── */
+/* ── Project indicator pill (below input) ────────────────────────────────── */
 
-.ct-project-bar {
+.ct-project-indicator {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  background: var(--background-secondary-alt);
-  border-bottom: 1px solid var(--background-modifier-border);
-  overflow-x: auto;
-  scrollbar-width: none;
-  flex-shrink: 0;
-  min-height: 28px;
-}
-
-.ct-project-bar::-webkit-scrollbar {
-  display: none;
-}
-
-.ct-project-bar.ct-hidden {
-  display: none;
-}
-
-.ct-project-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 12px;
-  background: transparent;
+  padding: 3px 8px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
-  flex-shrink: 0;
 }
 
-.ct-project-pill:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-  border-color: var(--interactive-accent);
+.ct-project-indicator.ct-hidden {
+  display: none;
 }
 
-.ct-project-pill-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
-  font-weight: 500;
-}
-
-.ct-project-pill-active:hover {
-  background: var(--interactive-accent-hover);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent-hover);
-}
-
-.ct-project-pill-icon {
+.ct-project-indicator-icon {
   font-size: 10px;
   line-height: 1;
 }
 
-.ct-project-pill-name {
-  /* nothing extra needed */
-}
-
-.ct-project-pill-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.ct-project-pill-active .ct-project-pill-count {
-  background: rgba(255, 255, 255, 0.25);
+.ct-project-indicator-name {
+  /* nothing extra */
 }
 
 /* Settings: project list and description text */
@@ -1319,4 +1316,103 @@
 
 .ct-projects-list {
   margin-bottom: 8px;
+}
+
+/* ── Layout Density ──────────────────────────────────────────────────────── */
+
+/* Compact — tighter padding, smaller gaps */
+.ct-root[data-density="compact"] .ct-messages {
+  padding: 6px;
+  gap: 4px;
+}
+
+.ct-root[data-density="compact"] .ct-message-user .ct-message-content {
+  padding: 5px 8px;
+  border-radius: 10px 10px 2px 10px;
+}
+
+.ct-root[data-density="compact"] .ct-message-assistant .ct-message-content {
+  line-height: 1.45;
+  font-size: var(--font-ui-small);
+}
+
+.ct-root[data-density="compact"] .ct-message-assistant .ct-message-content p {
+  margin-bottom: 0.25em;
+}
+
+.ct-root[data-density="compact"] .ct-message-assistant .ct-message-content pre {
+  padding: 5px 8px;
+}
+
+.ct-root[data-density="compact"] .ct-tools {
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.ct-root[data-density="compact"] .ct-thread-info-bar {
+  padding: 2px 8px;
+  font-size: 10px;
+}
+
+.ct-root[data-density="compact"] .ct-status-bar {
+  min-height: 14px;
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.ct-root[data-density="compact"] .ct-input-row {
+  padding: 4px;
+}
+
+.ct-root[data-density="compact"] .ct-compact-divider {
+  margin: 4px 10px;
+}
+
+/* Spacious — more breathing room */
+.ct-root[data-density="spacious"] .ct-messages {
+  padding: 20px 16px;
+  gap: 24px;
+}
+
+.ct-root[data-density="spacious"] .ct-message-user .ct-message-content {
+  padding: 12px 16px;
+  border-radius: 16px 16px 2px 16px;
+}
+
+.ct-root[data-density="spacious"] .ct-message-assistant .ct-message-content {
+  line-height: 1.8;
+  font-size: calc(var(--font-text-size, 15px) + 1px);
+  letter-spacing: 0.01em;
+}
+
+.ct-root[data-density="spacious"] .ct-message-assistant .ct-message-content p {
+  margin-bottom: 0.65em;
+}
+
+.ct-root[data-density="spacious"] .ct-message-assistant .ct-message-content pre {
+  padding: 10px 14px;
+}
+
+.ct-root[data-density="spacious"] .ct-tools {
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.ct-root[data-density="spacious"] .ct-thread-info-bar {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+.ct-root[data-density="spacious"] .ct-status-bar {
+  min-height: 22px;
+  padding: 4px 12px;
+}
+
+.ct-root[data-density="spacious"] .ct-input-row {
+  padding: 10px;
+}
+
+.ct-root[data-density="spacious"] .ct-compact-divider {
+  margin: 12px 20px;
+  font-size: 12px;
 }

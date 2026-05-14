@@ -202,6 +202,13 @@ export class AgentDashboard extends ItemView {
 
     const body = row.createDiv('ct-agents-row-body');
     body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+
+    // Show full summary for completed threads — this is the canonical home for summaries
+    const summary = thread.summary || thread.recap;
+    if (summary && state === 'idle') {
+      body.createDiv({ cls: 'ct-agents-row-summary', text: summary });
+    }
+
     const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
     activityEl.setText(this.getActivityText(thread, state));
     this.activityEls.set(thread.id, activityEl);
@@ -210,7 +217,7 @@ export class AgentDashboard extends ItemView {
     const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });
     this.timeEls.set(thread.id, timeEl);
     if (thread.cwd) {
-      meta.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd) });
+      meta.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
     row.addEventListener('click', () => this.plugin.openThreadInChatView(thread.id));
@@ -232,8 +239,7 @@ export class AgentDashboard extends ItemView {
     }
     if (state === 'error') return thread.lastError ?? 'Error occurred';
     if (state === 'empty') return 'Ready to start';
-    const summary = thread.summary || thread.recap;
-    if (summary) return summary.slice(0, 100);
+    // Summary is shown in its own element above; fall back to last message preview
     const lastAssistant = [...thread.messages].reverse().find(m => m.role === 'assistant');
     if (lastAssistant) {
       const text = lastAssistant.content.replace(/```[\s\S]*?```/g, '[code]').replace(/\n/g, ' ').trim();
@@ -274,9 +280,13 @@ function relativeTime(ts: number): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
-function shortenPath(p: string): string {
+function shortenPath(p: string, vaultRoot?: string): string {
+  if (vaultRoot && p.startsWith(vaultRoot)) {
+    const rel = p.slice(vaultRoot.length).replace(/^\//, '');
+    return rel || '/';
+  }
   const home = process.env.HOME ?? '';
   if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
   const parts = p.split('/');
-  return parts.length > 4 ? '~/' + parts.slice(-2).join('/') : p;
+  return parts.length > 4 ? '…/' + parts.slice(-2).join('/') : p;
 }
