@@ -183,6 +183,12 @@ export class ThreadsView extends ItemView {
     };
 
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
+      // Save whenever any thread's persistent state changes, not just the active one.
+      // Without this, messages on background threads are never written to disk and
+      // are lost on reload.
+      if (event.type === 'message' || event.type === 'done' || event.type === 'compact') {
+        void this.plugin.saveSettings();
+      }
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
       }
