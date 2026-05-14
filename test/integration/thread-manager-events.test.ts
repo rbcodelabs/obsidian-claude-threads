@@ -10,13 +10,14 @@ const mock = vi.hoisted(() => ({
   model: null as string | undefined,
   images: null as import('../../src/types').ImageAttachment[] | undefined,
   resolve: null as (() => void) | null,
+  resumeSessionId: undefined as string | undefined,
 }));
 
 vi.mock('../../src/ClaudeSession', () => ({
   ClaudeSession: class {
     async run(
       prompt: string,
-      _sid: unknown,
+      resumeSessionId: string | undefined,
       _cwd: unknown,
       _mode: unknown,
       _env: unknown,
@@ -29,10 +30,15 @@ vi.mock('../../src/ClaudeSession', () => ({
       mock.prompt = prompt;
       mock.model = model;
       mock.images = images;
+      mock.resumeSessionId = resumeSessionId;
       return new Promise<void>((res) => { mock.resolve = res; });
     }
     close() {}
-    async interrupt() { mock.resolve?.(); }
+    async interrupt() {
+      // Mirror real ClaudeSession: fire onInterrupted with the pre-interrupt session ID
+      mock.callbacks?.onInterrupted(mock.resumeSessionId ?? '');
+      mock.resolve?.();
+    }
   },
 }));
 
@@ -58,6 +64,7 @@ beforeEach(() => {
   mock.model = null;
   mock.images = null;
   mock.resolve = null;
+  mock.resumeSessionId = undefined;
 });
 
 describe('send message → event flow', () => {
@@ -530,5 +537,124 @@ describe('system events', () => {
       { type: 'rate_limit'; limitStatus: string; resetsAt?: number } | undefined;
     expect(evt?.limitStatus).toBe('allowed_warning');
     expect(evt?.resetsAt).toBeUndefined();
+  });
+});
+
+describe('interrupt / stop behavior', () => {
+  it('emits interrupted event (not done) when stop is hit', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.interrupt(thread.id);
+    await sendPromise;
+
+    const types = events.map(e => e.type);
+    expect(types).toContain('interrupted');
+    expect(types).not.toContain('done');
+  });
+
+  it('rolls back the orphaned user message from thread.messages', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    // Message is in the array while running
+    expect(thread.messages).toHaveLength(1);
+    await manager.interrupt(thread.id);
+    await sendPromise;
+
+    // After interrupt it should be removed
+    expect(thread.messages).toHaveLength(0);
+  });
+
+  it('preserves the prior session ID — does not corrupt it', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    thread.sessionId = 'prior-session-id';
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.interrupt(thread.id);
+    await sendPromise;
+
+    expect(thread.sessionId).toBe('prior-session-id');
+  });
+
+  it('isRunning is false after interrupt', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    expect(manager.isRunning(thread.id)).toBe(true);
+    await manager.interrupt(thread.id);
+    await sendPromise;
+    expect(manager.isRunning(thread.id)).toBe(false);
+  });
+
+  it('preserves all prior messages from successful turns — only interrupted turn is rolled back', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    // First turn completes successfully
+    const p1 = manager.sendMessage(thread.id, 'First');
+    await driveResponse('First response', 'sess-1');
+    await p1;
+
+    expect(thread.messages).toHaveLength(2);
+
+    // Second message gets interrupted before any response
+    const p2 = manager.sendMessage(thread.id, 'Second');
+    await manager.interrupt(thread.id);
+    await p2;
+
+    // Only the first turn's messages remain; session ID is still the successful one
+    expect(thread.messages).toHaveLength(2);
+    expect(thread.messages[0]).toMatchObject({ role: 'user', content: 'First' });
+    expect(thread.messages[1]).toMatchObject({ role: 'assistant', content: 'First response' });
+    expect(thread.sessionId).toBe('sess-1');
+  });
+
+  it('resumes from the correct session ID on the next send after interrupt', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    // First turn establishes a session
+    const p1 = manager.sendMessage(thread.id, 'First');
+    await driveResponse('First response', 'sess-1');
+    await p1;
+
+    // Second turn interrupted
+    const p2 = manager.sendMessage(thread.id, 'Interrupted');
+    await manager.interrupt(thread.id);
+    await p2;
+
+    // Third turn — should resume from sess-1, not from an empty/corrupted ID
+    const p3 = manager.sendMessage(thread.id, 'Third');
+    await driveResponse('Third response', 'sess-2');
+    await p3;
+
+    expect(mock.resumeSessionId).toBe('sess-1');
+    expect(thread.messages).toHaveLength(4);
+  });
+
+  it('discards any queued message when interrupted', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const p1 = manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Queued'); // parks in queue
+
+    expect(manager.getQueuedMessage(thread.id)).toBe('Queued');
+
+    await manager.interrupt(thread.id);
+    await p1;
+
+    // Queue cleared, dequeued never fired
+    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+    expect(events.find(e => e.type === 'dequeued')).toBeUndefined();
   });
 });

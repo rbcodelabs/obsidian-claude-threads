@@ -41,6 +41,9 @@ export class ThreadsView extends ItemView {
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
+  // The user-message bubble we just inserted, so we can remove it on interrupt
+  private pendingUserEl: HTMLElement | null = null;
+
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
 
@@ -673,6 +676,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'message': {
+        this.pendingUserEl = null; // assistant responded — user message is committed
         this.clearStreamingState();
         if (this.streamingEl) {
           this.streamingEl.remove();
@@ -722,6 +726,24 @@ export class ThreadsView extends ItemView {
       }
 
       case 'done': {
+        this.pendingUserEl = null;
+        if (this.streamingEl) {
+          this.streamingEl.remove();
+          this.streamingEl = null;
+          this.streamingContentEl = null;
+          this.clearStreamingState();
+        }
+        this.taskPills.clear();
+        this.setRunningState(false);
+        break;
+      }
+
+      case 'interrupted': {
+        // Roll back the user message bubble that was never processed
+        if (this.pendingUserEl) {
+          this.pendingUserEl.remove();
+          this.pendingUserEl = null;
+        }
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
@@ -941,6 +963,7 @@ export class ThreadsView extends ItemView {
 
     if (!this.manager.isRunning(this.activeThreadId)) {
       const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+      this.pendingUserEl = userEl;
       const content = userEl.createDiv('ct-message-content');
       if (typed) content.createEl('p', { text: typed });
       if (attachment) {

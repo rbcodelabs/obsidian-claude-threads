@@ -23,6 +23,7 @@ export type ThreadEvent =
   | { type: 'notification'; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
+  | { type: 'interrupted' }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
   | { type: 'active_thread_changed' };
@@ -292,6 +293,20 @@ export class ThreadManager {
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
           this.emit(threadId, { type: 'done' });
+        },
+        onInterrupted: (_sessionId) => {
+          // Roll back the orphaned user message — it was never processed by Claude Code
+          const lastMsg = thread.messages[thread.messages.length - 1];
+          if (lastMsg && lastMsg.id === userMsg.id) {
+            thread.messages.pop();
+          }
+          thread.updatedAt = Date.now();
+          // Do NOT update thread.sessionId — the last successful session ID is still valid
+          this.sessions.delete(threadId);
+          this.threadActivity.delete(threadId);
+          this.queuedMessages.delete(threadId);
+          // completedSuccessfully intentionally stays false
+          this.emit(threadId, { type: 'interrupted' });
         },
         onError: (err) => {
           thread.lastError = err.message;
