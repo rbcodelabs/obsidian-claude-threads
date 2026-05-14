@@ -428,6 +428,16 @@
   cursor: text;
 }
 
+/* Selection on user bubbles: accent bg + white text = invisible default highlight.
+   Obsidian's global ::selection uses --text-selection (often the accent color),
+   so we need !important to override it here. */
+.ct-message-user .ct-message-content p::selection,
+.ct-message-user .ct-message-content span::selection,
+.ct-message-user .ct-message-content::selection {
+  background: rgba(255, 255, 255, 0.4) !important;
+  color: var(--text-on-accent) !important;
+}
+
 /* Consecutive user bubbles: tighten gap, soften continuation corner */
 .ct-message-user + .ct-message-user {
   margin-top: -6px;
