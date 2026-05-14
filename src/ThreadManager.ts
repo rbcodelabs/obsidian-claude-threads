@@ -242,6 +242,8 @@ export class ThreadManager {
     let completedSuccessfully = false;
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
+    const project = thread.projectId ? this.getProject(thread.projectId) : undefined;
+    const appendSystemPrompt = project?.description?.trim() || undefined;
 
     await session.run(
       promptText,
@@ -331,6 +333,7 @@ export class ThreadManager {
       additionalDirs,
       model,
       images,
+      appendSystemPrompt,
     );
 
     if (completedSuccessfully) {

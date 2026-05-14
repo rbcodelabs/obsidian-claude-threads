@@ -40,6 +40,7 @@ export class ClaudeSession {
     additionalDirectories?: string[],
     model?: string,
     images?: ImageAttachment[],
+    appendSystemPrompt?: string,
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -80,6 +81,7 @@ export class ClaudeSession {
     if (resumeSessionId) options.resume = resumeSessionId;
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
     if (model) options.model = model;
+    if (appendSystemPrompt) options.extraArgs = { 'append-system-prompt': appendSystemPrompt };
 
     console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
