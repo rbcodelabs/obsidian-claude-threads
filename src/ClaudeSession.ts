@@ -1,4 +1,4 @@
-import { query, type Options, type Query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type Query, type CanUseTool, type SDKUserMessage, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 
@@ -41,6 +41,7 @@ export class ClaudeSession {
     model?: string,
     images?: ImageAttachment[],
     appendSystemPrompt?: string,
+    mcpServers?: Record<string, McpServerConfig>,
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -82,6 +83,7 @@ export class ClaudeSession {
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
     if (model) options.model = model;
     if (appendSystemPrompt) options.extraArgs = { 'append-system-prompt': appendSystemPrompt };
+    if (mcpServers && Object.keys(mcpServers).length) options.mcpServers = mcpServers;
 
     console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
@@ -294,6 +296,12 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
       return `Search: ${input.query}`;
     case 'OpenNewTab':
       return `OpenNewTab: ${(input.title as string) ?? 'New Thread'}`;
+    case 'obsidian_navigate_to_file': return `Navigate: ${input.path}`;
+    case 'obsidian_search_vault': return `Search vault: ${input.query}`;
+    case 'obsidian_get_backlinks': return `Backlinks: ${input.path}`;
+    case 'obsidian_get_outgoing_links': return `Links from: ${input.path}`;
+    case 'obsidian_insert_at_cursor': return `Insert at cursor`;
+    case 'obsidian_get_note_metadata': return `Metadata: ${input.path}`;
     default:
       return name;
   }
