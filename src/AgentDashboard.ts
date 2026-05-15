@@ -93,6 +93,10 @@ export class AgentDashboard extends ItemView {
       this.setActiveRow(threadId);
       return;
     }
+    if (event.type === 'permission_request' || event.type === 'permission_resolved') {
+      this.scheduleRender();
+      return;
+    }
     // When a thread finishes a new run, mark it unreviewed so it surfaces in "New"
     if (event.type === 'done') {
       const thread = this.manager.getThread(threadId);
@@ -211,13 +215,19 @@ export class AgentDashboard extends ItemView {
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
+    const hasPending = state === 'running' && this.manager.hasPendingPermission(thread.id);
     const row = parent.createDiv({
-      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}`,
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
     });
     this.rowEls.set(thread.id, row);
 
     const iconEl = row.createDiv('ct-agents-icon');
-    this.applyStateIcon(iconEl, state);
+    if (hasPending) {
+      iconEl.addClass('ct-agents-icon-permission');
+      iconEl.setText('?');
+    } else {
+      this.applyStateIcon(iconEl, state);
+    }
 
     const body = row.createDiv('ct-agents-row-body');
     body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
@@ -229,7 +239,7 @@ export class AgentDashboard extends ItemView {
     }
 
     const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
-    activityEl.setText(this.getActivityText(thread, state));
+    activityEl.setText(hasPending ? 'Waiting for permission...' : this.getActivityText(thread, state));
     this.activityEls.set(thread.id, activityEl);
 
     const meta = row.createDiv('ct-agents-row-meta');

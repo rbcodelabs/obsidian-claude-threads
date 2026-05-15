@@ -26,6 +26,8 @@ export type ThreadEvent =
   | { type: 'interrupted' }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
+  | { type: 'permission_request'; toolName: string; detail: string }
+  | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' };
 
 export class ThreadManager {
@@ -34,10 +36,11 @@ export class ThreadManager {
   private sessions: Map<string, ClaudeSession> = new Map();
   private queuedMessages: Map<string, string> = new Map();
   private threadActivity: Map<string, string> = new Map();
+  private pendingPermissions: Set<string> = new Set();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   mcpServers: Record<string, McpServerConfig> | undefined = undefined;
-  permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
+  permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
@@ -170,6 +173,10 @@ export class ThreadManager {
 
   isRunning(id: string): boolean {
     return this.sessions.has(id);
+  }
+
+  hasPendingPermission(threadId: string): boolean {
+    return this.pendingPermissions.has(threadId);
   }
 
   getQueuedMessage(id: string): string | undefined {
@@ -324,7 +331,16 @@ export class ThreadManager {
           this.queuedMessages.delete(threadId);
           this.emit(threadId, { type: 'error', error: err });
         },
-        onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
+        onPermissionRequest: async (toolName, detail) => {
+          this.pendingPermissions.add(threadId);
+          this.emit(threadId, { type: 'permission_request', toolName, detail });
+          try {
+            return await this.permissionHandler(threadId, toolName, detail);
+          } finally {
+            this.pendingPermissions.delete(threadId);
+            this.emit(threadId, { type: 'permission_resolved' });
+          }
+        },
         onAskUserQuestion: (questions) => this.questionHandler(questions),
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
