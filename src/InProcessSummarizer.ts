@@ -56,6 +56,62 @@ export class InProcessSummarizer {
     return parseJsonResult(raw.trim());
   }
 
+  async generateForkPrompt(
+    messages: ChatMessage[],
+    focus: string,
+    claudeBinaryPath: string,
+    modelAlias: string,
+    extraEnv: string,
+    onProgress?: ProgressCallback,
+  ): Promise<string> {
+    // Filter out compact markers, take last 30 messages, 800 chars each, max 6000 total
+    const relevantMessages = messages.filter(m => m.role !== 'compact');
+    const transcript = relevantMessages
+      .slice(-30)
+      .map(m => `${m.role === 'user' ? 'User' : 'Claude'}: ${m.content.slice(0, 800)}`)
+      .join('\n\n')
+      .slice(0, 6000);
+
+    const focusClause = focus.trim()
+      ? `The user wants the new thread to focus on: "${focus.trim()}"`
+      : 'The user wants to continue and extend the work from this conversation in a new clean thread.';
+
+    const prompt =
+      'You are helping fork a conversation into a new, self-contained thread.\n\n' +
+      'Conversation transcript:\n<transcript>\n' + transcript + '\n</transcript>\n\n' +
+      focusClause + '\n\n' +
+      'Generate a comprehensive starting message for the new thread. Requirements:\n' +
+      '1. Distill the relevant context: what was decided, which files are involved, current state\n' +
+      '2. Be written as a direct, actionable request — as if starting fresh\n' +
+      '3. Do NOT write "based on our previous conversation" or "as we discussed"\n' +
+      '4. Include specific details: file paths, decisions made, code snippets where relevant\n' +
+      '5. Be self-contained so the new thread can stand completely alone\n\n' +
+      'Output ONLY the starting message. No preamble, no explanation, no markdown fences.';
+
+    onProgress?.('Generating fork prompt…');
+
+    let result = '';
+
+    for await (const msg of query({
+      prompt,
+      options: {
+        pathToClaudeCodeExecutable: claudeBinaryPath,
+        permissionMode: 'default',
+        model: modelAlias,
+        cwd: os.tmpdir(),
+        env: { ...process.env, ...parseExtraEnv(extraEnv) },
+      },
+    })) {
+      if (msg.type === 'assistant') {
+        for (const block of msg.message.content) {
+          if (block.type === 'text') result = block.text;
+        }
+      }
+    }
+
+    return result.trim();
+  }
+
   unload(): void {}
 }
 

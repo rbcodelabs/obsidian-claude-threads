@@ -146,6 +146,10 @@ export const fixtureThreads: Thread[] = [
     updatedAt: T1 + 5 * 60 * 1000,
     summary: 'Debugged 401s in staging caused by a missing JWT_SECRET env var. Fixed auth.ts to throw on startup rather than silently fall back to an empty string. Added Jest tests covering the missing-secret, valid-token, and invalid-token cases.',
     recap: 'Read auth.ts and .env.example, then wrote a test file and edited the middleware.',
+    editedFiles: [
+      '/Users/mock/projects/hip-trip/src/middleware/auth.ts',
+      '/Users/mock/projects/hip-trip/src/middleware/__tests__/auth.test.ts',
+    ],
   },
   {
     id: 'thread-brainstorm',

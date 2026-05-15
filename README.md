@@ -31,7 +31,9 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files directly to dispatched tasks
+- **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
+- **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation

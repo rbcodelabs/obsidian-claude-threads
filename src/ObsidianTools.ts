@@ -189,18 +189,19 @@ export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstanc
           };
         }
 
-        // getBacklinksForFile is a real Obsidian API but missing from the community type stubs
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const backlinksObj = (app.metadataCache as any).getBacklinksForFile(abstract);
+        type BacklinksCache = {
+          getBacklinksForFile: (file: TFile) => {
+            data: {
+              forEach: (
+                cb: (refs: Array<{ original: string }>, sourcePath: string) => void,
+              ) => void;
+            };
+          };
+        };
+        const backlinksObj = (app.metadataCache as unknown as BacklinksCache).getBacklinksForFile(abstract);
         const results: Array<{ sourcePath: string; linkTexts: string[] }> = [];
 
-        (
-          backlinksObj.data as {
-            forEach: (
-              cb: (refs: Array<{ original: string }>, sourcePath: string) => void,
-            ) => void;
-          }
-        ).forEach((refs, sourcePath) => {
+        backlinksObj.data.forEach((refs, sourcePath) => {
           results.push({ sourcePath, linkTexts: refs.map((r) => r.original) });
         });
 

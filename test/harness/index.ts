@@ -15,7 +15,10 @@ const mockPlugin = {
   manager,
   persistence: null,
   summarizer: { summarize: async () => ({ title: '', summary: '' }) },
-  inProcessSummarizer: { summarize: async () => ({ title: '', summary: '' }) },
+  inProcessSummarizer: {
+    summarize: async () => ({ title: '', summary: '' }),
+    generateForkPrompt: async () => 'I need to fix the authentication bug in src/auth/jwt.ts. The JWT validation is rejecting valid tokens when the expiry is within 30 seconds. We decided to add a 60-second clock skew buffer to the validation logic.',
+  },
   saveSettings: async () => {},
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
 };

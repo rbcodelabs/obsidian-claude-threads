@@ -205,7 +205,10 @@ export class Modal {
 
   open(): void {
     document.body.appendChild(this.overlay);
+    this.onOpen();
   }
+
+  onOpen(): void {}
 
   close(): void {
     if (this.overlay.parentNode) {
@@ -227,21 +230,72 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
 }
 
 export class Menu {
+  private items: MenuItem[] = [];
+
   addItem(cb: (item: MenuItem) => void): this {
     const item = new MenuItem();
     cb(item);
+    this.items.push(item);
     return this;
   }
+
   addSeparator(): this { return this; }
-  showAtMouseEvent(_event: MouseEvent): void {}
-  showAtPosition(_pos: { x: number; y: number }): void {}
+
+  private show(): void {
+    const menuEl = document.createElement('div');
+    menuEl.className = 'menu';
+    menuEl.style.cssText = [
+      'position:fixed',
+      'z-index:10000',
+      'background:var(--background-primary,#1e1e1e)',
+      'border:1px solid var(--background-modifier-border,#404040)',
+      'border-radius:6px',
+      'padding:4px 0',
+      'min-width:160px',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.4)',
+    ].join(';');
+
+    for (const item of this.items) {
+      const itemEl = document.createElement('div');
+      itemEl.className = 'menu-item';
+      itemEl.style.cssText = 'padding:6px 12px;cursor:pointer;color:var(--text-normal,#dcddde);font-size:14px;';
+      itemEl.textContent = item.title;
+      itemEl.addEventListener('click', () => {
+        item.triggerClick();
+        if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+      });
+      menuEl.appendChild(itemEl);
+    }
+
+    document.body.appendChild(menuEl);
+
+    // Dismiss on next outside click
+    const dismiss = (e: MouseEvent) => {
+      if (!menuEl.contains(e.target as Node)) {
+        if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+        document.removeEventListener('click', dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', dismiss), 0);
+  }
+
+  showAtMouseEvent(_event: MouseEvent): void {
+    this.show();
+  }
+
+  showAtPosition(_pos: { x: number; y: number }): void {
+    this.show();
+  }
 }
 
 class MenuItem {
-  setTitle(_title: string): this { return this; }
+  title = '';
+  private _cb?: () => void;
+
+  setTitle(title: string): this { this.title = title; return this; }
   setIcon(_icon: string): this { return this; }
   onClick(cb: () => void): this { this._cb = cb; return this; }
-  private _cb?: () => void;
+  triggerClick(): void { this._cb?.(); }
 }
 
 export class Notice {

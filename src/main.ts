@@ -175,6 +175,17 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'fork-claude-thread',
+      name: 'Fork current Claude thread',
+      callback: async () => {
+        await this.activateView();
+        const view = this.getView();
+        const threadId = view?.getActiveThreadId();
+        if (view && threadId) view.forkThread(threadId);
+      },
+    });
+
     // Settings tab
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
   }
