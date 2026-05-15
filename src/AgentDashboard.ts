@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, ImageAttachment, ImageMediaType } from './types';
+import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -399,8 +400,7 @@ export class AgentDashboard extends ItemView {
   }
 
   private addFileAsTextAttachment(file: File): void {
-    const MAX_BYTES = 500_000;
-    if (file.size > MAX_BYTES) {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
       new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
       return;
     }
@@ -470,16 +470,10 @@ export class AgentDashboard extends ItemView {
 
     try {
       // Build the full message body, wrapping any file attachment in a code fence
-      let messageText = text;
-      if (attachment) {
-        messageText = text
-          ? `${text}\n\n\`\`\`\n${attachment}\n\`\`\``
-          : `\`\`\`\n${attachment}\n\`\`\``;
-      }
-      messageText = messageText || ' ';
+      const messageText = buildMessageWithAttachment(text, attachment);
 
-      // Derive a readable title: prefer typed text, then attachment filename (first line), then images
-      const titleHint = text || (attachment ? attachment.split('\n')[0].trim() : undefined);
+      // Derive a readable title: prefer typed text, then attachment filename, then images
+      const titleHint = deriveDispatchTitle(text, attachment, images.length);
 
       const threadId = await this.plugin.dispatchNewThread(
         messageText,

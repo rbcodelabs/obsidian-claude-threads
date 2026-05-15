@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
 import { marked } from 'marked';
+import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -993,8 +994,7 @@ export class ThreadsView extends ItemView {
   }
 
   private addFileAsTextAttachment(file: File): void {
-    const MAX_BYTES = 500_000;
-    if (file.size > MAX_BYTES) {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
       new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
       return;
     }
