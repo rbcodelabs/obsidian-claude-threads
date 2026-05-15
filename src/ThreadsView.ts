@@ -687,7 +687,7 @@ export class ThreadsView extends ItemView {
 
     // Re-render any pending permission card that was created while viewing another thread.
     const pendingPerm = this.pendingPermissions.get(this.activeThreadId!);
-    if (pendingPerm && !pendingPerm.cardEl) {
+    if (pendingPerm && !pendingPerm.cardEl?.isConnected) {
       const cardEl = this.renderPermissionCard(pendingPerm.toolName, pendingPerm.detail, pendingPerm.resolve);
       pendingPerm.cardEl = cardEl;
     }
