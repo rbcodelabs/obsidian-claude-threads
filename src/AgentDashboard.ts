@@ -239,8 +239,35 @@ export class AgentDashboard extends ItemView {
     }
 
     const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
-    activityEl.setText(hasPending ? 'Waiting for permission...' : this.getActivityText(thread, state));
     this.activityEls.set(thread.id, activityEl);
+
+    if (hasPending) {
+      const pendingInfo = this.manager.getPendingPermission(thread.id);
+      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ?? 'permission' });
+      if (pendingInfo?.detail) {
+        activityEl.createSpan({ cls: 'ct-agents-permission-detail', text: pendingInfo.detail });
+      }
+
+      const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
+
+      const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
+      deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
+
+      const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
+      allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
+
+      const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
+      always.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (pendingInfo) {
+          this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
+          await this.plugin.saveSettings();
+        }
+        this.manager.resolvePermission(thread.id, true);
+      });
+    } else {
+      activityEl.setText(this.getActivityText(thread, state));
+    }
 
     const meta = row.createDiv('ct-agents-row-meta');
     const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });

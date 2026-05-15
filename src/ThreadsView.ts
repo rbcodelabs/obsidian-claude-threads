@@ -122,6 +122,9 @@ export class ThreadsView extends ItemView {
           resolve(allow);
         };
 
+        // Register with ThreadManager so AgentDashboard can also resolve this
+        this.manager.registerPermissionResolver(threadId, done);
+
         // Render card immediately if this is the active thread; otherwise store for later
         if (threadId === this.activeThreadId) {
           const cardEl = this.renderPermissionCard(toolName, detail, done);

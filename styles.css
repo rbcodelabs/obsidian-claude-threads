@@ -1679,3 +1679,36 @@
   color: var(--color-orange, #e06c00);
   animation: ct-dot-pulse 1.2s ease-in-out infinite;
 }
+
+.ct-agents-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--color-orange, #e06c00);
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 12%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 6px;
+}
+
+.ct-agents-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-agents-permission-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+/* Tighter sizing for permission buttons inside the dashboard */
+.ct-agents-permission-actions .ct-permission-btn {
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+}
