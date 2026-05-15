@@ -88,7 +88,16 @@ export class ThreadsView extends ItemView {
   }
 
   getDisplayText(): string {
+    if (this.activeThreadId) {
+      const thread = this.manager.getThread(this.activeThreadId);
+      if (thread) return thread.title;
+    }
     return 'Claude Threads';
+  }
+
+  /** Force Obsidian to re-read getDisplayText() and repaint the workspace tab header. */
+  private refreshLeafHeader(): void {
+    (this.leaf as any).updateHeader();
   }
 
   getIcon(): string {
@@ -435,6 +444,7 @@ export class ThreadsView extends ItemView {
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
     this.syncEditedFiles();
+    this.refreshLeafHeader();
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -592,6 +602,7 @@ export class ThreadsView extends ItemView {
       this.moreBtn.disabled = false;
       this.renderTabs();
       this.renderThreadInfo();
+      this.refreshLeafHeader();
       // Refresh the Agent Dashboard so the new summary appears there immediately
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
@@ -786,6 +797,7 @@ export class ThreadsView extends ItemView {
               if (this.activeThreadId === thread.id) {
                 this.renderTabs();
                 this.renderThreadInfo();
+                this.refreshLeafHeader();
               }
             }).catch(() => { /* silent fail for auto */ });
           }
@@ -1342,6 +1354,7 @@ export class ThreadsView extends ItemView {
       const val = input.value.trim() || current;
       this.manager.renameThread(id, val);
       this.plugin.saveSettings();
+      if (id === this.activeThreadId) this.refreshLeafHeader();
       const newLabel = document.createElement('span');
       newLabel.className = 'ct-tab-label';
       newLabel.textContent = val;
