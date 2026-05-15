@@ -1376,7 +1376,7 @@
   flex-direction: column;
   gap: 4px;
   align-items: stretch;
-  transition: background 0.1s ease;
+  transition: background 0.1s ease, border-top-color 0.1s ease;
 }
 
 /* Image chip strip inside the dispatch area */

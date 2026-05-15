@@ -135,8 +135,12 @@ export class AgentDashboard extends ItemView {
       e.preventDefault();
       dispatchEl.addClass('ct-drag-over');
     });
-    dispatchEl.addEventListener('dragleave', () => {
-      dispatchEl.removeClass('ct-drag-over');
+    // Only clear the highlight when the pointer truly leaves the container,
+    // not when it crosses an internal child element boundary.
+    dispatchEl.addEventListener('dragleave', (e) => {
+      if (!dispatchEl.contains(e.relatedTarget as Node | null)) {
+        dispatchEl.removeClass('ct-drag-over');
+      }
     });
     dispatchEl.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -389,7 +393,7 @@ export class AgentDashboard extends ItemView {
     }
     this.pasteChipsEl.removeClass('ct-hidden');
 
-    this.pendingImages.forEach((img, idx) => {
+    this.pendingImages.forEach((img) => {
       const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
       const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
       thumb.src = `data:${img.mediaType};base64,${img.base64}`;
@@ -399,26 +403,36 @@ export class AgentDashboard extends ItemView {
         text: '×',
         attr: { title: 'Remove' },
       });
+      // Remove by identity rather than index — safe against re-render races
       removeBtn.addEventListener('click', () => {
-        this.pendingImages.splice(idx, 1);
+        this.pendingImages = this.pendingImages.filter(i => i !== img);
         this.renderDispatchChips();
       });
     });
   }
 
+  private dispatching = false;
+
   private async dispatch(): Promise<void> {
+    if (this.dispatching) return;
     const text = this.dispatchInput.value.trim();
     const images = this.pendingImages.slice();
     if (text.length < 2 && images.length === 0) return;
 
+    this.dispatching = true;
     this.dispatchInput.value = '';
     this.pendingImages = [];
     this.renderDispatchChips();
 
-    const effectiveText = text || (images.length > 0 ? 'Analyze this image' : '');
-    const threadId = await this.plugin.dispatchNewThread(effectiveText, images.length > 0 ? images : undefined);
-    await this.plugin.openThreadInChatView(threadId);
-    this.render();
+    try {
+      // Pass a single space when there's no text so ClaudeSession sees a non-empty prompt
+      const effectiveText = text || ' ';
+      const threadId = await this.plugin.dispatchNewThread(effectiveText, images.length > 0 ? images : undefined);
+      await this.plugin.openThreadInChatView(threadId);
+      this.render();
+    } finally {
+      this.dispatching = false;
+    }
   }
 }
 
