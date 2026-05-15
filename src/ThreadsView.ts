@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
 import { marked } from 'marked';
+import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -325,14 +326,22 @@ export class ThreadsView extends ItemView {
       e.preventDefault();
       this.inputRowEl.addClass('ct-drag-over');
     });
-    this.inputRowEl.addEventListener('dragleave', () => {
-      this.inputRowEl.removeClass('ct-drag-over');
+    this.inputRowEl.addEventListener('dragleave', (e) => {
+      if (!this.inputRowEl.contains(e.relatedTarget as Node | null)) {
+        this.inputRowEl.removeClass('ct-drag-over');
+      }
     });
     this.inputRowEl.addEventListener('drop', (e) => {
       e.preventDefault();
       this.inputRowEl.removeClass('ct-drag-over');
       const files = Array.from(e.dataTransfer?.files ?? []);
-      files.filter(f => f.type.startsWith('image/')).forEach(f => this.addImageAttachment(f));
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          this.addImageAttachment(file);
+        } else {
+          this.addFileAsTextAttachment(file);
+        }
+      }
     });
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
@@ -1037,6 +1046,20 @@ export class ThreadsView extends ItemView {
   private addPasteAttachment(content: string): void {
     this.pendingAttachment = content;
     this.renderPasteChips();
+  }
+
+  private addFileAsTextAttachment(file: File): void {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      // Filename on the first line so the chip label and Claude's context both show it
+      this.addPasteAttachment(`${file.name}\n${reader.result as string}`);
+    };
+    reader.onerror = () => new Notice(`Could not read "${file.name}".`);
+    reader.readAsText(file);
   }
 
   private addImageAttachment(file: File): void {

@@ -1,7 +1,8 @@
 import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
-import type { Thread } from './types';
+import type { Thread, ImageAttachment, ImageMediaType } from './types';
+import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -15,6 +16,12 @@ export class AgentDashboard extends ItemView {
   private listEl!: HTMLElement;
   private headerCountEl!: HTMLElement;
   private dispatchInput!: HTMLTextAreaElement;
+  private pasteChipsEl!: HTMLElement;
+  private hiddenFileInput!: HTMLInputElement;
+
+  // Pending attachments for the dispatch box
+  private pendingImages: ImageAttachment[] = [];
+  private pendingAttachment: string | null = null;
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -71,19 +78,88 @@ export class AgentDashboard extends ItemView {
     this.listEl = root.createDiv('ct-agents-list');
 
     const dispatchEl = root.createDiv('ct-agents-dispatch');
-    this.dispatchInput = dispatchEl.createEl('textarea', {
+
+    // Image chip strip — hidden until images are attached
+    this.pasteChipsEl = dispatchEl.createDiv('ct-paste-chips ct-agents-dispatch-chips ct-hidden');
+
+    // Input row: textarea + attach + start buttons
+    const dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
+    this.dispatchInput = dispatchRow.createEl('textarea', {
       cls: 'ct-agents-dispatch-input',
       attr: { placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)' },
     });
-    const dispatchBtn = dispatchEl.createEl('button', {
+
+    const attachBtn = dispatchRow.createEl('button', {
+      cls: 'ct-agents-dispatch-attach-btn',
+      attr: { title: 'Attach image' },
+    });
+    setIcon(attachBtn, 'paperclip');
+
+    const dispatchBtn = dispatchRow.createEl('button', {
       cls: 'ct-agents-dispatch-btn',
       text: 'Start',
     });
+
+    // Hidden file picker (triggered by attach button)
+    this.hiddenFileInput = document.createElement('input');
+    this.hiddenFileInput.type = 'file';
+    this.hiddenFileInput.accept = '*';
+    this.hiddenFileInput.multiple = true;
+    this.hiddenFileInput.style.display = 'none';
+    this.hiddenFileInput.addEventListener('change', () => {
+      for (const f of Array.from(this.hiddenFileInput.files ?? [])) {
+        if (f.type.startsWith('image/')) {
+          this.addImageAttachment(f);
+        } else {
+          this.addFileAsTextAttachment(f);
+        }
+      }
+      this.hiddenFileInput.value = '';
+    });
+    dispatchRow.appendChild(this.hiddenFileInput);
+
+    attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
     dispatchBtn.addEventListener('click', () => this.dispatch());
+
     this.dispatchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.dispatch();
+      }
+    });
+
+    // Paste: capture image files from clipboard
+    this.dispatchInput.addEventListener('paste', (e) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        imageFiles.forEach(f => this.addImageAttachment(f));
+      }
+    });
+
+    // Drag-and-drop images onto the dispatch area
+    dispatchEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dispatchEl.addClass('ct-drag-over');
+    });
+    // Only clear the highlight when the pointer truly leaves the container,
+    // not when it crosses an internal child element boundary.
+    dispatchEl.addEventListener('dragleave', (e) => {
+      if (!dispatchEl.contains(e.relatedTarget as Node | null)) {
+        dispatchEl.removeClass('ct-drag-over');
+      }
+    });
+    dispatchEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dispatchEl.removeClass('ct-drag-over');
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      for (const file of files) {
+        if (file.type.startsWith('image/')) {
+          this.addImageAttachment(file);
+        } else {
+          this.addFileAsTextAttachment(file);
+        }
       }
     });
   }
@@ -308,13 +384,107 @@ export class AgentDashboard extends ItemView {
     this.plugin.openThreadInChatView(candidate.id);
   }
 
+  private addImageAttachment(file: File): void {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      this.pendingImages.push({
+        base64,
+        mediaType: file.type as ImageMediaType,
+        name: file.name || 'image',
+      });
+      this.renderDispatchChips();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private addFileAsTextAttachment(file: File): void {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      // Filename on the first line so the chip label and Claude's context both show it
+      this.pendingAttachment = `${file.name}\n${reader.result as string}`;
+      this.renderDispatchChips();
+    };
+    reader.onerror = () => new Notice(`Could not read "${file.name}".`);
+    reader.readAsText(file);
+  }
+
+  private renderDispatchChips(): void {
+    this.pasteChipsEl.empty();
+    if (!this.pendingAttachment && this.pendingImages.length === 0) {
+      this.pasteChipsEl.addClass('ct-hidden');
+      return;
+    }
+    this.pasteChipsEl.removeClass('ct-hidden');
+
+    if (this.pendingAttachment) {
+      const chip = this.pasteChipsEl.createDiv('ct-paste-chip');
+      const fileName = this.pendingAttachment.split('\n')[0].trim().slice(0, 40);
+      chip.createSpan({ cls: 'ct-paste-chip-icon', text: '📄' });
+      chip.createSpan({ cls: 'ct-paste-chip-label', text: fileName || 'attached file' });
+      chip.createSpan({ cls: 'ct-paste-chip-meta', text: `${this.pendingAttachment.length.toLocaleString()} chars` });
+      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
+      removeBtn.addEventListener('click', () => {
+        this.pendingAttachment = null;
+        this.renderDispatchChips();
+      });
+    }
+
+    this.pendingImages.forEach((img) => {
+      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
+      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
+      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
+      const removeBtn = chip.createEl('button', {
+        cls: 'ct-paste-chip-remove',
+        text: '×',
+        attr: { title: 'Remove' },
+      });
+      // Remove by identity rather than index — safe against re-render races
+      removeBtn.addEventListener('click', () => {
+        this.pendingImages = this.pendingImages.filter(i => i !== img);
+        this.renderDispatchChips();
+      });
+    });
+  }
+
+  private dispatching = false;
+
   private async dispatch(): Promise<void> {
+    if (this.dispatching) return;
     const text = this.dispatchInput.value.trim();
-    if (text.length < 2) return;
+    const attachment = this.pendingAttachment;
+    const images = this.pendingImages.slice();
+    if (text.length < 2 && !attachment && images.length === 0) return;
+
+    this.dispatching = true;
     this.dispatchInput.value = '';
-    const threadId = await this.plugin.dispatchNewThread(text);
-    await this.plugin.openThreadInChatView(threadId);
-    this.render();
+    this.pendingAttachment = null;
+    this.pendingImages = [];
+    this.renderDispatchChips();
+
+    try {
+      // Build the full message body, wrapping any file attachment in a code fence
+      const messageText = buildMessageWithAttachment(text, attachment);
+
+      // Derive a readable title: prefer typed text, then attachment filename, then images
+      const titleHint = deriveDispatchTitle(text, attachment, images.length);
+
+      const threadId = await this.plugin.dispatchNewThread(
+        messageText,
+        images.length > 0 ? images : undefined,
+        titleHint,
+      );
+      await this.plugin.openThreadInChatView(threadId);
+      this.render();
+    } finally {
+      this.dispatching = false;
+    }
   }
 }
 
