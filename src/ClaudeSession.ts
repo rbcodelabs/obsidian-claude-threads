@@ -84,7 +84,17 @@ export class ClaudeSession {
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
     if (model) options.model = model;
     if (appendSystemPrompt) options.extraArgs = { 'append-system-prompt': appendSystemPrompt };
-    if (mcpServers && Object.keys(mcpServers).length) options.mcpServers = mcpServers;
+    if (mcpServers && Object.keys(mcpServers).length) {
+      options.mcpServers = mcpServers;
+      const mcpDebug = Object.entries(mcpServers).map(([k, v]) => ({
+        serverName: k,
+        type: (v as unknown as Record<string, unknown>).type,
+        hasInstance: 'instance' in v,
+      }));
+      console.log('[ClaudeThreads] MCP servers attached to session:', JSON.stringify(mcpDebug));
+    } else {
+      console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
+    }
 
     console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 

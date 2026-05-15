@@ -44,7 +44,7 @@ export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstanc
         const tabs: Array<{ path: string; title: string; type: string; isActive: boolean }> = [];
 
         app.workspace.iterateAllLeaves((leaf) => {
-          const view = leaf.view as Record<string, unknown>;
+          const view = leaf.view as unknown as Record<string, unknown>;
           const file = view?.file;
           if (file instanceof TFile) {
             tabs.push({
@@ -189,7 +189,9 @@ export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstanc
           };
         }
 
-        const backlinksObj = app.metadataCache.getBacklinksForFile(abstract);
+        // getBacklinksForFile is a real Obsidian API but missing from the community type stubs
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const backlinksObj = (app.metadataCache as any).getBacklinksForFile(abstract);
         const results: Array<{ sourcePath: string; linkTexts: string[] }> = [];
 
         (
