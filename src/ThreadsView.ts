@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
 import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
@@ -611,6 +611,12 @@ export class ThreadsView extends ItemView {
         .setIcon('brain-circuit')
         .onClick(() => this.summarizeThread(thread.id))
     );
+    menu.addItem(item =>
+      item
+        .setTitle('Fork conversation')
+        .setIcon('git-branch')
+        .onClick(() => this.forkThread(thread.id))
+    );
     menu.showAtMouseEvent(event);
   }
 
@@ -665,6 +671,25 @@ export class ThreadsView extends ItemView {
       this.moreBtn.disabled = false;
       new Notice(`Summarization failed: ${(err as Error).message}`, 8000);
     }
+  }
+
+  async forkThread(threadId: string): Promise<void> {
+    const thread = this.manager.getThread(threadId);
+    if (!thread || thread.messages.filter(m => m.role !== 'compact').length === 0) {
+      new Notice('Nothing to fork — thread has no messages yet.');
+      return;
+    }
+
+    new ForkModal(this.app, this.plugin, thread, async (prompt: string) => {
+      const forkedThread = this.manager.createThread(
+        `Fork: ${thread.title.slice(0, 40)}`,
+        thread.cwd,
+        thread.projectId,
+      );
+      await this.plugin.saveSettings();
+      this.setActiveThread(forkedThread.id);
+      await this.manager.sendMessage(forkedThread.id, prompt);
+    }).open();
   }
 
   private createStreamingEl(): void {
@@ -1439,6 +1464,147 @@ export class ThreadsView extends ItemView {
         commit();
       }
     });
+  }
+}
+
+class ForkModal extends Modal {
+  private plugin: ClaudeThreadsPlugin;
+  private sourceThread: Thread;
+  private onFork: (prompt: string) => Promise<void>;
+
+  private focusInput!: HTMLInputElement;
+  private promptTextarea!: HTMLTextAreaElement;
+  private generateBtn!: HTMLButtonElement;
+  private openForkBtn!: HTMLButtonElement;
+  private statusEl!: HTMLElement;
+  private promptSection!: HTMLElement;
+  private phase: 'input' | 'generating' | 'review' = 'input';
+
+  constructor(
+    app: App,
+    plugin: ClaudeThreadsPlugin,
+    sourceThread: Thread,
+    onFork: (prompt: string) => Promise<void>,
+  ) {
+    super(app);
+    this.plugin = plugin;
+    this.sourceThread = sourceThread;
+    this.onFork = onFork;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('ct-fork-modal');
+
+    contentEl.createEl('h2', { text: 'Fork conversation' });
+    contentEl.createEl('p', {
+      text: 'Claude will distill the relevant context from this conversation and generate a focused starting prompt for a new thread.',
+      cls: 'ct-fork-desc',
+    });
+
+    const focusSection = contentEl.createDiv({ cls: 'ct-fork-focus-section' });
+    focusSection.createEl('label', {
+      text: 'What should the new thread focus on? (optional)',
+      cls: 'ct-fork-label',
+    });
+    this.focusInput = focusSection.createEl('input', {
+      type: 'text',
+      placeholder: 'e.g. "the auth bug", "refactoring the API layer", "next deployment steps"',
+    });
+    this.focusInput.addClass('ct-fork-input');
+    this.focusInput.style.cssText = 'width:100%;margin-top:4px;';
+
+    this.statusEl = contentEl.createDiv({ cls: 'ct-fork-status' });
+    this.statusEl.style.display = 'none';
+
+    this.promptSection = contentEl.createDiv({ cls: 'ct-fork-prompt-section' });
+    this.promptSection.style.display = 'none';
+    this.promptSection.createEl('label', {
+      text: 'Generated starting prompt — edit before opening:',
+      cls: 'ct-fork-label',
+    });
+    this.promptTextarea = this.promptSection.createEl('textarea');
+    this.promptTextarea.addClass('ct-fork-textarea');
+    this.promptTextarea.rows = 8;
+    this.promptTextarea.style.cssText = 'width:100%;resize:vertical;margin-top:4px;';
+
+    const btnRow = contentEl.createDiv({ cls: 'ct-fork-btn-row' });
+    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
+
+    this.generateBtn = btnRow.createEl('button', { text: 'Generate fork prompt' });
+    this.generateBtn.addClass('mod-cta');
+    this.generateBtn.addEventListener('click', () => void this.handleGenerate());
+
+    this.openForkBtn = btnRow.createEl('button', { text: 'Open fork' });
+    this.openForkBtn.addClass('mod-cta');
+    this.openForkBtn.style.display = 'none';
+    this.openForkBtn.addEventListener('click', () => void this.handleOpenFork());
+
+    this.focusInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void this.handleGenerate();
+      }
+    });
+
+    this.focusInput.focus();
+  }
+
+  private async handleGenerate(): Promise<void> {
+    if (this.phase === 'generating') return;
+    this.phase = 'generating';
+
+    this.generateBtn.disabled = true;
+    this.generateBtn.textContent = 'Generating…';
+    this.statusEl.style.display = 'block';
+    this.statusEl.textContent = 'Generating fork prompt…';
+    this.promptSection.style.display = 'none';
+    this.openForkBtn.style.display = 'none';
+
+    try {
+      const focus = this.focusInput.value;
+      const result = await this.plugin.inProcessSummarizer.generateForkPrompt(
+        this.sourceThread.messages,
+        focus,
+        this.plugin.settings.claudeBinaryPath,
+        this.plugin.settings.inprocessModel,
+        this.plugin.settings.extraEnv,
+        (status: string) => { this.statusEl.textContent = status; },
+      );
+
+      this.promptTextarea.value = result;
+      this.promptSection.style.display = 'block';
+      this.statusEl.style.display = 'none';
+      this.generateBtn.textContent = 'Regenerate';
+      this.generateBtn.disabled = false;
+      this.openForkBtn.style.display = 'inline-block';
+      this.phase = 'review';
+    } catch (err) {
+      this.statusEl.textContent = `Error: ${(err as Error).message}`;
+      this.generateBtn.textContent = 'Try again';
+      this.generateBtn.disabled = false;
+      this.phase = 'input';
+    }
+  }
+
+  private async handleOpenFork(): Promise<void> {
+    const prompt = this.promptTextarea.value.trim();
+    if (!prompt) return;
+    this.openForkBtn.disabled = true;
+    this.openForkBtn.textContent = 'Opening…';
+    try {
+      await this.onFork(prompt);
+      this.close();
+    } catch (err) {
+      new Notice(`Fork failed: ${(err as Error).message}`, 8000);
+      this.openForkBtn.disabled = false;
+      this.openForkBtn.textContent = 'Open fork';
+    }
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
 
