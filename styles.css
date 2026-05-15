@@ -1373,6 +1373,20 @@
   border-top: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  transition: background 0.1s ease;
+}
+
+/* Image chip strip inside the dispatch area */
+.ct-agents-dispatch-chips {
+  padding-bottom: 2px;
+}
+
+/* Inner row: textarea + attach button + start button */
+.ct-agents-dispatch-row {
+  display: flex;
   gap: 6px;
   align-items: flex-end;
 }
@@ -1395,6 +1409,32 @@
 .ct-agents-dispatch-input:focus {
   outline: none;
   border-color: var(--color-accent);
+}
+
+.ct-agents-dispatch-attach-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: var(--background-modifier-border);
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ct-agents-dispatch-attach-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-agents-dispatch-attach-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
 }
 
 .ct-agents-dispatch-btn {

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
-import type { Thread } from './types';
+import type { Thread, ImageAttachment, ImageMediaType } from './types';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -15,6 +15,11 @@ export class AgentDashboard extends ItemView {
   private listEl!: HTMLElement;
   private headerCountEl!: HTMLElement;
   private dispatchInput!: HTMLTextAreaElement;
+  private pasteChipsEl!: HTMLElement;
+  private hiddenFileInput!: HTMLInputElement;
+
+  // Pending image attachments for the dispatch box
+  private pendingImages: ImageAttachment[] = [];
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -71,20 +76,73 @@ export class AgentDashboard extends ItemView {
     this.listEl = root.createDiv('ct-agents-list');
 
     const dispatchEl = root.createDiv('ct-agents-dispatch');
-    this.dispatchInput = dispatchEl.createEl('textarea', {
+
+    // Image chip strip — hidden until images are attached
+    this.pasteChipsEl = dispatchEl.createDiv('ct-paste-chips ct-agents-dispatch-chips ct-hidden');
+
+    // Input row: textarea + attach + start buttons
+    const dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
+    this.dispatchInput = dispatchRow.createEl('textarea', {
       cls: 'ct-agents-dispatch-input',
       attr: { placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)' },
     });
-    const dispatchBtn = dispatchEl.createEl('button', {
+
+    const attachBtn = dispatchRow.createEl('button', {
+      cls: 'ct-agents-dispatch-attach-btn',
+      attr: { title: 'Attach image' },
+    });
+    setIcon(attachBtn, 'paperclip');
+
+    const dispatchBtn = dispatchRow.createEl('button', {
       cls: 'ct-agents-dispatch-btn',
       text: 'Start',
     });
+
+    // Hidden file picker (triggered by attach button)
+    this.hiddenFileInput = document.createElement('input');
+    this.hiddenFileInput.type = 'file';
+    this.hiddenFileInput.accept = 'image/*';
+    this.hiddenFileInput.multiple = true;
+    this.hiddenFileInput.style.display = 'none';
+    this.hiddenFileInput.addEventListener('change', () => {
+      Array.from(this.hiddenFileInput.files ?? []).forEach(f => this.addImageAttachment(f));
+      this.hiddenFileInput.value = '';
+    });
+    dispatchRow.appendChild(this.hiddenFileInput);
+
+    attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
     dispatchBtn.addEventListener('click', () => this.dispatch());
+
     this.dispatchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.dispatch();
       }
+    });
+
+    // Paste: capture image files from clipboard
+    this.dispatchInput.addEventListener('paste', (e) => {
+      const files = Array.from(e.clipboardData?.files ?? []);
+      const imageFiles = files.filter(f => f.type.startsWith('image/'));
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        imageFiles.forEach(f => this.addImageAttachment(f));
+      }
+    });
+
+    // Drag-and-drop images onto the dispatch area
+    dispatchEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dispatchEl.addClass('ct-drag-over');
+    });
+    dispatchEl.addEventListener('dragleave', () => {
+      dispatchEl.removeClass('ct-drag-over');
+    });
+    dispatchEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dispatchEl.removeClass('ct-drag-over');
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      files.filter(f => f.type.startsWith('image/')).forEach(f => this.addImageAttachment(f));
     });
   }
 
@@ -308,11 +366,57 @@ export class AgentDashboard extends ItemView {
     this.plugin.openThreadInChatView(candidate.id);
   }
 
+  private addImageAttachment(file: File): void {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      this.pendingImages.push({
+        base64,
+        mediaType: file.type as ImageMediaType,
+        name: file.name || 'image',
+      });
+      this.renderDispatchChips();
+    };
+    reader.readAsDataURL(file);
+  }
+
+  private renderDispatchChips(): void {
+    this.pasteChipsEl.empty();
+    if (this.pendingImages.length === 0) {
+      this.pasteChipsEl.addClass('ct-hidden');
+      return;
+    }
+    this.pasteChipsEl.removeClass('ct-hidden');
+
+    this.pendingImages.forEach((img, idx) => {
+      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
+      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
+      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
+      const removeBtn = chip.createEl('button', {
+        cls: 'ct-paste-chip-remove',
+        text: '×',
+        attr: { title: 'Remove' },
+      });
+      removeBtn.addEventListener('click', () => {
+        this.pendingImages.splice(idx, 1);
+        this.renderDispatchChips();
+      });
+    });
+  }
+
   private async dispatch(): Promise<void> {
     const text = this.dispatchInput.value.trim();
-    if (text.length < 2) return;
+    const images = this.pendingImages.slice();
+    if (text.length < 2 && images.length === 0) return;
+
     this.dispatchInput.value = '';
-    const threadId = await this.plugin.dispatchNewThread(text);
+    this.pendingImages = [];
+    this.renderDispatchChips();
+
+    const effectiveText = text || (images.length > 0 ? 'Analyze this image' : '');
+    const threadId = await this.plugin.dispatchNewThread(effectiveText, images.length > 0 ? images : undefined);
     await this.plugin.openThreadInChatView(threadId);
     this.render();
   }

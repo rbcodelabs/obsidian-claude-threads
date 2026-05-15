@@ -6,7 +6,7 @@ import { VaultPersistence } from './VaultPersistence';
 import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
 import { WakeLockService } from './WakeLockService';
-import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity } from './types';
+import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
 import { createObsidianMcpServer } from './ObsidianTools';
 import fs from 'fs';
 
@@ -228,12 +228,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
-  async dispatchNewThread(text: string): Promise<string> {
-    const title = text.slice(0, 50).split('\n')[0].trim() || 'New Thread';
+  async dispatchNewThread(text: string, images?: ImageAttachment[]): Promise<string> {
+    const title = text.trim()
+      ? text.slice(0, 50).split('\n')[0].trim()
+      : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
     const thread = this.manager.createThread(title, this.getEffectiveCwd());
     await this.saveSettings();
     // Fire and forget — dashboard will show the running row via subscription
-    this.manager.sendMessage(thread.id, text).catch(console.error);
+    this.manager.sendMessage(thread.id, text, images).catch(console.error);
     return thread.id;
   }
 
