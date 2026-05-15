@@ -174,15 +174,13 @@ Then run `npm run dev` — every rebuild will copy `main.js`, `styles.css`, and 
 ## Releasing
 
 1. Bump the version in `manifest.json` and `package.json` (both must match)
-2. Commit the version bump: `git commit -am "chore: bump version to x.y.z"`
-3. Create a GitHub release and push the tag:
+2. Commit and tag:
    ```bash
-   gh release create vX.Y.Z --title "vX.Y.Z — your release notes here"
-   git push --tags
+   git commit -am "chore: bump version to x.y.z"
+   git tag vX.Y.Z
+   git push && git push --tags
    ```
-4. The [release workflow](.github/workflows/release.yml) automatically builds the plugin and uploads `main.js`, `styles.css`, and `manifest.json` to the release — BRAT will pick it up within a few minutes.
-
-> **Don't skip step 3.** The workflow uploads assets to an existing release — if no release exists for the tag, the upload step will fail.
+3. That's it. The [release workflow](.github/workflows/release.yml) automatically creates the GitHub release, builds the plugin, and attaches `main.js`, `styles.css`, and `manifest.json` — BRAT will pick it up within a few minutes.
 
 ## License
 
