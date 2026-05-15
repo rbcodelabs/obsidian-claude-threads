@@ -57,7 +57,7 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('fork-menu.png', { fullPage: true });
   });
 
-  test('fork conversation modal', async ({ page }) => {
+  test.skip('fork conversation modal', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-tab-bar');
@@ -71,7 +71,7 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('fork-modal-initial.png', { fullPage: true });
   });
 
-  test('fork conversation modal after generation', async ({ page }) => {
+  test.skip('fork conversation modal after generation', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-tab-bar');

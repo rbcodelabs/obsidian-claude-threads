@@ -138,13 +138,15 @@ export const mockApp = {
   workspace: {},
 };
 
-export const mockLeaf = { app: mockApp, view: null };
+export const mockLeaf = { app: mockApp, view: null, updateHeader: () => {} };
 
 export class ItemView {
   containerEl: HTMLElement;
   app = mockApp;
+  leaf: unknown;
 
   constructor(_leaf: unknown) {
+    this.leaf = _leaf;
     this.containerEl = document.createElement('div');
     // Obsidian ItemView has containerEl.children[0] (nav header) and children[1] (view-content)
     const header = document.createElement('div');
