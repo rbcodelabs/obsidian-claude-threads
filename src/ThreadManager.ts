@@ -26,18 +26,22 @@ export type ThreadEvent =
   | { type: 'interrupted' }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
+  | { type: 'permission_request'; toolName: string; detail: string }
+  | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
-  private queuedMessages: Map<string, string> = new Map();
+  private queuedMessages: Map<string, string[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
+  private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
+  private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   mcpServers: Record<string, McpServerConfig> | undefined = undefined;
-  permissionHandler: (toolName: string, detail: string) => Promise<boolean> = async () => false;
+  permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
@@ -172,8 +176,30 @@ export class ThreadManager {
     return this.sessions.has(id);
   }
 
+  hasPendingPermission(threadId: string): boolean {
+    return this.pendingPermissions.has(threadId);
+  }
+
+  getPendingPermission(threadId: string): { toolName: string; detail: string } | undefined {
+    return this.pendingPermissions.get(threadId);
+  }
+
+  registerPermissionResolver(threadId: string, resolver: (allow: boolean) => void): void {
+    this.permissionResolvers.set(threadId, resolver);
+  }
+
+  resolvePermission(threadId: string, allow: boolean): void {
+    const resolver = this.permissionResolvers.get(threadId);
+    if (resolver) resolver(allow);
+  }
+
   getQueuedMessage(id: string): string | undefined {
-    return this.queuedMessages.get(id);
+    const queue = this.queuedMessages.get(id);
+    return queue && queue.length > 0 ? queue[0] : undefined;
+  }
+
+  getQueuedCount(id: string): number {
+    return this.queuedMessages.get(id)?.length ?? 0;
   }
 
   getThreadActivity(id: string): string | undefined {
@@ -211,7 +237,9 @@ export class ThreadManager {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) {
-      this.queuedMessages.set(threadId, userText);
+      const queue = this.queuedMessages.get(threadId) ?? [];
+      queue.push(userText);
+      this.queuedMessages.set(threadId, queue);
       this.emit(threadId, { type: 'queued', text: userText });
       return;
     }
@@ -324,7 +352,17 @@ export class ThreadManager {
           this.queuedMessages.delete(threadId);
           this.emit(threadId, { type: 'error', error: err });
         },
-        onPermissionRequest: (toolName, detail) => this.permissionHandler(toolName, detail),
+        onPermissionRequest: async (toolName, detail) => {
+          this.pendingPermissions.set(threadId, { toolName, detail });
+          this.emit(threadId, { type: 'permission_request', toolName, detail });
+          try {
+            return await this.permissionHandler(threadId, toolName, detail);
+          } finally {
+            this.pendingPermissions.delete(threadId);
+            this.permissionResolvers.delete(threadId);
+            this.emit(threadId, { type: 'permission_resolved' });
+          }
+        },
         onAskUserQuestion: (questions) => this.questionHandler(questions),
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
@@ -363,11 +401,12 @@ export class ThreadManager {
     );
 
     if (completedSuccessfully) {
-      const queued = this.queuedMessages.get(threadId);
-      if (queued) {
-        this.queuedMessages.delete(threadId);
-        this.emit(threadId, { type: 'dequeued', text: queued });
-        await this.sendMessage(threadId, queued);
+      const queue = this.queuedMessages.get(threadId);
+      if (queue && queue.length > 0) {
+        const next = queue.shift()!;
+        if (queue.length === 0) this.queuedMessages.delete(threadId);
+        this.emit(threadId, { type: 'dequeued', text: next });
+        await this.sendMessage(threadId, next);
       }
     }
   }

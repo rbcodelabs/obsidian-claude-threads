@@ -111,17 +111,6 @@
   border-radius: 4px;
   padding: 1px 5px;
   flex-shrink: 0;
-}
-
-.ct-model-badge {
-  font-size: 10px;
-  font-family: var(--font-monospace);
-  color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  border-radius: 4px;
-  padding: 1px 5px;
-  flex-shrink: 0;
   margin-left: auto;
 }
 
@@ -215,6 +204,11 @@
   width: 20px;
 }
 
+.ct-tab-close svg {
+  width: 12px;
+  height: 12px;
+}
+
 .ct-tab-close:hover {
   background: var(--background-modifier-error);
   color: var(--text-on-accent);
@@ -271,6 +265,92 @@
   position: relative;
 }
 
+/* -- Summary peek banner -------------------------------------------------------- */
+/* Floats over the top of .ct-messages when returning to a thread after a break */
+
+.ct-summary-banner {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: 10px 12px;
+  animation: ct-banner-slide-in 0.2s ease both;
+}
+
+.ct-summary-banner.ct-summary-banner-out {
+  animation: ct-banner-fade-out 0.3s ease forwards;
+}
+
+@keyframes ct-banner-slide-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ct-banner-fade-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-6px); }
+}
+
+.ct-summary-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ct-summary-banner-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--interactive-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.ct-summary-banner-time {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ct-summary-banner-close {
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
+}
+
+.ct-summary-banner-close:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ct-summary-banner-text {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Slash command autocomplete */
 .ct-skill-dropdown {
   position: absolute;
@@ -321,6 +401,28 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* File mention autocomplete */
+.ct-file-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.ct-file-at {
+  color: var(--color-green);
+  font-weight: 600;
 }
 
 /* Messages */
@@ -453,6 +555,15 @@
 .ct-message-user .ct-message-content::selection {
   background: rgba(255, 255, 255, 0.4) !important;
   color: var(--text-on-accent) !important;
+}
+
+/* Consecutive assistant bubbles: tighten gap, soften continuation corner */
+.ct-message-assistant + .ct-message-assistant {
+  margin-top: -4px;
+}
+
+.ct-message-assistant + .ct-message-assistant .ct-message-content {
+  border-top-left-radius: 4px;
 }
 
 /* Consecutive user bubbles: tighten gap, soften continuation corner */
@@ -819,8 +930,21 @@
 
 .ct-edited-files-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+
+.ct-edited-files-list::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Icon-only chips: square, no text */
+.ct-edited-file-chip--icon-only {
+  padding: 3px;
+  max-width: none;
+  gap: 0;
 }
 
 .ct-edited-file-chip {
@@ -1511,8 +1635,92 @@
   line-height: 1;
 }
 
+/* ── Project bar ─────────────────────────────────────────────────────────── */
+
+.ct-project-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--background-secondary-alt);
+  border-bottom: 1px solid var(--background-modifier-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.ct-project-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.ct-project-bar.ct-hidden {
+  display: none;
+}
+
+.ct-project-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+
+.ct-project-pill:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+
+.ct-project-pill-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+  font-weight: 500;
+}
+
+.ct-project-pill-active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent-hover);
+}
+
+.ct-project-pill-icon {
+  font-size: 10px;
+  line-height: 1;
+}
+
 .ct-project-indicator-name {
   /* nothing extra */
+}
+
+.ct-project-pill-name {
+  /* nothing extra needed */
+}
+
+.ct-project-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-project-pill-active .ct-project-pill-count {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 /* Settings: project list and description text */
@@ -1623,4 +1831,161 @@
 .ct-root[data-density="spacious"] .ct-compact-divider {
   margin: 12px 20px;
   font-size: 12px;
+}
+
+/* -- Inline permission card ------------------------------------------ */
+.ct-permission-card {
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 8%, var(--background-primary));
+  border: 1px solid color-mix(in srgb, var(--color-orange, #e06c00) 35%, transparent);
+  border-left: 3px solid var(--color-orange, #e06c00);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: ct-fade-in 0.15s ease;
+}
+
+.ct-permission-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-orange, #e06c00);
+}
+
+.ct-permission-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-permission-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-permission-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-permission-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ct-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 12%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+}
+
+.ct-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 0;
+  font-family: var(--font-monospace);
+  overflow-wrap: break-word;
+  word-break: break-all;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.ct-permission-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ct-permission-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-permission-deny {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.ct-permission-deny:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+.ct-permission-allow {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.ct-permission-allow:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-permission-always {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.ct-permission-always:hover {
+  opacity: 0.9;
+}
+
+/* -- Agent dashboard: permission-waiting row ------------------------- */
+.ct-agents-row-permission {
+  border-left: 2px solid var(--color-orange, #e06c00);
+}
+
+.ct-agents-icon-permission {
+  color: var(--color-orange, #e06c00);
+  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.ct-agents-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--color-orange, #e06c00);
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 12%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 6px;
+}
+
+.ct-agents-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-agents-permission-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+/* Tighter sizing for permission buttons inside the dashboard */
+.ct-agents-permission-actions .ct-permission-btn {
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
 }

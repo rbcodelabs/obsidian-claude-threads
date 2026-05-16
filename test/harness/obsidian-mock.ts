@@ -225,6 +225,13 @@ export function setIcon(el: HTMLElement, name: string): void {
   el.innerHTML = svg;
 }
 
+export function setTooltip(el: HTMLElement, tooltip: string, _options?: { placement?: string }): void {
+  el.setAttribute('aria-label', tooltip);
+  el.setAttribute('title', tooltip);
+}
+
+export class App {}
+
 export function sanitizeHTMLToDom(html: string): DocumentFragment {
   const tpl = document.createElement('template');
   tpl.innerHTML = html;

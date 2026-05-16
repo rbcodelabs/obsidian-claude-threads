@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
 import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
@@ -43,14 +43,29 @@ export class ThreadsView extends ItemView {
   private pendingAttachment: string | null = null;
   private pendingImages: ImageAttachment[] = [];
 
+  // Debounce timer for persisting per-thread drafts to settings
+  private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
   // The user-message bubble we just inserted, so we can remove it on interrupt
   private pendingUserEl: HTMLElement | null = null;
 
+  // Inline permission cards waiting for user response (threadId -> card state)
+  private pendingPermissions: Map<string, {
+    toolName: string;
+    detail: string;
+    resolve: (allow: boolean) => void;
+    cardEl: HTMLElement | null;
+  }> = new Map();
+
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
+
+  // Project filtering
+  private activeProjectId: string | null = null;
+  private projectBar!: HTMLElement;
 
   // Slash command autocomplete
   // Tab overflow / new-thread button (combined)
@@ -58,10 +73,20 @@ export class ThreadsView extends ItemView {
   private threadAccessTimes: Map<string, number> = new Map();
   private static readonly MAX_VISIBLE_TABS = 4;
 
+  // Summary peek banner (shown on tab reactivation)
+  private summaryBannerEl: HTMLElement | null = null;
+  private summaryBannerTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;  // show only after 1 min away
+  private static readonly BANNER_AUTO_DISMISS_MS   = 10_000;  // auto-hide after 10 sec
+
   private skills: { name: string; description: string }[] = [];
   private skillDropdown: HTMLElement | null = null;
   private skillDropdownItems: { name: string; description: string }[] = [];
   private skillDropdownIndex = 0;
+
+  private fileDropdown: HTMLElement | null = null;
+  private fileDropdownItems: { path: string; basename: string }[] = [];
+  private fileDropdownIndex = 0;
 
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
     { name: 'compact', description: 'Summarize conversation history to free up context' },
@@ -108,27 +133,33 @@ export class ThreadsView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
 
-    this.manager.permissionHandler = (toolName, detail) => {
+    this.manager.permissionHandler = (threadId, toolName, detail) => {
       // First-party Obsidian MCP tools are always trusted — no prompt needed.
       if (toolName.startsWith('obsidian_')) return Promise.resolve(true);
       if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
+
       return new Promise((resolve) => {
         let resolved = false;
-        const done = (allow: boolean) => { if (!resolved) { resolved = true; resolve(allow); } };
-        const modal = new Modal(this.app);
-        modal.titleEl.setText(toolName);
-        if (detail) modal.contentEl.createEl('p', { text: detail });
-        const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
-        btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { done(false); modal.close(); };
-        btnRow.createEl('button', { text: 'Allow' }).onclick = () => { done(true); modal.close(); };
-        btnRow.createEl('button', { text: 'Always Allow', cls: 'mod-cta' }).onclick = async () => {
-          this.plugin.settings.alwaysAllowedTools.push(toolName);
-          await this.plugin.saveSettings();
-          done(true);
-          modal.close();
+        const done = (allow: boolean) => {
+          if (resolved) return;
+          resolved = true;
+          const pending = this.pendingPermissions.get(threadId);
+          if (pending?.cardEl) pending.cardEl.remove();
+          this.pendingPermissions.delete(threadId);
+          resolve(allow);
         };
-        modal.onClose = () => done(false);
-        modal.open();
+
+        // Register with ThreadManager so AgentDashboard can also resolve this
+        this.manager.registerPermissionResolver(threadId, done);
+
+        // Render card immediately if this is the active thread; otherwise store for later
+        if (threadId === this.activeThreadId) {
+          const cardEl = this.renderPermissionCard(toolName, detail, done);
+          this.pendingPermissions.set(threadId, { toolName, detail, resolve: done, cardEl });
+          this.scrollToBottom();
+        } else {
+          this.pendingPermissions.set(threadId, { toolName, detail, resolve: done, cardEl: null });
+        }
       });
     };
 
@@ -187,8 +218,15 @@ export class ThreadsView extends ItemView {
       });
 
     this.manager.openNewTabHandler = async (title?: string, initialPrompt?: string) => {
-      const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, this.plugin.getEffectiveCwd());
+      let cwd = this.plugin.getEffectiveCwd();
+      let projectId: string | undefined;
+      if (this.activeProjectId) {
+        const project = this.manager.getProject(this.activeProjectId);
+        if (project) { cwd = this.manager.getProjectCwd(project); projectId = project.id; }
+      }
+      const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, cwd, projectId);
       await this.plugin.saveSettings();
+      this.renderProjectBar();
       this.setActiveThread(thread.id);
       if (initialPrompt) {
         this.inputEl.value = initialPrompt;
@@ -202,6 +240,10 @@ export class ThreadsView extends ItemView {
       // are lost on reload.
       if (event.type === 'message' || event.type === 'done' || event.type === 'compact') {
         void this.plugin.saveSettings();
+      }
+      // Keep project badge counts up to date
+      if (event.type === 'thread_created' || event.type === 'thread_deleted') {
+        this.renderProjectBar();
       }
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
@@ -222,6 +264,7 @@ export class ThreadsView extends ItemView {
       this.setActiveThread(thread.id);
     }
 
+    this.renderProjectBar();
     this.renderTabs();
   }
 
@@ -272,6 +315,29 @@ export class ThreadsView extends ItemView {
     this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
 
     this.inputEl.addEventListener('keydown', (e) => {
+      if (this.fileDropdown) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename);
+          return;
+        }
+        if (e.key === 'Escape') {
+          this.hideFileDropdown();
+          return;
+        }
+      }
       if (this.skillDropdown) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -301,12 +367,24 @@ export class ThreadsView extends ItemView {
       }
     });
     this.inputEl.addEventListener('input', () => {
+      const atQuery = this.getAtQuery();
+      if (atQuery !== null) {
+        this.hideSkillDropdown();
+        this.showFileDropdown(atQuery);
+        this.scheduleDraftSave();
+        return;
+      }
+      this.hideFileDropdown();
       const query = this.getSlashQuery();
       if (query !== null) this.showSkillDropdown(query);
       else this.hideSkillDropdown();
+      this.scheduleDraftSave();
     });
     this.inputEl.addEventListener('blur', () => {
-      setTimeout(() => this.hideSkillDropdown(), 150);
+      setTimeout(() => {
+        this.hideSkillDropdown();
+        this.hideFileDropdown();
+      }, 150);
     });
     this.inputEl.addEventListener('paste', (e) => {
       const files = Array.from(e.clipboardData?.files ?? []);
@@ -347,6 +425,59 @@ export class ThreadsView extends ItemView {
     this.stopBtn.addEventListener('click', () => this.stopMessage());
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
+  }
+
+  private renderProjectBar(): void {
+    if (!this.projectBar) return; // project bar removed from UI; kept for compat
+    this.projectBar.empty();
+    const projects = this.manager.getProjects();
+
+    // "All" pill
+    const allPill = this.projectBar.createEl('button', {
+      cls: `ct-project-pill ${this.activeProjectId === null ? 'ct-project-pill-active' : ''}`,
+      text: 'All',
+    });
+    allPill.addEventListener('click', () => {
+      this.activeProjectId = null;
+      this.renderProjectBar();
+      this.renderTabs();
+    });
+
+    for (const project of projects) {
+      const pill = this.projectBar.createEl('button', {
+        cls: `ct-project-pill ${this.activeProjectId === project.id ? 'ct-project-pill-active' : ''}`,
+      });
+      pill.createSpan({ cls: 'ct-project-pill-icon', text: '📁' });
+      pill.createSpan({ cls: 'ct-project-pill-name', text: project.name });
+
+      const threadCount = this.manager.getThreadsByProject(project.id).length;
+      if (threadCount > 0) {
+        pill.createSpan({ cls: 'ct-project-pill-count', text: String(threadCount) });
+      }
+
+      pill.setAttribute('title', project.vaultFolder + (project.description ? '\n' + project.description : ''));
+
+      pill.addEventListener('click', () => {
+        this.activeProjectId = project.id;
+        this.renderProjectBar();
+        this.renderTabs();
+        // If the current active thread isn't in this project, switch to first project thread
+        const currentThread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+        if (!currentThread || currentThread.projectId !== project.id) {
+          const projectThreads = this.manager.getThreadsByProject(project.id);
+          if (projectThreads.length > 0) {
+            this.setActiveThread(projectThreads[0].id);
+          }
+        }
+      });
+    }
+
+    // Only show the bar if there are projects
+    if (projects.length === 0) {
+      this.projectBar.addClass('ct-hidden');
+    } else {
+      this.projectBar.removeClass('ct-hidden');
+    }
   }
 
   private renderTabs(): void {
@@ -438,11 +569,55 @@ export class ThreadsView extends ItemView {
     }
   }
 
+
   getActiveThreadId(): string | null {
     return this.activeThreadId;
   }
 
+  /** Snapshot the current input box state into the given thread object. */
+  private saveDraftToThread(threadId: string | null): void {
+    if (!threadId || !this.inputEl) return;
+    const thread = this.manager.getThread(threadId);
+    if (!thread) return;
+    const text = this.inputEl.value;
+    const hasContent = text.length > 0 || this.pendingAttachment !== null || this.pendingImages.length > 0;
+    if (hasContent) {
+      thread.draft = { text, attachment: this.pendingAttachment, images: [...this.pendingImages] };
+    } else {
+      delete thread.draft;
+    }
+  }
+
+  /** Restore the input box state from a thread's saved draft (or clear it). */
+  private restoreDraftFromThread(threadId: string): void {
+    if (!this.inputEl) return;
+    const thread = this.manager.getThread(threadId);
+    const draft = thread?.draft;
+    this.inputEl.value = draft?.text ?? '';
+    this.pendingAttachment = draft?.attachment ?? null;
+    this.pendingImages = draft ? [...draft.images] : [];
+    this.renderPasteChips();
+  }
+
+  /**
+   * Debounce-save the active thread's draft to plugin settings so it survives
+   * a plugin reload. Fires 1.5 s after the last keystroke or attachment change.
+   */
+  private scheduleDraftSave(): void {
+    if (this.draftSaveTimer !== null) clearTimeout(this.draftSaveTimer);
+    this.draftSaveTimer = setTimeout(() => {
+      this.draftSaveTimer = null;
+      this.saveDraftToThread(this.activeThreadId);
+      this.plugin.saveSettings();
+    }, 1500);
+  }
+
   private setActiveThread(id: string): void {
+    const previousId = this.activeThreadId;
+    const priorAccessTime = this.threadAccessTimes.get(id); // capture before overwriting
+
+    // Persist the draft for the thread we're leaving before switching
+    this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
     this.threadAccessTimes.set(id, Date.now());
     if (!this.tabBar) return; // buildUI hasn't run yet; onOpen will call us again with the right id
@@ -454,6 +629,96 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.syncEditedFiles();
     this.refreshLeafHeader();
+    // Restore draft for the thread we just switched to
+    this.restoreDraftFromThread(id);
+
+    // Show the context recap banner when switching back to a thread after being away
+    this.maybeShowSummaryBanner(id, previousId, priorAccessTime);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Summary peek banner
+  // ---------------------------------------------------------------------------
+
+  private maybeShowSummaryBanner(
+    threadId: string,
+    previousId: string | null,
+    priorAccessTime: number | undefined,
+  ): void {
+    this.hideSummaryBanner(true); // clear any stale banner immediately
+
+    // Only fire when genuinely switching between two different threads
+    if (!previousId || previousId === threadId) return;
+
+    const thread = this.manager.getThread(threadId);
+    if (!thread) return;
+
+    const summary = thread.summary || thread.recap;
+    if (!summary) return;
+
+    // Skip if the user was just here — only show when returning after a real break
+    const elapsed = priorAccessTime !== undefined ? Date.now() - priorAccessTime : Infinity;
+    if (elapsed < ThreadsView.BANNER_IDLE_THRESHOLD_MS) return;
+
+    this.showSummaryBanner(thread, summary);
+  }
+
+  private showSummaryBanner(thread: Thread, summary: string): void {
+    const banner = this.mainEl.createDiv('ct-summary-banner');
+    this.summaryBannerEl = banner;
+
+    const header = banner.createDiv('ct-summary-banner-header');
+    header.createSpan({ cls: 'ct-summary-banner-label', text: '↺ Context' });
+    header.createSpan({
+      cls: 'ct-summary-banner-time',
+      text: `Last active ${this.formatTimeAgo(thread.updatedAt)}`,
+    });
+
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-summary-banner-close',
+      text: '×',
+      attr: { title: 'Dismiss' },
+    });
+    closeBtn.addEventListener('click', () => this.hideSummaryBanner(false));
+
+    banner.createEl('p', { cls: 'ct-summary-banner-text', text: summary });
+
+    // Auto-dismiss after the configured delay
+    this.summaryBannerTimer = setTimeout(
+      () => this.hideSummaryBanner(false),
+      ThreadsView.BANNER_AUTO_DISMISS_MS,
+    );
+  }
+
+  private hideSummaryBanner(immediate: boolean): void {
+    if (this.summaryBannerTimer !== null) {
+      clearTimeout(this.summaryBannerTimer);
+      this.summaryBannerTimer = null;
+    }
+    if (!this.summaryBannerEl) return;
+    const el = this.summaryBannerEl;
+    this.summaryBannerEl = null;
+
+    if (immediate) {
+      el.remove();
+      return;
+    }
+
+    // Animate out then remove
+    el.addClass('ct-summary-banner-out');
+    setTimeout(() => el.remove(), 300);
+  }
+
+  private formatTimeAgo(timestamp: number): string {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return 'yesterday';
+    return `${days}d ago`;
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -481,6 +746,9 @@ export class ThreadsView extends ItemView {
     this.renderEditedFilesCard();
   }
 
+  // Switch to icon-only chips above this file count to keep the row compact
+  private static readonly COMPACT_THRESHOLD = 8;
+
   /** Render (or hide) the edited-files card below the chat area. */
   private renderEditedFilesCard(): void {
     this.editedFilesEl.empty();
@@ -502,12 +770,24 @@ export class ThreadsView extends ItemView {
     setIcon(focusBtn, 'focus');
     focusBtn.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
 
+    const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
-    for (const filePath of this.editedFilesSet) {
-      const chip = list.createDiv({ cls: 'ct-edited-file-chip', attr: { title: filePath } });
+
+    // Most recently edited first; in icon-only mode the first 3 still show full names
+    const files = [...this.editedFilesSet].reverse();
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
+      const showFull = !iconOnly || i < 3;
+      const chip = list.createDiv({
+        cls: showFull ? 'ct-edited-file-chip' : 'ct-edited-file-chip ct-edited-file-chip--icon-only',
+      });
       const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
       setIcon(fileIcon, 'file');
-      chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      if (showFull) {
+        chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      } else {
+        setTooltip(chip, path.basename(filePath));
+      }
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
   }
@@ -621,19 +901,12 @@ export class ThreadsView extends ItemView {
   }
 
   private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
-    if (this.plugin.settings.summarizationMode === 'inprocess') {
-      return this.plugin.inProcessSummarizer.summarize(
-        messages,
-        this.plugin.settings.claudeBinaryPath,
-        this.plugin.settings.inprocessModel,
-        this.plugin.settings.extraEnv,
-        onProgress,
-      );
-    }
-    return this.plugin.summarizer.summarize(
+    return this.plugin.inProcessSummarizer.summarize(
       messages,
-      this.plugin.settings.summarizationEndpoint,
-      this.plugin.settings.summarizationModel,
+      this.plugin.settings.claudeBinaryPath,
+      this.plugin.settings.inprocessModel,
+      this.plugin.settings.extraEnv,
+      onProgress,
     );
   }
 
@@ -729,6 +1002,13 @@ export class ThreadsView extends ItemView {
       this.createStreamingEl();
     }
 
+    // Re-render any pending permission card that was created while viewing another thread
+    const pendingPerm = this.pendingPermissions.get(this.activeThreadId!);
+    if (pendingPerm && !pendingPerm.cardEl?.isConnected) {
+      const cardEl = this.renderPermissionCard(pendingPerm.toolName, pendingPerm.detail, pendingPerm.resolve);
+      pendingPerm.cardEl = cardEl;
+    }
+
     this.scrollToBottom();
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
@@ -776,6 +1056,35 @@ export class ThreadsView extends ItemView {
       pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
       pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
+  }
+
+  private renderPermissionCard(toolName: string, detail: string, done: (allow: boolean) => void): HTMLElement {
+    const card = this.messagesEl.createDiv('ct-permission-card');
+
+    const header = card.createDiv('ct-permission-header');
+    const iconEl = header.createSpan('ct-permission-icon');
+    setIcon(iconEl, 'shield-alert');
+    header.createSpan({ cls: 'ct-permission-label', text: 'Permission request' });
+
+    const body = card.createDiv('ct-permission-body');
+    body.createEl('code', { cls: 'ct-permission-tool', text: toolName });
+    if (detail) {
+      body.createEl('p', { cls: 'ct-permission-detail', text: detail });
+    }
+
+    const actions = card.createDiv('ct-permission-actions');
+    actions.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' })
+      .addEventListener('click', () => done(false));
+    actions.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' })
+      .addEventListener('click', () => done(true));
+    actions.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' })
+      .addEventListener('click', async () => {
+        this.plugin.settings.alwaysAllowedTools.push(toolName);
+        await this.plugin.saveSettings();
+        done(true);
+      });
+
+    return card;
   }
 
   private clearStreamingState(): void {
@@ -847,6 +1156,8 @@ export class ThreadsView extends ItemView {
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
           const filePath = event.record.summary.replace(/^[^:]+: /, '');
           if (filePath) {
+            // Delete before re-adding so the file moves to the end (most recent)
+            this.editedFilesSet.delete(filePath);
             this.editedFilesSet.add(filePath);
             this.renderEditedFilesCard();
           }
@@ -1056,9 +1367,11 @@ export class ThreadsView extends ItemView {
   private updateStatusBar(): void {
     if (!this.activeThreadId) return;
     const queued = this.manager.getQueuedMessage(this.activeThreadId);
+    const count = this.manager.getQueuedCount(this.activeThreadId);
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
-      this.statusBar.setText(`Queued: "${preview}"`);
+      const countSuffix = count > 1 ? ` (+${count - 1} more)` : '';
+      this.statusBar.setText(`Queued: "${preview}"${countSuffix}`);
     } else {
       this.statusBar.setText('');
     }
@@ -1071,6 +1384,7 @@ export class ThreadsView extends ItemView {
   private addPasteAttachment(content: string): void {
     this.pendingAttachment = content;
     this.renderPasteChips();
+    this.scheduleDraftSave();
   }
 
   private addFileAsTextAttachment(file: File): void {
@@ -1098,6 +1412,7 @@ export class ThreadsView extends ItemView {
         name: file.name || 'image',
       });
       this.renderPasteChips();
+      this.scheduleDraftSave();
     };
     reader.readAsDataURL(file);
   }
@@ -1120,6 +1435,7 @@ export class ThreadsView extends ItemView {
       removeBtn.addEventListener('click', () => {
         this.pendingAttachment = null;
         this.renderPasteChips();
+        this.scheduleDraftSave();
       });
     }
 
@@ -1132,6 +1448,7 @@ export class ThreadsView extends ItemView {
       removeBtn.addEventListener('click', () => {
         this.pendingImages.splice(idx, 1);
         this.renderPasteChips();
+        this.scheduleDraftSave();
       });
     });
   }
@@ -1147,12 +1464,41 @@ export class ThreadsView extends ItemView {
     this.pendingAttachment = null;
     this.pendingImages = [];
     this.renderPasteChips();
+    // Clear any saved draft for this thread so it doesn't reappear
+    if (this.activeThreadId) {
+      const thread = this.manager.getThread(this.activeThreadId);
+      if (thread) delete thread.draft;
+    }
+
+    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    this.hideSummaryBanner(false);
 
     let text = typed;
     if (attachment) {
       text = typed
         ? `${typed}\n\n\`\`\`\n${attachment}\n\`\`\``
         : `\`\`\`\n${attachment}\n\`\`\``;
+    }
+
+    // Resolve @[[basename]] file mentions — append each file's content as context
+    const mentionRegex = /@\[\[([^\]]+)\]\]/g;
+    const mentions = [...text.matchAll(mentionRegex)].map(m => m[1]);
+    if (mentions.length > 0) {
+      const fileContextParts: string[] = [];
+      for (const basename of mentions) {
+        const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
+        if (file) {
+          try {
+            const content = await this.app.vault.cachedRead(file);
+            fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      }
+      if (fileContextParts.length > 0) {
+        text = text + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
+      }
     }
 
     if (!this.manager.isRunning(this.activeThreadId)) {
@@ -1280,6 +1626,7 @@ export class ThreadsView extends ItemView {
       projectId ?? undefined,
     );
     await this.plugin.saveSettings();
+    this.renderProjectBar(); // update thread count badges
     this.setActiveThread(thread.id);
   }
 
@@ -1388,6 +1735,68 @@ export class ThreadsView extends ItemView {
     this.skillDropdown = null;
     this.skillDropdownItems = [];
     this.skillDropdownIndex = 0;
+  }
+
+  private getAtQuery(): string | null {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    const word = val.slice(start + 1, pos);
+    return word.startsWith('@') ? word.slice(1) : null;
+  }
+
+  private showFileDropdown(query: string): void {
+    const q = query.toLowerCase();
+    const files = this.app.vault.getMarkdownFiles()
+      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
+      .slice(0, 20);
+    if (files.length === 0) { this.hideFileDropdown(); return; }
+    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
+    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
+    if (!this.fileDropdown) {
+      this.fileDropdown = this.inputRowEl.createDiv('ct-file-dropdown');
+    }
+    this.renderFileDropdown();
+  }
+
+  private renderFileDropdown(): void {
+    if (!this.fileDropdown) return;
+    this.fileDropdown.empty();
+    this.fileDropdownItems.forEach((file, i) => {
+      const item = this.fileDropdown!.createDiv({
+        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
+      });
+      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
+      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
+      nameRow.createSpan({ text: file.basename });
+      const pathParts = file.path.split('/');
+      if (pathParts.length > 1) {
+        const folder = pathParts.slice(0, -1).join('/');
+        item.createDiv({ cls: 'ct-skill-desc', text: folder });
+      }
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
+    });
+  }
+
+  private insertFileMention(basename: string): void {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = `@[[${basename}]] `;
+    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
+    this.hideFileDropdown();
+    this.inputEl.focus();
+  }
+
+  private hideFileDropdown(): void {
+    this.fileDropdown?.remove();
+    this.fileDropdown = null;
+    this.fileDropdownItems = [];
+    this.fileDropdownIndex = 0;
   }
 
   navigateTab(direction: 1 | -1): void {
