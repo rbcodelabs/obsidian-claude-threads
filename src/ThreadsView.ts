@@ -1056,9 +1056,11 @@ export class ThreadsView extends ItemView {
   private updateStatusBar(): void {
     if (!this.activeThreadId) return;
     const queued = this.manager.getQueuedMessage(this.activeThreadId);
+    const count = this.manager.getQueuedCount(this.activeThreadId);
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
-      this.statusBar.setText(`Queued: "${preview}"`);
+      const countSuffix = count > 1 ? ` (+${count - 1} more)` : '';
+      this.statusBar.setText(`Queued: "${preview}"${countSuffix}`);
     } else {
       this.statusBar.setText('');
     }

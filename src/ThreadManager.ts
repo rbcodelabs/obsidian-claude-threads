@@ -32,7 +32,7 @@ export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
-  private queuedMessages: Map<string, string> = new Map();
+  private queuedMessages: Map<string, string[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
@@ -173,7 +173,12 @@ export class ThreadManager {
   }
 
   getQueuedMessage(id: string): string | undefined {
-    return this.queuedMessages.get(id);
+    const queue = this.queuedMessages.get(id);
+    return queue && queue.length > 0 ? queue[0] : undefined;
+  }
+
+  getQueuedCount(id: string): number {
+    return this.queuedMessages.get(id)?.length ?? 0;
   }
 
   getThreadActivity(id: string): string | undefined {
@@ -211,7 +216,9 @@ export class ThreadManager {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) {
-      this.queuedMessages.set(threadId, userText);
+      const queue = this.queuedMessages.get(threadId) ?? [];
+      queue.push(userText);
+      this.queuedMessages.set(threadId, queue);
       this.emit(threadId, { type: 'queued', text: userText });
       return;
     }
@@ -363,11 +370,12 @@ export class ThreadManager {
     );
 
     if (completedSuccessfully) {
-      const queued = this.queuedMessages.get(threadId);
-      if (queued) {
-        this.queuedMessages.delete(threadId);
-        this.emit(threadId, { type: 'dequeued', text: queued });
-        await this.sendMessage(threadId, queued);
+      const queue = this.queuedMessages.get(threadId);
+      if (queue && queue.length > 0) {
+        const next = queue.shift()!;
+        if (queue.length === 0) this.queuedMessages.delete(threadId);
+        this.emit(threadId, { type: 'dequeued', text: next });
+        await this.sendMessage(threadId, next);
       }
     }
   }
