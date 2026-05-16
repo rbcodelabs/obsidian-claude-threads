@@ -169,6 +169,10 @@ export class AgentDashboard extends ItemView {
       this.setActiveRow(threadId);
       return;
     }
+    if (event.type === 'permission_request' || event.type === 'permission_resolved') {
+      this.scheduleRender();
+      return;
+    }
     // When a thread finishes a new run, mark it unreviewed so it surfaces in "New"
     if (event.type === 'done') {
       const thread = this.manager.getThread(threadId);
@@ -287,13 +291,19 @@ export class AgentDashboard extends ItemView {
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
+    const hasPending = state === 'running' && this.manager.hasPendingPermission(thread.id);
     const row = parent.createDiv({
-      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}`,
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
     });
     this.rowEls.set(thread.id, row);
 
     const iconEl = row.createDiv('ct-agents-icon');
-    this.applyStateIcon(iconEl, state);
+    if (hasPending) {
+      iconEl.addClass('ct-agents-icon-permission');
+      iconEl.setText('?');
+    } else {
+      this.applyStateIcon(iconEl, state);
+    }
 
     const body = row.createDiv('ct-agents-row-body');
     body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
@@ -305,8 +315,35 @@ export class AgentDashboard extends ItemView {
     }
 
     const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
-    activityEl.setText(this.getActivityText(thread, state));
     this.activityEls.set(thread.id, activityEl);
+
+    if (hasPending) {
+      const pendingInfo = this.manager.getPendingPermission(thread.id);
+      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ?? 'permission' });
+      if (pendingInfo?.detail) {
+        activityEl.createSpan({ cls: 'ct-agents-permission-detail', text: pendingInfo.detail });
+      }
+
+      const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
+
+      const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
+      deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
+
+      const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
+      allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
+
+      const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
+      always.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (pendingInfo) {
+          this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
+          await this.plugin.saveSettings();
+        }
+        this.manager.resolvePermission(thread.id, true);
+      });
+    } else {
+      activityEl.setText(this.getActivityText(thread, state));
+    }
 
     const meta = row.createDiv('ct-agents-row-meta');
     const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });

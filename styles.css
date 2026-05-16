@@ -1651,3 +1651,160 @@
   margin: 12px 20px;
   font-size: 12px;
 }
+
+/* -- Inline permission card ------------------------------------------ */
+.ct-permission-card {
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 8%, var(--background-primary));
+  border: 1px solid color-mix(in srgb, var(--color-orange, #e06c00) 35%, transparent);
+  border-left: 3px solid var(--color-orange, #e06c00);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: ct-fade-in 0.15s ease;
+}
+
+.ct-permission-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-orange, #e06c00);
+}
+
+.ct-permission-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-permission-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-permission-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-permission-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ct-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 12%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  display: inline-block;
+}
+
+.ct-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 0;
+  font-family: var(--font-monospace);
+  overflow-wrap: break-word;
+  word-break: break-all;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.ct-permission-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ct-permission-btn {
+  font-size: var(--font-ui-smaller);
+  padding: 4px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-permission-deny {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.ct-permission-deny:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+.ct-permission-allow {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.ct-permission-allow:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-permission-always {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.ct-permission-always:hover {
+  opacity: 0.9;
+}
+
+/* -- Agent dashboard: permission-waiting row ------------------------- */
+.ct-agents-row-permission {
+  border-left: 2px solid var(--color-orange, #e06c00);
+}
+
+.ct-agents-icon-permission {
+  color: var(--color-orange, #e06c00);
+  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+.ct-agents-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--color-orange, #e06c00);
+  background: color-mix(in srgb, var(--color-orange, #e06c00) 12%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 6px;
+}
+
+.ct-agents-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-agents-permission-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+/* Tighter sizing for permission buttons inside the dashboard */
+.ct-agents-permission-actions .ct-permission-btn {
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+}
