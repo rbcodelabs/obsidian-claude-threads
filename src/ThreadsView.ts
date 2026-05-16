@@ -482,6 +482,9 @@ export class ThreadsView extends ItemView {
     this.renderEditedFilesCard();
   }
 
+  // Switch to icon-only chips above this file count to keep the row compact
+  private static readonly COMPACT_THRESHOLD = 8;
+
   /** Render (or hide) the edited-files card below the chat area. */
   private renderEditedFilesCard(): void {
     this.editedFilesEl.empty();
@@ -503,12 +506,16 @@ export class ThreadsView extends ItemView {
     setIcon(focusBtn, 'focus');
     focusBtn.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
 
-    const list = this.editedFilesEl.createDiv('ct-edited-files-list');
+    const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
+    const listCls = iconOnly ? 'ct-edited-files-list ct-edited-files-list--icon-only' : 'ct-edited-files-list';
+    const list = this.editedFilesEl.createDiv(listCls);
     for (const filePath of this.editedFilesSet) {
       const chip = list.createDiv({ cls: 'ct-edited-file-chip', attr: { title: filePath } });
       const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
       setIcon(fileIcon, 'file');
-      chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      if (!iconOnly) {
+        chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      }
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
   }

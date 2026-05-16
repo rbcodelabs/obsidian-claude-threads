@@ -833,8 +833,21 @@
 
 .ct-edited-files-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
+}
+
+.ct-edited-files-list::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Icon-only mode: square chips, no text */
+.ct-edited-files-list--icon-only .ct-edited-file-chip {
+  padding: 3px;
+  max-width: none;
+  gap: 0;
 }
 
 .ct-edited-file-chip {
