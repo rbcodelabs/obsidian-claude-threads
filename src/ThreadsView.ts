@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, Notice, sanitizeHTMLToDom, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
 import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
@@ -663,14 +663,22 @@ export class ThreadsView extends ItemView {
     focusBtn.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
 
     const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
-    const listCls = iconOnly ? 'ct-edited-files-list ct-edited-files-list--icon-only' : 'ct-edited-files-list';
-    const list = this.editedFilesEl.createDiv(listCls);
-    for (const filePath of this.editedFilesSet) {
-      const chip = list.createDiv({ cls: 'ct-edited-file-chip', attr: { title: filePath } });
+    const list = this.editedFilesEl.createDiv('ct-edited-files-list');
+
+    // Most recently edited first; in icon-only mode the first 3 still show full names
+    const files = [...this.editedFilesSet].reverse();
+    for (let i = 0; i < files.length; i++) {
+      const filePath = files[i];
+      const showFull = !iconOnly || i < 3;
+      const chip = list.createDiv({
+        cls: showFull ? 'ct-edited-file-chip' : 'ct-edited-file-chip ct-edited-file-chip--icon-only',
+      });
       const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
       setIcon(fileIcon, 'file');
-      if (!iconOnly) {
+      if (showFull) {
         chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      } else {
+        setTooltip(chip, path.basename(filePath));
       }
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
@@ -1004,6 +1012,8 @@ export class ThreadsView extends ItemView {
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
           const filePath = event.record.summary.replace(/^[^:]+: /, '');
           if (filePath) {
+            // Delete before re-adding so the file moves to the end (most recent)
+            this.editedFilesSet.delete(filePath);
             this.editedFilesSet.add(filePath);
             this.renderEditedFilesCard();
           }
