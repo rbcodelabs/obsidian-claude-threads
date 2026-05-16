@@ -58,6 +58,12 @@ export class ThreadsView extends ItemView {
   private threadAccessTimes: Map<string, number> = new Map();
   private static readonly MAX_VISIBLE_TABS = 4;
 
+  // Summary peek banner (shown on tab reactivation)
+  private summaryBannerEl: HTMLElement | null = null;
+  private summaryBannerTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;  // show only after 1 min away
+  private static readonly BANNER_AUTO_DISMISS_MS   = 10_000;  // auto-hide after 10 sec
+
   private skills: { name: string; description: string }[] = [];
   private skillDropdown: HTMLElement | null = null;
   private skillDropdownItems: { name: string; description: string }[] = [];
@@ -443,6 +449,9 @@ export class ThreadsView extends ItemView {
   }
 
   private setActiveThread(id: string): void {
+    const previousId = this.activeThreadId;
+    const priorAccessTime = this.threadAccessTimes.get(id); // capture before overwriting
+
     this.activeThreadId = id;
     this.threadAccessTimes.set(id, Date.now());
     if (!this.tabBar) return; // buildUI hasn't run yet; onOpen will call us again with the right id
@@ -454,6 +463,94 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.syncEditedFiles();
     this.refreshLeafHeader();
+
+    // Show the context recap banner when switching back to a thread after being away
+    this.maybeShowSummaryBanner(id, previousId, priorAccessTime);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Summary peek banner
+  // ---------------------------------------------------------------------------
+
+  private maybeShowSummaryBanner(
+    threadId: string,
+    previousId: string | null,
+    priorAccessTime: number | undefined,
+  ): void {
+    this.hideSummaryBanner(true); // clear any stale banner immediately
+
+    // Only fire when genuinely switching between two different threads
+    if (!previousId || previousId === threadId) return;
+
+    const thread = this.manager.getThread(threadId);
+    if (!thread) return;
+
+    const summary = thread.summary || thread.recap;
+    if (!summary) return;
+
+    // Skip if the user was just here — only show when returning after a real break
+    const elapsed = priorAccessTime !== undefined ? Date.now() - priorAccessTime : Infinity;
+    if (elapsed < ThreadsView.BANNER_IDLE_THRESHOLD_MS) return;
+
+    this.showSummaryBanner(thread, summary);
+  }
+
+  private showSummaryBanner(thread: Thread, summary: string): void {
+    const banner = this.mainEl.createDiv('ct-summary-banner');
+    this.summaryBannerEl = banner;
+
+    const header = banner.createDiv('ct-summary-banner-header');
+    header.createSpan({ cls: 'ct-summary-banner-label', text: '↺ Context' });
+    header.createSpan({
+      cls: 'ct-summary-banner-time',
+      text: `Last active ${this.formatTimeAgo(thread.updatedAt)}`,
+    });
+
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-summary-banner-close',
+      text: '×',
+      attr: { title: 'Dismiss' },
+    });
+    closeBtn.addEventListener('click', () => this.hideSummaryBanner(false));
+
+    banner.createEl('p', { cls: 'ct-summary-banner-text', text: summary });
+
+    // Auto-dismiss after the configured delay
+    this.summaryBannerTimer = setTimeout(
+      () => this.hideSummaryBanner(false),
+      ThreadsView.BANNER_AUTO_DISMISS_MS,
+    );
+  }
+
+  private hideSummaryBanner(immediate: boolean): void {
+    if (this.summaryBannerTimer !== null) {
+      clearTimeout(this.summaryBannerTimer);
+      this.summaryBannerTimer = null;
+    }
+    if (!this.summaryBannerEl) return;
+    const el = this.summaryBannerEl;
+    this.summaryBannerEl = null;
+
+    if (immediate) {
+      el.remove();
+      return;
+    }
+
+    // Animate out then remove
+    el.addClass('ct-summary-banner-out');
+    setTimeout(() => el.remove(), 300);
+  }
+
+  private formatTimeAgo(timestamp: number): string {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days === 1) return 'yesterday';
+    return `${days}d ago`;
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -1147,6 +1244,9 @@ export class ThreadsView extends ItemView {
     this.pendingAttachment = null;
     this.pendingImages = [];
     this.renderPasteChips();
+
+    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    this.hideSummaryBanner(false);
 
     let text = typed;
     if (attachment) {

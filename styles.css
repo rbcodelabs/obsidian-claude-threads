@@ -271,6 +271,92 @@
   position: relative;
 }
 
+/* ── Summary peek banner ─────────────────────────────────────────────────── */
+/* Floats over the top of .ct-messages when returning to a thread after a break */
+
+.ct-summary-banner {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 20;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+  padding: 10px 12px;
+  animation: ct-banner-slide-in 0.2s ease both;
+}
+
+.ct-summary-banner.ct-summary-banner-out {
+  animation: ct-banner-fade-out 0.3s ease forwards;
+}
+
+@keyframes ct-banner-slide-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ct-banner-fade-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-6px); }
+}
+
+.ct-summary-banner-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ct-summary-banner-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--interactive-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.ct-summary-banner-time {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ct-summary-banner-close {
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
+}
+
+.ct-summary-banner-close:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ct-summary-banner-text {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Slash command autocomplete */
 .ct-skill-dropdown {
   position: absolute;
