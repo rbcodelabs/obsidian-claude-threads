@@ -52,6 +52,14 @@ export class ThreadsView extends ItemView {
   // The user-message bubble we just inserted, so we can remove it on interrupt
   private pendingUserEl: HTMLElement | null = null;
 
+  // Inline permission cards waiting for user response (threadId -> card state)
+  private pendingPermissions: Map<string, {
+    toolName: string;
+    detail: string;
+    resolve: (allow: boolean) => void;
+    cardEl: HTMLElement | null;
+  }> = new Map();
+
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
 
@@ -994,6 +1002,13 @@ export class ThreadsView extends ItemView {
       this.createStreamingEl();
     }
 
+    // Re-render any pending permission card that was created while viewing another thread
+    const pendingPerm = this.pendingPermissions.get(this.activeThreadId!);
+    if (pendingPerm && !pendingPerm.cardEl?.isConnected) {
+      const cardEl = this.renderPermissionCard(pendingPerm.toolName, pendingPerm.detail, pendingPerm.resolve);
+      pendingPerm.cardEl = cardEl;
+    }
+
     this.scrollToBottom();
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
@@ -1041,6 +1056,35 @@ export class ThreadsView extends ItemView {
       pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
       pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
+  }
+
+  private renderPermissionCard(toolName: string, detail: string, done: (allow: boolean) => void): HTMLElement {
+    const card = this.messagesEl.createDiv('ct-permission-card');
+
+    const header = card.createDiv('ct-permission-header');
+    const iconEl = header.createSpan('ct-permission-icon');
+    setIcon(iconEl, 'shield-alert');
+    header.createSpan({ cls: 'ct-permission-label', text: 'Permission request' });
+
+    const body = card.createDiv('ct-permission-body');
+    body.createEl('code', { cls: 'ct-permission-tool', text: toolName });
+    if (detail) {
+      body.createEl('p', { cls: 'ct-permission-detail', text: detail });
+    }
+
+    const actions = card.createDiv('ct-permission-actions');
+    actions.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' })
+      .addEventListener('click', () => done(false));
+    actions.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' })
+      .addEventListener('click', () => done(true));
+    actions.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' })
+      .addEventListener('click', async () => {
+        this.plugin.settings.alwaysAllowedTools.push(toolName);
+        await this.plugin.saveSettings();
+        done(true);
+      });
+
+    return card;
   }
 
   private clearStreamingState(): void {
