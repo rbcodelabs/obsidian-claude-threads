@@ -3,7 +3,6 @@ import { ThreadsView, VIEW_TYPE } from './ThreadsView';
 import { AgentDashboard, AGENT_VIEW_TYPE } from './AgentDashboard';
 import { ThreadManager } from './ThreadManager';
 import { VaultPersistence } from './VaultPersistence';
-import { SummarizationService } from './SummarizationService';
 import { InProcessSummarizer } from './InProcessSummarizer';
 import { WakeLockService } from './WakeLockService';
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
@@ -30,7 +29,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
   settings!: PluginSettings;
   manager!: ThreadManager;
   persistence!: VaultPersistence;
-  summarizer!: SummarizationService;
   inProcessSummarizer!: InProcessSummarizer;
   wakeLock!: WakeLockService;
 
@@ -72,7 +70,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     this.manager.vaultRoot = this.getEffectiveCwd();
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
-    this.summarizer = new SummarizationService();
     this.inProcessSummarizer = new InProcessSummarizer();
 
     // Wake lock — keep computer awake while sessions are processing
@@ -596,20 +593,6 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Mode')
-      .setDesc('"Claude (via CLI)" uses your existing Claude auth — same Bedrock/SSO setup, no extra config. "Remote endpoint" calls an OpenAI-compatible server like Ollama.')
-      .addDropdown((drop) =>
-        drop
-          .addOption('inprocess', 'Claude (via CLI)')
-          .addOption('endpoint', 'Remote endpoint (Ollama / LM Studio)')
-          .setValue(this.plugin.settings.summarizationMode)
-          .onChange(async (value) => {
-            this.plugin.settings.summarizationMode = value as 'inprocess' | 'endpoint';
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
       .setName('Claude summarization model')
       .setDesc('Model alias passed to claude --model. Use "haiku" for fast/cheap, "sonnet" for higher quality.')
       .addText((text) =>
@@ -618,32 +601,6 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.inprocessModel)
           .onChange(async (value) => {
             this.plugin.settings.inprocessModel = value || 'haiku';
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName('Endpoint')
-      .setDesc('OpenAI-compatible chat completions URL (Ollama, LM Studio, etc.)')
-      .addText((text) =>
-        text
-          .setPlaceholder('http://localhost:11434/v1/chat/completions')
-          .setValue(this.plugin.settings.summarizationEndpoint)
-          .onChange(async (value) => {
-            this.plugin.settings.summarizationEndpoint = value;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName('Model')
-      .setDesc('Model name to use for summarization')
-      .addText((text) =>
-        text
-          .setPlaceholder('llama3.2')
-          .setValue(this.plugin.settings.summarizationModel)
-          .onChange(async (value) => {
-            this.plugin.settings.summarizationModel = value;
             await this.plugin.saveSettings();
           }),
       );

@@ -17,8 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.132",
-    "marked": "^18.0.3",
-    "node-llama-cpp": "^3.18.1"
+    "marked": "^18.0.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
