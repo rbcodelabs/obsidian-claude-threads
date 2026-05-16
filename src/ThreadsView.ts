@@ -438,6 +438,7 @@ export class ThreadsView extends ItemView {
     }
   }
 
+
   getActiveThreadId(): string | null {
     return this.activeThreadId;
   }
