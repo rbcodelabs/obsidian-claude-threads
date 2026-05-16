@@ -63,6 +63,10 @@ export class ThreadsView extends ItemView {
   private skillDropdownItems: { name: string; description: string }[] = [];
   private skillDropdownIndex = 0;
 
+  private fileDropdown: HTMLElement | null = null;
+  private fileDropdownItems: { path: string; basename: string }[] = [];
+  private fileDropdownIndex = 0;
+
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
     { name: 'compact', description: 'Summarize conversation history to free up context' },
     { name: 'clear', description: 'Clear conversation history and start fresh' },
@@ -272,6 +276,29 @@ export class ThreadsView extends ItemView {
     this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
 
     this.inputEl.addEventListener('keydown', (e) => {
+      if (this.fileDropdown) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename);
+          return;
+        }
+        if (e.key === 'Escape') {
+          this.hideFileDropdown();
+          return;
+        }
+      }
       if (this.skillDropdown) {
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -301,12 +328,22 @@ export class ThreadsView extends ItemView {
       }
     });
     this.inputEl.addEventListener('input', () => {
+      const atQuery = this.getAtQuery();
+      if (atQuery !== null) {
+        this.hideSkillDropdown();
+        this.showFileDropdown(atQuery);
+        return;
+      }
+      this.hideFileDropdown();
       const query = this.getSlashQuery();
       if (query !== null) this.showSkillDropdown(query);
       else this.hideSkillDropdown();
     });
     this.inputEl.addEventListener('blur', () => {
-      setTimeout(() => this.hideSkillDropdown(), 150);
+      setTimeout(() => {
+        this.hideSkillDropdown();
+        this.hideFileDropdown();
+      }, 150);
     });
     this.inputEl.addEventListener('paste', (e) => {
       const files = Array.from(e.clipboardData?.files ?? []);
@@ -1155,6 +1192,27 @@ export class ThreadsView extends ItemView {
         : `\`\`\`\n${attachment}\n\`\`\``;
     }
 
+    // Resolve @[[basename]] file mentions — append each file's content as context for Claude
+    const mentionRegex = /@\[\[([^\]]+)\]\]/g;
+    const mentions = [...text.matchAll(mentionRegex)].map(m => m[1]);
+    if (mentions.length > 0) {
+      const fileContextParts: string[] = [];
+      for (const basename of mentions) {
+        const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
+        if (file) {
+          try {
+            const content = await this.app.vault.cachedRead(file);
+            fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
+          } catch {
+            // Skip unreadable files
+          }
+        }
+      }
+      if (fileContextParts.length > 0) {
+        text = text + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
+      }
+    }
+
     if (!this.manager.isRunning(this.activeThreadId)) {
       const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
       this.pendingUserEl = userEl;
@@ -1388,6 +1446,68 @@ export class ThreadsView extends ItemView {
     this.skillDropdown = null;
     this.skillDropdownItems = [];
     this.skillDropdownIndex = 0;
+  }
+
+  private getAtQuery(): string | null {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    const word = val.slice(start + 1, pos);
+    return word.startsWith('@') ? word.slice(1) : null;
+  }
+
+  private showFileDropdown(query: string): void {
+    const q = query.toLowerCase();
+    const files = this.app.vault.getMarkdownFiles()
+      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
+      .slice(0, 20);
+    if (files.length === 0) { this.hideFileDropdown(); return; }
+    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
+    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
+    if (!this.fileDropdown) {
+      this.fileDropdown = this.inputRowEl.createDiv('ct-file-dropdown');
+    }
+    this.renderFileDropdown();
+  }
+
+  private renderFileDropdown(): void {
+    if (!this.fileDropdown) return;
+    this.fileDropdown.empty();
+    this.fileDropdownItems.forEach((file, i) => {
+      const item = this.fileDropdown!.createDiv({
+        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
+      });
+      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
+      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
+      nameRow.createSpan({ text: file.basename });
+      const pathParts = file.path.split('/');
+      if (pathParts.length > 1) {
+        const folder = pathParts.slice(0, -1).join('/');
+        item.createDiv({ cls: 'ct-skill-desc', text: folder });
+      }
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
+    });
+  }
+
+  private insertFileMention(basename: string): void {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = `@[[${basename}]] `;
+    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
+    this.hideFileDropdown();
+    this.inputEl.focus();
+  }
+
+  private hideFileDropdown(): void {
+    this.fileDropdown?.remove();
+    this.fileDropdown = null;
+    this.fileDropdownItems = [];
+    this.fileDropdownIndex = 0;
   }
 
   navigateTab(direction: 1 | -1): void {
