@@ -259,10 +259,6 @@ export class ThreadsView extends ItemView {
     root.addClass('ct-root');
     root.setAttribute('data-density', this.plugin.settings.layoutDensity ?? 'comfortable');
 
-    // Project selector bar (above the thread tab row)
-    this.projectBar = root.createDiv('ct-project-bar');
-    this.renderProjectBar();
-
     const tabRow = root.createDiv('ct-tab-row');
     this.tabBar = tabRow.createDiv('ct-tab-bar');
     this.newThreadBtn = tabRow.createEl('button', { cls: 'ct-tab-new', text: '+', attr: { title: 'New thread' } });
@@ -412,6 +408,7 @@ export class ThreadsView extends ItemView {
   }
 
   private renderProjectBar(): void {
+    if (!this.projectBar) return; // project bar removed from UI; kept for compat
     this.projectBar.empty();
     const projects = this.manager.getProjects();
 
@@ -465,7 +462,7 @@ export class ThreadsView extends ItemView {
 
   private renderTabs(): void {
     this.tabBar.empty();
-    const threads = this.manager.getThreadsByProject(this.activeProjectId);
+    const threads = this.manager.getThreads();
 
     const { visible, hidden } = this.computeTabOverflow(threads);
 
