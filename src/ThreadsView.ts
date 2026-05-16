@@ -43,6 +43,9 @@ export class ThreadsView extends ItemView {
   private pendingAttachment: string | null = null;
   private pendingImages: ImageAttachment[] = [];
 
+  // Debounce timer for persisting per-thread drafts to settings
+  private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
@@ -332,12 +335,14 @@ export class ThreadsView extends ItemView {
       if (atQuery !== null) {
         this.hideSkillDropdown();
         this.showFileDropdown(atQuery);
+        this.scheduleDraftSave();
         return;
       }
       this.hideFileDropdown();
       const query = this.getSlashQuery();
       if (query !== null) this.showSkillDropdown(query);
       else this.hideSkillDropdown();
+      this.scheduleDraftSave();
     });
     this.inputEl.addEventListener('blur', () => {
       setTimeout(() => {
@@ -479,7 +484,47 @@ export class ThreadsView extends ItemView {
     return this.activeThreadId;
   }
 
+  /** Snapshot the current input box state into the given thread object. */
+  private saveDraftToThread(threadId: string | null): void {
+    if (!threadId || !this.inputEl) return;
+    const thread = this.manager.getThread(threadId);
+    if (!thread) return;
+    const text = this.inputEl.value;
+    const hasContent = text.length > 0 || this.pendingAttachment !== null || this.pendingImages.length > 0;
+    if (hasContent) {
+      thread.draft = { text, attachment: this.pendingAttachment, images: [...this.pendingImages] };
+    } else {
+      delete thread.draft;
+    }
+  }
+
+  /** Restore the input box state from a thread's saved draft (or clear it). */
+  private restoreDraftFromThread(threadId: string): void {
+    if (!this.inputEl) return;
+    const thread = this.manager.getThread(threadId);
+    const draft = thread?.draft;
+    this.inputEl.value = draft?.text ?? '';
+    this.pendingAttachment = draft?.attachment ?? null;
+    this.pendingImages = draft ? [...draft.images] : [];
+    this.renderPasteChips();
+  }
+
+  /**
+   * Debounce-save the active thread's draft to plugin settings so it survives
+   * a plugin reload. Fires 1.5 s after the last keystroke or attachment change.
+   */
+  private scheduleDraftSave(): void {
+    if (this.draftSaveTimer !== null) clearTimeout(this.draftSaveTimer);
+    this.draftSaveTimer = setTimeout(() => {
+      this.draftSaveTimer = null;
+      this.saveDraftToThread(this.activeThreadId);
+      this.plugin.saveSettings();
+    }, 1500);
+  }
+
   private setActiveThread(id: string): void {
+    // Persist the draft for the thread we're leaving before switching
+    this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
     this.threadAccessTimes.set(id, Date.now());
     if (!this.tabBar) return; // buildUI hasn't run yet; onOpen will call us again with the right id
@@ -491,6 +536,8 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.syncEditedFiles();
     this.refreshLeafHeader();
+    // Restore draft for the thread we just switched to
+    this.restoreDraftFromThread(id);
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -1101,6 +1148,7 @@ export class ThreadsView extends ItemView {
   private addPasteAttachment(content: string): void {
     this.pendingAttachment = content;
     this.renderPasteChips();
+    this.scheduleDraftSave();
   }
 
   private addFileAsTextAttachment(file: File): void {
@@ -1128,6 +1176,7 @@ export class ThreadsView extends ItemView {
         name: file.name || 'image',
       });
       this.renderPasteChips();
+      this.scheduleDraftSave();
     };
     reader.readAsDataURL(file);
   }
@@ -1150,6 +1199,7 @@ export class ThreadsView extends ItemView {
       removeBtn.addEventListener('click', () => {
         this.pendingAttachment = null;
         this.renderPasteChips();
+        this.scheduleDraftSave();
       });
     }
 
@@ -1162,6 +1212,7 @@ export class ThreadsView extends ItemView {
       removeBtn.addEventListener('click', () => {
         this.pendingImages.splice(idx, 1);
         this.renderPasteChips();
+        this.scheduleDraftSave();
       });
     });
   }
@@ -1177,6 +1228,11 @@ export class ThreadsView extends ItemView {
     this.pendingAttachment = null;
     this.pendingImages = [];
     this.renderPasteChips();
+    // Clear any saved draft for this thread so it doesn't reappear
+    if (this.activeThreadId) {
+      const thread = this.manager.getThread(this.activeThreadId);
+      if (thread) delete thread.draft;
+    }
 
     let text = typed;
     if (attachment) {

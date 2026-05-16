@@ -38,6 +38,12 @@ export interface ChatMessage {
   preTokens?: number;
 }
 
+export interface ThreadDraft {
+  text: string;
+  attachment: string | null;
+  images: ImageAttachment[];
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -55,6 +61,8 @@ export interface Thread {
   reviewed?: boolean;
   /** Paths of files written or edited during this thread's lifetime. */
   editedFiles?: string[];
+  /** Unsent draft message and attachments for this thread. */
+  draft?: ThreadDraft;
 }
 
 /**
@@ -85,9 +93,6 @@ export interface PluginSettings {
   permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
   extraEnv: string;
   summarizationEnabled: boolean;
-  summarizationMode: 'endpoint' | 'inprocess';
-  summarizationEndpoint: string;
-  summarizationModel: string;
   inprocessModel: string;
   autoSummarize: boolean;
   opusEscalationEnabled: boolean;
@@ -107,9 +112,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   permissionMode: 'acceptEdits',
   extraEnv: '',
   summarizationEnabled: true,
-  summarizationMode: 'inprocess',
-  summarizationEndpoint: 'http://localhost:11434/v1/chat/completions',
-  summarizationModel: 'llama3.2',
   inprocessModel: 'haiku',
   autoSummarize: false,
   opusEscalationEnabled: true,
