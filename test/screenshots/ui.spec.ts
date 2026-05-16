@@ -28,21 +28,22 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('slash-commands.png', { fullPage: true });
   });
 
-  test('permission modal', async ({ page }) => {
+  test('permission card', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-tab-bar');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
-    // Trigger the permission modal without awaiting (it's a promise that resolves on user action)
+    // Trigger the inline permission card (3-param: threadId, toolName, detail)
     page.evaluate(() => {
-      (window as any).__manager.permissionHandler(
+      (window as any).__view.manager.permissionHandler(
+        'thread-fix-auth',
         'Write file',
         'src/components/TripCard.tsx',
       );
     });
-    await page.waitForSelector('.modal-container');
-    await expect(page).toHaveScreenshot('permission-modal.png', { fullPage: true });
+    await page.waitForSelector('.ct-permission-card');
+    await expect(page).toHaveScreenshot('permission-card.png', { fullPage: true });
   });
 
   test('fork conversation menu item', async ({ page }) => {
