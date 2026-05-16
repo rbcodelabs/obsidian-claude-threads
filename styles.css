@@ -829,8 +829,8 @@
   display: none; /* Chrome/Safari */
 }
 
-/* Icon-only mode: square chips, no text */
-.ct-edited-files-list--icon-only .ct-edited-file-chip {
+/* Icon-only chips: square, no text */
+.ct-edited-file-chip--icon-only {
   padding: 3px;
   max-width: none;
   gap: 0;
