@@ -111,29 +111,6 @@
   border-radius: 4px;
   padding: 1px 5px;
   flex-shrink: 0;
-}
-
-.ct-model-badge {
-  font-size: 10px;
-  font-family: var(--font-monospace);
-  color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  border-radius: 4px;
-  padding: 1px 5px;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.ct-model-badge {
-  font-size: 10px;
-  font-family: var(--font-monospace);
-  color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  border-radius: 4px;
-  padding: 1px 5px;
-  flex-shrink: 0;
   margin-left: auto;
 }
 
