@@ -119,27 +119,33 @@ export class ThreadsView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
 
-    this.manager.permissionHandler = (toolName, detail) => {
+    this.manager.permissionHandler = (threadId, toolName, detail) => {
       // First-party Obsidian MCP tools are always trusted — no prompt needed.
       if (toolName.startsWith('obsidian_')) return Promise.resolve(true);
       if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
+
       return new Promise((resolve) => {
         let resolved = false;
-        const done = (allow: boolean) => { if (!resolved) { resolved = true; resolve(allow); } };
-        const modal = new Modal(this.app);
-        modal.titleEl.setText(toolName);
-        if (detail) modal.contentEl.createEl('p', { text: detail });
-        const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
-        btnRow.createEl('button', { text: 'Deny', cls: 'mod-warning' }).onclick = () => { done(false); modal.close(); };
-        btnRow.createEl('button', { text: 'Allow' }).onclick = () => { done(true); modal.close(); };
-        btnRow.createEl('button', { text: 'Always Allow', cls: 'mod-cta' }).onclick = async () => {
-          this.plugin.settings.alwaysAllowedTools.push(toolName);
-          await this.plugin.saveSettings();
-          done(true);
-          modal.close();
+        const done = (allow: boolean) => {
+          if (resolved) return;
+          resolved = true;
+          const pending = this.pendingPermissions.get(threadId);
+          if (pending?.cardEl) pending.cardEl.remove();
+          this.pendingPermissions.delete(threadId);
+          resolve(allow);
         };
-        modal.onClose = () => done(false);
-        modal.open();
+
+        // Register with ThreadManager so AgentDashboard can also resolve this
+        this.manager.registerPermissionResolver(threadId, done);
+
+        // Render card immediately if this is the active thread; otherwise store for later
+        if (threadId === this.activeThreadId) {
+          const cardEl = this.renderPermissionCard(toolName, detail, done);
+          this.pendingPermissions.set(threadId, { toolName, detail, resolve: done, cardEl });
+          this.scrollToBottom();
+        } else {
+          this.pendingPermissions.set(threadId, { toolName, detail, resolve: done, cardEl: null });
+        }
       });
     };
 
