@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
 import { ThreadsView, VIEW_TYPE } from './ThreadsView';
 import { AgentDashboard, AGENT_VIEW_TYPE } from './AgentDashboard';
 import { ThreadManager } from './ThreadManager';
@@ -7,6 +7,9 @@ import { InProcessSummarizer } from './InProcessSummarizer';
 import { WakeLockService } from './WakeLockService';
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
 import { createObsidianMcpServer } from './ObsidianTools';
+import { RelayClient } from './RelayClient';
+import { MobileThreadStore } from './MobileThreadStore';
+import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
 import fs from 'fs';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
@@ -32,6 +35,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
   inProcessSummarizer!: InProcessSummarizer;
   wakeLock!: WakeLockService;
 
+  // Remote access (desktop and mobile)
+  relayClient: RelayClient | null = null;
+  mobileStore: MobileThreadStore | null = null;
+
   async onload(): Promise<void> {
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
@@ -53,6 +60,17 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     await this.loadSettings();
 
+    if (Platform.isMobile) {
+      await this.onloadMobile();
+    } else {
+      await this.onloadDesktop();
+    }
+
+    // Settings tab (both platforms)
+    this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
+  }
+
+  private async onloadDesktop(): Promise<void> {
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
@@ -183,8 +201,97 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
-    // Settings tab
-    this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
+    // Initialize relay client if remote access is enabled
+    this.initDesktopRelayClient();
+  }
+
+  private async onloadMobile(): Promise<void> {
+    // Mobile path: register MobileView, connect to relay if configured
+
+    this.registerView(
+      MOBILE_VIEW_TYPE,
+      (leaf) => new MobileView(leaf, this.relayClient, this.mobileStore),
+    );
+
+    this.addRibbonIcon('smartphone', 'Claude Threads (Mobile)', () => {
+      this.activateMobileView();
+    });
+
+    // Register URI handler for claude-threads://pair?roomId=...&relay=...
+    this.registerObsidianProtocolHandler('pair', async (params) => {
+      const roomId = params['roomId'];
+      const relayUrl = params['relay'] ?? this.settings.remoteAccess.relayUrl;
+      if (!roomId) {
+        new Notice('Invalid pairing link: missing roomId');
+        return;
+      }
+      this.settings.remoteAccess.roomId = roomId;
+      this.settings.remoteAccess.relayUrl = relayUrl;
+      this.settings.remoteAccess.enabled = true;
+      await this.saveSettings();
+      this.initMobileRelayClient();
+      new Notice('Paired with desktop successfully');
+      await this.activateMobileView();
+    });
+
+    // Connect if already configured
+    if (this.settings.remoteAccess.roomId) {
+      this.initMobileRelayClient();
+    }
+  }
+
+  initDesktopRelayClient(): void {
+    const ra = this.settings.remoteAccess;
+    if (!ra.enabled || !ra.roomId) return;
+
+    this.relayClient?.disconnect();
+    this.relayClient = new RelayClient('desktop', ra.relayUrl, ra.roomId, this.manager);
+
+    // Provide expiry getter so RelayClient can gate first-time joins.
+    this.relayClient.getPairingExpiresAt = () => this.settings.remoteAccess.pairingExpiresAt;
+
+    // Once the first successful join completes, mark pairing done so reconnects
+    // are always allowed (expiry only guards the initial QR scan window).
+    this.relayClient.onPairingComplete = () => {
+      this.settings.remoteAccess.pairingExpiresAt = null;
+      this.saveSettings().catch(console.error);
+    };
+
+    this.relayClient.connect();
+
+    // Keep the relay client informed of the active thread
+    const unsub = this.manager.subscribe((threadId, event) => {
+      if (event.type === 'active_thread_changed') {
+        this.relayClient?.setActiveThreadId(threadId);
+      }
+    });
+    this.register(unsub);
+  }
+
+  initMobileRelayClient(): void {
+    const ra = this.settings.remoteAccess;
+    if (!ra.roomId) return;
+
+    this.relayClient?.disconnect();
+    this.mobileStore = new MobileThreadStore();
+    this.relayClient = new RelayClient('mobile', ra.relayUrl, ra.roomId);
+
+    const unsub = this.relayClient.onFrame((frame) => {
+      this.mobileStore!.applyFrame(frame);
+    });
+    this.register(unsub);
+
+    this.relayClient.connect();
+  }
+
+  async activateMobileView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(MOBILE_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+      await leaf.setViewState({ type: MOBILE_VIEW_TYPE, active: true });
+    }
+    workspace.revealLeaf(leaf);
   }
 
   getPluginResourceUrl(): string {
@@ -203,6 +310,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.manager?.destroy();
 
@@ -290,14 +398,34 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     // Ensure projects array exists for older data
     this.settings.projects = this.settings.projects ?? [];
+    // Ensure remoteAccess block exists for installs predating this feature
+    this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
   }
 
   async saveSettings(): Promise<void> {
     // Persist projects + thread state (without streaming content)
-    this.settings.projects = this.manager?.getProjects() ?? [];
-    this.settings.threads = this.manager?.getThreads() ?? [];
+    // manager is null on mobile — skip thread persistence there
+    if (this.manager) {
+      this.settings.projects = this.manager.getProjects();
+      this.settings.threads = this.manager.getThreads();
+    }
     await this.saveData(this.settings);
   }
+}
+
+function generateRoomId(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function formatRoomIdAsCode(roomId: string): string {
+  // Format as XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+  const groups: string[] = [];
+  for (let i = 0; i < 32; i += 8) {
+    groups.push(roomId.slice(i, i + 8).toUpperCase());
+  }
+  return groups.join('-');
 }
 
 class ClaudeThreadsSettingTab extends PluginSettingTab {
@@ -604,5 +732,184 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    // ── Remote Access ─────────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Remote Access' });
+    containerEl.createEl('p', {
+      text: 'Connect Obsidian Mobile to this desktop instance and control Claude Threads sessions in real time.',
+      cls: 'ct-settings-desc',
+    });
+
+    const ra = this.plugin.settings.remoteAccess;
+
+    new Setting(containerEl)
+      .setName('Enable remote access')
+      .setDesc('Allow Obsidian Mobile to connect to this desktop via a relay server.')
+      .addToggle((toggle) =>
+        toggle.setValue(ra.enabled).onChange(async (value) => {
+          ra.enabled = value;
+          if (value && !ra.roomId) {
+            ra.roomId = generateRoomId();
+          }
+          await this.plugin.saveSettings();
+          if (value) {
+            this.plugin.initDesktopRelayClient();
+          } else {
+            this.plugin.relayClient?.disconnect();
+            this.plugin.relayClient = null;
+          }
+          this.display(); // Refresh to show/hide controls
+        }),
+      );
+
+    if (ra.enabled && ra.roomId) {
+      const maskedId = '••••••••-••••••••-••••••••-' + ra.roomId.slice(-8).toUpperCase();
+
+      new Setting(containerEl)
+        .setName('Room ID')
+        .setDesc(`Your device pairing identifier. ${maskedId}`)
+        .addButton((btn) =>
+          btn
+            .setButtonText('Show pairing QR code')
+            .setCta()
+            .onClick(() => {
+              new PairingModal(this.app, this.plugin).open();
+            }),
+        )
+        .addButton((btn) =>
+          btn
+            .setButtonText('Rotate room ID')
+            .setWarning()
+            .onClick(async () => {
+              ra.roomId = generateRoomId();
+              ra.pairingCode = null;
+              ra.pairingExpiresAt = null;
+              await this.plugin.saveSettings();
+              this.plugin.relayClient?.disconnect();
+              this.plugin.relayClient = null;
+              if (ra.enabled) {
+                this.plugin.initDesktopRelayClient();
+              }
+              this.display();
+            }),
+        );
+
+      // Connection status indicator
+      const isConnected = this.plugin.relayClient?.isConnected() ?? false;
+      new Setting(containerEl)
+        .setName('Connection status')
+        .setDesc(isConnected ? 'Relay connected' : 'Relay not connected');
+
+      new Setting(containerEl)
+        .setName('Relay URL')
+        .setDesc('WebSocket relay server URL. Change only if self-hosting.')
+        .addText((text) =>
+          text
+            .setPlaceholder('wss://relay.claude-threads.rbcodelabs.com')
+            .setValue(ra.relayUrl)
+            .onChange(async (value) => {
+              ra.relayUrl = value || 'wss://relay.claude-threads.rbcodelabs.com';
+              await this.plugin.saveSettings();
+            }),
+        );
+    }
+  }
+}
+
+/** Modal that displays the pairing QR code and alphanumeric code. */
+class PairingModal extends Modal {
+  private countdownTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(app: App, private plugin: ClaudeThreadsPlugin) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('ct-pairing-modal');
+
+    const ra = this.plugin.settings.remoteAccess;
+
+    // Set or refresh the 5-minute expiry window when the modal opens.
+    ra.pairingExpiresAt = Date.now() + 5 * 60 * 1000;
+    this.plugin.saveSettings().catch(console.error);
+
+    const pairingUrl = `claude-threads://pair?roomId=${ra.roomId}&relay=${encodeURIComponent(ra.relayUrl)}`;
+    const formatted = formatRoomIdAsCode(ra.roomId);
+
+    contentEl.createEl('h2', { text: 'Pair with Mobile' });
+    contentEl.createEl('p', {
+      text: 'Scan this QR code from Obsidian on your mobile device, or enter the code manually in Settings > Remote Access.',
+      cls: 'ct-pairing-desc',
+    });
+
+    const qrContainer = contentEl.createDiv('ct-pairing-qr');
+
+    // Generate QR code asynchronously
+    import('qrcode').then((QRCode) => {
+      QRCode.toCanvas(pairingUrl, { width: 240, margin: 2 }, (err, canvas) => {
+        if (err) {
+          qrContainer.createEl('p', { text: 'QR code generation failed. Use the code below.' });
+          return;
+        }
+        qrContainer.appendChild(canvas);
+      });
+    }).catch(() => {
+      qrContainer.createEl('p', { text: 'QR code unavailable. Use the code below.' });
+    });
+
+    contentEl.createEl('p', { cls: 'ct-pairing-code-label', text: 'Pairing code:' });
+    const codeEl = contentEl.createEl('code', { cls: 'ct-pairing-code', text: formatted });
+    codeEl.addEventListener('click', () => {
+      navigator.clipboard.writeText(ra.roomId);
+      new Notice('Room ID copied to clipboard');
+    });
+
+    contentEl.createEl('p', {
+      text: 'This code is your room ID. Keep it private — anyone with this code can connect to your desktop.',
+      cls: 'ct-pairing-warning',
+    });
+
+    // Live countdown label
+    const countdownEl = contentEl.createEl('p', { cls: 'ct-pairing-countdown' });
+
+    const updateCountdown = () => {
+      const remaining = (ra.pairingExpiresAt ?? 0) - Date.now();
+      if (remaining <= 0) {
+        this.expire();
+        return;
+      }
+      const minutes = Math.floor(remaining / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
+      countdownEl.textContent = `Code expires in ${minutes}:${String(seconds).padStart(2, '0')}`;
+    };
+
+    updateCountdown();
+    this.countdownTimer = setInterval(updateCountdown, 1000);
+
+    const closeBtn = contentEl.createEl('button', { text: 'Done', cls: 'mod-cta' });
+    closeBtn.addEventListener('click', () => this.close());
+  }
+
+  onClose(): void {
+    if (this.countdownTimer !== null) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
+    }
+    this.contentEl.empty();
+  }
+
+  private expire(): void {
+    if (this.countdownTimer !== null) {
+      clearInterval(this.countdownTimer);
+      this.countdownTimer = null;
+    }
+    const ra = this.plugin.settings.remoteAccess;
+    ra.pairingCode = null;
+    ra.pairingExpiresAt = null;
+    this.plugin.saveSettings().catch(console.error);
+    this.close();
+    new Notice('Pairing code expired. Open Settings to generate a new one.');
   }
 }

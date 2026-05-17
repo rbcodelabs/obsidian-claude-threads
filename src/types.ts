@@ -85,6 +85,17 @@ export interface Project {
   createdAt: number;
 }
 
+export interface RemoteAccessSettings {
+  enabled: boolean;
+  /** 32-char hex string generated on first enable. Empty string when not yet generated. */
+  roomId: string;
+  relayUrl: string;
+  /** Non-null only while actively pairing (the pairing code is the formatted roomId). */
+  pairingCode: string | null;
+  /** ms epoch at which the pairing code expires. */
+  pairingExpiresAt: number | null;
+}
+
 export interface PluginSettings {
   claudeBinaryPath: string;
   defaultCwd: string;
@@ -102,6 +113,7 @@ export interface PluginSettings {
   projects: Project[];
   wakeLockEnabled: boolean;
   layoutDensity: LayoutDensity;
+  remoteAccess: RemoteAccessSettings;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -121,6 +133,13 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   projects: [],
   wakeLockEnabled: true,
   layoutDensity: 'comfortable',
+  remoteAccess: {
+    enabled: false,
+    roomId: '',
+    relayUrl: 'wss://relay.claude-threads.rbcodelabs.com',
+    pairingCode: null,
+    pairingExpiresAt: null,
+  },
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {

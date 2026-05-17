@@ -6,5 +6,5 @@
   "description": "Multi-threaded Claude Code sessions in Obsidian",
   "author": "Rick Bowman",
   "authorUrl": "https://github.com/rickbowman",
-  "isDesktopOnly": true
+  "isDesktopOnly": false
 }

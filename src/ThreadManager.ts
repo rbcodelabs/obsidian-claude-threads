@@ -26,6 +26,7 @@ export type ThreadEvent =
   | { type: 'interrupted' }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
+  | { type: 'thread_renamed'; threadId: string; title: string }
   | { type: 'permission_request'; toolName: string; detail: string }
   | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' };
@@ -38,6 +39,8 @@ export class ThreadManager {
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
+  /** Remote permission resolvers keyed by requestId (used by RelayClient). */
+  private remotePermissionResolvers: Map<string, (allow: boolean) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   mcpServers: Record<string, McpServerConfig> | undefined = undefined;
@@ -161,6 +164,7 @@ export class ThreadManager {
     if (thread) {
       thread.title = title;
       thread.updatedAt = Date.now();
+      this.emit(id, { type: 'thread_renamed', threadId: id, title });
     }
   }
 
@@ -191,6 +195,26 @@ export class ThreadManager {
   resolvePermission(threadId: string, allow: boolean): void {
     const resolver = this.permissionResolvers.get(threadId);
     if (resolver) resolver(allow);
+  }
+
+  /**
+   * Resolve a permission that was issued with a specific requestId (used by
+   * RelayClient for remote permission resolution from a mobile client).
+   */
+  resolvePermissionByRequestId(requestId: string, allow: boolean): void {
+    const resolver = this.remotePermissionResolvers.get(requestId);
+    if (resolver) {
+      this.remotePermissionResolvers.delete(requestId);
+      resolver(allow);
+    }
+  }
+
+  /**
+   * Register a resolver keyed by a stable requestId so that RelayClient can
+   * bridge remote resolve_permission commands to the correct local promise.
+   */
+  registerRemotePermissionResolver(requestId: string, resolver: (allow: boolean) => void): void {
+    this.remotePermissionResolvers.set(requestId, resolver);
   }
 
   getQueuedMessage(id: string): string | undefined {
