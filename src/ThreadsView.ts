@@ -869,14 +869,22 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    // Summary/recap lives in the Agent Dashboard — only show model badge here
-    const hasContent = !!thread.model;
+    // Summary/recap lives in the Agent Dashboard — show model badge and cwd here
+    const hasContent = !!thread.model || !!thread.cwd;
 
     // Hide the bar entirely when there's nothing to show
     this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
 
     if (thread.model) {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
+    }
+
+    if (thread.cwd) {
+      const cwdBadge = this.threadInfoBar.createSpan({ cls: 'ct-cwd-badge' });
+      const iconEl = cwdBadge.createSpan({ cls: 'ct-cwd-icon' });
+      setIcon(iconEl, 'folder');
+      cwdBadge.createSpan({ cls: 'ct-cwd-text', text: shortenPath(thread.cwd) });
+      setTooltip(cwdBadge, thread.cwd);
     }
   }
 
@@ -1243,6 +1251,13 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         this.setRunningState(false);
+        break;
+      }
+
+      case 'cwd_changed': {
+        if (this.activeThreadId === threadId) {
+          this.renderThreadInfo();
+        }
         break;
       }
 
@@ -2015,5 +2030,20 @@ class ForkModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
+}
+
+/**
+ * Returns a display-friendly version of an absolute path.
+ * Replaces the home directory with ~ and keeps only the last two path segments
+ * so the cwd badge stays compact even for deeply-nested repos.
+ */
+function shortenPath(fullPath: string): string {
+  const home = os.homedir();
+  const withTilde = fullPath.startsWith(home)
+    ? '~' + fullPath.slice(home.length)
+    : fullPath;
+  const parts = withTilde.split('/').filter(Boolean);
+  if (parts.length <= 3) return withTilde;
+  return '.../' + parts.slice(-2).join('/');
 }
 

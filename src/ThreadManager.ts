@@ -24,6 +24,7 @@ export type ThreadEvent =
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
   | { type: 'interrupted' }
+  | { type: 'cwd_changed'; cwd: string }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
   | { type: 'permission_request'; toolName: string; detail: string }
@@ -41,6 +42,12 @@ export class ThreadManager {
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   mcpServers: Record<string, McpServerConfig> | undefined = undefined;
+  /**
+   * When set, called before each session run to produce per-thread MCP server configs.
+   * Preferred over `mcpServers` when present — allows baking a thread-specific callback
+   * (e.g. onSetCwd) into the server without shared mutable state across concurrent threads.
+   */
+  mcpServerFactory: ((threadId: string) => Record<string, McpServerConfig>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -164,6 +171,15 @@ export class ThreadManager {
     }
   }
 
+  setThreadCwd(id: string, cwd: string): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      thread.cwd = cwd;
+      thread.updatedAt = Date.now();
+      this.emit(id, { type: 'cwd_changed', cwd });
+    }
+  }
+
   setThreadModel(id: string, model: string | undefined): void {
     const thread = this.threads.get(id);
     if (thread) {
@@ -275,6 +291,7 @@ export class ThreadManager {
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
     const project = thread.projectId ? this.getProject(thread.projectId) : undefined;
     const appendSystemPrompt = project?.description?.trim() || undefined;
+    const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId) : this.mcpServers;
 
     await session.run(
       promptText,
@@ -397,7 +414,7 @@ export class ThreadManager {
       model,
       images,
       appendSystemPrompt,
-      this.mcpServers,
+      sessionMcpServers,
     );
 
     if (completedSuccessfully) {
