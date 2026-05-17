@@ -1997,13 +1997,21 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .ct-mobile-root {
+  /* Use absolute positioning so we fill the view container regardless of
+     whether Obsidian Mobile's view-content div has a fixed height or not.
+     `height: 100%` only works when the parent has an explicit height; on
+     mobile the parent is often height:auto which causes the whole flex chain
+     to collapse to zero and clip most messages. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
   background: var(--background-primary);
   color: var(--text-normal);
   font-size: var(--font-ui-small);
-  position: relative;
   overflow: hidden;
 }
 
@@ -2194,13 +2202,6 @@
   color: var(--text-normal);
 }
 
-.ct-mobile-conv-msg-count {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  white-space: nowrap;
-  padding-left: 6px;
-  flex-shrink: 0;
-}
 
 .ct-mobile-conversation {
   flex: 1;
@@ -2213,7 +2214,9 @@
 .ct-mobile-messages {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  /* Use `scroll` not `auto` — on iOS WebView, `auto` can fail to create a
+     scrollable region inside a flex container. `scroll` always creates one. */
+  overflow-y: scroll;
   -webkit-overflow-scrolling: touch;
   padding: 12px 12px 4px;
   display: flex;

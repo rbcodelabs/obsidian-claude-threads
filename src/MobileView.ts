@@ -33,7 +33,6 @@ export class MobileView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private convTitleEl!: HTMLSpanElement;
-  private convMsgCountEl!: HTMLSpanElement;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
 
   // Cleanup handles
@@ -116,7 +115,6 @@ export class MobileView extends ItemView {
       this.showPanel('list');
     });
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
-    this.convMsgCountEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-msg-count' });
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
@@ -159,9 +157,6 @@ export class MobileView extends ItemView {
     if (activeId && !this.showingList) {
       const thread = this.store.getThread(activeId);
       this.convTitleEl.textContent = thread?.title ?? '';
-      // Show message count so we can immediately tell if data is arriving
-      const msgCount = thread?.messages.length ?? 0;
-      this.convMsgCountEl.textContent = msgCount > 0 ? `${msgCount} msgs` : '';
       this.showPanel('conversation');
     } else if (!activeId) {
       this.showingList = false;
