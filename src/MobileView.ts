@@ -375,6 +375,13 @@ export class MobileView extends ItemView {
   }
 
   private scrollToBottom(): void {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    // Two-pass scroll: first RAF waits for layout to be computed (flex heights),
+    // second setTimeout waits for marked.parse() async calls to finish rendering.
+    requestAnimationFrame(() => {
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      setTimeout(() => {
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      }, 150);
+    });
   }
 }
