@@ -10,13 +10,13 @@ import { createObsidianMcpServer } from './ObsidianTools';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
-import fs from 'fs';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
 // Symbol.for('nodejs.event_target') marker. Node's isEventTarget() checks
 // obj?.constructor?.[kIsNodeEventTarget], i.e. AbortSignal[symbol] (the constructor,
 // not the prototype), causing ERR_INVALID_ARG_TYPE when events.once(signal, 'abort') is called.
-{
+// Desktop/Electron only — mobile does not need this patch.
+if (!Platform.isMobile) {
   const kNodeEventTarget = Symbol.for('nodejs.event_target');
   if (!(AbortSignal as unknown as Record<symbol, unknown>)[kNodeEventTarget]) {
     Object.defineProperty(AbortSignal, kNodeEventTarget, {
@@ -52,7 +52,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // Enable SDK verbose debug logging so MCP connection errors surface to the console.
     // The SDK checks process.env.DEBUG_SDK lazily via a memoized fn — set it before any SDK call.
-    if (!process.env.DEBUG_SDK) {
+    // Desktop only: process.env is a Node.js global not available on mobile.
+    if (!Platform.isMobile && !process.env.DEBUG_SDK) {
       process.env.DEBUG_SDK = '1';
       process.env.CLAUDE_CODE_DEBUG_LOGS_DIR = `${process.env.HOME}/.claude/debug/claude-threads`;
       console.log('[ClaudeThreads] SDK debug logging enabled → ~/.claude/debug/claude-threads/');
@@ -319,6 +320,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   private detectClaudeBinary(): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
     if (this.settings.claudeBinaryPath && fs.existsSync(this.settings.claudeBinaryPath)) {
       return;
     }
