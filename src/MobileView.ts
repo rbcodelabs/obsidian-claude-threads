@@ -277,11 +277,16 @@ export class MobileView extends ItemView {
     const content = el.createDiv('ct-mobile-message-content');
 
     if (msg.role === 'assistant') {
-      marked.parse(msg.content).then((html) => {
+      // marked v18 returns a string synchronously (not a Promise) when no async
+      // extensions are configured. Calling .then() on a plain string throws
+      // TypeError which propagates out of the for loop and stops all subsequent
+      // messages from rendering. Call synchronously and wrap in try/catch.
+      try {
+        const html = marked.parse(msg.content) as string;
         content.appendChild(sanitizeHTMLToDom(html));
-      }).catch(() => {
+      } catch {
         content.createEl('p', { text: msg.content });
-      });
+      }
     } else {
       content.createEl('p', { text: msg.content });
     }
@@ -296,13 +301,14 @@ export class MobileView extends ItemView {
     const contentEl = el.createDiv('ct-mobile-message-content');
 
     if (content) {
-      marked.parse(content).then((html) => {
+      try {
+        const html = marked.parse(content) as string;
         contentEl.appendChild(sanitizeHTMLToDom(html));
         contentEl.createSpan({ cls: 'ct-cursor' });
-      }).catch(() => {
+      } catch {
         contentEl.createEl('p', { text: content });
         contentEl.createSpan({ cls: 'ct-cursor' });
-      });
+      }
     } else {
       contentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
       contentEl.createSpan({ cls: 'ct-cursor' });
