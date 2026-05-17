@@ -23,6 +23,8 @@ export class MobileView extends ItemView {
   // DOM refs
   private rootEl!: HTMLElement;
   private headerEl!: HTMLElement;
+  private listPanelEl!: HTMLElement;
+  private convPanelEl!: HTMLElement;
   private disconnectedBannerEl: HTMLElement | null = null;
   private threadListEl!: HTMLElement;
   private conversationEl!: HTMLElement;
@@ -31,7 +33,7 @@ export class MobileView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private convTitleEl!: HTMLSpanElement;
-  private showingList = false; // mobile-only: user pressed back, stay on list even if desktop has active thread
+  private showingList = false; // user pressed back — stay on list even if desktop has active thread
 
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
@@ -88,7 +90,8 @@ export class MobileView extends ItemView {
     root.addClass('ct-mobile-root');
 
     // ── List panel ────────────────────────────────────────────────────
-    const listPanel = root.createDiv('ct-mobile-list-panel');
+    this.listPanelEl = root.createDiv('ct-mobile-list-panel');
+    const listPanel = this.listPanelEl;
     const listHeader = listPanel.createDiv('ct-mobile-list-header');
     listHeader.createEl('span', { cls: 'ct-mobile-list-title', text: 'Claude Threads' });
     const newBtn = listHeader.createEl('button', { cls: 'ct-mobile-new-btn', attr: { title: 'New thread' } });
@@ -99,13 +102,14 @@ export class MobileView extends ItemView {
     this.threadListEl = listPanel.createDiv('ct-mobile-thread-list');
 
     // ── Conversation panel ────────────────────────────────────────────
-    const convPanel = root.createDiv('ct-mobile-conv-panel');
+    this.convPanelEl = root.createDiv('ct-mobile-conv-panel');
+    const convPanel = this.convPanelEl;
     this.headerEl = convPanel.createDiv('ct-mobile-conv-header');
     const backBtn = this.headerEl.createEl('button', { cls: 'ct-mobile-back-btn' });
     backBtn.setText('‹');
     backBtn.addEventListener('click', () => {
       this.showingList = true;
-      this.rootEl.removeClass('ct-has-active');
+      this.showPanel('list');
     });
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
@@ -148,19 +152,19 @@ export class MobileView extends ItemView {
     // Switch to conversation panel when there's an active thread and the user
     // hasn't explicitly navigated back to the list.
     if (activeId && !this.showingList) {
-      this.rootEl.addClass('ct-has-active');
       const thread = this.store.getThread(activeId);
       this.convTitleEl.textContent = thread?.title ?? '';
+      this.showPanel('conversation');
     } else if (!activeId) {
       this.showingList = false;
-      this.rootEl.removeClass('ct-has-active');
+      this.showPanel('list');
     }
   }
 
   private renderPairingScreen(): void {
     this.threadListEl.empty();
     this.messagesEl.empty();
-    this.rootEl.removeClass('ct-has-active');
+    this.showPanel('list');
 
     const el = this.threadListEl.createDiv('ct-mobile-pairing');
     el.createEl('div', { cls: 'ct-mobile-pairing-icon', text: '⟳' });
@@ -208,6 +212,10 @@ export class MobileView extends ItemView {
 
       item.addEventListener('click', () => {
         this.showingList = false;
+        // Switch panel immediately — don't wait for the store to notify and re-render.
+        // This makes the tap feel instant on mobile.
+        this.convTitleEl.textContent = thread.title || 'Untitled';
+        this.showPanel('conversation');
         this.store!.setActiveThreadId(thread.id);
         this.relayClient!.sendCommand({ type: 'set_active_thread', threadId: thread.id });
       });
@@ -337,6 +345,19 @@ export class MobileView extends ItemView {
       this.disconnectedBannerEl = banner;
       // Insert at the top
       this.rootEl.insertBefore(banner, this.rootEl.firstChild);
+    }
+  }
+
+  // ── Panel switching ───────────────────────────────────────────────────
+
+  /** Directly show/hide panels without relying on CSS class cascades. */
+  private showPanel(panel: 'list' | 'conversation'): void {
+    if (panel === 'conversation') {
+      this.listPanelEl.style.display = 'none';
+      this.convPanelEl.style.display = 'flex';
+    } else {
+      this.convPanelEl.style.display = 'none';
+      this.listPanelEl.style.display = 'flex';
     }
   }
 
