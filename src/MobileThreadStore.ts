@@ -8,6 +8,7 @@
  */
 
 import type { RelayFrame, SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
+import type { ToolCallRecord } from './types';
 
 type StoreListener = () => void;
 
@@ -19,6 +20,8 @@ export class MobileThreadStore {
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   /** Partially accumulated streaming token for the active streaming message. */
   private streamingContent: Map<string, string> = new Map();
+  /** Tool calls fired during the current streaming turn, keyed by threadId. */
+  private streamingTools: Map<string, ToolCallRecord[]> = new Map();
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -48,6 +51,10 @@ export class MobileThreadStore {
 
   getStreamingContent(threadId: string): string {
     return this.streamingContent.get(threadId) ?? '';
+  }
+
+  getStreamingTools(threadId: string): ToolCallRecord[] {
+    return this.streamingTools.get(threadId) ?? [];
   }
 
   isStreaming(threadId: string): boolean {
@@ -99,6 +106,7 @@ export class MobileThreadStore {
 
       case 'streaming_start':
         this.streamingContent.set(frame.threadId, '');
+        this.streamingTools.set(frame.threadId, []);
         this.notify();
         break;
 
@@ -109,10 +117,12 @@ export class MobileThreadStore {
         break;
       }
 
-      case 'tool_use':
-        // Streaming tool use — no store mutation needed; view shows this via streaming state
+      case 'tool_use': {
+        const tools = this.streamingTools.get(frame.threadId) ?? [];
+        this.streamingTools.set(frame.threadId, [...tools, { name: frame.name, summary: frame.summary }]);
         this.notify();
         break;
+      }
 
       case 'message': {
         const thread = this.threads.get(frame.threadId);
@@ -125,12 +135,14 @@ export class MobileThreadStore {
         }
         // Clear streaming state for this thread — the final message has arrived
         this.streamingContent.delete(frame.threadId);
+        this.streamingTools.delete(frame.threadId);
         this.notify();
         break;
       }
 
       case 'done':
         this.streamingContent.delete(frame.threadId);
+        this.streamingTools.delete(frame.threadId);
         this.notify();
         break;
 
@@ -140,6 +152,7 @@ export class MobileThreadStore {
           this.threads.set(frame.threadId, { ...errThread, lastError: frame.error });
         }
         this.streamingContent.delete(frame.threadId);
+        this.streamingTools.delete(frame.threadId);
         this.notify();
         break;
       }
@@ -215,6 +228,7 @@ export class MobileThreadStore {
   private clear(): void {
     this.threads.clear();
     this.streamingContent.clear();
+    this.streamingTools.clear();
     this.pendingPermissions.clear();
     this.activeThreadId = null;
   }

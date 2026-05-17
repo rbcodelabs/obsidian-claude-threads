@@ -13,6 +13,7 @@ import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
+import type { ToolCallRecord } from './types';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -359,8 +360,15 @@ export class MobileView extends ItemView {
     if (!activeId || !this.store || !this.store.isStreaming(activeId)) return;
 
     const content = this.store.getStreamingContent(activeId);
+    const tools = this.store.getStreamingTools(activeId);
     const el = this.messagesEl.createDiv('ct-mobile-message ct-mobile-message-assistant ct-mobile-streaming');
     this.streamingEl = el;
+
+    // Show tool pills for any tools fired during this turn
+    if (tools.length > 0) {
+      this.renderToolCalls(el, tools, true);
+    }
+
     const contentEl = el.createDiv('ct-mobile-message-content');
 
     if (content) {
@@ -370,7 +378,7 @@ export class MobileView extends ItemView {
       } catch {
         contentEl.createEl('p', { text: content });
       }
-    } else {
+    } else if (tools.length === 0) {
       contentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
     }
     contentEl.createSpan({ cls: 'ct-cursor' });
@@ -386,6 +394,12 @@ export class MobileView extends ItemView {
     }
 
     const el = this.messagesEl.createDiv(`ct-mobile-message ct-mobile-message-${msg.role}`);
+
+    // Render tool-call pills above the message content (assistant only)
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+      this.renderToolCalls(el, msg.toolCalls, false);
+    }
+
     const content = el.createDiv('ct-mobile-message-content');
 
     if (msg.role === 'assistant') {
@@ -419,6 +433,16 @@ export class MobileView extends ItemView {
     }
   }
 
+
+  /** Renders tool-call pills using the same ct-tool-pill classes as the desktop view. */
+  private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], active: boolean): void {
+    const wrapper = parent.createDiv('ct-tools');
+    for (const tool of tools) {
+      const pill = wrapper.createDiv(active ? 'ct-tool-pill ct-tool-active' : 'ct-tool-pill');
+      pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
+      pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+    }
+  }
 
   private renderPermissionCard(permission: PendingPermission): void {
     const card = this.messagesEl.createDiv('ct-mobile-permission-card');

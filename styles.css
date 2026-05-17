@@ -2367,6 +2367,7 @@
 .ct-mobile-message-assistant {
   align-self: flex-start;
   align-items: flex-start;
+  max-width: 100%; /* flowing text — no bubble, so no width cap needed */
 }
 
 .ct-mobile-message-content {
@@ -2387,10 +2388,11 @@
 }
 
 .ct-mobile-message-assistant .ct-mobile-message-content {
-  background: var(--background-secondary);
+  background: transparent;
   color: var(--text-normal);
-  border-bottom-left-radius: 4px;
-  border: 1px solid var(--background-modifier-border);
+  border: none;
+  border-radius: 0;
+  padding: 0 4px;
 }
 
 /* Markdown inside assistant messages */
@@ -2434,10 +2436,41 @@
   font-size: var(--font-ui-small);
   font-weight: 600;
 }
-
-.ct-mobile-message-streaming .ct-mobile-message-content {
-  border-color: var(--interactive-accent);
+.ct-mobile-message-assistant .ct-mobile-message-content blockquote {
+  border-left: 3px solid var(--interactive-accent);
+  margin: 6px 0;
+  padding: 3px 10px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--interactive-accent) 6%, transparent);
+  border-radius: 0 4px 4px 0;
 }
+.ct-mobile-message-assistant .ct-mobile-message-content blockquote p {
+  margin: 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-ui-smaller);
+  margin: 6px 0;
+  display: block;
+  overflow-x: auto;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content th,
+.ct-mobile-message-assistant .ct-mobile-message-content td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 5px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content th {
+  background: var(--background-secondary);
+  font-weight: 600;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content tr:nth-child(even) td {
+  background: var(--background-modifier-hover);
+}
+
+/* streaming has no box — no border override needed */
 
 .ct-mobile-cost {
   font-size: 10px;
@@ -2479,20 +2512,8 @@
   font-style: italic;
 }
 
-.ct-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  background: var(--text-normal);
-  margin-left: 1px;
-  vertical-align: text-bottom;
-  animation: ct-blink 0.8s step-end infinite;
-}
-
-@keyframes ct-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
+/* ct-cursor in the mobile section intentionally removed — the desktop rule
+   (accent colour, smooth pulse) defined earlier in this file applies here too. */
 
 /* ── Permission card ────────────────────────────────────────────────────── */
 
