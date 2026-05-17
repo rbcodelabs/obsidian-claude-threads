@@ -1989,3 +1989,72 @@
   padding: 2px 8px;
   font-size: var(--font-ui-smaller);
 }
+
+/* ── Context footer (status line) ────────────────────────────────────────── */
+
+.ct-context-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--background-secondary);
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  flex-shrink: 0;
+  min-height: 26px;
+}
+
+.ct-context-footer.ct-hidden {
+  display: none;
+}
+
+.ct-footer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-footer-pill-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.ct-footer-pill-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.ct-footer-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Clickable dev-server URL pills */
+.ct-footer-link {
+  color: var(--text-accent, var(--interactive-accent));
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ct-footer-link:hover {
+  text-decoration: underline;
+}
+
+/* AWS expired warning state */
+.ct-footer-pill-warn {
+  color: var(--text-warning, var(--color-orange));
+}
