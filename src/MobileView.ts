@@ -36,6 +36,11 @@ export class MobileView extends ItemView {
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
   private debugBarEl!: HTMLElement;
 
+  // Image attachments pending send
+  private pendingImages: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> = [];
+  private imageStripEl!: HTMLElement;
+  private fileInputEl!: HTMLInputElement;
+
   // Incremental render tracking — avoids full re-render on every streaming token
   private lastRenderedActiveId: string | null = null;
   private lastRenderedMessageCount = -1;
@@ -125,7 +130,15 @@ export class MobileView extends ItemView {
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
     this.debugBarEl = this.conversationEl.createDiv('ct-mobile-debug-bar');
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
+    this.imageStripEl = this.inputRowEl.createDiv('ct-mobile-image-strip');
+    this.imageStripEl.style.display = 'none';
     const inputControls = this.inputRowEl.createDiv('ct-mobile-input-controls');
+    const attachBtn = inputControls.createEl('button', { cls: 'ct-mobile-attach-btn', attr: { title: 'Attach image' } });
+    attachBtn.setText('⊕');
+    this.fileInputEl = this.inputRowEl.createEl('input', { type: 'file', attr: { accept: 'image/*', multiple: 'true' } });
+    this.fileInputEl.style.display = 'none';
+    attachBtn.addEventListener('click', () => this.fileInputEl.click());
+    this.fileInputEl.addEventListener('change', () => this.handleImageSelect());
     this.inputEl = inputControls.createEl('textarea', {
       cls: 'ct-mobile-input',
       attr: { placeholder: 'Message Claude…', rows: '1' },
@@ -462,13 +475,56 @@ export class MobileView extends ItemView {
 
   private handleSend(): void {
     const text = this.inputEl.value.trim();
-    if (!text || !this.store || !this.relayClient) return;
+    if ((!text && this.pendingImages.length === 0) || !this.store || !this.relayClient) return;
 
     const activeId = this.store.getActiveThreadId();
     if (!activeId) return;
 
-    this.relayClient.sendCommand({ type: 'send_message', threadId: activeId, text });
+    const cmd: { type: 'send_message'; threadId: string; text: string; images?: typeof this.pendingImages } = {
+      type: 'send_message',
+      threadId: activeId,
+      text,
+    };
+    if (this.pendingImages.length > 0) {
+      cmd.images = [...this.pendingImages];
+    }
+    this.relayClient.sendCommand(cmd);
     this.inputEl.value = '';
+    this.inputEl.style.height = 'auto';
+    this.pendingImages = [];
+    this.renderImageStrip();
+  }
+
+  private async handleImageSelect(): Promise<void> {
+    const files = Array.from(this.fileInputEl.files ?? []);
+    this.fileInputEl.value = '';
+    for (const file of files) {
+      const attachment = await resizeImage(file);
+      this.pendingImages.push(attachment);
+    }
+    this.renderImageStrip();
+  }
+
+  private renderImageStrip(): void {
+    this.imageStripEl.empty();
+    if (this.pendingImages.length === 0) {
+      this.imageStripEl.style.display = 'none';
+      return;
+    }
+    this.imageStripEl.style.display = 'flex';
+    for (let i = 0; i < this.pendingImages.length; i++) {
+      const img = this.pendingImages[i];
+      const thumb = this.imageStripEl.createDiv('ct-mobile-image-thumb');
+      const imgEl = thumb.createEl('img');
+      imgEl.src = `data:${img.mediaType};base64,${img.base64}`;
+      const removeBtn = thumb.createEl('button', { cls: 'ct-mobile-image-remove', text: '×' });
+      const idx = i;
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.pendingImages.splice(idx, 1);
+        this.renderImageStrip();
+      });
+    }
   }
 
   private scrollToBottom(): void {
@@ -509,4 +565,29 @@ function relativeTime(ts: number): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
   return `${Math.floor(diff / 86_400_000)}d`;
+}
+
+/** Resize an image file to max 1024px on longest side, returning a base64 JPEG. */
+async function resizeImage(file: File): Promise<{ base64: string; mediaType: 'image/jpeg'; name: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1024;
+      let { width, height } = img;
+      if (width > MAX || height > MAX) {
+        if (width >= height) { height = Math.round(height * MAX / width); width = MAX; }
+        else { width = Math.round(width * MAX / height); height = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      resolve({ base64: dataUrl.split(',')[1], mediaType: 'image/jpeg', name: file.name });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')); };
+    img.src = url;
+  });
 }

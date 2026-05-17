@@ -68,7 +68,7 @@ export type RelayFrame =
  * The relay forwards them verbatim; the desktop RelayClient dispatches them.
  */
 export type RemoteCommand =
-  | { type: 'send_message'; threadId: string; text: string }
+  | { type: 'send_message'; threadId: string; text: string; images?: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> }
   | { type: 'stop_session'; threadId: string }
   | { type: 'resolve_permission'; threadId: string; requestId: string; allow: boolean }
   | { type: 'create_thread'; title: string; cwd?: string }
