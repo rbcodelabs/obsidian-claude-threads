@@ -40,7 +40,7 @@ export class ThreadManager {
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
-  mcpServers: Record<string, McpServerConfig> | undefined = undefined;
+  mcpServerFactory: (() => Record<string, McpServerConfig>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -397,7 +397,7 @@ export class ThreadManager {
       model,
       images,
       appendSystemPrompt,
-      this.mcpServers,
+      this.mcpServerFactory?.(),
     );
 
     if (completedSuccessfully) {
