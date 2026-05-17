@@ -58,6 +58,7 @@ function serializeMessage(msg: ChatMessage): SerializedMessage {
     cost: msg.cost,
     compactTrigger: msg.compactTrigger,
     preTokens: msg.preTokens,
+    images: msg.images,
   };
 }
 

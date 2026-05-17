@@ -280,6 +280,7 @@ export class ThreadManager {
       role: 'user',
       content: userText,
       timestamp: Date.now(),
+      images: images && images.length > 0 ? images : undefined,
     };
     thread.messages.push(userMsg);
     thread.updatedAt = Date.now();

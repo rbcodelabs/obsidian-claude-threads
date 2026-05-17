@@ -396,7 +396,18 @@ export class MobileView extends ItemView {
         content.createEl('p', { text: msg.content });
       }
     } else {
-      content.createEl('p', { text: msg.content });
+      // Render any attached images above the text
+      if (msg.images && msg.images.length > 0) {
+        const imgGrid = content.createDiv('ct-mobile-msg-images');
+        for (const img of msg.images) {
+          const imgEl = imgGrid.createEl('img', { cls: 'ct-mobile-msg-img' });
+          imgEl.src = `data:${img.mediaType};base64,${img.base64}`;
+          imgEl.alt = img.name || 'image';
+        }
+      }
+      if (msg.content) {
+        content.createEl('p', { text: msg.content });
+      }
     }
 
     if (msg.cost && msg.cost > 0) {

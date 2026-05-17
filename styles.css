@@ -2653,6 +2653,24 @@
   color: var(--interactive-accent) !important;
 }
 
+/* ── Images in conversation bubbles ────────────────────────────────────── */
+
+.ct-mobile-msg-images {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ct-mobile-msg-img {
+  max-height: 200px;
+  max-width: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  display: block;
+}
+
 /* ── Settings mobile panel ──────────────────────────────────────────────── */
 
 .ct-mobile-status-ok {

@@ -36,6 +36,8 @@ export interface ChatMessage {
   cost?: number;
   compactTrigger?: 'auto' | 'manual';
   preTokens?: number;
+  /** Images attached to this message (user role only). Stored as base64 for display. */
+  images?: ImageAttachment[];
 }
 
 export interface ThreadDraft {

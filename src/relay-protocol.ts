@@ -20,6 +20,8 @@ export interface SerializedMessage {
   cost?: number;
   compactTrigger?: 'auto' | 'manual';
   preTokens?: number;
+  /** Images attached to this user message, base64-encoded for display in mobile history. */
+  images?: Array<{ base64: string; mediaType: string; name: string }>;
 }
 
 /** JSON-safe version of Thread (no class instances, no functions). */
