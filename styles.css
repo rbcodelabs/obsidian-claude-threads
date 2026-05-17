@@ -2194,6 +2194,14 @@
   color: var(--text-normal);
 }
 
+.ct-mobile-conv-msg-count {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding-left: 6px;
+  flex-shrink: 0;
+}
+
 .ct-mobile-conversation {
   flex: 1;
   min-height: 0;

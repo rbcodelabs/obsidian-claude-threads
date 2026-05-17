@@ -328,6 +328,20 @@ export class RelayClient {
   private sendSnapshot(): void {
     if (!this.threadManager) return;
     const threads = this.threadManager.getThreads().map(serializeThread);
+
+    // Diagnostic logging — visible in desktop DevTools console
+    const totalMessages = threads.reduce((sum, t) => sum + t.messages.length, 0);
+    const payloadJson = JSON.stringify({ type: 'snapshot', threads, activeThreadId: this.activeThreadIdForDesktop });
+    console.log(
+      `[RelayClient] Sending snapshot: ${threads.length} threads, ${totalMessages} total messages, ${(payloadJson.length / 1024).toFixed(1)} KB`,
+      threads.map(t => `${t.title}: ${t.messages.length} msgs`),
+    );
+
+    // If payload exceeds 900 KB warn loudly — Cloudflare DO WebSocket limit is ~1 MB.
+    if (payloadJson.length > 900_000) {
+      console.warn(`[RelayClient] Snapshot payload is ${(payloadJson.length / 1024).toFixed(0)} KB — approaching Cloudflare WebSocket 1 MB limit. Consider sending threads in batches.`);
+    }
+
     this.sendFrame({
       type: 'snapshot',
       threads,

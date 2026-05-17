@@ -33,11 +33,13 @@ export class MobileView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private convTitleEl!: HTMLSpanElement;
+  private convMsgCountEl!: HTMLSpanElement;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
 
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
+  private scrollObserver: MutationObserver | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -79,6 +81,8 @@ export class MobileView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubStore?.();
     this.unsubConnectionState?.();
+    this.scrollObserver?.disconnect();
+    this.scrollObserver = null;
   }
 
   // ── UI construction ───────────────────────────────────────────────────
@@ -112,6 +116,7 @@ export class MobileView extends ItemView {
       this.showPanel('list');
     });
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
+    this.convMsgCountEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-msg-count' });
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
@@ -154,6 +159,9 @@ export class MobileView extends ItemView {
     if (activeId && !this.showingList) {
       const thread = this.store.getThread(activeId);
       this.convTitleEl.textContent = thread?.title ?? '';
+      // Show message count so we can immediately tell if data is arriving
+      const msgCount = thread?.messages.length ?? 0;
+      this.convMsgCountEl.textContent = msgCount > 0 ? `${msgCount} msgs` : '';
       this.showPanel('conversation');
     } else if (!activeId) {
       this.showingList = false;
@@ -375,13 +383,32 @@ export class MobileView extends ItemView {
   }
 
   private scrollToBottom(): void {
-    // Two-pass scroll: first RAF waits for layout to be computed (flex heights),
-    // second setTimeout waits for marked.parse() async calls to finish rendering.
-    requestAnimationFrame(() => {
+    // Disconnect any previous observer before creating a new one.
+    this.scrollObserver?.disconnect();
+    this.scrollObserver = null;
+
+    const doScroll = () => {
       this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    };
+
+    // First pass: after layout is computed.
+    requestAnimationFrame(() => {
+      doScroll();
+
+      // Second pass: watch for async DOM mutations (marked.parse() populating
+      // assistant message content) and re-scroll each time something changes.
+      // Disconnect automatically after 2 s so we don't observe forever.
+      const observer = new MutationObserver(() => {
+        doScroll();
+      });
+      observer.observe(this.messagesEl, { childList: true, subtree: true, characterData: true });
+      this.scrollObserver = observer;
+
       setTimeout(() => {
-        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-      }, 150);
+        observer.disconnect();
+        if (this.scrollObserver === observer) this.scrollObserver = null;
+        doScroll(); // Final scroll after everything has settled.
+      }, 2000);
     });
   }
 }
