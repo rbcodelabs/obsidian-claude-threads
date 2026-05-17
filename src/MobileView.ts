@@ -211,37 +211,86 @@ export class MobileView extends ItemView {
       return;
     }
 
-    for (const thread of threads) {
-      const isActive = thread.id === activeId;
-      const isStreaming = this.store!.isStreaming(thread.id);
-      const item = this.threadListEl.createDiv({
-        cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}`,
-      });
-      const meta = item.createDiv('ct-mobile-thread-meta');
-      meta.createSpan({ cls: 'ct-mobile-thread-title', text: thread.title || 'Untitled' });
-      const lastMsg = thread.messages.filter(m => m.role !== 'compact').at(-1);
-      if (lastMsg) {
-        meta.createSpan({
-          cls: 'ct-mobile-thread-preview',
-          text: lastMsg.content.slice(0, 80).replace(/\n/g, ' '),
-        });
-      }
-      const right = item.createDiv('ct-mobile-thread-right');
-      if (isStreaming) {
-        right.createSpan({ cls: 'ct-mobile-streaming-dot', text: '●' });
-      }
-      right.createSpan({ cls: 'ct-mobile-thread-chevron', text: '›' });
+    // Group threads by status, each group sorted by updatedAt descending
+    const byUpdated = (a: SerializedThread, b: SerializedThread) => b.updatedAt - a.updatedAt;
+    const running  = threads.filter(t => this.store!.isStreaming(t.id)).sort(byUpdated);
+    const failed   = threads.filter(t => !this.store!.isStreaming(t.id) && t.lastError).sort(byUpdated);
+    const active   = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0).sort(byUpdated);
+    const empty    = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length === 0).sort(byUpdated);
 
-      item.addEventListener('click', () => {
-        this.showingList = false;
-        // Switch panel immediately — don't wait for the store to notify and re-render.
-        // This makes the tap feel instant on mobile.
-        this.convTitleEl.textContent = thread.title || 'Untitled';
-        this.showPanel('conversation');
-        this.store!.setActiveThreadId(thread.id);
-        this.relayClient!.sendCommand({ type: 'set_active_thread', threadId: thread.id });
-      });
+    const groups: Array<{ label: string; threads: SerializedThread[] }> = [
+      { label: 'Running', threads: running },
+      { label: 'Failed',  threads: failed },
+      { label: 'Active',  threads: active },
+      { label: 'Ready',   threads: empty },
+    ];
+
+    for (const group of groups) {
+      if (group.threads.length === 0) continue;
+
+      const groupEl = this.threadListEl.createDiv('ct-mobile-thread-group');
+      groupEl.createDiv({ cls: 'ct-mobile-thread-group-label', text: group.label });
+
+      for (const thread of group.threads) {
+        this.renderThreadRow(thread, activeId, groupEl);
+      }
     }
+  }
+
+  private renderThreadRow(thread: SerializedThread, activeId: string | null, container: HTMLElement): void {
+    const isActive = thread.id === activeId;
+    const isStreaming = this.store!.isStreaming(thread.id);
+
+    const item = container.createDiv({
+      cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}`,
+    });
+
+    // Left: status icon
+    let icon = '›';
+    let iconCls = 'ct-mobile-thread-icon';
+    if (isStreaming) {
+      icon = '✽';
+      iconCls += ' ct-mobile-thread-icon-running';
+    } else if (thread.lastError) {
+      icon = '✗';
+      iconCls += ' ct-mobile-thread-icon-error';
+    } else if (thread.messages.length === 0) {
+      icon = '○';
+      iconCls += ' ct-mobile-thread-icon-empty';
+    } else {
+      icon = '✓';
+      iconCls += ' ct-mobile-thread-icon-done';
+    }
+    item.createSpan({ cls: iconCls, text: icon });
+
+    // Middle: title + subtitle
+    const meta = item.createDiv('ct-mobile-thread-meta');
+    meta.createSpan({ cls: 'ct-mobile-thread-title', text: thread.title || 'Untitled' });
+
+    const subtitle = thread.lastError
+      ? thread.lastError.slice(0, 80)
+      : (thread.summary || thread.recap)
+        ? (thread.summary || thread.recap)!.replace(/\n/g, ' ').slice(0, 80)
+        : thread.messages.filter(m => m.role !== 'compact').at(-1)?.content.slice(0, 80).replace(/\n/g, ' ') ?? '';
+
+    if (subtitle) {
+      meta.createSpan({ cls: 'ct-mobile-thread-preview', text: subtitle });
+    }
+
+    // Right: relative time + chevron
+    const right = item.createDiv('ct-mobile-thread-right');
+    if (thread.updatedAt) {
+      right.createSpan({ cls: 'ct-mobile-thread-time', text: relativeTime(thread.updatedAt) });
+    }
+    right.createSpan({ cls: 'ct-mobile-thread-chevron', text: '›' });
+
+    item.addEventListener('click', () => {
+      this.showingList = false;
+      this.convTitleEl.textContent = thread.title || 'Untitled';
+      this.showPanel('conversation');
+      this.store!.setActiveThreadId(thread.id);
+      this.relayClient!.sendCommand({ type: 'set_active_thread', threadId: thread.id });
+    });
   }
 
   private renderConversation(activeId: string | null): void {
@@ -451,4 +500,13 @@ export class MobileView extends ItemView {
       }, 2000);
     });
   }
+}
+
+/** Format a timestamp as a short relative string: "just now", "5m", "2h", "3d". */
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  return `${Math.floor(diff / 86_400_000)}d`;
 }

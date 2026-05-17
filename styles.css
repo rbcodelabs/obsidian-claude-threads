@@ -2075,15 +2075,35 @@
   -webkit-overflow-scrolling: touch;
 }
 
+/* ── Thread groups ───────────────────────────────────────────────────────── */
+
+.ct-mobile-thread-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-mobile-thread-group-label {
+  padding: 6px 16px 4px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* ── Thread rows ─────────────────────────────────────────────────────────── */
+
 .ct-mobile-thread-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 11px 14px 11px 12px;
   border-bottom: 1px solid var(--background-modifier-border);
   cursor: pointer;
   transition: background 0.1s;
-  min-height: 60px;
+  min-height: 56px;
 }
 
 .ct-mobile-thread-item:active {
@@ -2093,7 +2113,38 @@
 .ct-mobile-thread-item-active {
   background: var(--background-modifier-hover);
   border-left: 3px solid var(--interactive-accent);
-  padding-left: 13px;
+  padding-left: 9px;
+}
+
+/* Status icon */
+.ct-mobile-thread-icon {
+  flex-shrink: 0;
+  width: 20px;
+  font-size: 13px;
+  text-align: center;
+  line-height: 1;
+}
+
+.ct-mobile-thread-icon-running {
+  color: var(--interactive-accent);
+  animation: ct-spin 2s linear infinite;
+}
+
+.ct-mobile-thread-icon-done {
+  color: var(--text-faint);
+}
+
+.ct-mobile-thread-icon-error {
+  color: var(--text-error, #e03131);
+}
+
+.ct-mobile-thread-icon-empty {
+  color: var(--text-faint);
+}
+
+@keyframes ct-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 .ct-mobile-thread-meta {
@@ -2123,26 +2174,26 @@
 
 .ct-mobile-thread-right {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   flex-shrink: 0;
 }
 
-.ct-mobile-streaming-dot {
-  font-size: 10px;
-  color: var(--interactive-accent);
-  animation: ct-pulse 1.2s ease-in-out infinite;
+.ct-mobile-thread-time {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ct-mobile-thread-chevron {
+  font-size: 18px;
+  color: var(--text-faint);
+  line-height: 1;
 }
 
 @keyframes ct-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
-}
-
-.ct-mobile-thread-chevron {
-  font-size: 20px;
-  color: var(--text-faint);
-  line-height: 1;
 }
 
 .ct-mobile-no-threads {
