@@ -36,6 +36,11 @@ export class MobileView extends ItemView {
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
   private debugBarEl!: HTMLElement;
 
+  // Incremental render tracking — avoids full re-render on every streaming token
+  private lastRenderedActiveId: string | null = null;
+  private lastRenderedMessageCount = -1;
+  private streamingEl: HTMLElement | null = null;
+
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
@@ -152,12 +157,24 @@ export class MobileView extends ItemView {
     const activeId = this.store.getActiveThreadId();
 
     this.renderThreadList(threads, activeId);
-    this.renderConversation(activeId);
+
+    const thread = activeId ? this.store.getThread(activeId) : null;
+    const msgCount = thread?.messages.length ?? 0;
+
+    if (activeId !== this.lastRenderedActiveId || msgCount !== this.lastRenderedMessageCount) {
+      // Thread changed or new messages finalized — do a full conversation re-render.
+      this.renderConversation(activeId);
+      this.lastRenderedActiveId = activeId;
+      this.lastRenderedMessageCount = msgCount;
+    } else {
+      // Same thread, same message count — streaming token arrived.
+      // Only swap out the streaming element; stable messages stay untouched.
+      this.updateStreamingEl(activeId);
+    }
 
     // Switch to conversation panel when there's an active thread and the user
     // hasn't explicitly navigated back to the list.
     if (activeId && !this.showingList) {
-      const thread = this.store.getThread(activeId);
       this.convTitleEl.textContent = thread?.title ?? '';
       this.showPanel('conversation');
     } else if (!activeId) {
@@ -228,6 +245,8 @@ export class MobileView extends ItemView {
   }
 
   private renderConversation(activeId: string | null): void {
+    // Clear the streaming element ref — it will be destroyed by empty() below.
+    this.streamingEl = null;
     this.messagesEl.empty();
 
     if (!activeId || !this.store) {
@@ -242,10 +261,8 @@ export class MobileView extends ItemView {
       return;
     }
 
-    // Debug: show exact message count from store so we can distinguish data vs render bugs
-    const msgCount = thread.messages.length;
     const allThreads = this.store.getThreads();
-    this.debugBarEl.textContent = `store: ${msgCount} msgs | ${allThreads.length} threads total`;
+    this.debugBarEl.textContent = `store: ${thread.messages.length} msgs | ${allThreads.length} threads`;
 
     // Render permission cards for this thread first
     const permissions = this.store.getPendingPermissionsForThread(activeId);
@@ -253,18 +270,47 @@ export class MobileView extends ItemView {
       this.renderPermissionCard(permission);
     }
 
-    // Render existing messages
+    // Render settled messages
     for (const msg of thread.messages) {
       this.renderMessage(msg);
     }
 
-    // Streaming state
-    if (this.store.isStreaming(activeId)) {
-      const streamingContent = this.store.getStreamingContent(activeId);
-      this.renderStreamingMessage(streamingContent);
-    }
+    // Append streaming element if active
+    this.updateStreamingEl(activeId);
 
     this.scrollToBottom();
+  }
+
+  /**
+   * Swap out only the streaming element without touching settled messages.
+   * Called on every token event so the stable message list is never cleared.
+   */
+  private updateStreamingEl(activeId: string | null): void {
+    // Remove previous streaming element.
+    this.streamingEl?.remove();
+    this.streamingEl = null;
+
+    if (!activeId || !this.store || !this.store.isStreaming(activeId)) return;
+
+    const content = this.store.getStreamingContent(activeId);
+    const el = this.messagesEl.createDiv('ct-mobile-message ct-mobile-message-assistant ct-mobile-streaming');
+    this.streamingEl = el;
+    const contentEl = el.createDiv('ct-mobile-message-content');
+
+    if (content) {
+      try {
+        const html = marked.parse(content) as string;
+        contentEl.appendChild(sanitizeHTMLToDom(html));
+      } catch {
+        contentEl.createEl('p', { text: content });
+      }
+    } else {
+      contentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
+    }
+    contentEl.createSpan({ cls: 'ct-cursor' });
+
+    // Scroll to keep streaming content visible.
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
   private renderMessage(msg: SerializedMessage): void {
@@ -296,24 +342,6 @@ export class MobileView extends ItemView {
     }
   }
 
-  private renderStreamingMessage(content: string): void {
-    const el = this.messagesEl.createDiv('ct-mobile-message ct-mobile-message-assistant ct-mobile-streaming');
-    const contentEl = el.createDiv('ct-mobile-message-content');
-
-    if (content) {
-      try {
-        const html = marked.parse(content) as string;
-        contentEl.appendChild(sanitizeHTMLToDom(html));
-        contentEl.createSpan({ cls: 'ct-cursor' });
-      } catch {
-        contentEl.createEl('p', { text: content });
-        contentEl.createSpan({ cls: 'ct-cursor' });
-      }
-    } else {
-      contentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
-      contentEl.createSpan({ cls: 'ct-cursor' });
-    }
-  }
 
   private renderPermissionCard(permission: PendingPermission): void {
     const card = this.messagesEl.createDiv('ct-mobile-permission-card');

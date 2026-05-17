@@ -2217,6 +2217,7 @@
   /* Use `scroll` not `auto` — on iOS WebView, `auto` can fail to create a
      scrollable region inside a flex container. `scroll` always creates one. */
   overflow-y: scroll;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   padding: 12px 12px 4px;
   display: flex;
@@ -2228,6 +2229,7 @@
 
 .ct-mobile-message {
   max-width: 88%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -2248,6 +2250,9 @@
   font-size: var(--font-ui-small);
   line-height: 1.5;
   word-break: break-word;
+  /* Prevent code blocks from expanding beyond bubble width */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ct-mobile-message-user .ct-mobile-message-content {
@@ -2276,6 +2281,9 @@
   border-radius: 6px;
   padding: 10px 12px;
   overflow-x: auto;
+  /* Must be set so pre doesn't blow out the bubble width */
+  max-width: 100%;
+  box-sizing: border-box;
   font-size: var(--font-ui-smaller);
   margin: 6px 0;
 }
@@ -2452,19 +2460,23 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 22px;
   padding: 6px 6px 6px 14px;
+  /* Clip the textarea inside the rounded wrapper */
+  overflow: hidden;
 }
 
 .ct-mobile-input {
   flex: 1;
   resize: none;
   border: none;
+  /* Override any theme border-radius — the wrapper provides the visual rounding */
+  border-radius: 0 !important;
   background: transparent;
   color: var(--text-normal);
   font-size: var(--font-ui-small);
   line-height: 1.5;
   max-height: 120px;
   overflow-y: auto;
-  padding: 2px 0;
+  padding: 4px 0;
   outline: none;
   box-shadow: none !important;
   font-family: var(--font-interface);
