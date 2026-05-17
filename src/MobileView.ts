@@ -50,6 +50,7 @@ export class MobileView extends ItemView {
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
   private scrollObserver: MutationObserver | null = null;
+  private vpHandler: (() => void) | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -76,6 +77,7 @@ export class MobileView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
     this.render();
+    this.attachViewportListener();
 
     if (this.store) {
       this.unsubStore = this.store.subscribe(() => this.render());
@@ -89,6 +91,7 @@ export class MobileView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.detachViewportListener();
     this.unsubStore?.();
     this.unsubConnectionState?.();
     this.scrollObserver?.disconnect();
@@ -468,6 +471,37 @@ export class MobileView extends ItemView {
       // Insert at the top
       this.rootEl.insertBefore(banner, this.rootEl.firstChild);
     }
+  }
+
+  // ── Viewport / keyboard handling ──────────────────────────────────────
+
+  /**
+   * iOS does not resize the layout viewport when the software keyboard opens.
+   * The visual viewport shrinks instead. We listen for those changes and push
+   * the root element's bottom edge up by the keyboard height so the input row
+   * is never hidden behind the keyboard.
+   */
+  private attachViewportListener(): void {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      // keyboard height = gap between the bottom of the visual viewport and
+      // the bottom of the layout viewport.
+      const keyboardHeight = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+      this.rootEl.style.bottom = keyboardHeight + 'px';
+    };
+    this.vpHandler = update;
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+  }
+
+  private detachViewportListener(): void {
+    const vv = window.visualViewport;
+    if (!vv || !this.vpHandler) return;
+    vv.removeEventListener('resize', this.vpHandler);
+    vv.removeEventListener('scroll', this.vpHandler);
+    this.vpHandler = null;
+    this.rootEl.style.bottom = '';
   }
 
   // ── Panel switching ───────────────────────────────────────────────────

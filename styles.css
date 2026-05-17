@@ -5,6 +5,11 @@
   padding: 0;
 }
 
+/* Same reset for the mobile view — .view-content gets ct-mobile-root added to it */
+.view-content.ct-mobile-root {
+  padding: 0;
+}
+
 /* Obsidian's button:not(.clickable-icon) global rule injects box-shadow and a
    background-color on every button. Reset both for our plugin — individual
    button styles (send, stop, etc.) re-apply their own backgrounds after. */
