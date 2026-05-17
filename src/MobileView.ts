@@ -34,6 +34,7 @@ export class MobileView extends ItemView {
   private sendBtn!: HTMLButtonElement;
   private convTitleEl!: HTMLSpanElement;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
+  private debugBarEl!: HTMLElement;
 
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
@@ -117,6 +118,7 @@ export class MobileView extends ItemView {
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
+    this.debugBarEl = this.conversationEl.createDiv('ct-mobile-debug-bar');
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
     const inputControls = this.inputRowEl.createDiv('ct-mobile-input-controls');
     this.inputEl = inputControls.createEl('textarea', {
@@ -230,11 +232,20 @@ export class MobileView extends ItemView {
 
     if (!activeId || !this.store) {
       this.messagesEl.createDiv({ cls: 'ct-mobile-empty', text: 'Select a thread to start chatting.' });
+      this.debugBarEl.textContent = '';
       return;
     }
 
     const thread = this.store.getThread(activeId);
-    if (!thread) return;
+    if (!thread) {
+      this.debugBarEl.textContent = `store has thread? NO (id: ${activeId.slice(0, 8)})`;
+      return;
+    }
+
+    // Debug: show exact message count from store so we can distinguish data vs render bugs
+    const msgCount = thread.messages.length;
+    const allThreads = this.store.getThreads();
+    this.debugBarEl.textContent = `store: ${msgCount} msgs | ${allThreads.length} threads total`;
 
     // Render permission cards for this thread first
     const permissions = this.store.getPendingPermissionsForThread(activeId);

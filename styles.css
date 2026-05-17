@@ -2422,6 +2422,19 @@
   color: var(--text-on-accent) !important;
 }
 
+/* ── Debug bar (temporary — remove after bug is diagnosed) ──────────────── */
+
+.ct-mobile-debug-bar {
+  flex-shrink: 0;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--text-on-accent);
+  background: #c0392b;
+  text-align: center;
+  font-family: monospace;
+  min-height: 20px;
+}
+
 /* ── Input row ──────────────────────────────────────────────────────────── */
 
 .ct-mobile-input-row {
