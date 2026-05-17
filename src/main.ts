@@ -63,7 +63,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         return { obsidian: mcpServer };
       } catch (err) {
         console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
-        return {};
+        return {} as Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>;
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
