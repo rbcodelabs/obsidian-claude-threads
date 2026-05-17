@@ -175,6 +175,11 @@ export class ThreadManager {
     const thread = this.threads.get(id);
     if (thread) {
       thread.cwd = cwd;
+      // Session IDs are scoped to a Claude Code project directory. Resuming a
+      // session from the old cwd in the new cwd's project directory will fail with
+      // "No conversation found with session ID". Clear it so the next turn starts
+      // fresh in the new directory.
+      thread.sessionId = undefined;
       thread.updatedAt = Date.now();
       this.emit(id, { type: 'cwd_changed', cwd });
     }
@@ -288,15 +293,29 @@ export class ThreadManager {
     const pendingToolCalls: ToolCallRecord[] = [];
     let completedSuccessfully = false;
 
+    // Snapshot the cwd at session start. If obsidian_set_working_directory fires
+    // mid-session, thread.cwd changes but this value stays fixed. We use it in
+    // onDone to decide whether the resulting sessionId is safe to resume.
+    const cwdAtStart = thread.cwd;
+
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
     const project = thread.projectId ? this.getProject(thread.projectId) : undefined;
     const appendSystemPrompt = project?.description?.trim() || undefined;
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId) : this.mcpServers;
 
+    // If there is no session to resume but there IS prior history, the cwd must
+    // have changed mid-conversation (via obsidian_set_working_directory). Inject
+    // the prior turns as a preamble so Claude isn't amnesiac after the switch.
+    const priorMessages = thread.messages.slice(0, -1); // excludes the just-pushed user msg
+    const effectivePrompt =
+      !thread.sessionId && priorMessages.length > 0
+        ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
+        : promptText;
+
     await session.run(
-      promptText,
+      effectivePrompt,
       thread.sessionId,
-      thread.cwd,
+      cwdAtStart,
       this.settings.permissionMode,
       this.settings.extraEnv,
       {
@@ -336,7 +355,13 @@ export class ThreadManager {
           this.emit(threadId, { type: 'message', message: assistantMsg });
         },
         onDone: (sessionId, cost) => {
-          thread.sessionId = sessionId;
+          // Only save the session ID for resumption if cwd didn't change during
+          // this run. If the directory changed (via obsidian_set_working_directory),
+          // the session lives under the old project path and can't be resumed in
+          // the new one — clearing it forces a fresh session next turn.
+          if (thread.cwd === cwdAtStart) {
+            thread.sessionId = sessionId;
+          }
           thread.updatedAt = Date.now();
           const lastMsg = thread.messages[thread.messages.length - 1];
           if (lastMsg?.role === 'assistant' && cost > 0) {
@@ -456,5 +481,46 @@ export class ThreadManager {
     }
     this.sessions.clear();
   }
+}
+
+/**
+ * Builds a text preamble that summarises prior conversation turns when session
+ * continuity is lost (e.g. after a working-directory change). Capped at the
+ * most recent 20 messages to avoid bloating the context window.
+ */
+function buildHistoryPreamble(priorMessages: ChatMessage[], newCwd: string): string {
+  const MAX_MESSAGES = 20;
+  const messages = priorMessages.length > MAX_MESSAGES
+    ? priorMessages.slice(-MAX_MESSAGES)
+    : priorMessages;
+
+  const omitted = priorMessages.length - messages.length;
+  const lines: string[] = [
+    `[Note: the working directory was changed to ${newCwd} and the Claude Code session could not be resumed. The prior conversation is summarised below to restore context.]`,
+    '',
+  ];
+
+  if (omitted > 0) {
+    lines.push(`[... ${omitted} earlier message${omitted > 1 ? 's' : ''} omitted ...]`, '');
+  }
+
+  for (const msg of messages) {
+    if (msg.role === 'compact') {
+      lines.push('[— context compacted here —]', '');
+      continue;
+    }
+
+    const label = msg.role === 'user' ? 'User' : 'Assistant';
+    const toolSuffix =
+      msg.toolCalls && msg.toolCalls.length > 0
+        ? ` [used: ${msg.toolCalls.map(t => t.summary).join(', ')}]`
+        : '';
+
+    lines.push(`${label}: ${msg.content}${toolSuffix}`, '');
+  }
+
+  lines.push('[End of prior context. Continue from here.]', '');
+
+  return lines.join('\n');
 }
 
