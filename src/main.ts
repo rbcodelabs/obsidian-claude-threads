@@ -248,7 +248,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.activateMobileView();
     });
 
-    // Register URI handler for claude-threads://pair?roomId=...&relay=...
+    // Register URI handler for obsidian://pair?roomId=...&relay=...
+    // Triggered when the user scans the QR code on desktop (camera opens the deep link).
     this.registerObsidianProtocolHandler('pair', async (params) => {
       const roomId = params['roomId'];
       const relayUrl = params['relay'] ?? this.settings.remoteAccess.relayUrl;
@@ -518,12 +519,76 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
   /** Minimal settings shown on mobile (desktop-only settings are omitted). */
   private renderMobileOnlySettings(containerEl: HTMLElement): void {
+    const ra = this.plugin.settings.remoteAccess;
+    const isConnected = this.plugin.relayClient?.isConnected() ?? false;
+
+    // Connection status banner
+    const statusEl = containerEl.createDiv({ cls: 'ct-mobile-status' });
+    statusEl.createEl('p', {
+      text: isConnected ? 'Connected to desktop.' : 'Not connected to desktop.',
+      cls: isConnected ? 'ct-mobile-status-ok' : 'ct-mobile-status-disconnected',
+    });
+
+    containerEl.createEl('h3', { text: 'Pair with desktop' });
     containerEl.createEl('p', {
-      text: 'Claude Threads is running in mobile mode. Connect to a desktop instance via Remote Access to use Claude sessions.',
+      text: 'On your desktop, open Settings > Claude Threads > Remote Access, enable it, then tap "Show pairing QR code". Scan that QR code with your phone camera — your phone will ask to open Obsidian, which will connect automatically.',
       cls: 'ct-settings-desc',
     });
 
-    const ra = this.plugin.settings.remoteAccess;
+    // Manual pairing fallback
+    containerEl.createEl('h4', { text: 'Manual pairing' });
+    containerEl.createEl('p', {
+      text: 'If the QR scan does not work, copy the pairing code shown on desktop and paste it below.',
+      cls: 'ct-settings-desc',
+    });
+
+    let manualRoomId = '';
+    new Setting(containerEl)
+      .setName('Pairing code')
+      .setDesc('Paste the XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX code from desktop Settings.')
+      .addText((text) => {
+        text
+          .setPlaceholder('XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX')
+          .setValue(ra.roomId ? formatRoomIdAsCode(ra.roomId) : '')
+          .onChange((val) => { manualRoomId = val.trim(); });
+        return text;
+      })
+      .addButton((btn) =>
+        btn.setButtonText('Connect').setCta().onClick(async () => {
+          // Accept both the formatted code (XXXX-XXXX-...) and raw hex
+          const raw = manualRoomId.replace(/-/g, '').toLowerCase();
+          if (!/^[0-9a-f]{32}$/.test(raw)) {
+            new Notice('Invalid pairing code. Copy the code exactly from desktop Settings.');
+            return;
+          }
+          ra.roomId = raw;
+          ra.enabled = true;
+          await this.plugin.saveSettings();
+          this.plugin.initMobileRelayClient();
+          new Notice('Connecting to desktop…');
+          this.display(); // Refresh status
+        }),
+      );
+
+    // Show current room ID if paired
+    if (ra.roomId) {
+      const maskedId = '••••••••-••••••••-••••••••-' + ra.roomId.slice(-8).toUpperCase();
+      new Setting(containerEl)
+        .setName('Paired room')
+        .setDesc(maskedId)
+        .addButton((btn) =>
+          btn.setButtonText('Disconnect').setWarning().onClick(async () => {
+            this.plugin.relayClient?.disconnect();
+            this.plugin.relayClient = null;
+            ra.roomId = '';
+            ra.enabled = false;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+        );
+    }
+
+    containerEl.createEl('h3', { text: 'Advanced' });
 
     new Setting(containerEl)
       .setName('Relay URL')
@@ -537,11 +602,6 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
-
-    const isConnected = this.plugin.relayClient?.isConnected() ?? false;
-    new Setting(containerEl)
-      .setName('Connection status')
-      .setDesc(isConnected ? 'Connected to desktop relay' : 'Not connected — scan the QR code on desktop to pair');
   }
 
   display(): void {
@@ -904,7 +964,10 @@ class PairingModal extends Modal {
     ra.pairingExpiresAt = Date.now() + 5 * 60 * 1000;
     this.plugin.saveSettings().catch(console.error);
 
-    const pairingUrl = `claude-threads://pair?roomId=${ra.roomId}&relay=${encodeURIComponent(ra.relayUrl)}`;
+    // obsidian:// deep link — iOS/Android camera apps will offer "Open in Obsidian"
+    // when the user scans this QR code. registerObsidianProtocolHandler('pair', ...)
+    // handles obsidian://pair?... on the mobile side.
+    const pairingUrl = `obsidian://pair?roomId=${ra.roomId}&relay=${encodeURIComponent(ra.relayUrl)}`;
     const formatted = formatRoomIdAsCode(ra.roomId);
 
     contentEl.createEl('h2', { text: 'Pair with Mobile' });
