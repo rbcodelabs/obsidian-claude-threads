@@ -51,9 +51,31 @@ const syncPlugin = {
   },
 };
 
+// Banner that stubs Node.js built-in modules on Obsidian Mobile.
+// On desktop (Electron), require('fs') etc. work normally so the stub is never
+// activated. On mobile there is no Node.js runtime — the stubs return empty
+// objects so module-level requires don't throw. The actual Node APIs are only
+// called inside desktop-only code paths gated behind Platform.isMobile checks.
+const mobileNodeStubBanner = `(function(){
+  var _builtins = ['assert','buffer','child_process','crypto','events','fs','fs/promises',
+    'module','net','os','path','process','readline','stream','string_decoder',
+    'timers','tty','url','util','zlib'];
+  try { require('path'); } catch(e) {
+    var _orig = typeof require !== 'undefined' ? require : null;
+    var _stub = new Proxy({}, { get: function(){ return function(){}; } });
+    var _r = function(id) {
+      if (_builtins.indexOf(id) !== -1) return _stub;
+      return _orig ? _orig(id) : (function(){ throw new Error('Cannot require: ' + id); }());
+    };
+    if (typeof globalThis !== 'undefined') globalThis.require = _r;
+    else if (typeof global !== 'undefined') global.require = _r;
+  }
+})();`;
+
 const ctx = await esbuild.context({
   entryPoints: ['src/main.ts'],
   bundle: true,
+  banner: { js: mobileNodeStubBanner },
   plugins: [syncPlugin],
   external: [
     'obsidian',
