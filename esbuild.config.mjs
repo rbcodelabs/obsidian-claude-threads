@@ -57,12 +57,20 @@ const syncPlugin = {
 // objects so module-level requires don't throw. The actual Node APIs are only
 // called inside desktop-only code paths gated behind Platform.isMobile checks.
 const mobileNodeStubBanner = `(function(){
-  var _builtins = ['assert','buffer','child_process','crypto','events','fs','fs/promises',
-    'module','net','os','path','process','readline','stream','string_decoder',
-    'timers','tty','url','util','zlib'];
-  try { require('path'); } catch(e) {
+  // Detect a real Node.js runtime (desktop Electron). On Obsidian Mobile
+  // process.versions.node is absent, so we patch require() to return safe
+  // stubs for Node built-ins instead of throwing or returning undefined.
+  var _isNode = typeof process !== 'undefined'
+    && process.versions != null
+    && typeof process.versions.node === 'string';
+  if (!_isNode) {
+    var _builtins = ['assert','buffer','child_process','crypto','events','fs','fs/promises',
+      'module','net','os','path','process','readline','stream','string_decoder',
+      'timers','tty','url','util','zlib'];
     var _orig = typeof require !== 'undefined' ? require : null;
-    var _stub = new Proxy({}, { get: function(){ return function(){}; } });
+    var _stub = typeof Proxy !== 'undefined'
+      ? new Proxy({}, { get: function(){ return function(){}; } })
+      : {};
     var _r = function(id) {
       if (_builtins.indexOf(id) !== -1) return _stub;
       return _orig ? _orig(id) : (function(){ throw new Error('Cannot require: ' + id); }());

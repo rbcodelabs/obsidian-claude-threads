@@ -40,6 +40,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
   mobileStore: MobileThreadStore | null = null;
 
   async onload(): Promise<void> {
+    // DIAGNOSTIC — remove before shipping
+    new Notice(`[CT] onload reached — mobile:${Platform.isMobile}`, 8000);
+    try {
+      await this._onload();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message + '\n' + (err.stack ?? '').slice(0, 400) : String(err);
+      new Notice(`[CT] load error:\n${msg}`, 0);
+      console.error('[ClaudeThreads] onload failed:', err);
+    }
+  }
+
+  async _onload(): Promise<void> {
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
     addIcon('square', '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>');
