@@ -1,15 +1,26 @@
 import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
-import { ThreadsView, VIEW_TYPE } from './ThreadsView';
-import { AgentDashboard, AGENT_VIEW_TYPE } from './AgentDashboard';
-import { ThreadManager } from './ThreadManager';
-import { VaultPersistence } from './VaultPersistence';
-import { InProcessSummarizer } from './InProcessSummarizer';
-import { WakeLockService } from './WakeLockService';
+// Desktop-only modules: type-only imports so their module-level code never runs on mobile.
+// Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
+// require('fs') / require('child_process') etc. at the top level, which would crash.
+// The actual classes are loaded via lazy require() inside onloadDesktop() instead.
+import type { ThreadsView } from './ThreadsView';
+import type { AgentDashboard } from './AgentDashboard';
+import type { ThreadManager } from './ThreadManager';
+import type { VaultPersistence } from './VaultPersistence';
+import type { InProcessSummarizer } from './InProcessSummarizer';
+import type { WakeLockService } from './WakeLockService';
+import type { createObsidianMcpServer } from './ObsidianTools';
+// Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
-import { createObsidianMcpServer } from './ObsidianTools';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
+
+// View-type string constants. Must match the values exported by each view module.
+// Defined here as literals so both desktop and mobile code can reference them without
+// triggering a static import of the desktop-only view modules.
+const VIEW_TYPE = 'claude-threads:chat';
+const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
 // Symbol.for('nodejs.event_target') marker. Node's isEventTarget() checks
@@ -40,18 +51,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
   mobileStore: MobileThreadStore | null = null;
 
   async onload(): Promise<void> {
-    // DIAGNOSTIC — remove before shipping
-    new Notice(`[CT] onload reached — mobile:${Platform.isMobile}`, 8000);
-    try {
-      await this._onload();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message + '\n' + (err.stack ?? '').slice(0, 400) : String(err);
-      new Notice(`[CT] load error:\n${msg}`, 0);
-      console.error('[ClaudeThreads] onload failed:', err);
-    }
-  }
-
-  async _onload(): Promise<void> {
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
     addIcon('square', '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>');
@@ -84,6 +83,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   private async onloadDesktop(): Promise<void> {
+    // Lazy-load desktop-only modules. Because these are declared as `import type`
+    // at the top of the file, esbuild does not run their module-level code until
+    // the require() below is first called — which only happens on desktop.
+    // (On mobile we never reach this function, so Node.js built-ins are never required.)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ThreadsView } = require('./ThreadsView') as typeof import('./ThreadsView');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { AgentDashboard } = require('./AgentDashboard') as typeof import('./AgentDashboard');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ThreadManager } = require('./ThreadManager') as typeof import('./ThreadManager');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { VaultPersistence } = require('./VaultPersistence') as typeof import('./VaultPersistence');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { InProcessSummarizer } = require('./InProcessSummarizer') as typeof import('./InProcessSummarizer');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createObsidianMcpServer } = require('./ObsidianTools') as typeof import('./ObsidianTools');
+
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
@@ -395,13 +413,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   getView(): ThreadsView | null {
+    // getLeavesOfType only returns leaves registered with VIEW_TYPE, which is
+    // always ThreadsView on desktop. Safe to cast without instanceof.
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-    return leaf?.view instanceof ThreadsView ? leaf.view : null;
+    return (leaf?.view as ThreadsView) ?? null;
   }
 
   getAgentDashboard(): AgentDashboard | null {
+    // Same reasoning as getView().
     const leaf = this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
-    return leaf?.view instanceof AgentDashboard ? leaf.view : null;
+    return (leaf?.view as AgentDashboard) ?? null;
   }
 
   async loadSettings(): Promise<void> {
@@ -495,10 +516,43 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       });
   }
 
+  /** Minimal settings shown on mobile (desktop-only settings are omitted). */
+  private renderMobileOnlySettings(containerEl: HTMLElement): void {
+    containerEl.createEl('p', {
+      text: 'Claude Threads is running in mobile mode. Connect to a desktop instance via Remote Access to use Claude sessions.',
+      cls: 'ct-settings-desc',
+    });
+
+    const ra = this.plugin.settings.remoteAccess;
+
+    new Setting(containerEl)
+      .setName('Relay URL')
+      .setDesc('WebSocket relay server. Change only if self-hosting.')
+      .addText((text) =>
+        text
+          .setPlaceholder('wss://claude-threads-relay.rbcodelabs.workers.dev')
+          .setValue(ra.relayUrl)
+          .onChange(async (value) => {
+            ra.relayUrl = value || 'wss://claude-threads-relay.rbcodelabs.workers.dev';
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    const isConnected = this.plugin.relayClient?.isConnected() ?? false;
+    new Setting(containerEl)
+      .setName('Connection status')
+      .setDesc(isConnected ? 'Connected to desktop relay' : 'Not connected — scan the QR code on desktop to pair');
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl('h2', { text: 'Claude Threads Settings' });
+
+    if (Platform.isMobile) {
+      this.renderMobileOnlySettings(containerEl);
+      return;
+    }
 
     new Setting(containerEl)
       .setName('Layout density')
