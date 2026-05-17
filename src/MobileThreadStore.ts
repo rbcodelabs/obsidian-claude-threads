@@ -70,6 +70,7 @@ export class MobileThreadStore {
 
       case 'thread_created':
         this.threads.set(frame.thread.id, frame.thread);
+        this.activeThreadId = frame.thread.id;
         this.notify();
         break;
 

@@ -111,6 +111,7 @@ export class MobileView extends ItemView {
     const newBtn = listHeader.createEl('button', { cls: 'ct-mobile-new-btn', attr: { title: 'New thread' } });
     newBtn.createSpan({ text: '+' });
     newBtn.addEventListener('click', () => {
+      this.showingList = false; // clear back-navigation guard so we switch to the new thread
       this.relayClient?.sendCommand({ type: 'create_thread', title: 'New Thread' });
     });
     this.threadListEl = listPanel.createDiv('ct-mobile-thread-list');
