@@ -136,7 +136,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   remoteAccess: {
     enabled: false,
     roomId: '',
-    relayUrl: 'wss://relay.claude-threads.rbcodelabs.com',
+    relayUrl: 'wss://claude-threads-relay.rbcodelabs.workers.dev',
     pairingCode: null,
     pairingExpiresAt: null,
   },
