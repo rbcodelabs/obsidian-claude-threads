@@ -30,6 +30,8 @@ export class MobileView extends ItemView {
   private inputRowEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
+  private convTitleEl!: HTMLSpanElement;
+  private showingList = false; // mobile-only: user pressed back, stay on list even if desktop has active thread
 
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
@@ -85,33 +87,47 @@ export class MobileView extends ItemView {
     root.empty();
     root.addClass('ct-mobile-root');
 
-    this.headerEl = root.createDiv('ct-mobile-header');
+    // ── List panel ────────────────────────────────────────────────────
+    const listPanel = root.createDiv('ct-mobile-list-panel');
+    const listHeader = listPanel.createDiv('ct-mobile-list-header');
+    listHeader.createEl('span', { cls: 'ct-mobile-list-title', text: 'Claude Threads' });
+    const newBtn = listHeader.createEl('button', { cls: 'ct-mobile-new-btn', attr: { title: 'New thread' } });
+    newBtn.createSpan({ text: '+' });
+    newBtn.addEventListener('click', () => {
+      this.relayClient?.sendCommand({ type: 'create_thread', title: 'New Thread' });
+    });
+    this.threadListEl = listPanel.createDiv('ct-mobile-thread-list');
 
-    // Thread list sidebar
-    this.threadListEl = root.createDiv('ct-mobile-thread-list');
-
-    // Conversation panel
-    this.conversationEl = root.createDiv('ct-mobile-conversation');
+    // ── Conversation panel ────────────────────────────────────────────
+    const convPanel = root.createDiv('ct-mobile-conv-panel');
+    this.headerEl = convPanel.createDiv('ct-mobile-conv-header');
+    const backBtn = this.headerEl.createEl('button', { cls: 'ct-mobile-back-btn' });
+    backBtn.setText('‹');
+    backBtn.addEventListener('click', () => {
+      this.showingList = true;
+      this.rootEl.removeClass('ct-has-active');
+    });
+    this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
+    this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
-
-    // Input area
-    this.inputRowEl = this.conversationEl.createDiv('ct-mobile-input-row');
+    this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
     const inputControls = this.inputRowEl.createDiv('ct-mobile-input-controls');
     this.inputEl = inputControls.createEl('textarea', {
       cls: 'ct-mobile-input',
-      attr: { placeholder: 'Message Claude...' },
+      attr: { placeholder: 'Message Claude…', rows: '1' },
     });
-    this.sendBtn = inputControls.createEl('button', {
-      cls: 'ct-mobile-send-btn',
-      text: 'Send',
-    });
-
+    this.sendBtn = inputControls.createEl('button', { cls: 'ct-mobile-send-btn', text: 'Send' });
     this.sendBtn.addEventListener('click', () => this.handleSend());
     this.inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.handleSend();
       }
+    });
+    // Auto-grow textarea
+    this.inputEl.addEventListener('input', () => {
+      this.inputEl.style.height = 'auto';
+      this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
     });
   }
 
@@ -128,16 +144,33 @@ export class MobileView extends ItemView {
 
     this.renderThreadList(threads, activeId);
     this.renderConversation(activeId);
+
+    // Switch to conversation panel when there's an active thread and the user
+    // hasn't explicitly navigated back to the list.
+    if (activeId && !this.showingList) {
+      this.rootEl.addClass('ct-has-active');
+      const thread = this.store.getThread(activeId);
+      this.convTitleEl.textContent = thread?.title ?? '';
+    } else if (!activeId) {
+      this.showingList = false;
+      this.rootEl.removeClass('ct-has-active');
+    }
   }
 
   private renderPairingScreen(): void {
-    this.messagesEl.empty();
     this.threadListEl.empty();
+    this.messagesEl.empty();
+    this.rootEl.removeClass('ct-has-active');
 
-    const pairingEl = this.messagesEl.createDiv('ct-mobile-pairing');
-    pairingEl.createEl('h2', { text: 'Connect to Desktop' });
-    pairingEl.createEl('p', {
-      text: 'Pair with your desktop to get started. Open Claude Threads on your desktop, go to Settings > Remote Access, and scan the QR code or enter the pairing code.',
+    const el = this.threadListEl.createDiv('ct-mobile-pairing');
+    el.createEl('div', { cls: 'ct-mobile-pairing-icon', text: '⟳' });
+    el.createEl('h3', { text: 'Not connected' });
+    el.createEl('p', {
+      text: 'On desktop: Settings > Claude Threads > Remote Access > enable > Show QR code.',
+      cls: 'ct-mobile-pairing-text',
+    });
+    el.createEl('p', {
+      text: 'Scan the QR code with your phone camera, or paste the pairing code in Settings.',
       cls: 'ct-mobile-pairing-text',
     });
   }
@@ -146,22 +179,35 @@ export class MobileView extends ItemView {
     this.threadListEl.empty();
 
     if (threads.length === 0) {
-      this.threadListEl.createDiv({ cls: 'ct-mobile-no-threads', text: 'No threads yet.' });
+      const empty = this.threadListEl.createDiv({ cls: 'ct-mobile-no-threads' });
+      empty.createEl('p', { text: 'No threads yet.' });
+      empty.createEl('p', { text: 'Create one on desktop to get started.', cls: 'ct-mobile-hint' });
       return;
     }
 
     for (const thread of threads) {
-      const item = this.threadListEl.createDiv({
-        cls: `ct-mobile-thread-item${thread.id === activeId ? ' ct-mobile-thread-item-active' : ''}`,
-      });
-      item.createSpan({ cls: 'ct-mobile-thread-title', text: thread.title });
-
+      const isActive = thread.id === activeId;
       const isStreaming = this.store!.isStreaming(thread.id);
-      if (isStreaming) {
-        item.createSpan({ cls: 'ct-mobile-streaming-dot', text: '●' });
+      const item = this.threadListEl.createDiv({
+        cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}`,
+      });
+      const meta = item.createDiv('ct-mobile-thread-meta');
+      meta.createSpan({ cls: 'ct-mobile-thread-title', text: thread.title || 'Untitled' });
+      const lastMsg = thread.messages.filter(m => m.role !== 'compact').at(-1);
+      if (lastMsg) {
+        meta.createSpan({
+          cls: 'ct-mobile-thread-preview',
+          text: lastMsg.content.slice(0, 80).replace(/\n/g, ' '),
+        });
       }
+      const right = item.createDiv('ct-mobile-thread-right');
+      if (isStreaming) {
+        right.createSpan({ cls: 'ct-mobile-streaming-dot', text: '●' });
+      }
+      right.createSpan({ cls: 'ct-mobile-thread-chevron', text: '›' });
 
       item.addEventListener('click', () => {
+        this.showingList = false;
         this.store!.setActiveThreadId(thread.id);
         this.relayClient!.sendCommand({ type: 'set_active_thread', threadId: thread.id });
       });
