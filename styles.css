@@ -1542,11 +1542,11 @@
   padding-bottom: 2px;
 }
 
-/* Inner row: textarea + attach button + start button */
+/* Inner row: textarea + stacked action buttons (mirrors ct-input-controls) */
 .ct-agents-dispatch-row {
   display: flex;
   gap: 6px;
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
 .ct-agents-dispatch-input {
@@ -1567,57 +1567,6 @@
 .ct-agents-dispatch-input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-.ct-agents-dispatch-attach-btn {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  background: var(--background-modifier-border);
-  border: none;
-  border-radius: 6px;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.ct-agents-dispatch-attach-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.ct-agents-dispatch-attach-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.ct-agents-dispatch-btn {
-  padding: 6px 14px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
-  height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.ct-agents-dispatch-btn svg {
-  width: 13px;
-  height: 13px;
-}
-
-.ct-agents-dispatch-btn:hover {
-  background: var(--interactive-accent-hover);
 }
 
 /* ── Project indicator pill (below input) ────────────────────────────────── */
