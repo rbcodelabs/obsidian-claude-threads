@@ -93,9 +93,9 @@ export class AgentDashboard extends ItemView {
 
     const dispatchBtn = inputActions.createEl('button', {
       cls: 'ct-send-btn ct-agents-dispatch-btn',
+      text: '▶',
       attr: { title: 'Start task' },
     });
-    setIcon(dispatchBtn, 'play');
 
     const attachBtn = inputActions.createEl('button', {
       cls: 'ct-more-btn ct-agents-dispatch-attach-btn',
