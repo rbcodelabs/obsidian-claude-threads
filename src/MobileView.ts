@@ -52,6 +52,9 @@ export class MobileView extends ItemView {
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
   private scrollObserver: MutationObserver | null = null;
+  private vpFocusHandler: (() => void) | null = null;
+  private vpBlurHandler: (() => void) | null = null;
+  private vpHandler: (() => void) | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -78,6 +81,7 @@ export class MobileView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
     this.render();
+    this.attachViewportListener();
 
     if (this.store) {
       this.unsubStore = this.store.subscribe(() => this.render());
@@ -91,6 +95,7 @@ export class MobileView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.detachViewportListener();
     this.unsubStore?.();
     this.unsubConnectionState?.();
     this.scrollObserver?.disconnect();
@@ -495,6 +500,102 @@ export class MobileView extends ItemView {
       // Insert at the top
       this.rootEl.insertBefore(banner, this.rootEl.firstChild);
     }
+  }
+
+  // ── Viewport / keyboard handling ──────────────────────────────────────
+
+  /**
+   * Keyboard handling in Obsidian's iOS WKWebView.
+   *
+   * Neither window.innerHeight nor window.visualViewport.height changes when
+   * the software keyboard opens — confirmed by measuring both values with the
+   * keyboard open vs closed (both 874px on the test device). The keyboard is a
+   * pure OS overlay with no web-layer API exposure.
+   *
+   * Strategy:
+   *   • Use input focus / blur as the keyboard proxy.
+   *   • On focus: shrink the root to the estimated visible area above the
+   *     keyboard (60% of window height minus the parent's top offset), then
+   *     scroll messages to the bottom so the input row stays in view.
+   *   • On blur: restore CSS-driven sizing.
+   *   • Keep a visualViewport resize/scroll listener as a silent fallback in
+   *     case a future Obsidian version does expose keyboard height via the vv
+   *     API (gap > 50px threshold avoids false-positives).
+   *
+   * The 60/40 split (visible / keyboard) is calibrated from real device data:
+   * on an 874 px logical screen the keyboard + suggestion bar ≈ 350 px (40%).
+   * This may be slightly off on very small or very large devices but keeps the
+   * input comfortably above the keyboard on all modern iPhones.
+   */
+  private attachViewportListener(): void {
+    const onFocus = () => {
+      // Wait for the keyboard animation (~300 ms) before resizing.
+      setTimeout(() => this.applyKeyboardInset(), 350);
+    };
+    const onBlur = () => {
+      this.rootEl.style.height = '';
+      this.rootEl.style.bottom = '';
+    };
+    this.vpFocusHandler = onFocus;
+    this.vpBlurHandler = onBlur;
+    this.inputEl.addEventListener('focus', onFocus);
+    this.inputEl.addEventListener('blur', onBlur);
+
+    // Fallback: visualViewport API (no-op in current Obsidian but future-proof).
+    const vv = window.visualViewport;
+    if (vv) {
+      const update = () => {
+        const gap = window.innerHeight - vv.offsetTop - vv.height;
+        if (gap < 50) return; // viewport unchanged — Obsidian WKWebView case
+        const parent = this.rootEl.parentElement;
+        if (!parent) return;
+        const rect = parent.getBoundingClientRect();
+        const newHeight = Math.min(rect.height, Math.max(100, vv.height - Math.max(0, rect.top)));
+        this.rootEl.style.height = newHeight + 'px';
+        this.rootEl.style.bottom = 'auto';
+      };
+      this.vpHandler = update;
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+    }
+  }
+
+  private applyKeyboardInset(): void {
+    // If the vv fallback already handled it, skip.
+    const vv = window.visualViewport;
+    if (vv && window.innerHeight - vv.offsetTop - vv.height > 50) return;
+
+    const parent = this.rootEl.parentElement;
+    if (!parent) return;
+    const parentRect = parent.getBoundingClientRect();
+
+    // Keyboard ≈ 40% of screen height on modern iPhones (portrait).
+    const keyboardTop = Math.round(window.innerHeight * 0.60);
+    const newHeight = Math.max(100, Math.min(parentRect.height, keyboardTop - Math.max(0, parentRect.top)));
+    this.rootEl.style.height = newHeight + 'px';
+    this.rootEl.style.bottom = 'auto';
+
+    // Scroll so the input row is visible at the bottom of the shrunk root.
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
+  private detachViewportListener(): void {
+    if (this.vpFocusHandler) {
+      this.inputEl.removeEventListener('focus', this.vpFocusHandler);
+      this.vpFocusHandler = null;
+    }
+    if (this.vpBlurHandler) {
+      this.inputEl.removeEventListener('blur', this.vpBlurHandler);
+      this.vpBlurHandler = null;
+    }
+    const vv = window.visualViewport;
+    if (vv && this.vpHandler) {
+      vv.removeEventListener('resize', this.vpHandler);
+      vv.removeEventListener('scroll', this.vpHandler);
+      this.vpHandler = null;
+    }
+    this.rootEl.style.height = '';
+    this.rootEl.style.bottom = '';
   }
 
   // ── Panel switching ───────────────────────────────────────────────────
