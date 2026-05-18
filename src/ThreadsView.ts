@@ -1183,7 +1183,11 @@ export class ThreadsView extends ItemView {
   }
 
   private renderPermissionCard(toolName: string, detail: string, done: (allow: boolean) => void): HTMLElement {
-    const card = this.messagesEl.createDiv('ct-permission-card');
+    // Anchor inside the active streaming element so the card sits visually
+    // inside the current response turn rather than floating as a sibling that
+    // can overlap the tool-pill list above it.
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-permission-card');
 
     const header = card.createDiv('ct-permission-header');
     const iconEl = header.createSpan('ct-permission-icon');
