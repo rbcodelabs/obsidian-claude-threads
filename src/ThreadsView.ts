@@ -85,6 +85,12 @@ export class ThreadsView extends ItemView {
   private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;  // show only after 1 min away
   private static readonly BANNER_AUTO_DISMISS_MS   = 10_000;  // auto-hide after 10 sec
 
+  // Per-thread streaming buffers. Accumulates tokens and tool calls for every
+  // running thread (active or background) so the streaming UI can be fully
+  // restored when the user switches back to a thread that is still in progress.
+  // Cleared on 'message' or 'done' for the corresponding thread.
+  private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[] }> = new Map();
+
   private skills: { name: string; description: string }[] = [];
   private skillDropdown: HTMLElement | null = null;
   private skillDropdownItems: { name: string; description: string }[] = [];
@@ -250,6 +256,21 @@ export class ThreadsView extends ItemView {
       // Keep project badge counts up to date
       if (event.type === 'thread_created' || event.type === 'thread_deleted') {
         this.renderProjectBar();
+      }
+      // Maintain a per-thread streaming buffer for ALL threads so we can restore
+      // the live streaming UI when switching back to a thread still in progress.
+      if (event.type === 'streaming_start') {
+        this.streamingBuffers.set(threadId, { content: '', tools: [] });
+      } else if (event.type === 'token') {
+        let buf = this.streamingBuffers.get(threadId);
+        if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
+        buf.content += event.text;
+      } else if (event.type === 'tool_use') {
+        let buf = this.streamingBuffers.get(threadId);
+        if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
+        buf.tools.push(event.record);
+      } else if (event.type === 'message' || event.type === 'done') {
+        this.streamingBuffers.delete(threadId);
       }
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
@@ -1128,6 +1149,32 @@ export class ThreadsView extends ItemView {
 
     if (this.manager.isRunning(this.activeThreadId)) {
       this.createStreamingEl();
+      // Restore streaming content and tool pills accumulated while this thread
+      // was running in the background (user was viewing a different thread).
+      const buf = this.streamingBuffers.get(this.activeThreadId!);
+      if (buf) {
+        // Replay tool pills in the order they originally arrived. prepend()
+        // inserts above existing children, so iterate in reverse so the first
+        // tool ends up on top (matching the live order).
+        for (let i = buf.tools.length - 1; i >= 0; i--) {
+          const tool = buf.tools[i];
+          const pill = document.createElement('div');
+          pill.className = 'ct-tool-pill ct-tool-active';
+          const badge = document.createElement('span');
+          badge.className = 'ct-tool-pill-name';
+          badge.textContent = tool.name.toLowerCase();
+          const label = document.createElement('span');
+          label.className = 'ct-tool-pill-text';
+          label.textContent = tool.summary;
+          pill.append(badge, label);
+          this.streamingEl!.prepend(pill);
+        }
+        // Restore accumulated text and re-render it into the streaming bubble.
+        if (buf.content) {
+          this.streamingContent = buf.content;
+          void this.renderStreamingContent();
+        }
+      }
     }
 
     // Re-render any pending permission card that was created while viewing another thread
