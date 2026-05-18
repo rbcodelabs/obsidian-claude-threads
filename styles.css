@@ -2321,6 +2321,11 @@
   border: none;
   border-radius: 0;
   padding: 0 4px;
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  font-size: calc(var(--font-text-size, 15px) + 1px);
+  line-height: 1.65;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Markdown inside assistant messages */
@@ -2551,14 +2556,18 @@
   flex-shrink: 0;
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: 8px;
   background: var(--interactive-accent) !important;
   color: var(--text-on-accent) !important;
-  font-size: var(--font-ui-smaller);
-  font-weight: 600;
+  font-size: 17px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.1s;
+}
+
+.ct-mobile-send-btn:hover {
+  background: var(--interactive-accent-hover) !important;
 }
 
 .ct-mobile-send-btn:disabled {
