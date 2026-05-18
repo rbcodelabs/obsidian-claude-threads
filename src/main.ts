@@ -121,6 +121,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onScheduleWakeup: (delayMs: number, prompt: string, reason: string) => {
             const id = window.setTimeout(async () => {
               try {
+                if (!this.manager.getThread(threadId)) {
+                  console.warn(`[ClaudeThreads] ScheduleWakeup: thread ${threadId} no longer exists, skipping`);
+                  return;
+                }
                 await this.manager.sendMessage(threadId, prompt);
               } catch (err) {
                 console.error(`[ClaudeThreads] ScheduleWakeup failed for thread ${threadId}:`, err);
