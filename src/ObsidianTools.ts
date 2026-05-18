@@ -34,6 +34,8 @@ const insertAtCursorSchema = {
 export interface ObsidianMcpServerOptions {
   /** Called when the agent requests a working-directory change. Receives the resolved absolute path. */
   onSetCwd?: (path: string) => void;
+  /** Called when the agent schedules a wakeup. delayMs is the delay in milliseconds. */
+  onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => void;
 }
 
 /**
@@ -325,6 +327,37 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  const boundScheduleWakeup = tool(
+    'ScheduleWakeup',
+    [
+      'Schedules a wakeup to resume this conversation after a delay.',
+      'When the timer fires, the prompt is injected as a new user message into the same thread, waking the conversation back up.',
+      'Use for polling CI status, waiting for deploys to finish, or self-pacing loop work.',
+      'The reason field is a human-readable label shown in logs and UI.',
+    ].join(' '),
+    {
+      delaySeconds: z.number().describe('Seconds to wait before waking up'),
+      prompt: z.string().describe('The message to inject as a user message when the timer fires'),
+      reason: z.string().describe('Human-readable reason for the wakeup (for display/logging)'),
+    },
+    async (args, _extra) => {
+      try {
+        options.onScheduleWakeup?.(args.delaySeconds * 1000, args.prompt, args.reason);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Wakeup scheduled in ${args.delaySeconds}s — ${args.reason}`,
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
   const boundSetWorkingDirectory = tool(
     'obsidian_set_working_directory',
     [
@@ -380,6 +413,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundInsertAtCursor,
       boundGetNoteMetadata,
       boundSetWorkingDirectory,
+      boundScheduleWakeup,
     ],
     alwaysLoad: true,
   });
