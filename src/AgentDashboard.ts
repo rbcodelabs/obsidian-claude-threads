@@ -16,12 +16,18 @@ export class AgentDashboard extends ItemView {
   private listEl!: HTMLElement;
   private headerCountEl!: HTMLElement;
   private dispatchInput!: HTMLTextAreaElement;
+  private dispatchRow!: HTMLElement;
   private pasteChipsEl!: HTMLElement;
   private hiddenFileInput!: HTMLInputElement;
 
   // Pending attachments for the dispatch box
   private pendingImages: ImageAttachment[] = [];
   private pendingAttachment: string | null = null;
+
+  // @ file mention dropdown state
+  private fileDropdown: HTMLElement | null = null;
+  private fileDropdownItems: { path: string; basename: string }[] = [];
+  private fileDropdownIndex = 0;
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -83,7 +89,8 @@ export class AgentDashboard extends ItemView {
     this.pasteChipsEl = dispatchEl.createDiv('ct-paste-chips ct-agents-dispatch-chips ct-hidden');
 
     // Input row: textarea + stacked action buttons (mirrors chat ct-input-controls layout)
-    const dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
+    this.dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
+    const dispatchRow = this.dispatchRow;
     this.dispatchInput = dispatchRow.createEl('textarea', {
       cls: 'ct-agents-dispatch-input',
       attr: { placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)' },
@@ -125,10 +132,47 @@ export class AgentDashboard extends ItemView {
     attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
 
     this.dispatchInput.addEventListener('keydown', (e) => {
+      if (this.fileDropdown) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
+          this.renderFileDropdown();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename);
+          return;
+        }
+        if (e.key === 'Escape') {
+          this.hideFileDropdown();
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.dispatch();
       }
+    });
+
+    this.dispatchInput.addEventListener('input', () => {
+      const atQuery = this.getAtQuery();
+      if (atQuery !== null) {
+        this.showFileDropdown(atQuery);
+        return;
+      }
+      this.hideFileDropdown();
+    });
+
+    this.dispatchInput.addEventListener('blur', () => {
+      // Delay so mousedown on a dropdown item fires before blur hides it
+      setTimeout(() => this.hideFileDropdown(), 150);
     });
 
     // Paste: capture image files from clipboard
@@ -494,6 +538,72 @@ export class AgentDashboard extends ItemView {
     });
   }
 
+  // ── @ file mention helpers ──────────────────────────────────────────────
+
+  private getAtQuery(): string | null {
+    const val = this.dispatchInput.value;
+    const pos = this.dispatchInput.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    const word = val.slice(start + 1, pos);
+    return word.startsWith('@') ? word.slice(1) : null;
+  }
+
+  private showFileDropdown(query: string): void {
+    const q = query.toLowerCase();
+    const files = this.app.vault.getMarkdownFiles()
+      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
+      .slice(0, 20);
+    if (files.length === 0) { this.hideFileDropdown(); return; }
+    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
+    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
+    if (!this.fileDropdown) {
+      this.fileDropdown = this.dispatchRow.createDiv('ct-file-dropdown');
+    }
+    this.renderFileDropdown();
+  }
+
+  private renderFileDropdown(): void {
+    if (!this.fileDropdown) return;
+    this.fileDropdown.empty();
+    this.fileDropdownItems.forEach((file, i) => {
+      const item = this.fileDropdown!.createDiv({
+        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
+      });
+      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
+      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
+      nameRow.createSpan({ text: file.basename });
+      const pathParts = file.path.split('/');
+      if (pathParts.length > 1) {
+        const folder = pathParts.slice(0, -1).join('/');
+        item.createDiv({ cls: 'ct-skill-desc', text: folder });
+      }
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
+    });
+  }
+
+  private insertFileMention(basename: string): void {
+    const val = this.dispatchInput.value;
+    const pos = this.dispatchInput.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = `@[[${basename}]] `;
+    this.dispatchInput.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.dispatchInput.selectionStart = this.dispatchInput.selectionEnd = start + inserted.length;
+    this.hideFileDropdown();
+    this.dispatchInput.focus();
+  }
+
+  private hideFileDropdown(): void {
+    this.fileDropdown?.remove();
+    this.fileDropdown = null;
+    this.fileDropdownItems = [];
+    this.fileDropdownIndex = 0;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+
   private dispatching = false;
 
   private async dispatch(): Promise<void> {
@@ -511,7 +621,28 @@ export class AgentDashboard extends ItemView {
 
     try {
       // Build the full message body, wrapping any file attachment in a code fence
-      const messageText = buildMessageWithAttachment(text, attachment);
+      let messageText = buildMessageWithAttachment(text, attachment);
+
+      // Resolve @[[basename]] file mentions — append each file's content as context
+      const mentionRegex = /@\[\[([^\]]+)\]\]/g;
+      const mentions = [...messageText.matchAll(mentionRegex)].map(m => m[1]);
+      if (mentions.length > 0) {
+        const fileContextParts: string[] = [];
+        for (const basename of mentions) {
+          const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
+          if (file) {
+            try {
+              const content = await this.app.vault.cachedRead(file);
+              fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
+            } catch {
+              // Skip unreadable files
+            }
+          }
+        }
+        if (fileContextParts.length > 0) {
+          messageText = messageText + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
+        }
+      }
 
       // Derive a readable title: prefer typed text, then attachment filename, then images
       const titleHint = deriveDispatchTitle(text, attachment, images.length);
