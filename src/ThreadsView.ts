@@ -878,20 +878,17 @@ export class ThreadsView extends ItemView {
     }
     this.editedFilesEl.removeClass('ct-hidden');
 
-    const header = this.editedFilesEl.createDiv('ct-edited-files-header');
-    const iconEl = header.createSpan('ct-edited-files-icon');
-    setIcon(iconEl, 'file-edit');
-    header.createSpan({ text: 'Files edited' });
-
-    const focusBtn = header.createEl('button', {
-      cls: 'ct-focus-files-btn',
-      attr: { title: 'Open only these files (close other tabs)' },
-    });
-    setIcon(focusBtn, 'focus');
-    focusBtn.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
-
     const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
+
+    // CWD chip — pinned at the start of the row
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
+    const cwdChip = list.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd' });
+    const cwdIcon = cwdChip.createSpan('ct-edited-file-chip-icon');
+    setIcon(cwdIcon, 'folder');
+    cwdChip.createSpan({ cls: 'ct-edited-file-chip-name', text: shortenPath(cwd) });
+    setTooltip(cwdChip, cwd);
 
     // Most recently edited first; in icon-only mode the first 3 still show full names
     const files = [...this.editedFilesSet].reverse();
@@ -902,7 +899,7 @@ export class ThreadsView extends ItemView {
         cls: showFull ? 'ct-edited-file-chip' : 'ct-edited-file-chip ct-edited-file-chip--icon-only',
       });
       const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
-      setIcon(fileIcon, 'file');
+      setIcon(fileIcon, 'file-edit');
       if (showFull) {
         chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
       } else {
@@ -910,6 +907,13 @@ export class ThreadsView extends ItemView {
       }
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
+
+    // Focus button as a small icon chip at the end of the list
+    const focusChip = list.createDiv({ cls: 'ct-edited-file-chip ct-focus-files-chip', attr: { title: 'Open only these files (close other tabs)' } });
+    setTooltip(focusChip, 'Open only these files');
+    const focusIcon = focusChip.createSpan('ct-edited-file-chip-icon');
+    setIcon(focusIcon, 'focus');
+    focusChip.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
   }
 
   /** Close all markdown tabs and reopen only the files edited in this thread. */
@@ -989,22 +993,14 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    // Summary/recap lives in the Agent Dashboard — show model badge and cwd here
-    const hasContent = !!thread.model || !!thread.cwd;
+    // Show model badge only; cwd is now shown in the edited-files row
+    const hasContent = !!thread.model;
 
     // Hide the bar entirely when there's nothing to show
     this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
 
     if (thread.model) {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
-    }
-
-    if (thread.cwd) {
-      const cwdBadge = this.threadInfoBar.createSpan({ cls: 'ct-cwd-badge' });
-      const iconEl = cwdBadge.createSpan({ cls: 'ct-cwd-icon' });
-      setIcon(iconEl, 'folder');
-      cwdBadge.createSpan({ cls: 'ct-cwd-text', text: shortenPath(thread.cwd) });
-      setTooltip(cwdBadge, thread.cwd);
     }
   }
 

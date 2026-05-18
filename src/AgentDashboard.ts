@@ -82,23 +82,26 @@ export class AgentDashboard extends ItemView {
     // Image chip strip — hidden until images are attached
     this.pasteChipsEl = dispatchEl.createDiv('ct-paste-chips ct-agents-dispatch-chips ct-hidden');
 
-    // Input row: textarea + attach + start buttons
+    // Input row: textarea + stacked action buttons (mirrors chat ct-input-controls layout)
     const dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
     this.dispatchInput = dispatchRow.createEl('textarea', {
       cls: 'ct-agents-dispatch-input',
       attr: { placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)' },
     });
 
-    const attachBtn = dispatchRow.createEl('button', {
-      cls: 'ct-agents-dispatch-attach-btn',
-      attr: { title: 'Attach image' },
+    const inputActions = dispatchRow.createDiv('ct-input-actions');
+
+    const dispatchBtn = inputActions.createEl('button', {
+      cls: 'ct-send-btn ct-agents-dispatch-btn',
+      text: '▶',
+      attr: { title: 'Start task' },
+    });
+
+    const attachBtn = inputActions.createEl('button', {
+      cls: 'ct-more-btn ct-agents-dispatch-attach-btn',
+      attr: { title: 'Attach file' },
     });
     setIcon(attachBtn, 'paperclip');
-
-    const dispatchBtn = dispatchRow.createEl('button', {
-      cls: 'ct-agents-dispatch-btn',
-      text: 'Start',
-    });
 
     // Hidden file picker (triggered by attach button)
     this.hiddenFileInput = document.createElement('input');
@@ -118,8 +121,8 @@ export class AgentDashboard extends ItemView {
     });
     dispatchRow.appendChild(this.hiddenFileInput);
 
-    attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
     dispatchBtn.addEventListener('click', () => this.dispatch());
+    attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
 
     this.dispatchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

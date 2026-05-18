@@ -876,61 +876,26 @@
 
 /* Edited-files card */
 .ct-edited-files {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-top: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
 }
 
-.ct-edited-files-header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--font-ui-smaller);
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.ct-focus-files-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  padding: 2px;
-  background: none;
-  border: none;
-  border-radius: 4px;
+.ct-edited-files-cwd {
   color: var(--text-faint);
-  cursor: pointer;
+  border-style: dashed;
+  cursor: default;
+  pointer-events: none;
+}
+
+.ct-focus-files-chip {
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.1s, color 0.1s, border-color 0.1s;
+  margin-left: 2px;
 }
 
-.ct-edited-files:hover .ct-focus-files-btn {
+.ct-edited-files:hover .ct-focus-files-chip {
   opacity: 1;
-}
-
-.ct-focus-files-btn:hover {
-  color: var(--text-accent);
-  background: var(--background-modifier-hover);
-}
-
-.ct-focus-files-btn svg {
-  width: 12px;
-  height: 12px;
-}
-
-.ct-edited-files-header .ct-edited-files-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-}
-
-.ct-edited-files-header .ct-edited-files-icon svg {
-  width: 12px;
-  height: 12px;
 }
 
 .ct-edited-files-list {
@@ -1542,11 +1507,11 @@
   padding-bottom: 2px;
 }
 
-/* Inner row: textarea + attach button + start button */
+/* Inner row: textarea + stacked action buttons (mirrors ct-input-controls) */
 .ct-agents-dispatch-row {
   display: flex;
   gap: 6px;
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
 .ct-agents-dispatch-input {
@@ -1567,57 +1532,6 @@
 .ct-agents-dispatch-input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-.ct-agents-dispatch-attach-btn {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  background: var(--background-modifier-border);
-  border: none;
-  border-radius: 6px;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.ct-agents-dispatch-attach-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.ct-agents-dispatch-attach-btn:hover {
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.ct-agents-dispatch-btn {
-  padding: 6px 14px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: var(--font-ui-small);
-  font-weight: 500;
-  height: 36px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.ct-agents-dispatch-btn svg {
-  width: 13px;
-  height: 13px;
-}
-
-.ct-agents-dispatch-btn:hover {
-  background: var(--interactive-accent-hover);
 }
 
 /* ── Project indicator pill (below input) ────────────────────────────────── */
