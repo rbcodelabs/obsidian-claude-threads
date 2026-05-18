@@ -148,7 +148,7 @@ export class MobileView extends ItemView {
       cls: 'ct-mobile-input',
       attr: { placeholder: 'Message Claude…', rows: '1' },
     });
-    this.sendBtn = inputControls.createEl('button', { cls: 'ct-mobile-send-btn', text: 'Send' });
+    this.sendBtn = inputControls.createEl('button', { cls: 'ct-mobile-send-btn', text: '↵', attr: { title: 'Send message' } });
     this.sendBtn.addEventListener('click', () => this.handleSend());
     this.inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
