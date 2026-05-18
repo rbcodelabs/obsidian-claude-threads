@@ -733,7 +733,6 @@ export class ThreadsView extends ItemView {
     const days = Math.floor(hours / 24);
     if (days === 1) return 'yesterday';
     return `${days}d ago`;
-<<<<<<< HEAD
   }
 
   // ---------------------------------------------------------------------------
@@ -1376,9 +1375,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'cwd_changed': {
-        if (this.activeThreadId === threadId) {
-          this.renderThreadInfo();
-        }
+        this.renderThreadInfo();
         break;
       }
 

@@ -10,6 +10,7 @@ import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
 import type { WakeLockService } from './WakeLockService';
 import type { createObsidianMcpServer } from './ObsidianTools';
+import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
 import { RelayClient } from './RelayClient';
@@ -124,7 +125,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         return { obsidian: mcpServer };
       } catch (err) {
         console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
-        return {};
+        return {} as Record<string, McpServerConfig>;
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();

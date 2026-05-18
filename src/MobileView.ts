@@ -13,7 +13,7 @@ import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
-import type { ToolCallRecord } from './types';
+import type { ToolCallRecord, ImageAttachment } from './types';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -550,7 +550,7 @@ export class MobileView extends ItemView {
     const activeId = this.store.getActiveThreadId();
     if (!activeId) return;
 
-    const cmd: { type: 'send_message'; threadId: string; text: string; images?: typeof this.pendingImages } = {
+    const cmd: { type: 'send_message'; threadId: string; text: string; images?: ImageAttachment[] } = {
       type: 'send_message',
       threadId: activeId,
       text,
