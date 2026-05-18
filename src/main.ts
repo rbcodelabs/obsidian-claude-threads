@@ -422,6 +422,27 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Context footer command')
+      .setDesc(
+        'Shell command that provides contextual info for the footer bar below the input area. ' +
+        'Receives JSON on stdin with the active thread\'s cwd. ' +
+        'Output is split on two spaces into labelled pills (branch, PR, dev URL, etc.). ' +
+        'Leave empty to disable. Compatible with the Claude Code statusLine script.',
+      )
+      .addText((text) => {
+        text
+          .setPlaceholder('bash $HOME/claude-config/bin/statusline-command.sh')
+          .setValue(this.plugin.settings.statusLineCommand)
+          .onChange(async (value) => {
+            this.plugin.settings.statusLineCommand = value;
+            await this.plugin.saveSettings();
+            // Live-update the footer in the open view
+            this.plugin.getView()?.updateStatusLineCommand();
+          });
+        text.inputEl.style.width = '100%';
+      });
+
+    new Setting(containerEl)
       .setName('Save threads to vault')
       .setDesc('Auto-save conversations as Obsidian notes')
       .addToggle((toggle) =>

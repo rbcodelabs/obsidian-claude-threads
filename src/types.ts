@@ -102,6 +102,12 @@ export interface PluginSettings {
   projects: Project[];
   wakeLockEnabled: boolean;
   layoutDensity: LayoutDensity;
+  /**
+   * Shell command for the context footer bar. Receives JSON on stdin with
+   * {cwd, branch} describing the active thread. stdout is displayed as a
+   * one-line status strip below the input area. Empty string disables it.
+   */
+  statusLineCommand: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -121,6 +127,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   projects: [],
   wakeLockEnabled: true,
   layoutDensity: 'comfortable',
+  statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {
