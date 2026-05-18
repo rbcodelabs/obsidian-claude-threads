@@ -876,61 +876,19 @@
 
 /* Edited-files card */
 .ct-edited-files {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-top: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
 }
 
-.ct-edited-files-header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--font-ui-smaller);
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-.ct-focus-files-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: auto;
-  padding: 2px;
-  background: none;
-  border: none;
-  border-radius: 4px;
-  color: var(--text-faint);
-  cursor: pointer;
+.ct-focus-files-chip {
   opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.1s, color 0.1s, border-color 0.1s;
+  margin-left: 2px;
 }
 
-.ct-edited-files:hover .ct-focus-files-btn {
+.ct-edited-files:hover .ct-focus-files-chip {
   opacity: 1;
-}
-
-.ct-focus-files-btn:hover {
-  color: var(--text-accent);
-  background: var(--background-modifier-hover);
-}
-
-.ct-focus-files-btn svg {
-  width: 12px;
-  height: 12px;
-}
-
-.ct-edited-files-header .ct-edited-files-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
-}
-
-.ct-edited-files-header .ct-edited-files-icon svg {
-  width: 12px;
-  height: 12px;
 }
 
 .ct-edited-files-list {
