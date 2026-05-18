@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk/browser';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { App, TFile } from 'obsidian';
+import fs from 'fs';
+import os from 'os';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -29,11 +31,16 @@ const insertAtCursorSchema = {
 
 // ── Factory ──────────────────────────────────────────────────────────────────
 
+export interface ObsidianMcpServerOptions {
+  /** Called when the agent requests a working-directory change. Receives the resolved absolute path. */
+  onSetCwd?: (path: string) => void;
+}
+
 /**
  * Creates an MCP server config with Obsidian-specific tools bound to the given App instance.
  * Pass the result as `{ obsidian: createObsidianMcpServer(this.app) }` in the `mcpServers` option.
  */
-export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstance {
+export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): McpSdkServerConfigWithInstance {
   const boundGetOpenTabs = tool(
     'obsidian_get_open_tabs',
     'Returns all open tabs in the Obsidian workspace with their path, title, type, and whether they are the active tab.',
@@ -318,6 +325,49 @@ export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstanc
     },
   );
 
+  const boundSetWorkingDirectory = tool(
+    'obsidian_set_working_directory',
+    [
+      'Changes the working directory for this Claude session.',
+      'Use this when you need to switch context to a different repository or project folder.',
+      'Accepts an absolute path; ~ is expanded to the home directory.',
+      'The change takes effect on the next turn — the current query continues in the original directory.',
+      'Returns the resolved absolute path on success.',
+    ].join(' '),
+    {
+      path: z.string().describe('Absolute filesystem path to set as the new working directory (~ is expanded)'),
+    },
+    async (args, _extra) => {
+      try {
+        const resolved = args.path.replace(/^~(?=\/|$)/, os.homedir());
+
+        if (!fs.existsSync(resolved)) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `Path does not exist: ${resolved}` }) }],
+            isError: true,
+          };
+        }
+
+        if (!fs.statSync(resolved).isDirectory()) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `Not a directory: ${resolved}` }) }],
+            isError: true,
+          };
+        }
+
+        options.onSetCwd?.(resolved);
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: true, cwd: resolved }) }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -329,6 +379,7 @@ export function createObsidianMcpServer(app: App): McpSdkServerConfigWithInstanc
       boundGetOutgoingLinks,
       boundInsertAtCursor,
       boundGetNoteMetadata,
+      boundSetWorkingDirectory,
     ],
     alwaysLoad: true,
   });

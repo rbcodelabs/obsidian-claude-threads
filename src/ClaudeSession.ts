@@ -313,6 +313,7 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
     case 'obsidian_get_outgoing_links': return `Links from: ${input.path}`;
     case 'obsidian_insert_at_cursor': return `Insert at cursor`;
     case 'obsidian_get_note_metadata': return `Metadata: ${input.path}`;
+    case 'obsidian_set_working_directory': return `Set cwd: ${input.path}`;
     default:
       return name;
   }

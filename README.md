@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.2.0-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.3.0-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -31,13 +31,18 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files directly to dispatched tasks
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
+- **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context
+- **Projects** — group threads by vault sub-folder with a shared context prompt injected into every message
+- **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
+- **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
+- **Keep computer awake** — prevents the Mac from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses `caffeinate -i` on macOS, Web Lock API as fallback)
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
 
@@ -102,6 +107,16 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 **Skills** — any `.md` file (or directory) in `~/.claude/skills/` appears below the built-in commands. Selecting one inserts the skill name into your message, which Claude handles via your `CLAUDE.md` configuration.
 
+### @ file mentions
+
+Type `@` anywhere in the input box to search vault files by name. A dropdown appears showing up to 20 matching files — navigate with arrow keys and press Tab or Enter to insert.
+
+<p align="center">
+  <img src="docs/screenshot-file-mention.png" width="800" alt="@ file mention autocomplete — type @ to search vault files and inject their content as context" />
+</p>
+
+Selecting a file inserts `@[[filename]]` into your message. When you send the message, the plugin resolves each mention and appends the file's full content as context for Claude — useful for asking Claude to work with a specific note, doc, or config file without copying and pasting.
+
 ### Model switching
 
 `/model` sets the model for all subsequent turns in a thread:
@@ -141,6 +156,20 @@ A summary bar above the messages shows what the thread is about. It updates auto
 
 When you switch back to a thread you haven't viewed in over a minute, a **context recap banner** floats at the top of the conversation showing the thread summary and how long ago you were last active. It auto-dismisses after 10 seconds or when you send a message.
 
+<p align="center">
+  <img src="docs/screenshot-context-recap-banner.png" width="800" alt="Context recap banner — re-orients you to a thread after returning from a break" />
+</p>
+
+### Projects
+
+Projects group threads by vault sub-folder and inject shared context into every message, so Claude always knows what it's working on.
+
+**Creating a project:** Go to Settings → Projects → enter a project name and vault folder path → click **Create project**. You can also add a project context prompt — a few sentences describing the project's goals, conventions, and key files that Claude should always keep in mind.
+
+**Opening a thread in a project:** When you create a new thread, select a project from the dropdown near the input box. The thread's working directory is set to the project's vault folder, and the project context is prepended to every message you send.
+
+**Managing projects:** Edit the name, folder, or context prompt at any time in Settings → Projects. Deleting a project keeps all its threads — they just lose the project association.
+
 ## Settings
 
 | Setting | Description |
@@ -151,11 +180,13 @@ When you switch back to a thread you haven't viewed in over a minute, a **contex
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Permission mode | `Accept edits automatically`, `Bypass all permissions`, or `Prompt for permissions` |
+| Layout density | `Comfortable` or `Compact` — controls message spacing and padding |
 | Enable summarization | Show the summarize button and auto-summarize |
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
-| Mode | `Claude (via CLI)` uses your existing auth; `Remote endpoint` calls an OpenAI-compatible server |
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
 | Opus escalation keyword | Keyword that triggers Opus for a single turn (default: `/opus`) |
+| Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
+| Projects | Group threads by vault sub-folder with a shared context prompt |
 
 ## Building from source
 
