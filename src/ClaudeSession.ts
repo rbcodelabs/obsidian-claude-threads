@@ -273,6 +273,13 @@ export class ClaudeSession {
     } finally {
       this.interrupted = false;
       this.activeQuery = null;
+      // Explicitly close the query so the SDK removes the subprocess wrapper from its
+      // internal tracking Set (w7) and detaches exit/error listeners. Without this call,
+      // every completed query leaks its ChildProcess wrapper and the closure chain it
+      // holds (options.env copy, callbacks, MCP server config) until the parent process
+      // exits. On a day of heavy use with many queries this accumulates into tens of MB
+      // of heap that is never collected.
+      q.close();
     }
   }
 
