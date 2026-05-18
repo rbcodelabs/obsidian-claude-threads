@@ -733,6 +733,7 @@ export class ThreadsView extends ItemView {
     const days = Math.floor(hours / 24);
     if (days === 1) return 'yesterday';
     return `${days}d ago`;
+<<<<<<< HEAD
   }
 
   // ---------------------------------------------------------------------------
@@ -1604,6 +1605,9 @@ export class ThreadsView extends ItemView {
       const thread = this.manager.getThread(this.activeThreadId);
       if (thread) delete thread.draft;
     }
+
+    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    this.hideSummaryBanner(false);
 
     // Dismiss the context banner as soon as the user sends — they're back in the thread
     this.hideSummaryBanner(false);

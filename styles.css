@@ -265,7 +265,7 @@
   position: relative;
 }
 
-/* -- Summary peek banner -------------------------------------------------------- */
+/* ── Summary peek banner ─────────────────────────────────────────────────── */
 /* Floats over the top of .ct-messages when returning to a thread after a break */
 
 .ct-summary-banner {
