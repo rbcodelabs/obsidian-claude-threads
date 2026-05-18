@@ -182,6 +182,7 @@ export class AgentDashboard extends ItemView {
       }
     }
 
+
     const isStateChange =
       event.type === 'streaming_start' ||
       event.type === 'done' ||
