@@ -45,6 +45,7 @@ export class MobileView extends ItemView {
   // Incremental render tracking — avoids full re-render on every streaming token
   private lastRenderedActiveId: string | null = null;
   private lastRenderedMessageCount = -1;
+  private lastRenderedPermissionCount = -1;
   private streamingEl: HTMLElement | null = null;
 
   // Cleanup handles
@@ -178,12 +179,14 @@ export class MobileView extends ItemView {
 
     const thread = activeId ? this.store.getThread(activeId) : null;
     const msgCount = thread?.messages.length ?? 0;
+    const permCount = activeId ? (this.store.getPendingPermissionsForThread(activeId)?.length ?? 0) : 0;
 
-    if (activeId !== this.lastRenderedActiveId || msgCount !== this.lastRenderedMessageCount) {
-      // Thread changed or new messages finalized — do a full conversation re-render.
+    if (activeId !== this.lastRenderedActiveId || msgCount !== this.lastRenderedMessageCount || permCount !== this.lastRenderedPermissionCount) {
+      // Thread changed, new messages finalized, or permission state changed — full re-render.
       this.renderConversation(activeId);
       this.lastRenderedActiveId = activeId;
       this.lastRenderedMessageCount = msgCount;
+      this.lastRenderedPermissionCount = permCount;
     } else {
       // Same thread, same message count — streaming token arrived.
       // Only swap out the streaming element; stable messages stay untouched.
