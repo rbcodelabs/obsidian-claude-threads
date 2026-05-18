@@ -881,6 +881,15 @@ export class ThreadsView extends ItemView {
     const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
 
+    // CWD chip — pinned at the start of the row
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
+    const cwdChip = list.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd' });
+    const cwdIcon = cwdChip.createSpan('ct-edited-file-chip-icon');
+    setIcon(cwdIcon, 'folder');
+    cwdChip.createSpan({ cls: 'ct-edited-file-chip-name', text: shortenPath(cwd) });
+    setTooltip(cwdChip, cwd);
+
     // Most recently edited first; in icon-only mode the first 3 still show full names
     const files = [...this.editedFilesSet].reverse();
     for (let i = 0; i < files.length; i++) {

@@ -881,6 +881,13 @@
   flex-shrink: 0;
 }
 
+.ct-edited-files-cwd {
+  color: var(--text-faint);
+  border-style: dashed;
+  cursor: default;
+  pointer-events: none;
+}
+
 .ct-focus-files-chip {
   opacity: 0;
   transition: opacity 0.15s, background 0.1s, color 0.1s, border-color 0.1s;
