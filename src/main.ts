@@ -56,18 +56,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
-    try {
-      const mcpServer = createObsidianMcpServer(this.app);
-      const mcpDebug = {
-        type: (mcpServer as unknown as Record<string, unknown>).type,
-        name: (mcpServer as unknown as Record<string, unknown>).name,
-        hasInstance: 'instance' in mcpServer,
-      };
-      console.log('[ClaudeThreads] Obsidian MCP server created:', mcpDebug);
-      this.manager.mcpServers = { obsidian: mcpServer };
-    } catch (err) {
-      console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
-    }
+    // Use a per-thread factory so the set_working_directory tool can close over the
+    // correct threadId without shared mutable state across concurrent sessions.
+    this.manager.mcpServerFactory = (threadId: string) => {
+      try {
+        const mcpServer = createObsidianMcpServer(this.app, {
+          onSetCwd: (newCwd: string) => {
+            this.manager.setThreadCwd(threadId, newCwd);
+            this.saveSettings().catch(console.error);
+          },
+        });
+        const mcpDebug = {
+          type: (mcpServer as unknown as Record<string, unknown>).type,
+          name: (mcpServer as unknown as Record<string, unknown>).name,
+          hasInstance: 'instance' in mcpServer,
+        };
+        console.log(`[ClaudeThreads] Obsidian MCP server created for thread ${threadId}:`, mcpDebug);
+        return { obsidian: mcpServer };
+      } catch (err) {
+        console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
+        return {};
+      }
+    };
     this.manager.vaultRoot = this.getEffectiveCwd();
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.inProcessSummarizer = new InProcessSummarizer();
