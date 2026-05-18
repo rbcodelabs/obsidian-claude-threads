@@ -150,6 +150,43 @@ You can also send messages to any thread directly from the dashboard without swi
 
 When Claude needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in settings.
 
+### Remote access (mobile)
+
+Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
+
+**Prerequisites:**
+
+- Obsidian desktop with Claude Threads installed and running
+- Obsidian Mobile with Claude Threads installed via [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+- Both devices on any internet connection (no LAN required)
+
+**Setup:**
+
+1. On desktop: open Settings > Claude Threads > Remote Access and toggle **Enable remote access** on
+2. Click **Show pairing QR code** — a QR code appears with a 5-minute expiry window
+3. On mobile: open the Claude Threads ribbon icon, tap **Connect to Desktop**, then scan the QR code (or tap the `claude-threads://pair` link if you're on the same device)
+4. The mobile view refreshes to show all your desktop threads
+
+**Manual pairing (URI scheme):**
+
+If you can't scan a QR code, send yourself the pairing link directly:
+
+```
+claude-threads://pair?roomId=<ROOM_ID>&relay=<RELAY_URL>
+```
+
+Opening this URL on any device with Obsidian Mobile + Claude Threads installed will pair it to your desktop.
+
+**Limitations:**
+
+- Desktop must be running and connected — mobile cannot start new Claude sessions without desktop
+- Mobile is a read-mostly thin client; it cannot access your vault files or run tools directly
+- One desktop per room ID; rotate the room ID in settings to revoke all mobile access
+
+<p align="center">
+  <img src="docs/screenshot-mobile-connected.png" width="390" alt="Mobile connected view showing thread list and active conversation" />
+</p>
+
 ### Thread summaries
 
 A summary bar above the messages shows what the thread is about. It updates automatically after each response if **Auto-summarize** is enabled, or you can trigger it manually with the brain icon. The summarizer also updates the tab name.
@@ -187,6 +224,9 @@ Projects group threads by vault sub-folder and inject shared context into every 
 | Opus escalation keyword | Keyword that triggers Opus for a single turn (default: `/opus`) |
 | Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
+| Remote access | Enable/disable mobile remote access via WebSocket relay |
+| Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
+| Show pairing QR | Display a QR code for one-time mobile pairing (expires in 5 minutes) |
 
 ## Building from source
 

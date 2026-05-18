@@ -79,6 +79,32 @@ describe('ThreadManager — thread lifecycle', () => {
     unsub();
     expect(events).toHaveLength(0);
   });
+
+  it('renameThread emits thread_renamed event with correct payload', () => {
+    const t = manager.createThread('Original');
+    const events: Array<{ threadId: string; type: string; title?: string }> = [];
+    manager.subscribe((threadId, e) => {
+      if (e.type === 'thread_renamed') {
+        events.push({ threadId, type: e.type, title: e.title });
+      }
+    });
+
+    manager.renameThread(t.id, 'Renamed');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].threadId).toBe(t.id);
+    expect(events[0].type).toBe('thread_renamed');
+    expect(events[0].title).toBe('Renamed');
+  });
+
+  it('renameThread does not emit event for unknown thread', () => {
+    const events: string[] = [];
+    manager.subscribe((_, e) => events.push(e.type));
+
+    manager.renameThread('nonexistent-id', 'Whatever');
+
+    expect(events.filter(t => t === 'thread_renamed')).toHaveLength(0);
+  });
 });
 
 describe('ThreadManager — mcpServerFactory', () => {
