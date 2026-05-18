@@ -51,6 +51,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
   relayClient: RelayClient | null = null;
   mobileStore: MobileThreadStore | null = null;
 
+  // Tracks pending ScheduleWakeup timeout IDs keyed by threadId for cleanup on unload.
+  pendingWakeups = new Map<string, number[]>();
+
   async onload(): Promise<void> {
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
@@ -114,6 +117,23 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onSetCwd: (newCwd: string) => {
             this.manager.setThreadCwd(threadId, newCwd);
             this.saveSettings().catch(console.error);
+          },
+          onScheduleWakeup: (delayMs: number, prompt: string, reason: string) => {
+            const id = window.setTimeout(async () => {
+              try {
+                await this.manager.sendMessage(threadId, prompt);
+              } catch (err) {
+                console.error(`[ClaudeThreads] ScheduleWakeup failed for thread ${threadId}:`, err);
+              } finally {
+                const ids = this.pendingWakeups.get(threadId) ?? [];
+                const idx = ids.indexOf(id);
+                if (idx !== -1) ids.splice(idx, 1);
+              }
+            }, delayMs) as unknown as number;
+            const ids = this.pendingWakeups.get(threadId) ?? [];
+            ids.push(id);
+            this.pendingWakeups.set(threadId, ids);
+            console.log(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
         });
         const mcpDebug = {
@@ -356,6 +376,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.manager?.destroy();
+
+    // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
+    for (const ids of this.pendingWakeups.values()) {
+      for (const id of ids) window.clearTimeout(id);
+    }
+    this.pendingWakeups.clear();
 
     // Persist thread state
     await this.saveSettings();
