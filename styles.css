@@ -1753,6 +1753,12 @@
 }
 
 /* -- Inline permission card ------------------------------------------ */
+/* Give the card a top margin when it lives inside a streaming message so it
+   doesn't run flush against the content above it. */
+.ct-streaming .ct-permission-card {
+  margin-top: 8px;
+}
+
 .ct-permission-card {
   background: color-mix(in srgb, var(--color-orange, #e06c00) 8%, var(--background-primary));
   border: 1px solid color-mix(in srgb, var(--color-orange, #e06c00) 35%, transparent);
