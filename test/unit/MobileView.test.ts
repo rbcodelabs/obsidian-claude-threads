@@ -598,6 +598,9 @@ describe('MobileView — permission cards', () => {
       threads: [makeThread({ id: 'tid' })],
       activeThreadId: 'tid',
     });
+    // Reset incremental-render cache so the next render() call triggers a full
+    // renderConversation() even though activeId and msgCount haven't changed.
+    (view as never)['lastRenderedMessageCount'] = -1;
     store.applyFrame({
       type: 'permission_request',
       threadId: 'tid',
@@ -620,6 +623,9 @@ describe('MobileView — permission cards', () => {
       threads: [makeThread({ id: 'tid' })],
       activeThreadId: 'tid',
     });
+    // Reset incremental-render cache so the next render() call triggers a full
+    // renderConversation() even though activeId and msgCount haven't changed.
+    (view as never)['lastRenderedMessageCount'] = -1;
     store.applyFrame({
       type: 'permission_request',
       threadId: 'tid',
@@ -649,6 +655,9 @@ describe('MobileView — permission cards', () => {
       threads: [makeThread({ id: 'tid' })],
       activeThreadId: 'tid',
     });
+    // Reset incremental-render cache so the next render() call triggers a full
+    // renderConversation() even though activeId and msgCount haven't changed.
+    (view as never)['lastRenderedMessageCount'] = -1;
     store.applyFrame({
       type: 'permission_request',
       threadId: 'tid',

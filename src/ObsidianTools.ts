@@ -359,13 +359,10 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
   );
 
   const boundSetWorkingDirectory = tool(
-    'obsidian_set_working_directory',
+    'set_working_directory',
     [
-      'Changes the working directory for this Claude session.',
-      'Use this when you need to switch context to a different repository or project folder.',
-      'Accepts an absolute path; ~ is expanded to the home directory.',
-      'The change takes effect on the next turn — the current query continues in the original directory.',
-      'Returns the resolved absolute path on success.',
+      'Changes the working directory for this Claude session. Use this when you need to switch context to a different repository or project folder. Accepts an absolute path; ~ is expanded to the home directory.',
+      'The change takes effect on the next turn — the current query continues in the original directory. Returns the resolved absolute path on success.',
     ].join(' '),
     {
       path: z.string().describe('Absolute filesystem path to set as the new working directory (~ is expanded)'),
