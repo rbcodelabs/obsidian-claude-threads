@@ -52,7 +52,6 @@ export class MobileView extends ItemView {
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
   private scrollObserver: MutationObserver | null = null;
-  private vpHandler: (() => void) | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -79,7 +78,6 @@ export class MobileView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildUI();
     this.render();
-    this.attachViewportListener();
 
     if (this.store) {
       this.unsubStore = this.store.subscribe(() => this.render());
@@ -93,7 +91,6 @@ export class MobileView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.detachViewportListener();
     this.unsubStore?.();
     this.unsubConnectionState?.();
     this.scrollObserver?.disconnect();
@@ -498,49 +495,6 @@ export class MobileView extends ItemView {
       // Insert at the top
       this.rootEl.insertBefore(banner, this.rootEl.firstChild);
     }
-  }
-
-  // ── Viewport / keyboard handling ──────────────────────────────────────
-
-  /**
-   * iOS does not resize the layout viewport when the software keyboard opens —
-   * only the visual viewport (vv.height) shrinks. Computing a keyboard offset
-   * via `window.innerHeight - vv.height` always returns 0 in Obsidian's
-   * WKWebView because Obsidian keeps the layout viewport fixed, so adjusting
-   * `bottom` by that amount has no effect.
-   *
-   * Instead we size the root directly to the visible area:
-   *   newHeight = vv.height − parent's top offset (below Obsidian's tab bar)
-   * clamped to the parent's natural height so we never grow beyond the container.
-   * When the keyboard opens vv.height shrinks → root shrinks → input row stays
-   * visible above the keyboard.
-   */
-  private attachViewportListener(): void {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const update = () => {
-      const parent = this.rootEl.parentElement;
-      if (!parent) return;
-      const parentRect = parent.getBoundingClientRect();
-      const availableHeight = vv.height - Math.max(0, parentRect.top);
-      const newHeight = Math.min(parentRect.height, Math.max(100, availableHeight));
-      this.rootEl.style.height = newHeight + 'px';
-      this.rootEl.style.bottom = 'auto';
-    };
-    this.vpHandler = update;
-    vv.addEventListener('resize', update);
-    vv.addEventListener('scroll', update);
-  }
-
-  private detachViewportListener(): void {
-    const vv = window.visualViewport;
-    if (!vv || !this.vpHandler) return;
-    vv.removeEventListener('resize', this.vpHandler);
-    vv.removeEventListener('scroll', this.vpHandler);
-    this.vpHandler = null;
-    // Restore CSS-driven sizing (position: absolute; top: 0; bottom: 0).
-    this.rootEl.style.height = '';
-    this.rootEl.style.bottom = '';
   }
 
   // ── Panel switching ───────────────────────────────────────────────────
