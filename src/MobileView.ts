@@ -35,8 +35,6 @@ export class MobileView extends ItemView {
   private sendBtn!: HTMLButtonElement;
   private convTitleEl!: HTMLSpanElement;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
-  private debugBarEl!: HTMLElement;
-
   // Image attachments pending send
   private pendingImages: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> = [];
   private imageStripEl!: HTMLElement;
@@ -136,7 +134,6 @@ export class MobileView extends ItemView {
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
-    this.debugBarEl = this.conversationEl.createDiv('ct-mobile-debug-bar');
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
     this.imageStripEl = this.inputRowEl.createDiv('ct-mobile-image-strip');
     this.imageStripEl.style.display = 'none';
@@ -323,18 +320,13 @@ export class MobileView extends ItemView {
 
     if (!activeId || !this.store) {
       this.messagesEl.createDiv({ cls: 'ct-mobile-empty', text: 'Select a thread to start chatting.' });
-      this.debugBarEl.textContent = '';
       return;
     }
 
     const thread = this.store.getThread(activeId);
     if (!thread) {
-      this.debugBarEl.textContent = `store has thread? NO (id: ${activeId.slice(0, 8)})`;
       return;
     }
-
-    const allThreads = this.store.getThreads();
-    this.debugBarEl.textContent = `store: ${thread.messages.length} msgs | ${allThreads.length} threads`;
 
     // Render permission cards for this thread first
     const permissions = this.store.getPendingPermissionsForThread(activeId);
