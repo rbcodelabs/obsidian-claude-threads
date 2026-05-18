@@ -331,7 +331,7 @@ describe('RelayClient — send_message round-trip', () => {
 
     await drain(10);
 
-    expect(sendMessageSpy).toHaveBeenCalledWith('thread-1', 'Hello from mobile');
+    expect(sendMessageSpy).toHaveBeenCalledWith('thread-1', 'Hello from mobile', undefined);
 
     cleanup();
     desktopClient.disconnect();
