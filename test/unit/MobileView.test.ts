@@ -584,7 +584,7 @@ describe('MobileView — message rendering', () => {
     store.applyFrame({ type: 'streaming_start', threadId: 'tid' });
 
     const threadList = (view as never)['threadListEl'] as HTMLElement;
-    expect(threadList.querySelector('.ct-mobile-streaming-dot')).not.toBeNull();
+    expect(threadList.querySelector('.ct-mobile-thread-icon-running')).not.toBeNull();
 
     await view.onClose();
   });
