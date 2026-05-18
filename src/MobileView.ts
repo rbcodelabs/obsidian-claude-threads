@@ -503,19 +503,29 @@ export class MobileView extends ItemView {
   // ── Viewport / keyboard handling ──────────────────────────────────────
 
   /**
-   * iOS does not resize the layout viewport when the software keyboard opens.
-   * The visual viewport shrinks instead. We listen for those changes and push
-   * the root element's bottom edge up by the keyboard height so the input row
-   * is never hidden behind the keyboard.
+   * iOS does not resize the layout viewport when the software keyboard opens —
+   * only the visual viewport (vv.height) shrinks. Computing a keyboard offset
+   * via `window.innerHeight - vv.height` always returns 0 in Obsidian's
+   * WKWebView because Obsidian keeps the layout viewport fixed, so adjusting
+   * `bottom` by that amount has no effect.
+   *
+   * Instead we size the root directly to the visible area:
+   *   newHeight = vv.height − parent's top offset (below Obsidian's tab bar)
+   * clamped to the parent's natural height so we never grow beyond the container.
+   * When the keyboard opens vv.height shrinks → root shrinks → input row stays
+   * visible above the keyboard.
    */
   private attachViewportListener(): void {
     const vv = window.visualViewport;
     if (!vv) return;
     const update = () => {
-      // keyboard height = gap between the bottom of the visual viewport and
-      // the bottom of the layout viewport.
-      const keyboardHeight = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
-      this.rootEl.style.bottom = keyboardHeight + 'px';
+      const parent = this.rootEl.parentElement;
+      if (!parent) return;
+      const parentRect = parent.getBoundingClientRect();
+      const availableHeight = vv.height - Math.max(0, parentRect.top);
+      const newHeight = Math.min(parentRect.height, Math.max(100, availableHeight));
+      this.rootEl.style.height = newHeight + 'px';
+      this.rootEl.style.bottom = 'auto';
     };
     this.vpHandler = update;
     vv.addEventListener('resize', update);
@@ -528,6 +538,8 @@ export class MobileView extends ItemView {
     vv.removeEventListener('resize', this.vpHandler);
     vv.removeEventListener('scroll', this.vpHandler);
     this.vpHandler = null;
+    // Restore CSS-driven sizing (position: absolute; top: 0; bottom: 0).
+    this.rootEl.style.height = '';
     this.rootEl.style.bottom = '';
   }
 

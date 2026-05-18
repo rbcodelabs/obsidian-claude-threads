@@ -358,9 +358,18 @@ export class RelayClient {
       const thread = this.threadManager!.getThread(threadId);
 
       switch (event.type) {
-        case 'streaming_start':
+        case 'streaming_start': {
+          // Before announcing that streaming has started, send the user message
+          // that was just pushed to thread.messages so mobile can display it.
+          // Without this the user's own message never appears in the mobile chat —
+          // only the assistant's final reply does (via the 'message' frame below).
+          const lastMsg = thread?.messages.at(-1);
+          if (lastMsg?.role === 'user') {
+            this.sendFrame({ type: 'message', threadId, message: serializeMessage(lastMsg) });
+          }
           this.sendFrame({ type: 'streaming_start', threadId });
           break;
+        }
 
         case 'token':
           this.sendFrame({ type: 'token', threadId, text: event.text });
