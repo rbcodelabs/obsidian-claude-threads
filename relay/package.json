@@ -1,0 +1,17 @@
+{
+  "name": "claude-threads-relay",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker relay for Claude Threads remote access",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240725.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5",
+    "wrangler": "^4.92.0"
+  }
+}

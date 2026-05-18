@@ -7,6 +7,7 @@ import type { SummarizeResult } from './InProcessSummarizer';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 
 export const VIEW_TYPE = 'claude-threads:chat';
@@ -59,6 +60,11 @@ export class ThreadsView extends ItemView {
     resolve: (allow: boolean) => void;
     cardEl: HTMLElement | null;
   }> = new Map();
+
+  // Context footer (status line below input)
+  private contextFooterEl!: HTMLElement;
+  private statusLineRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly STATUS_LINE_INTERVAL_MS = 30_000;
 
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
@@ -266,10 +272,14 @@ export class ThreadsView extends ItemView {
 
     this.renderProjectBar();
     this.renderTabs();
+
+    // Start periodic status line refresh
+    this.startStatusLineInterval();
   }
 
   async onClose(): Promise<void> {
     this.unsubscribe?.();
+    this.stopStatusLineInterval();
   }
 
   private buildUI(): void {
@@ -425,6 +435,8 @@ export class ThreadsView extends ItemView {
     this.stopBtn.addEventListener('click', () => this.stopMessage());
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
+
+    this.contextFooterEl = this.mainEl.createDiv('ct-context-footer ct-hidden');
   }
 
   private renderProjectBar(): void {
@@ -631,6 +643,8 @@ export class ThreadsView extends ItemView {
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
     this.restoreDraftFromThread(id);
+    // Refresh context footer for the new thread's cwd
+    void this.refreshStatusLine();
 
     // Show the context recap banner when switching back to a thread after being away
     this.maybeShowSummaryBanner(id, previousId, priorAccessTime);
@@ -719,6 +733,112 @@ export class ThreadsView extends ItemView {
     const days = Math.floor(hours / 24);
     if (days === 1) return 'yesterday';
     return `${days}d ago`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Context footer (status line)
+  // ---------------------------------------------------------------------------
+
+  private startStatusLineInterval(): void {
+    this.stopStatusLineInterval();
+    const cmd = this.plugin.settings.statusLineCommand;
+    if (!cmd) return;
+    this.statusLineRefreshTimer = setInterval(
+      () => void this.refreshStatusLine(),
+      ThreadsView.STATUS_LINE_INTERVAL_MS,
+    );
+  }
+
+  private stopStatusLineInterval(): void {
+    if (this.statusLineRefreshTimer !== null) {
+      clearInterval(this.statusLineRefreshTimer);
+      this.statusLineRefreshTimer = null;
+    }
+  }
+
+  /**
+   * Run the configured statusLineCommand, pipe the active thread's cwd as JSON
+   * to stdin, and render the stdout output in the context footer bar.
+   * Silently hides the footer on error or empty output.
+   */
+  refreshStatusLine(): void {
+    const cmd = this.plugin.settings.statusLineCommand;
+    if (!cmd) {
+      this.contextFooterEl.addClass('ct-hidden');
+      return;
+    }
+
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
+    const stdin = JSON.stringify({ cwd, workspace: { current_dir: cwd } });
+
+    // Expand $HOME / ~ in the command so paths work outside a login shell
+    const expandedCmd = cmd.replace(/\$HOME/g, os.homedir()).replace(/^~\//, `${os.homedir()}/`);
+
+    const child = exec(
+      expandedCmd,
+      { env: { ...process.env, HOME: os.homedir() }, timeout: 5000 },
+      (err, stdout) => {
+        const text = stdout.trim();
+        if (err || !text) {
+          this.contextFooterEl.addClass('ct-hidden');
+          return;
+        }
+        this.renderContextFooter(text);
+      },
+    );
+
+    child.stdin?.write(stdin);
+    child.stdin?.end();
+  }
+
+  private renderContextFooter(text: string): void {
+    this.contextFooterEl.empty();
+    this.contextFooterEl.removeClass('ct-hidden');
+
+    // Split on two-or-more spaces — each segment becomes a pill
+    const segments = text.split(/  +/).map(s => s.trim()).filter(Boolean);
+
+    for (const segment of segments) {
+      const pill = this.contextFooterEl.createDiv('ct-footer-pill');
+
+      // Heuristic decoration: URL gets a globe icon, branch gets git-branch,
+      // "PR #N" gets a pull-request marker, AWS status gets a cloud icon.
+      if (/^https?:\/\//.test(segment)) {
+        const iconEl = pill.createSpan('ct-footer-pill-icon');
+        setIcon(iconEl, 'globe');
+        const link = pill.createEl('a', { cls: 'ct-footer-pill-text ct-footer-link', text: segment });
+        link.href = segment;
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
+          shell.openExternal(segment);
+        });
+      } else if (/^PR #\d+/.test(segment)) {
+        const iconEl = pill.createSpan('ct-footer-pill-icon');
+        setIcon(iconEl, 'git-pull-request');
+        pill.createSpan({ cls: 'ct-footer-pill-text', text: segment });
+      } else if (/AWS/.test(segment)) {
+        const iconEl = pill.createSpan('ct-footer-pill-icon');
+        setIcon(iconEl, segment.includes('ok') ? 'cloud' : 'cloud-off');
+        pill.createSpan({
+          cls: `ct-footer-pill-text ${segment.includes('expired') ? 'ct-footer-pill-warn' : ''}`,
+          text: segment,
+        });
+      } else {
+        // Default: treat as git branch name
+        const iconEl = pill.createSpan('ct-footer-pill-icon');
+        setIcon(iconEl, 'git-branch');
+        pill.createSpan({ cls: 'ct-footer-pill-text', text: segment });
+      }
+    }
+  }
+
+  /** Called from settings tab when the command is changed so the footer updates live. */
+  updateStatusLineCommand(): void {
+    this.stopStatusLineInterval();
+    this.startStatusLineInterval();
+    void this.refreshStatusLine();
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -1255,9 +1375,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'cwd_changed': {
-        if (this.activeThreadId === threadId) {
-          this.renderThreadInfo();
-        }
+        this.renderThreadInfo();
         break;
       }
 
@@ -1484,6 +1602,9 @@ export class ThreadsView extends ItemView {
       const thread = this.manager.getThread(this.activeThreadId);
       if (thread) delete thread.draft;
     }
+
+    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    this.hideSummaryBanner(false);
 
     // Dismiss the context banner as soon as the user sends — they're back in the thread
     this.hideSummaryBanner(false);

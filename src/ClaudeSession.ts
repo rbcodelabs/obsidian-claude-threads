@@ -107,7 +107,7 @@ export class ClaudeSession {
               message: {
                 role: 'user' as const,
                 content: [
-                  { type: 'text' as const, text: prompt },
+                  ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
                   ...images.map(img => ({
                     type: 'image' as const,
                     source: {

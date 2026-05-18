@@ -36,6 +36,8 @@ export interface ChatMessage {
   cost?: number;
   compactTrigger?: 'auto' | 'manual';
   preTokens?: number;
+  /** Images attached to this message (user role only). Stored as base64 for display. */
+  images?: ImageAttachment[];
 }
 
 export interface ThreadDraft {
@@ -85,6 +87,17 @@ export interface Project {
   createdAt: number;
 }
 
+export interface RemoteAccessSettings {
+  enabled: boolean;
+  /** 32-char hex string generated on first enable. Empty string when not yet generated. */
+  roomId: string;
+  relayUrl: string;
+  /** Non-null only while actively pairing (the pairing code is the formatted roomId). */
+  pairingCode: string | null;
+  /** ms epoch at which the pairing code expires. */
+  pairingExpiresAt: number | null;
+}
+
 export interface PluginSettings {
   claudeBinaryPath: string;
   defaultCwd: string;
@@ -102,6 +115,13 @@ export interface PluginSettings {
   projects: Project[];
   wakeLockEnabled: boolean;
   layoutDensity: LayoutDensity;
+  /**
+   * Shell command for the context footer bar. Receives JSON on stdin with
+   * {cwd, branch} describing the active thread. stdout is displayed as a
+   * one-line status strip below the input area. Empty string disables it.
+   */
+  statusLineCommand: string;
+  remoteAccess: RemoteAccessSettings;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -121,6 +141,14 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   projects: [],
   wakeLockEnabled: true,
   layoutDensity: 'comfortable',
+  statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
+  remoteAccess: {
+    enabled: false,
+    roomId: '',
+    relayUrl: 'wss://claude-threads-relay.rbcodelabs.workers.dev',
+    pairingCode: null,
+    pairingExpiresAt: null,
+  },
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {

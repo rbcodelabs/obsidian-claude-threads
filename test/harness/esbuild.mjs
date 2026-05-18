@@ -7,9 +7,7 @@ const __dirname = path.dirname(__filename);
 
 const resolve = (...parts) => path.resolve(__dirname, ...parts);
 
-await build({
-  entryPoints: [resolve('./index.ts')],
-  outfile: resolve('./dist/bundle.js'),
+const sharedConfig = {
   format: 'iife',
   platform: 'browser',
   sourcemap: true,
@@ -26,6 +24,18 @@ await build({
     'process.env.HOME':     '"/Users/mock"',
     'process.env.PATH':     '"/usr/local/bin"',
   },
+};
+
+await build({
+  ...sharedConfig,
+  entryPoints: [resolve('./index.ts')],
+  outfile: resolve('./dist/bundle.js'),
 });
 
-console.log('[harness] bundle built → test/harness/dist/bundle.js');
+await build({
+  ...sharedConfig,
+  entryPoints: [resolve('./mobile-index.ts')],
+  outfile: resolve('./dist/mobile-bundle.js'),
+});
+
+console.log('[harness] bundles built → test/harness/dist/');

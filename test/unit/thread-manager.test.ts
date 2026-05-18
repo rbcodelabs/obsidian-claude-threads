@@ -79,6 +79,60 @@ describe('ThreadManager — thread lifecycle', () => {
     unsub();
     expect(events).toHaveLength(0);
   });
+
+  it('renameThread emits thread_renamed event with correct payload', () => {
+    const t = manager.createThread('Original');
+    const events: Array<{ threadId: string; type: string; title?: string }> = [];
+    manager.subscribe((threadId, e) => {
+      if (e.type === 'thread_renamed') {
+        events.push({ threadId, type: e.type, title: e.title });
+      }
+    });
+
+    manager.renameThread(t.id, 'Renamed');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].threadId).toBe(t.id);
+    expect(events[0].type).toBe('thread_renamed');
+    expect(events[0].title).toBe('Renamed');
+  });
+
+  it('renameThread does not emit event for unknown thread', () => {
+    const events: string[] = [];
+    manager.subscribe((_, e) => events.push(e.type));
+
+    manager.renameThread('nonexistent-id', 'Whatever');
+
+    expect(events.filter(t => t === 'thread_renamed')).toHaveLength(0);
+  });
+});
+
+describe('ThreadManager — mcpServerFactory', () => {
+  it('is undefined by default', () => {
+    const manager = makeManager();
+    expect(manager.mcpServerFactory).toBeUndefined();
+  });
+
+  it('returns a fresh object on each call', () => {
+    const manager = makeManager();
+    let callCount = 0;
+    manager.mcpServerFactory = () => {
+      callCount++;
+      return { obsidian: { type: 'sdk_mcp', instance: {} } as never };
+    };
+    manager.mcpServerFactory();
+    manager.mcpServerFactory();
+    expect(callCount).toBe(2);
+  });
+
+  it('returns distinct objects per call (no shared instance)', () => {
+    const manager = makeManager();
+    manager.mcpServerFactory = () => ({ obsidian: { type: 'sdk_mcp', instance: {} } as never });
+    const a = manager.mcpServerFactory();
+    const b = manager.mcpServerFactory();
+    expect(a).not.toBe(b);
+    expect(a.obsidian).not.toBe(b.obsidian);
+  });
 });
 
 describe('ThreadManager — opus escalation (resolveModel / stripKeyword)', () => {

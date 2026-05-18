@@ -5,6 +5,11 @@
   padding: 0;
 }
 
+/* Same reset for the mobile view — .view-content gets ct-mobile-root added to it */
+.view-content.ct-mobile-root {
+  padding: 0;
+}
+
 /* Obsidian's button:not(.clickable-icon) global rule injects box-shadow and a
    background-color on every button. Reset both for our plugin — individual
    button styles (send, stop, etc.) re-apply their own backgrounds after. */
@@ -265,7 +270,7 @@
   position: relative;
 }
 
-/* -- Summary peek banner -------------------------------------------------------- */
+/* ── Summary peek banner ─────────────────────────────────────────────────── */
 /* Floats over the top of .ct-messages when returning to a thread after a break */
 
 .ct-summary-banner {
@@ -1988,4 +1993,786 @@
 .ct-agents-permission-actions .ct-permission-btn {
   padding: 2px 8px;
   font-size: var(--font-ui-smaller);
+}
+
+/* ── Context footer (status line) ────────────────────────────────────────── */
+
+.ct-context-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--background-secondary);
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  flex-shrink: 0;
+  min-height: 26px;
+}
+
+.ct-context-footer.ct-hidden {
+  display: none;
+}
+
+.ct-footer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-footer-pill-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.ct-footer-pill-icon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.ct-footer-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Clickable dev-server URL pills */
+.ct-footer-link {
+  color: var(--text-accent, var(--interactive-accent));
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ct-footer-link:hover {
+  text-decoration: underline;
+}
+
+/* AWS expired warning state */
+.ct-footer-pill-warn {
+  color: var(--text-warning, var(--color-orange));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mobile View (ct-mobile-*)
+   Two-panel: list → tap thread → conversation. ct-has-active on root switches
+   which panel is visible.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.ct-mobile-root {
+  /* Use absolute positioning so we fill the view container regardless of
+     whether Obsidian Mobile's view-content div has a fixed height or not.
+     `height: 100%` only works when the parent has an explicit height; on
+     mobile the parent is often height:auto which causes the whole flex chain
+     to collapse to zero and clip most messages. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  overflow: hidden;
+}
+
+/* Reset Obsidian's global button styles inside the mobile view */
+.ct-mobile-root button {
+  box-shadow: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ── List panel ─────────────────────────────────────────────────────────── */
+
+.ct-mobile-list-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;      /* fill available height in the flex-column root */
+  min-height: 0; /* allow flex children to scroll rather than overflow */
+  overflow: hidden;
+}
+
+.ct-mobile-root.ct-has-active .ct-mobile-list-panel {
+  display: none;
+}
+
+.ct-mobile-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  height: 52px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-mobile-list-title {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-mobile-new-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  font-size: 22px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 2px;
+}
+
+.ct-mobile-thread-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Thread groups ───────────────────────────────────────────────────────── */
+
+.ct-mobile-thread-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-mobile-thread-group-label {
+  padding: 6px 16px 4px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* ── Thread rows ─────────────────────────────────────────────────────────── */
+
+.ct-mobile-thread-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px 11px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  transition: background 0.1s;
+  min-height: 56px;
+}
+
+.ct-mobile-thread-item:active {
+  background: var(--background-modifier-hover);
+}
+
+.ct-mobile-thread-item-active {
+  background: var(--background-modifier-hover);
+  border-left: 3px solid var(--interactive-accent);
+  padding-left: 9px;
+}
+
+/* Status icon */
+.ct-mobile-thread-icon {
+  flex-shrink: 0;
+  width: 20px;
+  font-size: 13px;
+  text-align: center;
+  line-height: 1;
+}
+
+.ct-mobile-thread-icon-running {
+  color: var(--interactive-accent);
+  animation: ct-spin 2s linear infinite;
+}
+
+.ct-mobile-thread-icon-done {
+  color: var(--text-faint);
+}
+
+.ct-mobile-thread-icon-error {
+  color: var(--text-error, #e03131);
+}
+
+.ct-mobile-thread-icon-empty {
+  color: var(--text-faint);
+}
+
+@keyframes ct-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.ct-mobile-thread-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ct-mobile-thread-title {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-mobile-thread-preview {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-mobile-thread-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ct-mobile-thread-time {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ct-mobile-thread-chevron {
+  font-size: 18px;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+@keyframes ct-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.ct-mobile-no-threads {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.ct-mobile-hint {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-top: 8px;
+}
+
+/* ── Conversation panel ─────────────────────────────────────────────────── */
+
+.ct-mobile-conv-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;       /* fill available height in the flex-column root */
+  min-height: 0; /* allow inner messages list to scroll */
+  overflow: hidden;
+}
+
+.ct-mobile-root.ct-has-active .ct-mobile-conv-panel {
+  display: flex;
+}
+
+.ct-mobile-conv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 4px;
+  height: 52px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-mobile-back-btn {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--interactive-accent) !important;
+  padding: 0 8px !important;
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.ct-mobile-conv-title {
+  flex: 1;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-normal);
+}
+
+
+.ct-mobile-conversation {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ct-mobile-messages {
+  flex: 1;
+  min-height: 0;
+  /* Use `scroll` not `auto` — on iOS WebView, `auto` can fail to create a
+     scrollable region inside a flex container. `scroll` always creates one. */
+  overflow-y: scroll;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Messages ────────────────────────────────────────────────────────────── */
+
+.ct-mobile-message {
+  max-width: 88%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-mobile-message-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.ct-mobile-message-assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+  max-width: 100%; /* flowing text — no bubble, so no width cap needed */
+}
+
+.ct-mobile-message-content {
+  padding: 10px 13px;
+  border-radius: 18px;
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  word-break: break-word;
+  /* Prevent code blocks from expanding beyond bubble width */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ct-mobile-message-user .ct-mobile-message-content {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-bottom-right-radius: 4px;
+}
+
+.ct-mobile-message-assistant .ct-mobile-message-content {
+  background: transparent;
+  color: var(--text-normal);
+  border: none;
+  border-radius: 0;
+  padding: 0 4px;
+}
+
+/* Markdown inside assistant messages */
+.ct-mobile-message-assistant .ct-mobile-message-content p {
+  margin: 0 0 8px;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content p:last-child {
+  margin-bottom: 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content pre {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  /* Must be set so pre doesn't blow out the bubble width */
+  max-width: 100%;
+  box-sizing: border-box;
+  font-size: var(--font-ui-smaller);
+  margin: 6px 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content code {
+  background: var(--background-primary-alt, var(--background-modifier-hover));
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content pre code {
+  background: none;
+  padding: 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content ul,
+.ct-mobile-message-assistant .ct-mobile-message-content ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content h1,
+.ct-mobile-message-assistant .ct-mobile-message-content h2,
+.ct-mobile-message-assistant .ct-mobile-message-content h3 {
+  margin: 8px 0 4px;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content blockquote {
+  border-left: 3px solid var(--interactive-accent);
+  margin: 6px 0;
+  padding: 3px 10px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--interactive-accent) 6%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content blockquote p {
+  margin: 0;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-ui-smaller);
+  margin: 6px 0;
+  display: block;
+  overflow-x: auto;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content th,
+.ct-mobile-message-assistant .ct-mobile-message-content td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 5px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content th {
+  background: var(--background-secondary);
+  font-weight: 600;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content tr:nth-child(even) td {
+  background: var(--background-modifier-hover);
+}
+
+/* streaming has no box — no border override needed */
+
+.ct-mobile-cost {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 2px 4px;
+  align-self: flex-end;
+}
+
+.ct-mobile-compact-divider {
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  padding: 4px 0;
+  position: relative;
+}
+.ct-mobile-compact-divider::before,
+.ct-mobile-compact-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+.ct-mobile-compact-divider::before { left: 0; }
+.ct-mobile-compact-divider::after { right: 0; }
+
+.ct-mobile-empty {
+  color: var(--text-faint);
+  text-align: center;
+  padding: 48px 24px;
+  font-size: var(--font-ui-small);
+}
+
+/* ── Streaming / thinking ───────────────────────────────────────────────── */
+
+.ct-thinking-label {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ct-cursor in the mobile section intentionally removed — the desktop rule
+   (accent colour, smooth pulse) defined earlier in this file applies here too. */
+
+/* ── Permission card ────────────────────────────────────────────────────── */
+
+.ct-mobile-permission-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--color-orange, #f59e0b);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 4px 0;
+  align-self: stretch;
+}
+
+.ct-mobile-permission-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--color-orange, #f59e0b);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.ct-mobile-permission-tool {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-hover);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.ct-mobile-permission-detail {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+.ct-mobile-permission-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ct-mobile-permission-btn {
+  flex: 1;
+  height: 36px;
+  border-radius: 8px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  cursor: pointer !important;
+}
+
+.ct-mobile-permission-deny {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-muted) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+}
+
+.ct-mobile-permission-allow {
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+}
+
+/* ── Debug bar (temporary — remove after bug is diagnosed) ──────────────── */
+
+.ct-mobile-debug-bar {
+  flex-shrink: 0;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--text-on-accent);
+  background: #c0392b;
+  text-align: center;
+  font-family: monospace;
+  min-height: 20px;
+}
+
+/* ── Input row ──────────────────────────────────────────────────────────── */
+
+.ct-mobile-input-row {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-mobile-input-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 22px;
+  padding: 6px 6px 6px 14px;
+  /* Clip the textarea inside the rounded wrapper */
+  overflow: hidden;
+}
+
+.ct-mobile-input {
+  flex: 1;
+  resize: none;
+  border: none;
+  /* Override any theme border-radius — the wrapper provides the visual rounding */
+  border-radius: 0 !important;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px 0;
+  outline: none;
+  box-shadow: none !important;
+  font-family: var(--font-interface);
+}
+
+.ct-mobile-input::placeholder {
+  color: var(--text-faint);
+}
+
+.ct-mobile-send-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-mobile-send-btn:disabled {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-muted) !important;
+}
+
+/* ── Disconnected banner ────────────────────────────────────────────────── */
+
+.ct-mobile-disconnected-banner {
+  background: var(--background-modifier-error, rgba(224,49,49,0.15));
+  color: var(--text-error, #c92a2a);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+  padding: 6px 12px;
+  flex-shrink: 0;
+}
+
+/* ── Pairing screen ─────────────────────────────────────────────────────── */
+
+.ct-mobile-pairing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 24px 24px;
+  text-align: center;
+  gap: 12px;
+}
+
+.ct-mobile-pairing-icon {
+  font-size: 48px;
+  color: var(--text-faint);
+  line-height: 1;
+}
+
+.ct-mobile-pairing h3 {
+  margin: 0;
+  color: var(--text-normal);
+}
+
+.ct-mobile-pairing-text {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 300px;
+}
+
+/* ── Image attachment strip ─────────────────────────────────────────────── */
+
+.ct-mobile-image-strip {
+  display: none; /* shown via JS when images pending */
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.ct-mobile-image-thumb {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ct-mobile-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ct-mobile-image-remove {
+  position: absolute !important;
+  top: 2px;
+  right: 2px;
+  width: 18px !important;
+  height: 18px !important;
+  border-radius: 50% !important;
+  background: rgba(0,0,0,0.6) !important;
+  color: white !important;
+  font-size: 12px !important;
+  line-height: 1 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  cursor: pointer;
+}
+
+/* Attachment button */
+.ct-mobile-attach-btn {
+  flex-shrink: 0;
+  font-size: 22px;
+  color: var(--text-muted) !important;
+  line-height: 1;
+  padding: 0 4px !important;
+}
+
+.ct-mobile-attach-btn:active {
+  color: var(--interactive-accent) !important;
+}
+
+/* ── Images in conversation bubbles ────────────────────────────────────── */
+
+.ct-mobile-msg-images {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ct-mobile-msg-img {
+  max-height: 200px;
+  max-width: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  display: block;
+}
+
+/* ── Settings mobile panel ──────────────────────────────────────────────── */
+
+.ct-mobile-status-ok {
+  color: var(--color-green, #2f9e44);
+  font-weight: 500;
+}
+
+.ct-mobile-status-disconnected {
+  color: var(--text-muted);
 }
