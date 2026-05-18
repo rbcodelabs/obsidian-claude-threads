@@ -10,6 +10,14 @@
   padding: 0;
 }
 
+/* Obsidian themes commonly add a ::after fade gradient to .view-content for
+   scrollable areas. Suppress it — our layout handles its own visual framing. */
+.view-content.ct-mobile-root::before,
+.view-content.ct-mobile-root::after {
+  display: none !important;
+  content: none !important;
+}
+
 /* Obsidian's button:not(.clickable-icon) global rule injects box-shadow and a
    background-color on every button. Reset both for our plugin — individual
    button styles (send, stop, etc.) re-apply their own backgrounds after. */
