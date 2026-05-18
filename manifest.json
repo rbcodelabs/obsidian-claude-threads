@@ -1,7 +1,7 @@
 {
   "id": "claude-threads",
   "name": "Claude Threads",
-  "version": "0.4.24",
+  "version": "0.4.25",
   "minAppVersion": "1.0.0",
   "description": "Multi-threaded Claude Code sessions in Obsidian",
   "author": "Rick Bowman",
