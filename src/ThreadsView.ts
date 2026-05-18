@@ -993,22 +993,14 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    // Summary/recap lives in the Agent Dashboard — show model badge and cwd here
-    const hasContent = !!thread.model || !!thread.cwd;
+    // Show model badge only; cwd is now shown in the edited-files row
+    const hasContent = !!thread.model;
 
     // Hide the bar entirely when there's nothing to show
     this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
 
     if (thread.model) {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
-    }
-
-    if (thread.cwd) {
-      const cwdBadge = this.threadInfoBar.createSpan({ cls: 'ct-cwd-badge' });
-      const iconEl = cwdBadge.createSpan({ cls: 'ct-cwd-icon' });
-      setIcon(iconEl, 'folder');
-      cwdBadge.createSpan({ cls: 'ct-cwd-text', text: shortenPath(thread.cwd) });
-      setTooltip(cwdBadge, thread.cwd);
     }
   }
 
