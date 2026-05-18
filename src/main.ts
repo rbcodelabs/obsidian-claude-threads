@@ -56,18 +56,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.detectClaudeBinary();
 
     this.manager = new ThreadManager(this.settings);
-    try {
-      const mcpServer = createObsidianMcpServer(this.app);
-      const mcpDebug = {
-        type: (mcpServer as unknown as Record<string, unknown>).type,
-        name: (mcpServer as unknown as Record<string, unknown>).name,
-        hasInstance: 'instance' in mcpServer,
-      };
-      console.log('[ClaudeThreads] Obsidian MCP server created:', mcpDebug);
-      this.manager.mcpServers = { obsidian: mcpServer };
-    } catch (err) {
-      console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
-    }
+    this.manager.mcpServerFactory = () => {
+      try {
+        const mcpServer = createObsidianMcpServer(this.app);
+        console.log('[ClaudeThreads] Obsidian MCP server created for session');
+        return { obsidian: mcpServer };
+      } catch (err) {
+        console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
+        return {} as Record<string, import('@anthropic-ai/claude-agent-sdk').McpServerConfig>;
+      }
+    };
     this.manager.vaultRoot = this.getEffectiveCwd();
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.inProcessSummarizer = new InProcessSummarizer();

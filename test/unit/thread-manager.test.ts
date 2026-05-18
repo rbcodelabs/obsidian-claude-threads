@@ -81,6 +81,34 @@ describe('ThreadManager — thread lifecycle', () => {
   });
 });
 
+describe('ThreadManager — mcpServerFactory', () => {
+  it('is undefined by default', () => {
+    const manager = makeManager();
+    expect(manager.mcpServerFactory).toBeUndefined();
+  });
+
+  it('returns a fresh object on each call', () => {
+    const manager = makeManager();
+    let callCount = 0;
+    manager.mcpServerFactory = () => {
+      callCount++;
+      return { obsidian: { type: 'sdk_mcp', instance: {} } as never };
+    };
+    manager.mcpServerFactory();
+    manager.mcpServerFactory();
+    expect(callCount).toBe(2);
+  });
+
+  it('returns distinct objects per call (no shared instance)', () => {
+    const manager = makeManager();
+    manager.mcpServerFactory = () => ({ obsidian: { type: 'sdk_mcp', instance: {} } as never });
+    const a = manager.mcpServerFactory();
+    const b = manager.mcpServerFactory();
+    expect(a).not.toBe(b);
+    expect(a.obsidian).not.toBe(b.obsidian);
+  });
+});
+
 describe('ThreadManager — opus escalation (resolveModel / stripKeyword)', () => {
   it('strips /opus keyword from middle of message', () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
