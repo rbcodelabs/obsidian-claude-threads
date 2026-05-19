@@ -964,12 +964,214 @@ const WIN_W   = 1920 - MARGIN * 2       // 1864
 const WIN_H   = 1080 - MARGIN * 2       // 1024
 const SCALE   = 1.25                    // zoom: content × 1.25 fills window exactly
 
+// ─── Scene 4: Mobile phone mockup (floating over main desktop view) ──────────
+
+function MobilePhoneOverlay() {
+  const PHONE_W  = 260
+  const PHONE_H  = 530
+  const PHONE_R  = 36
+  const BEZEL    = 10
+  const SCREEN_W = PHONE_W - BEZEL * 2
+  const SCREEN_H = PHONE_H - BEZEL * 2
+
+  const M_BG     = '#0d1117'
+  const M_CARD   = '#161b22'
+  const M_BORDER = '#21262d'
+  const M_TEXT   = '#e6edf3'
+  const M_MUTED  = '#8b949e'
+  const M_BLUE   = '#58a6ff'
+  const M_GREEN  = '#3fb950'
+  const M_AMBER  = '#f0883e'
+  const M_ACCENT = '#ea928a'
+
+  const threads = [
+    { title: 'Fix auth middleware',   dot: M_ACCENT, active: true,  running: true  },
+    { title: 'HipTrip feature ideas', dot: M_AMBER,  active: false, running: true  },
+    { title: 'claude-threads-spec',   dot: M_GREEN,  active: false, running: false },
+  ]
+
+  return (
+    <div style={{
+      position: 'absolute',
+      bottom: 52, right: 68,
+      width: PHONE_W, height: PHONE_H,
+      zIndex: 50,
+      filter: 'drop-shadow(0 28px 60px rgba(0,0,0,0.85)) drop-shadow(0 8px 20px rgba(0,0,0,0.5))',
+    }}>
+      {/* Phone body */}
+      <div style={{
+        width: PHONE_W, height: PHONE_H,
+        borderRadius: PHONE_R,
+        background: '#1a1a1e',
+        border: '1px solid rgba(255,255,255,0.13)',
+        position: 'relative',
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+      }}>
+        {/* Left buttons */}
+        <div style={{ position: 'absolute', left: -3, top: 88,  width: 3, height: 28, background: '#2a2a2e', borderRadius: '2px 0 0 2px' }} />
+        <div style={{ position: 'absolute', left: -3, top: 124, width: 3, height: 48, background: '#2a2a2e', borderRadius: '2px 0 0 2px' }} />
+        <div style={{ position: 'absolute', left: -3, top: 180, width: 3, height: 48, background: '#2a2a2e', borderRadius: '2px 0 0 2px' }} />
+        {/* Right power button */}
+        <div style={{ position: 'absolute', right: -3, top: 130, width: 3, height: 64, background: '#2a2a2e', borderRadius: '0 2px 2px 0' }} />
+
+        {/* Screen */}
+        <div style={{
+          position: 'absolute',
+          top: BEZEL, left: BEZEL,
+          width: SCREEN_W, height: SCREEN_H,
+          borderRadius: PHONE_R - BEZEL,
+          background: M_BG,
+          overflow: 'hidden',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Dynamic Island */}
+          <div style={{
+            position: 'absolute', top: 9, left: '50%',
+            transform: 'translateX(-50%)',
+            width: 80, height: 22,
+            background: '#000', borderRadius: 12,
+            zIndex: 10,
+          }} />
+
+          {/* Status bar */}
+          <div style={{
+            height: 40, flexShrink: 0,
+            paddingTop: 14, paddingLeft: 14, paddingRight: 14,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <span style={{ fontFamily: SANS, fontSize: 10, fontWeight: 600, color: M_TEXT }}>9:41</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <svg width="14" height="10" viewBox="0 0 14 10" fill={M_TEXT}>
+                <rect x="0" y="6" width="2.5" height="4" rx="0.5"/>
+                <rect x="3.5" y="4" width="2.5" height="6" rx="0.5"/>
+                <rect x="7" y="2" width="2.5" height="8" rx="0.5"/>
+                <rect x="10.5" y="0" width="2.5" height="10" rx="0.5"/>
+              </svg>
+              <svg width="13" height="10" viewBox="0 0 13 10" fill="none" stroke={M_TEXT} strokeWidth="1.4" strokeLinecap="round">
+                <path d="M1 3.5C3.2 1.3 9.8 1.3 12 3.5"/>
+                <path d="M2.8 5.3C4.3 3.8 8.7 3.8 10.2 5.3"/>
+                <path d="M4.6 7C5.4 6.2 7.6 6.2 8.4 7"/>
+                <circle cx="6.5" cy="9" r="0.8" fill={M_TEXT} stroke="none"/>
+              </svg>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <div style={{ width: 20, height: 10, borderRadius: 2.5, border: `1px solid ${M_TEXT}`, padding: 1.5, display: 'flex', alignItems: 'center' }}>
+                  <div style={{ width: '80%', height: '100%', background: M_TEXT, borderRadius: 1 }} />
+                </div>
+                <div style={{ width: 2, height: 5, background: M_TEXT, borderRadius: 1 }} />
+              </div>
+            </div>
+          </div>
+
+          {/* App header */}
+          <div style={{
+            height: 38, flexShrink: 0,
+            background: M_CARD,
+            borderBottom: `1px solid ${M_BORDER}`,
+            display: 'flex', alignItems: 'center',
+            paddingLeft: 12, paddingRight: 12, gap: 8,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={M_ACCENT} strokeWidth="1.8" strokeLinecap="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: M_TEXT, flex: 1 }}>Claude Threads</span>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'rgba(63,185,80,0.15)', border: `1px solid rgba(63,185,80,0.3)`,
+              borderRadius: 10, paddingLeft: 6, paddingRight: 7, paddingTop: 2, paddingBottom: 2,
+            }}>
+              <div style={{ width: 5, height: 5, borderRadius: 3, background: M_GREEN }} />
+              <span style={{ fontFamily: SANS, fontSize: 9, color: M_GREEN, fontWeight: 600 }}>LIVE</span>
+            </div>
+          </div>
+
+          {/* Thread list */}
+          {threads.map((t, i) => (
+            <div key={i} style={{
+              padding: '8px 12px',
+              borderBottom: `1px solid ${M_BORDER}`,
+              background: t.active ? 'rgba(234,146,138,0.06)' : 'transparent',
+              display: 'flex', alignItems: 'center', gap: 8,
+              borderLeft: t.active ? `2px solid ${M_ACCENT}` : '2px solid transparent',
+              boxSizing: 'border-box',
+            }}>
+              <div style={{ width: 7, height: 7, borderRadius: 4, background: t.dot, flexShrink: 0 }} />
+              <span style={{
+                fontFamily: SANS, fontSize: 11,
+                color: t.active ? M_TEXT : M_MUTED,
+                fontWeight: t.active ? 500 : 400,
+                flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{t.title}</span>
+              {t.running && <span style={{ fontFamily: SANS, fontSize: 9, color: t.dot }}>●</span>}
+            </div>
+          ))}
+
+          {/* Active conversation */}
+          <div style={{ flex: 1, padding: '10px 10px 6px', display: 'flex', flexDirection: 'column', gap: 6, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{
+                background: M_ACCENT, color: '#2a1e1b',
+                borderRadius: '10px 10px 2px 10px',
+                padding: '6px 9px',
+                fontFamily: SANS, fontSize: 10, lineHeight: 1.4,
+                maxWidth: '80%',
+              }}>Auth middleware throwing 401s in staging but not locally. Can you take a look?</div>
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '3px 7px', background: M_CARD,
+              border: `1px solid ${M_BORDER}`, borderRadius: 5,
+            }}>
+              <span style={{ fontSize: 8 }}>📖</span>
+              <span style={{ fontFamily: MONO, fontSize: 9, color: M_MUTED }}>Read: src/middleware/auth.ts</span>
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 10, color: M_TEXT, lineHeight: 1.5 }}>
+              Found it — token expiry check uses local time but the{' '}
+              <span style={{ fontFamily: MONO, fontSize: 9, background: 'rgba(255,255,255,0.07)', padding: '1px 3px', borderRadius: 2, color: M_ACCENT }}>iat</span>
+              {' '}claim is UTC in staging. Fixing now
+              <span style={{
+                display: 'inline-block', width: 1.5, height: '1em',
+                background: M_BLUE, marginLeft: 2, verticalAlign: 'text-bottom',
+              }} />
+            </div>
+          </div>
+
+          {/* Input bar */}
+          <div style={{
+            borderTop: `1px solid ${M_BORDER}`,
+            background: M_CARD,
+            padding: '7px 10px',
+            display: 'flex', alignItems: 'center', gap: 7,
+            flexShrink: 0,
+          }}>
+            <div style={{
+              flex: 1, fontFamily: SANS, fontSize: 10,
+              color: M_MUTED, padding: '5px 8px',
+              background: M_BG, borderRadius: 8,
+              border: `1px solid ${M_BORDER}`,
+            }}>Message Claude…</div>
+            <div style={{
+              width: 24, height: 24, borderRadius: 6,
+              background: M_BORDER,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={M_MUTED} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main composition ─────────────────────────────────────────────────────────
 export function ClaudeThreadsShots() {
   const frame = useCurrentFrame()
-  const scene = frame < 60 ? 0 : frame < 120 ? 1 : frame < 180 ? 2 : 3
+  const scene = frame < 60 ? 0 : frame < 120 ? 1 : frame < 180 ? 2 : frame < 240 ? 3 : 4
 
-  const ctPanel = scene === 0
+  const ctPanel = scene === 0 || scene === 4
     ? <CTPanel_Main />
     : scene === 1
     ? <CTPanel_Slash />
@@ -977,7 +1179,7 @@ export function ClaudeThreadsShots() {
     ? <CTPanel_Stream />
     : <CTPanel_Permission />
 
-  const editorTitle = scene === 0
+  const editorTitle = scene === 0 || scene === 4
     ? 'claude-threads-spec'
     : scene === 1
     ? 'HipTrip-user-interviews.md'
@@ -1020,6 +1222,8 @@ export function ClaudeThreadsShots() {
           {scene === 3 && <PermissionModal />}
         </div>
       </div>
+      {/* Mobile phone overlay — scene 4 only */}
+      {scene === 4 && <MobilePhoneOverlay />}
     </AbsoluteFill>
   )
 }
