@@ -973,6 +973,8 @@ function MobilePhoneOverlay() {
   const BEZEL    = 12
   const SCREEN_W = PHONE_W - BEZEL * 2
   const SCREEN_H = PHONE_H - BEZEL * 2
+  const BASE_SCREEN_W  = 240                          // original design width
+  const CONTENT_SCALE  = SCREEN_W / BASE_SCREEN_W    // ~1.44× at 370px phone
 
   const M_BG     = '#0d1117'
   const M_CARD   = '#161b22'
@@ -1023,8 +1025,14 @@ function MobilePhoneOverlay() {
           borderRadius: PHONE_R - BEZEL,
           background: M_BG,
           overflow: 'hidden',
-          display: 'flex', flexDirection: 'column',
         }}>
+          {/* Scale content up to fill the larger phone */}
+          <div style={{
+            width: BASE_SCREEN_W,
+            height: Math.round(SCREEN_H / CONTENT_SCALE),
+            zoom: CONTENT_SCALE,
+            display: 'flex', flexDirection: 'column',
+          }}>
           {/* Dynamic Island */}
           <div style={{
             position: 'absolute', top: 9, left: '50%',
@@ -1160,6 +1168,7 @@ function MobilePhoneOverlay() {
               </svg>
             </div>
           </div>
+          </div>{/* end content scale wrapper */}
         </div>
       </div>
     </div>
