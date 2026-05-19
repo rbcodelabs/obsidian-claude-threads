@@ -2007,6 +2007,15 @@ export class ThreadsView extends ItemView {
     const threads = this.manager.getThreads();
     if (threads.length <= 1) return;
 
+    const thread = this.manager.getThread(id);
+    const hasMessages = thread && thread.messages.some((m) => m.role !== 'compact');
+
+    if (hasMessages && this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
+      // Archive to vault before removing from memory so the Bases Kanban retains it.
+      thread.status = 'archived';
+      this.plugin.persistence.saveThread(thread).catch(console.error);
+    }
+
     this.manager.deleteThread(id);
     this.plugin.saveSettings();
 

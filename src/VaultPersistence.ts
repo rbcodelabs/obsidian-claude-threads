@@ -1,5 +1,5 @@
 import { App, TFile } from 'obsidian';
-import type { Thread, ChatMessage } from './types';
+import type { Thread, ChatMessage, ThreadStatus } from './types';
 
 export class VaultPersistence {
   constructor(
@@ -24,6 +24,8 @@ export class VaultPersistence {
     } else {
       await this.app.vault.create(fileName, content);
     }
+    // Keep noteFile in sync so callers can reference the vault path.
+    thread.noteFile = fileName;
     return fileName;
   }
 
@@ -53,11 +55,18 @@ export class VaultPersistence {
   }
 
   private threadToMarkdown(thread: Thread): string {
+    const status = thread.status ?? 'waiting';
+    const messageCount = thread.messages.filter((m) => m.role !== 'compact').length;
     const headerParts = [
       '---',
       `thread_id: ${thread.id}`,
       thread.sessionId ? `claude_session_id: ${thread.sessionId}` : null,
+      `title: "${thread.title.replace(/"/g, '\\"')}"`,
+      `status: ${status}`,
       `cwd: ${thread.cwd}`,
+      thread.model ? `model: ${thread.model}` : null,
+      `message_count: ${messageCount}`,
+      thread.summary ? `summary: "${thread.summary.replace(/"/g, '\\"').replace(/\n/g, ' ')}"` : null,
       `created: ${new Date(thread.createdAt).toISOString()}`,
       `updated: ${new Date(thread.updatedAt).toISOString()}`,
       '---',
@@ -75,6 +84,7 @@ export class VaultPersistence {
   }
 
   private messageToMarkdown(msg: ChatMessage): string {
+    if (msg.role === 'compact') return '';
     const prefix = msg.role === 'user' ? '**You:**' : '**Claude:**';
     let body = `${prefix}\n\n${msg.content}`;
     if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -100,10 +110,17 @@ export class VaultPersistence {
       if (!id || !cwd) return null;
 
       const titleMatch = content.match(/^# (.+)$/m);
-      const title = titleMatch ? titleMatch[1] : 'Untitled';
+      const title = titleMatch ? titleMatch[1] : (get('title')?.replace(/^"|"$/g, '') ?? 'Untitled');
       const sessionId = get('claude_session_id');
       const createdAt = get('created') ? new Date(get('created')!).getTime() : Date.now();
       const updatedAt = get('updated') ? new Date(get('updated')!).getTime() : createdAt;
+      const rawStatus = get('status');
+      const status = (rawStatus === 'waiting' || rawStatus === 'active' || rawStatus === 'error' || rawStatus === 'archived')
+        ? rawStatus as ThreadStatus
+        : 'waiting';
+      const model = get('model');
+      const summaryRaw = get('summary');
+      const summary = summaryRaw ? summaryRaw.replace(/^"|"$/g, '') : undefined;
 
       const messages = this.parseMessages(content.replace(/^---[\s\S]*?---\n/, ''));
 
@@ -116,6 +133,9 @@ export class VaultPersistence {
         createdAt,
         updatedAt,
         noteFile: filePath,
+        status,
+        model,
+        summary,
       };
     } catch {
       return null;

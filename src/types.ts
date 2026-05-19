@@ -1,5 +1,7 @@
 export type MessageRole = 'user' | 'assistant' | 'compact';
 
+export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived';
+
 export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 
 export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
@@ -65,6 +67,8 @@ export interface Thread {
   editedFiles?: string[];
   /** Unsent draft message and attachments for this thread. */
   draft?: ThreadDraft;
+  /** Current lifecycle status of the thread. */
+  status?: ThreadStatus;
 }
 
 /**

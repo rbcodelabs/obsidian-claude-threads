@@ -174,6 +174,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubWakeLock);
 
+    // Persist status changes to vault for all threads (including background ones
+    // not covered by the per-view save on 'message').
+    const unsubStatus = this.manager.subscribe((threadId, event) => {
+      if (!this.settings.saveThreadsToVault) return;
+      if (event.type !== 'done' && event.type !== 'error') return;
+      const thread = this.manager.getThread(threadId);
+      if (thread) {
+        this.persistence?.saveThread(thread).catch(console.error);
+      }
+    });
+    this.register(unsubStatus);
+
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
