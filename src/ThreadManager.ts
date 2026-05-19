@@ -325,7 +325,14 @@ export class ThreadManager {
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
     const project = thread.projectId ? this.getProject(thread.projectId) : undefined;
-    const appendSystemPrompt = project?.description?.trim() || undefined;
+    const envContext = buildEnvironmentSystemPrompt(
+      this.vaultRoot,
+      cwdAtStart,
+      this.settings.vaultFolder,
+      this.settings.saveThreadsToVault,
+    );
+    const projectDesc = project?.description?.trim();
+    const appendSystemPrompt = projectDesc ? `${envContext}\n\n${projectDesc}` : envContext;
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId) : this.mcpServers;
 
     // If there is no session to resume but there IS prior history, the cwd must
@@ -545,6 +552,45 @@ function buildHistoryPreamble(priorMessages: ChatMessage[], newCwd: string): str
   }
 
   lines.push('[End of prior context. Continue from here.]', '');
+
+  return lines.join('\n');
+}
+
+/**
+ * Builds the base system-prompt context injected into every session.
+ * Tells the agent where it is running, path semantics for Obsidian vs
+ * filesystem tools, and key behavioral notes about session-affecting tools.
+ */
+function buildEnvironmentSystemPrompt(
+  vaultRoot: string,
+  cwd: string,
+  vaultFolder: string,
+  saveThreadsToVault: boolean,
+): string {
+  const lines = [
+    'You are running inside the Obsidian Claude Threads plugin.',
+    '',
+    `Vault root (filesystem path): ${vaultRoot}`,
+    `Working directory: ${cwd}`,
+    '',
+    'Path semantics:',
+    '- obsidian_* tools use vault-relative paths (e.g. "Daily/2026-05-18.md")',
+    '- Filesystem tools (Read, Write, Bash) use absolute paths',
+  ];
+
+  if (saveThreadsToVault) {
+    lines.push(
+      '',
+      `Conversation history: completed threads are auto-saved as Markdown notes to "${vaultFolder}/YYYY-MM-DD-<title-slug>.md" in the vault. Use obsidian_search_vault or Read to look up prior conversations.`,
+    );
+  }
+
+  lines.push(
+    '',
+    'Tool notes:',
+    '- set_working_directory takes effect on the next turn and resets session continuity. Set it before starting a task, not mid-conversation.',
+    '- ScheduleWakeup injects the given prompt as a new message into this thread after the delay.',
+  );
 
   return lines.join('\n');
 }
