@@ -15,6 +15,9 @@ export class AgentDashboard extends ItemView {
 
   private listEl!: HTMLElement;
   private headerCountEl!: HTMLElement;
+  private searchBarEl!: HTMLElement;
+  private searchInputEl!: HTMLInputElement;
+  private searchQuery = '';
   private dispatchInput!: HTMLTextAreaElement;
   private dispatchRow!: HTMLElement;
   private pasteChipsEl!: HTMLElement;
@@ -79,7 +82,28 @@ export class AgentDashboard extends ItemView {
     const iconSpan = titleEl.createSpan('ct-agents-title-icon');
     setIcon(iconSpan, 'layout-dashboard');
     titleEl.createSpan({ text: 'Agent Dashboard' });
-    this.headerCountEl = header.createDiv('ct-agents-count');
+
+    const headerRight = header.createDiv('ct-agents-header-right');
+    this.headerCountEl = headerRight.createDiv('ct-agents-count');
+    const searchBtn = headerRight.createEl('button', {
+      cls: 'ct-agents-search-btn clickable-icon',
+      attr: { title: 'Search threads', 'aria-label': 'Search threads' },
+    });
+    setIcon(searchBtn, 'search');
+    searchBtn.addEventListener('click', () => this.toggleSearch());
+
+    this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
+    this.searchInputEl = this.searchBarEl.createEl('input', {
+      cls: 'ct-agents-search-input',
+      attr: { type: 'text', placeholder: 'Search threads…' },
+    });
+    this.searchInputEl.addEventListener('input', () => {
+      this.searchQuery = this.searchInputEl.value.toLowerCase().trim();
+      this.render();
+    });
+    this.searchInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.closeSearch();
+    });
 
     this.listEl = root.createDiv('ct-agents-list');
 
@@ -285,7 +309,15 @@ export class AgentDashboard extends ItemView {
     this.timeEls.clear();
     this.rowEls.clear();
 
-    const threads = this.manager.getThreads();
+    const q = this.searchQuery;
+    const allThreads = this.manager.getThreads();
+    const threads = q
+      ? allThreads.filter(t =>
+          t.title.toLowerCase().includes(q) ||
+          (t.summary ?? '').toLowerCase().includes(q) ||
+          (t.recap ?? '').toLowerCase().includes(q)
+        )
+      : allThreads;
     const running: Thread[] = [];
     const unreviewed: Thread[] = [];
     const reviewed: Thread[] = [];
@@ -311,8 +343,12 @@ export class AgentDashboard extends ItemView {
 
     if (threads.length === 0) {
       const emptyEl = this.listEl.createDiv('ct-agents-empty');
-      emptyEl.createDiv({ text: 'No threads yet.' });
-      emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
+      if (q) {
+        emptyEl.createDiv({ text: 'No threads match your search.' });
+      } else {
+        emptyEl.createDiv({ text: 'No threads yet.' });
+        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
+      }
     }
 
     if (running.length > 0) this.renderGroup('Working', running, 'running');
@@ -600,6 +636,24 @@ export class AgentDashboard extends ItemView {
     this.fileDropdown = null;
     this.fileDropdownItems = [];
     this.fileDropdownIndex = 0;
+  }
+
+  // ── Search ──────────────────────────────────────────────────────────────
+
+  private toggleSearch(): void {
+    if (this.searchBarEl.hasClass('ct-hidden')) {
+      this.searchBarEl.removeClass('ct-hidden');
+      this.searchInputEl.focus();
+    } else {
+      this.closeSearch();
+    }
+  }
+
+  private closeSearch(): void {
+    this.searchBarEl.addClass('ct-hidden');
+    this.searchQuery = '';
+    this.searchInputEl.value = '';
+    this.render();
   }
 
   // ────────────────────────────────────────────────────────────────────────
