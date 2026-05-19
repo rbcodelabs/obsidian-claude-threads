@@ -208,11 +208,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
       id: 'new-claude-thread',
       name: 'New Claude Thread',
       callback: async () => {
-        await this.activateView();
-        const view = this.getView();
-        if (view) {
-          await view.openNewThread();
-        }
+        await this.activateAgentView();
+        this.getAgentDashboard()?.focusDispatchInput();
       },
     });
 
