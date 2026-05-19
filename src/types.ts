@@ -69,6 +69,8 @@ export interface Thread {
   draft?: ThreadDraft;
   /** Current lifecycle status of the thread. */
   status?: ThreadStatus;
+  /** URL of the most recent GitHub PR opened during this thread (e.g. https://github.com/owner/repo/pull/42). */
+  prUrl?: string;
 }
 
 /**

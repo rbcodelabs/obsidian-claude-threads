@@ -111,9 +111,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager = new ThreadManager(this.settings);
     // Use a per-thread factory so the set_working_directory tool can close over the
     // correct threadId without shared mutable state across concurrent sessions.
-    this.manager.mcpServerFactory = (threadId: string) => {
+    this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
       try {
         const mcpServer = createObsidianMcpServer(this.app, {
+          initialCwd,
           onSetCwd: (newCwd: string) => {
             this.manager.setThreadCwd(threadId, newCwd);
             this.saveSettings().catch(console.error);

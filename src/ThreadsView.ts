@@ -793,12 +793,32 @@ export class ThreadsView extends ItemView {
    */
   refreshStatusLine(): void {
     const cmd = this.plugin.settings.statusLineCommand;
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+
+    // Lazy-scan existing threads for a PR URL in case it was created before
+    // the prUrl field was introduced (scans the last 20 messages for a GitHub PR link).
+    if (thread && !thread.prUrl) {
+      const msgs = thread.messages.slice(-20);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role === 'assistant') {
+          const match = m.content.match(/https:\/\/github\.com\/[^\s>)"']+\/pull\/\d+/);
+          if (match) { thread.prUrl = match[0]; break; }
+        }
+      }
+    }
+
+    const prUrl = thread?.prUrl;
+
     if (!cmd) {
-      this.contextFooterEl.addClass('ct-hidden');
+      if (prUrl) {
+        this.renderContextFooter('', prUrl);
+      } else {
+        this.contextFooterEl.addClass('ct-hidden');
+      }
       return;
     }
 
-    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
     const stdin = JSON.stringify({ cwd, workspace: { current_dir: cwd } });
 
@@ -811,10 +831,14 @@ export class ThreadsView extends ItemView {
       (err, stdout) => {
         const text = stdout.trim();
         if (err || !text) {
-          this.contextFooterEl.addClass('ct-hidden');
+          if (prUrl) {
+            this.renderContextFooter('', prUrl);
+          } else {
+            this.contextFooterEl.addClass('ct-hidden');
+          }
           return;
         }
-        this.renderContextFooter(text);
+        this.renderContextFooter(text, prUrl);
       },
     );
 
@@ -822,12 +846,28 @@ export class ThreadsView extends ItemView {
     child.stdin?.end();
   }
 
-  private renderContextFooter(text: string): void {
+  private renderContextFooter(shellText: string, prUrl?: string): void {
     this.contextFooterEl.empty();
-    this.contextFooterEl.removeClass('ct-hidden');
 
-    // Split on two-or-more spaces — each segment becomes a pill
-    const segments = text.split(/  +/).map(s => s.trim()).filter(Boolean);
+    // PR pill — always rendered first when the thread has an associated PR.
+    if (prUrl) {
+      const prNumMatch = prUrl.match(/\/pull\/(\d+)/);
+      const label = prNumMatch ? `PR #${prNumMatch[1]}` : 'Open PR';
+      const pill = this.contextFooterEl.createDiv('ct-footer-pill ct-footer-pill-pr');
+      const iconEl = pill.createSpan('ct-footer-pill-icon');
+      setIcon(iconEl, 'git-pull-request');
+      const link = pill.createEl('a', { cls: 'ct-footer-pill-text ct-footer-link', text: label });
+      link.href = prUrl;
+      link.title = prUrl;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
+        shell.openExternal(prUrl);
+      });
+    }
+
+    // Shell-command pills — split on two-or-more spaces, each segment is a pill.
+    const segments = shellText.split(/  +/).map(s => s.trim()).filter(Boolean);
 
     for (const segment of segments) {
       const pill = this.contextFooterEl.createDiv('ct-footer-pill');
@@ -861,6 +901,12 @@ export class ThreadsView extends ItemView {
         setIcon(iconEl, 'git-branch');
         pill.createSpan({ cls: 'ct-footer-pill-text', text: segment });
       }
+    }
+
+    if (!prUrl && segments.length === 0) {
+      this.contextFooterEl.addClass('ct-hidden');
+    } else {
+      this.contextFooterEl.removeClass('ct-hidden');
     }
   }
 

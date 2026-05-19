@@ -7,6 +7,7 @@ import { App, TFile } from 'obsidian';
 import fs from 'fs';
 import os from 'os';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
+import { execFileSync } from 'child_process';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -37,6 +38,11 @@ export interface ObsidianMcpServerOptions {
   onSetCwd?: (path: string) => void;
   /** Called when the agent schedules a wakeup. delayMs is the delay in milliseconds. */
   onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => void;
+  /**
+   * Initial effective cwd for this session. Pre-seeds the in-session cwd tracker so
+   * obsidian_enter_worktree knows which repo to operate on from the first turn.
+   */
+  initialCwd?: string;
 }
 
 /**
@@ -44,6 +50,15 @@ export interface ObsidianMcpServerOptions {
  * Pass the result as `{ obsidian: createObsidianMcpServer(this.app) }` in the `mcpServers` option.
  */
 export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): McpSdkServerConfigWithInstance {
+  // ── In-session cwd tracking ────────────────────────────────────────────────
+  // Unlike cwdAtStart in ThreadManager (which is frozen in the subprocess),
+  // effectiveCwd is updated immediately by set_working_directory so worktree
+  // tools always operate on the right repo within the same turn.
+  let effectiveCwd = options.initialCwd ?? '';
+
+  // worktreePath → originalGitRoot, for tracking active worktrees this session.
+  const activeWorktrees = new Map<string, string>();
+
   const boundGetOpenTabs = tool(
     'obsidian_get_open_tabs',
     'Returns all open tabs in the Obsidian workspace with their path, title, type, and whether they are the active tab.',
@@ -413,6 +428,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
           };
         }
 
+        // Update both the persisted cwd (for next session) and the in-session
+        // effective cwd (used immediately by obsidian_enter_worktree).
+        effectiveCwd = resolved;
         options.onSetCwd?.(resolved);
 
         return {
@@ -424,6 +442,174 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       }
     },
     { alwaysLoad: true },
+  );
+
+  // ── Worktree tools ──────────────────────────────────────────────────────────
+  // These replace the built-in EnterWorktree / ExitWorktree SDK tools for
+  // sessions running inside the Obsidian plugin.  The SDK's built-in tools use
+  // the frozen OS-level subprocess cwd (set at session start), so they always
+  // operate on whatever repo was active when the thread was created — usually
+  // the vault root.  These MCP versions read effectiveCwd instead, which is
+  // updated immediately whenever set_working_directory is called.
+
+  const boundEnterWorktree = tool(
+    'obsidian_enter_worktree',
+    [
+      'Creates a new git worktree for the repo at the current effective working directory and switches this session to use it.',
+      'The worktree is an isolated copy of the repo on a new branch — changes there do not affect the main checkout.',
+      'After this call the session cwd is updated to the worktree path (takes effect next turn).',
+      'Use obsidian_exit_worktree to remove the worktree and restore the original repo path.',
+      'Use this instead of the built-in EnterWorktree tool when running inside the Obsidian plugin.',
+    ].join(' '),
+    {
+      branch: z.string().optional().describe(
+        'Branch name to create in the worktree. Auto-generated as claude/<timestamp> if omitted.',
+      ),
+      baseBranch: z.string().optional().describe(
+        'Base branch or commit to start from. Defaults to HEAD.',
+      ),
+      repoPath: z.string().optional().describe(
+        'Override which git repo to use. Defaults to the current effective working directory.',
+      ),
+    },
+    async (args, _extra) => {
+      try {
+        const path = require('path') as typeof import('path');
+
+        const repoPath = args.repoPath ?? effectiveCwd;
+        if (!repoPath) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No working directory set. Call set_working_directory first.' }) }],
+            isError: true,
+          };
+        }
+
+        // Resolve the git root (handles cases where repoPath is a subdirectory)
+        let gitRoot: string;
+        try {
+          gitRoot = execFileSync('git', ['-C', repoPath, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+        } catch {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `Not a git repository: ${repoPath}` }) }],
+            isError: true,
+          };
+        }
+
+        // Generate a unique worktree directory under os.tmpdir()
+        const worktreeId = crypto.randomUUID().slice(0, 8);
+        const worktreePath = path.join(os.tmpdir(), 'claude-worktrees', worktreeId);
+        fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+
+        const branchName = args.branch ?? `claude/${Date.now()}`;
+
+        // git worktree add <path> -b <branch> [<base>]
+        const gitArgs = ['worktree', 'add', worktreePath, '-b', branchName];
+        if (args.baseBranch) gitArgs.push(args.baseBranch);
+
+        try {
+          execFileSync('git', gitArgs, { cwd: gitRoot, encoding: 'utf8' });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `git worktree add failed: ${msg}` }) }],
+            isError: true,
+          };
+        }
+
+        activeWorktrees.set(worktreePath, gitRoot);
+        effectiveCwd = worktreePath;
+        options.onSetCwd?.(worktreePath);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              worktreePath,
+              branch: branchName,
+              gitRoot,
+              message: 'Worktree created. Send any follow-up message to continue in the worktree.',
+            }, null, 2),
+          }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  const boundExitWorktree = tool(
+    'obsidian_exit_worktree',
+    [
+      'Removes a git worktree created by obsidian_enter_worktree and restores the session working directory to the original repo root.',
+      'If no path is provided, removes the current effective working directory if it is a tracked worktree.',
+      'Use this instead of the built-in ExitWorktree tool when running inside the Obsidian plugin.',
+    ].join(' '),
+    {
+      worktreePath: z.string().optional().describe(
+        'Absolute path of the worktree to remove. Defaults to the current effective working directory.',
+      ),
+      force: z.boolean().optional().describe(
+        'Force removal even if the worktree has uncommitted changes (default: false).',
+      ),
+    },
+    async (args, _extra) => {
+      try {
+        const targetPath = args.worktreePath ?? effectiveCwd;
+        const originalRepo = activeWorktrees.get(targetPath);
+
+        if (!originalRepo) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: `No tracked worktree at: ${targetPath}. Use \`git worktree remove\` manually if needed.`,
+              }),
+            }],
+            isError: true,
+          };
+        }
+
+        const removeArgs = ['worktree', 'remove', targetPath];
+        if (args.force) removeArgs.push('--force');
+
+        try {
+          execFileSync('git', removeArgs, { cwd: originalRepo, encoding: 'utf8' });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: `git worktree remove failed: ${msg}` }) }],
+            isError: true,
+          };
+        }
+
+        activeWorktrees.delete(targetPath);
+        effectiveCwd = originalRepo;
+        options.onSetCwd?.(originalRepo);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              removedWorktree: targetPath,
+              restoredCwd: originalRepo,
+            }, null, 2),
+          }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }],
+          isError: true,
+        };
+      }
+    },
   );
 
   return createSdkMcpServer({
@@ -439,6 +625,8 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundGetNoteMetadata,
       boundSetWorkingDirectory,
       boundScheduleWakeup,
+      boundEnterWorktree,
+      boundExitWorktree,
     ],
     alwaysLoad: true,
   });
