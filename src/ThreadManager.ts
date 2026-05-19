@@ -388,6 +388,10 @@ export class ThreadManager {
           thread.messages.push(assistantMsg);
           thread.updatedAt = Date.now();
           pendingToolCalls.length = 0;
+          // Detect the most recent GitHub PR URL in assistant output so the
+          // context footer can surface a clickable PR pill automatically.
+          const prMatch = content.match(/https:\/\/github\.com\/[^\s>)"']+\/pull\/\d+/);
+          if (prMatch) thread.prUrl = prMatch[0];
           this.emit(threadId, { type: 'message', message: assistantMsg });
         },
         onDone: (sessionId, cost) => {
