@@ -33,6 +33,8 @@ export class MobileView extends ItemView {
   private inputRowEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
+  private stopBtn!: HTMLButtonElement;
+  private queueBannerEl: HTMLElement | null = null;
   private convTitleEl!: HTMLSpanElement;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
   // Image attachments pending send
@@ -158,6 +160,9 @@ export class MobileView extends ItemView {
     });
     this.sendBtn = inputControls.createEl('button', { cls: 'ct-mobile-send-btn', text: '↵', attr: { title: 'Send message' } });
     this.sendBtn.addEventListener('click', () => this.handleSend());
+    this.stopBtn = inputControls.createEl('button', { cls: 'ct-mobile-stop-btn', text: '■', attr: { title: 'Stop' } });
+    this.stopBtn.style.display = 'none';
+    this.stopBtn.addEventListener('click', () => this.handleStop());
     this.inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -183,6 +188,14 @@ export class MobileView extends ItemView {
     const activeId = this.store.getActiveThreadId();
 
     this.renderThreadList(threads, activeId);
+
+    // Toggle send/stop based on streaming state
+    const isStreaming = activeId ? this.store.isStreaming(activeId) : false;
+    this.sendBtn.style.display = isStreaming ? 'none' : '';
+    this.stopBtn.style.display = isStreaming ? '' : 'none';
+
+    // Update queue banner
+    this.updateQueueBanner(activeId);
 
     const thread = activeId ? this.store.getThread(activeId) : null;
     const msgCount = thread?.messages.length ?? 0;
@@ -708,6 +721,33 @@ export class MobileView extends ItemView {
     this.inputEl.style.height = 'auto';
     this.pendingImages = [];
     this.renderImageStrip();
+  }
+
+  private handleStop(): void {
+    const activeId = this.store?.getActiveThreadId();
+    if (!activeId || !this.relayClient) return;
+    this.relayClient.sendCommand({ type: 'stop_session', threadId: activeId });
+  }
+
+  private updateQueueBanner(activeId: string | null): void {
+    this.queueBannerEl?.remove();
+    this.queueBannerEl = null;
+
+    if (!activeId || !this.store) return;
+    const queued = this.store.getQueuedMessages(activeId);
+    if (queued.length === 0) return;
+
+    const banner = this.inputRowEl.createDiv('ct-mobile-queue-banner');
+    this.queueBannerEl = banner;
+
+    const first = queued[0];
+    const preview = first.length > 48 ? first.slice(0, 48) + '…' : first;
+    const extra = queued.length > 1 ? ` +${queued.length - 1} more` : '';
+    banner.createSpan({ cls: 'ct-mobile-queue-icon', text: '⏳' });
+    banner.createSpan({ cls: 'ct-mobile-queue-text', text: `"${preview}"${extra}` });
+
+    // Insert at top of inputRowEl, before the image strip
+    this.inputRowEl.insertBefore(banner, this.imageStripEl);
   }
 
   private async handleImageSelect(): Promise<void> {

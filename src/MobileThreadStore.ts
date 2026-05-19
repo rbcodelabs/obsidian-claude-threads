@@ -22,6 +22,8 @@ export class MobileThreadStore {
   private streamingContent: Map<string, string> = new Map();
   /** Tool calls fired during the current streaming turn, keyed by threadId. */
   private streamingTools: Map<string, ToolCallRecord[]> = new Map();
+  /** Messages waiting to be processed after the current session, keyed by threadId. */
+  private queuedMessages: Map<string, string[]> = new Map();
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -61,6 +63,10 @@ export class MobileThreadStore {
     return this.streamingContent.has(threadId);
   }
 
+  getQueuedMessages(threadId: string): string[] {
+    return this.queuedMessages.get(threadId) ?? [];
+  }
+
   /** Subscribe to any store change. Returns an unsubscribe function. */
   subscribe(listener: StoreListener): () => void {
     this.listeners.add(listener);
@@ -84,6 +90,8 @@ export class MobileThreadStore {
       case 'thread_deleted':
         this.threads.delete(frame.threadId);
         this.streamingContent.delete(frame.threadId);
+        this.streamingTools.delete(frame.threadId);
+        this.queuedMessages.delete(frame.threadId);
         // Clear permissions for this thread
         for (const [id, p] of this.pendingPermissions) {
           if (p.threadId === frame.threadId) this.pendingPermissions.delete(id);
@@ -196,6 +204,25 @@ export class MobileThreadStore {
         this.notify();
         break;
 
+      case 'queued': {
+        const existing = this.queuedMessages.get(frame.threadId) ?? [];
+        this.queuedMessages.set(frame.threadId, [...existing, frame.text]);
+        this.notify();
+        break;
+      }
+
+      case 'dequeued': {
+        const existing = this.queuedMessages.get(frame.threadId) ?? [];
+        const remaining = existing.slice(1);
+        if (remaining.length === 0) {
+          this.queuedMessages.delete(frame.threadId);
+        } else {
+          this.queuedMessages.set(frame.threadId, remaining);
+        }
+        this.notify();
+        break;
+      }
+
       case 'pong':
         // Handled by RelayClient; should not reach here
         break;
@@ -210,7 +237,9 @@ export class MobileThreadStore {
   private applySnapshot(threads: SerializedThread[], activeThreadId: string | null): void {
     this.threads.clear();
     this.streamingContent.clear();
+    this.streamingTools.clear();
     this.pendingPermissions.clear();
+    this.queuedMessages.clear();
 
     for (const thread of threads) {
       this.threads.set(thread.id, thread);
@@ -230,6 +259,7 @@ export class MobileThreadStore {
     this.streamingContent.clear();
     this.streamingTools.clear();
     this.pendingPermissions.clear();
+    this.queuedMessages.clear();
     this.activeThreadId = null;
   }
 

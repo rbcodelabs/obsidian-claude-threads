@@ -60,6 +60,8 @@ export type RelayFrame =
   | { type: 'permission_request'; threadId: string; toolName: string; detail: string; requestId: string }
   | { type: 'permission_resolved'; threadId: string; requestId: string }
   | { type: 'status'; threadId: string; status: 'compacting' | 'requesting' | null }
+  | { type: 'queued'; threadId: string; text: string; count: number }
+  | { type: 'dequeued'; threadId: string }
   | { type: 'desktop_reconnected' }
   | { type: 'pong' };
 
