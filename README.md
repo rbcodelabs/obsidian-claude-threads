@@ -59,12 +59,12 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 
 1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat) from Obsidian's Community Plugins
 2. Open BRAT settings → **Add Beta Plugin**
-3. Enter: `richardbowman/obsidian-claude-threads`
+3. Enter: `rbcodelabs/obsidian-claude-threads`
 4. Enable **Claude Threads** in Settings → Community Plugins
 
 ### Manual install
 
-1. Download the latest release from [GitHub Releases](https://github.com/richardbowman/obsidian-claude-threads/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/rbcodelabs/obsidian-claude-threads/releases)
 2. Extract into your vault's plugin folder: `<vault>/.obsidian/plugins/claude-threads/`
 3. Enable **Claude Threads** in Settings → Community Plugins
 
@@ -231,7 +231,7 @@ Projects group threads by vault sub-folder and inject shared context into every 
 ## Building from source
 
 ```bash
-git clone https://github.com/richardbowman/obsidian-claude-threads
+git clone https://github.com/rbcodelabs/obsidian-claude-threads
 cd obsidian-claude-threads
 npm install
 npm run build
