@@ -44,6 +44,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
 - **Keep computer awake** — prevents the Mac from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses `caffeinate -i` on macOS, Web Lock API as fallback)
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response
+- **Cancel and restore** — press Escape (or click Stop) while Claude is running to cancel; the sent message pops back into the input box ready to edit and re-send
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
 
 ## Prerequisites
@@ -89,6 +90,7 @@ Tabs are renamed automatically after the first exchange using the thread summari
 - **Enter** — send message
 - **Shift+Enter** — newline
 - **`/`** — opens slash command autocomplete
+- **Escape** — cancel the running session; the sent message is restored to the input box so you can edit and re-send
 
 ### Slash commands
 
