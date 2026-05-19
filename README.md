@@ -184,7 +184,7 @@ Opening this URL on any device with Obsidian Mobile + Claude Threads installed w
 - One desktop per room ID; rotate the room ID in settings to revoke all mobile access
 
 <p align="center">
-  <img src="docs/screenshot-mobile-connected.png" width="390" alt="Mobile connected view showing thread list and active conversation" />
+  <img src="docs/screenshot-mobile-connected.png" width="800" alt="Mobile remote access — desktop sessions mirrored to your phone in real time" />
 </p>
 
 ### Thread summaries
