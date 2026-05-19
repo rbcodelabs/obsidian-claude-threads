@@ -681,6 +681,173 @@ describe('MobileView — permission cards', () => {
   });
 });
 
+describe('MobileView — context summary banner', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows banner when switching to a thread with a summary after the idle threshold', async () => {
+    const { view, store } = await buildView();
+
+    const threadA = makeThread({ id: 'thread-a', title: 'Thread A' });
+    const threadB = makeThread({
+      id: 'thread-b',
+      title: 'Thread B',
+      summary: 'Thread B was discussing widget refactors.',
+    });
+
+    store.applyFrame({ type: 'snapshot', threads: [threadA, threadB], activeThreadId: 'thread-a' });
+
+    // Stamp an old access time for thread-b (2 minutes ago)
+    const accessTimes = (view as never)['threadAccessTimes'] as Map<string, number>;
+    accessTimes.set('thread-b', Date.now() - 120_000);
+
+    // Directly call maybeShowSummaryBanner simulating the switch from A → B
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+    maybeShow(threadB, 'thread-a', Date.now() - 120_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    expect(conversationEl.querySelector('.ct-summary-banner')).not.toBeNull();
+    expect(conversationEl.textContent).toContain('Thread B was discussing widget refactors.');
+
+    await view.onClose();
+  });
+
+  it('does NOT show banner when elapsed time is below the idle threshold', async () => {
+    const { view, store } = await buildView();
+
+    const threadA = makeThread({ id: 'thread-a' });
+    const threadB = makeThread({
+      id: 'thread-b',
+      summary: 'Recent thread.',
+    });
+
+    store.applyFrame({ type: 'snapshot', threads: [threadA, threadB], activeThreadId: 'thread-a' });
+
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+
+    // 30 seconds ago — below the 60 s threshold
+    maybeShow(threadB, 'thread-a', Date.now() - 30_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    expect(conversationEl.querySelector('.ct-summary-banner')).toBeNull();
+
+    await view.onClose();
+  });
+
+  it('does NOT show banner when the thread has no summary', async () => {
+    const { view, store } = await buildView();
+
+    const threadA = makeThread({ id: 'thread-a' });
+    const threadB = makeThread({ id: 'thread-b' }); // no summary
+
+    store.applyFrame({ type: 'snapshot', threads: [threadA, threadB], activeThreadId: 'thread-a' });
+
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+
+    maybeShow(threadB, 'thread-a', Date.now() - 120_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    expect(conversationEl.querySelector('.ct-summary-banner')).toBeNull();
+
+    await view.onClose();
+  });
+
+  it('does NOT show banner when switching to the same thread', async () => {
+    const { view, store } = await buildView();
+
+    const thread = makeThread({ id: 'thread-a', summary: 'Some summary.' });
+    store.applyFrame({ type: 'snapshot', threads: [thread], activeThreadId: 'thread-a' });
+
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+
+    maybeShow(thread, 'thread-a', Date.now() - 120_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    expect(conversationEl.querySelector('.ct-summary-banner')).toBeNull();
+
+    await view.onClose();
+  });
+
+  it('close button dismisses the banner immediately', async () => {
+    const { view, store } = await buildView();
+
+    const threadA = makeThread({ id: 'thread-a' });
+    const threadB = makeThread({ id: 'thread-b', summary: 'Summary text.' });
+    store.applyFrame({ type: 'snapshot', threads: [threadA, threadB], activeThreadId: 'thread-a' });
+
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+    maybeShow(threadB, 'thread-a', Date.now() - 120_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    const closeBtn = conversationEl.querySelector('.ct-summary-banner-close') as HTMLButtonElement;
+    expect(closeBtn).not.toBeNull();
+
+    closeBtn.click();
+
+    // hideSummaryBanner(false) sets summaryBannerEl to null immediately, then
+    // schedules a 300 ms setTimeout to remove the DOM element after the fade-out.
+    expect((view as never)['summaryBannerEl']).toBeNull();
+
+    // Advance past the 300 ms removal timer so the element is also gone from DOM.
+    vi.advanceTimersByTime(350);
+    expect(conversationEl.querySelector('.ct-summary-banner')).toBeNull();
+
+    await view.onClose();
+  });
+
+  it('auto-dismisses the banner after the dismiss delay', async () => {
+    const { view, store } = await buildView();
+
+    const threadA = makeThread({ id: 'thread-a' });
+    const threadB = makeThread({ id: 'thread-b', summary: 'Auto-dismiss me.' });
+    store.applyFrame({ type: 'snapshot', threads: [threadA, threadB], activeThreadId: 'thread-a' });
+
+    const maybeShow = (view as never)['maybeShowSummaryBanner'].bind(view) as (
+      thread: SerializedThread,
+      previousId: string | null,
+      priorAccessTime: number | undefined,
+    ) => void;
+    maybeShow(threadB, 'thread-a', Date.now() - 120_000);
+
+    const conversationEl = (view as never)['conversationEl'] as HTMLElement;
+    expect(conversationEl.querySelector('.ct-summary-banner')).not.toBeNull();
+
+    // Advance past the auto-dismiss timer (10 s)
+    vi.advanceTimersByTime(11_000);
+
+    // The banner element is removed from DOM (immediate removal path starts after fade-out
+    // animation — in jsdom animations don't fire, so the element is cleared via null ref)
+    expect((view as never)['summaryBannerEl']).toBeNull();
+
+    await view.onClose();
+  });
+});
+
 describe('MobileView — cleanup', () => {
   it('unsubscribes store listener on close', async () => {
     const { view, store } = await buildView();
