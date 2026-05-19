@@ -967,10 +967,10 @@ const SCALE   = 1.25                    // zoom: content × 1.25 fills window ex
 // ─── Scene 4: Mobile phone mockup (floating over main desktop view) ──────────
 
 function MobilePhoneOverlay() {
-  const PHONE_W  = 310
-  const PHONE_H  = 630
-  const PHONE_R  = 38
-  const BEZEL    = 11
+  const PHONE_W  = 370
+  const PHONE_H  = 750
+  const PHONE_R  = 42
+  const BEZEL    = 12
   const SCREEN_W = PHONE_W - BEZEL * 2
   const SCREEN_H = PHONE_H - BEZEL * 2
 
