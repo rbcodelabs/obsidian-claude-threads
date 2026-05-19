@@ -53,6 +53,9 @@ export class ThreadsView extends ItemView {
   // The user-message bubble we just inserted, so we can remove it on interrupt
   private pendingUserEl: HTMLElement | null = null;
 
+  // The raw typed text from the last send, so we can restore it on interrupt
+  private lastSentText = '';
+
   // Inline permission cards waiting for user response (threadId -> card state)
   private pendingPermissions: Map<string, {
     toolName: string;
@@ -391,6 +394,11 @@ export class ThreadsView extends ItemView {
           this.hideSkillDropdown();
           return;
         }
+      }
+      if (e.key === 'Escape' && !this.stopBtn.hasClass('ct-hidden')) {
+        e.preventDefault();
+        this.stopMessage();
+        return;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -1417,6 +1425,11 @@ export class ThreadsView extends ItemView {
           this.clearStreamingState();
         }
         this.taskPills.clear();
+        // Restore the sent message so the user can edit and re-send
+        if (this.lastSentText) {
+          this.inputEl.value = this.lastSentText;
+          this.lastSentText = '';
+        }
         this.setRunningState(false);
         break;
       }
@@ -1640,6 +1653,7 @@ export class ThreadsView extends ItemView {
     if (!typed && !attachment && images.length === 0) return;
     if (!this.activeThreadId) return;
 
+    this.lastSentText = typed;
     this.inputEl.value = '';
     this.pendingAttachment = null;
     this.pendingImages = [];
