@@ -191,6 +191,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
 
+    // Archive orphaned vault notes: thread notes written before the archive-on-close
+    // feature existed still carry status=waiting even though their tabs are long gone.
+    // Flip them to archived so they land in the right Bases Kanban column.
+    if (this.settings.saveThreadsToVault) {
+      const activeIds = new Set(this.manager.getThreads().map((t) => t.id));
+      this.persistence.archiveOrphanedNotes(activeIds).then((n) => {
+        if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
+      }).catch(console.error);
+    }
+
     // Register the views
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
