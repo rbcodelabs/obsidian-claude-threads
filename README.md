@@ -248,14 +248,35 @@ Then run `npm run dev` — every rebuild will copy `main.js`, `styles.css`, and 
 
 ## Releasing
 
-1. Bump the version in `manifest.json` and `package.json` (both must match)
-2. Commit and tag:
+The project uses a worktree-based workflow — edits directly to the main checkout are blocked by a git hook. Follow these steps:
+
+1. **Create a worktree** for the version bump:
    ```bash
-   git commit -am "chore: bump version to x.y.z"
-   git tag vX.Y.Z
-   git push && git push --tags
+   git worktree add .claude/worktrees/chore/bump-version-X.Y.Z -b chore/bump-version-X.Y.Z
+   cd .claude/worktrees/chore/bump-version-X.Y.Z
    ```
-3. That's it. The [release workflow](.github/workflows/release.yml) automatically creates the GitHub release, builds the plugin, and attaches `main.js`, `styles.css`, and `manifest.json` — BRAT will pick it up within a few minutes.
+
+2. **Bump the version** in `manifest.json` and `package.json` (both must match), then commit and push:
+   ```bash
+   git add manifest.json package.json
+   git commit -m "chore: bump version to vX.Y.Z"
+   git push -u origin chore/bump-version-X.Y.Z
+   ```
+
+3. **Open and squash-merge a PR** for the version bump:
+   ```bash
+   gh pr create --title "chore: bump version to vX.Y.Z" --body "Version bump." --base main
+   gh pr merge <number> --squash --delete-branch
+   ```
+
+4. **Pull main and push the tag** to trigger the release workflow:
+   ```bash
+   git pull origin main
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+5. That's it. The [release workflow](.github/workflows/release.yml) automatically builds the plugin and publishes a GitHub release with `main.js`, `styles.css`, and `manifest.json` attached — BRAT will pick it up within a few minutes.
 
 ## License
 
