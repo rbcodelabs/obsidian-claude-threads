@@ -50,7 +50,7 @@ export class ThreadManager {
    * Preferred over `mcpServers` when present — allows baking a thread-specific callback
    * (e.g. onSetCwd) into the server without shared mutable state across concurrent threads.
    */
-  mcpServerFactory: ((threadId: string) => Record<string, McpServerConfig>) | undefined = undefined;
+  mcpServerFactory: ((threadId: string, initialCwd: string) => Record<string, McpServerConfig>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -337,7 +337,7 @@ export class ThreadManager {
     );
     const projectDesc = project?.description?.trim();
     const appendSystemPrompt = projectDesc ? `${envContext}\n\n${projectDesc}` : envContext;
-    const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId) : this.mcpServers;
+    const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, cwdAtStart) : this.mcpServers;
 
     // If there is no session to resume but there IS prior history, the cwd must
     // have changed mid-conversation (via obsidian_set_working_directory). Inject
@@ -596,6 +596,7 @@ function buildEnvironmentSystemPrompt(
     '',
     'Tool notes:',
     '- set_working_directory takes effect on the next turn and resets session continuity. Set it before starting a task, not mid-conversation.',
+    '- obsidian_enter_worktree / obsidian_exit_worktree: use these instead of the built-in EnterWorktree/ExitWorktree tools. They read the effective cwd updated by set_working_directory, so they always target the right git repo.',
     '- ScheduleWakeup injects the given prompt as a new message into this thread after the delay.',
   );
 
