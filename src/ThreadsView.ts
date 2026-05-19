@@ -1070,7 +1070,9 @@ export class ThreadsView extends ItemView {
     try {
       const result = await this.runSummarize(thread.messages, onProgress);
       thread.summary = result.summary;
-      if (result.title) this.applyAutoTitle(thread.id, result.title);
+      // Manual summarize always applies the new title; auto-summarize (after each
+      // message) uses applyAutoTitle which guards against overwriting a user-set name.
+      if (result.title) this.manager.renameThread(thread.id, result.title);
       await this.plugin.saveSettings();
       this.statusBar.setText('');
       this.moreBtn.removeClass('ct-summarize-spinning');
