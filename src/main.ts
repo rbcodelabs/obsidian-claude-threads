@@ -191,27 +191,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
 
-    // Auto-archive threads from previous sessions: any thread that finished
-    // (status === 'waiting') and has messages is an old completed conversation.
-    // Move it to the vault as 'archived' and drop it from the in-memory tab list
-    // so the tab bar starts clean each session. Threads with 0 messages (brand-new,
-    // never sent) and error threads are left open.
-    {
-      const staleThreads = this.manager.getThreads().filter(
-        (t) => t.status === 'waiting' && t.messages.some((m) => m.role !== 'compact'),
-      );
-      if (staleThreads.length > 0) {
-        for (const thread of staleThreads) {
-          thread.status = 'archived';
-          if (this.settings.saveThreadsToVault) {
-            this.persistence.saveThread(thread).catch(console.error);
-          }
-          this.manager.deleteThread(thread.id);
-        }
-        await this.saveSettings();
-      }
-    }
-
     // Register the views
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
