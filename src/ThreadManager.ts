@@ -121,6 +121,8 @@ export class ThreadManager {
 
   loadThreads(threads: Thread[]): void {
     for (const t of threads) {
+      // Migrate threads persisted before status was introduced.
+      if (!t.status) t.status = 'waiting';
       this.threads.set(t.id, t);
     }
   }
@@ -148,6 +150,7 @@ export class ThreadManager {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       projectId,
+      status: 'waiting',
     };
     this.threads.set(thread.id, thread);
     this.emit(thread.id, { type: 'thread_created' });
@@ -290,6 +293,7 @@ export class ThreadManager {
     }
 
     thread.lastError = undefined;
+    thread.status = 'active';
     this.threadActivity.delete(threadId);
 
     const keywordModel = this.resolveModel(userText);
@@ -395,6 +399,7 @@ export class ThreadManager {
             thread.sessionId = sessionId;
           }
           thread.updatedAt = Date.now();
+          thread.status = 'waiting';
           const lastMsg = thread.messages[thread.messages.length - 1];
           if (lastMsg?.role === 'assistant' && cost > 0) {
             lastMsg.cost = cost;
@@ -411,6 +416,7 @@ export class ThreadManager {
             thread.messages.pop();
           }
           thread.updatedAt = Date.now();
+          thread.status = 'waiting';
           // Do NOT update thread.sessionId — the last successful session ID is still valid
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
@@ -421,6 +427,7 @@ export class ThreadManager {
         onError: (err) => {
           thread.lastError = err.message;
           thread.updatedAt = Date.now();
+          thread.status = 'error';
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           this.queuedMessages.delete(threadId);

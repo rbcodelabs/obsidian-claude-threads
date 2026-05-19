@@ -174,10 +174,32 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubWakeLock);
 
+    // Persist status changes to vault for all threads (including background ones
+    // not covered by the per-view save on 'message').
+    const unsubStatus = this.manager.subscribe((threadId, event) => {
+      if (!this.settings.saveThreadsToVault) return;
+      if (event.type !== 'done' && event.type !== 'error') return;
+      const thread = this.manager.getThread(threadId);
+      if (thread) {
+        this.persistence?.saveThread(thread).catch(console.error);
+      }
+    });
+    this.register(unsubStatus);
+
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
+
+    // Archive orphaned vault notes: thread notes written before the archive-on-close
+    // feature existed still carry status=waiting even though their tabs are long gone.
+    // Flip them to archived so they land in the right Bases Kanban column.
+    if (this.settings.saveThreadsToVault) {
+      const activeIds = new Set(this.manager.getThreads().map((t) => t.id));
+      this.persistence.archiveOrphanedNotes(activeIds).then((n) => {
+        if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
+      }).catch(console.error);
+    }
 
     // Register the views
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
