@@ -192,6 +192,10 @@ export class ClaudeSession {
                 callbacks.onRecap(`Used ${names.join(', ')} (${allToolCalls.length} call${allToolCalls.length > 1 ? 's' : ''})`);
               }
               callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+            } else if (this.interrupted) {
+              // User-initiated stop — Claude Code reports error_during_execution when
+              // interrupted; treat this as a clean cancellation, not a real error.
+              callbacks.onInterrupted(this.resumeSessionId ?? '');
             } else {
               callbacks.onError(
                 new Error(`Claude session ended: ${(msg as { subtype: string }).subtype}`),
