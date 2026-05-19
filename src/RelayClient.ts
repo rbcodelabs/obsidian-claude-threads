@@ -437,11 +437,17 @@ export class RelayClient {
           this.activeThreadIdForDesktop = threadId;
           break;
 
+        case 'queued':
+          this.sendFrame({ type: 'queued', threadId, text: event.text, count: this.threadManager!.getQueuedCount(threadId) });
+          break;
+
+        case 'dequeued':
+          this.sendFrame({ type: 'dequeued', threadId });
+          break;
+
         // Events not forwarded to mobile (desktop-only)
         case 'recap':
         case 'escalated':
-        case 'queued':
-        case 'dequeued':
         case 'compact':
         case 'task_started':
         case 'task_progress':

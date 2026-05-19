@@ -2623,6 +2623,47 @@
   color: var(--text-muted) !important;
 }
 
+.ct-mobile-stop-btn {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--color-red, #e03131) !important;
+  color: #fff !important;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s;
+}
+
+.ct-mobile-stop-btn:hover {
+  opacity: 0.85;
+}
+
+/* ── Queue banner ────────────────────────────────────────────────────────── */
+
+.ct-mobile-queue-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-mobile-queue-icon {
+  flex-shrink: 0;
+}
+
+.ct-mobile-queue-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Disconnected banner ────────────────────────────────────────────────── */
 
 .ct-mobile-disconnected-banner {
