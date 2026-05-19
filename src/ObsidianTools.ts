@@ -6,6 +6,7 @@ import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-
 import { App, TFile } from 'obsidian';
 import fs from 'fs';
 import os from 'os';
+import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -136,45 +137,72 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundSearchVault = tool(
     'obsidian_search_vault',
-    'Searches markdown files in the vault by filename and content. Returns matching paths with match type and a ~200-char content excerpt.',
+    'Searches markdown files in the vault by filename and content. Tokenizes multi-word queries so each term is matched independently — partial matches across scattered words are found. Returns results ranked by relevance score (filename hits weighted 10x) with a ~300-char excerpt from the densest matching region.',
     searchVaultSchema,
     async (args, _extra) => {
       try {
         const { query, limit = 20 } = args;
-        const lowerQuery = query.toLowerCase();
-        const results: Array<{ path: string; matchType: 'filename' | 'content'; excerpt?: string }> =
-          [];
+
+        const terms = tokenizeQuery(query);
+        if (terms.length === 0) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify([]) }] };
+        }
+
         const files = app.vault.getMarkdownFiles();
+        const scored: Array<{
+          path: string;
+          matchType: 'filename' | 'content';
+          score: number;
+          excerpt?: string;
+        }> = [];
 
-        // First pass: filename matches
         for (const file of files) {
-          if (results.length >= limit) break;
-          if (file.path.toLowerCase().includes(lowerQuery)) {
-            results.push({ path: file.path, matchType: 'filename' });
+          const pathLower = file.path.toLowerCase();
+
+          // Filename score: 10 points per matching term (weighted above content hits)
+          let filenameScore = 0;
+          for (const term of terms) {
+            if (pathLower.includes(term)) filenameScore += 10;
+          }
+
+          // Content score: count total occurrences of each term across the file
+          let contentScore = 0;
+          let excerpt: string | undefined;
+          try {
+            const content = await app.vault.cachedRead(file);
+            const contentLower = content.toLowerCase();
+            for (const term of terms) {
+              let idx = contentLower.indexOf(term);
+              while (idx !== -1) {
+                contentScore++;
+                idx = contentLower.indexOf(term, idx + 1);
+              }
+            }
+            if (contentScore > 0) {
+              excerpt = findBestExcerpt(content, contentLower, terms);
+            }
+          } catch {
+            // Skip unreadable files
+          }
+
+          const totalScore = filenameScore + contentScore;
+          if (totalScore > 0) {
+            scored.push({
+              path: file.path,
+              matchType: filenameScore > 0 ? 'filename' : 'content',
+              score: totalScore,
+              excerpt,
+            });
           }
         }
 
-        // Second pass: content matches (only if room remains in limit)
-        if (results.length < limit) {
-          const alreadyMatched = new Set(results.map((r) => r.path));
-          for (const file of files) {
-            if (results.length >= limit) break;
-            if (alreadyMatched.has(file.path)) continue;
-            try {
-              const content = await app.vault.cachedRead(file);
-              const lowerContent = content.toLowerCase();
-              const idx = lowerContent.indexOf(lowerQuery);
-              if (idx !== -1) {
-                const start = Math.max(0, idx - 100);
-                const end = Math.min(content.length, idx + query.length + 100);
-                const excerpt = content.slice(start, end).replace(/\n/g, ' ').trim();
-                results.push({ path: file.path, matchType: 'content', excerpt });
-              }
-            } catch {
-              // Skip unreadable files
-            }
-          }
-        }
+        scored.sort((a, b) => b.score - a.score);
+        const results = scored.slice(0, limit).map(({ path, matchType, score, excerpt }) => ({
+          path,
+          matchType,
+          score,
+          ...(excerpt ? { excerpt } : {}),
+        }));
 
         return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
       } catch (err: unknown) {
