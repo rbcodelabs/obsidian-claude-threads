@@ -967,10 +967,10 @@ const SCALE   = 1.25                    // zoom: content × 1.25 fills window ex
 // ─── Scene 4: Mobile phone mockup (floating over main desktop view) ──────────
 
 function MobilePhoneOverlay() {
-  const PHONE_W  = 260
-  const PHONE_H  = 530
-  const PHONE_R  = 36
-  const BEZEL    = 10
+  const PHONE_W  = 310
+  const PHONE_H  = 630
+  const PHONE_R  = 38
+  const BEZEL    = 11
   const SCREEN_W = PHONE_W - BEZEL * 2
   const SCREEN_H = PHONE_H - BEZEL * 2
 
@@ -993,7 +993,7 @@ function MobilePhoneOverlay() {
   return (
     <div style={{
       position: 'absolute',
-      bottom: 52, right: 68,
+      bottom: 52, right: 520,
       width: PHONE_W, height: PHONE_H,
       zIndex: 50,
       filter: 'drop-shadow(0 28px 60px rgba(0,0,0,0.85)) drop-shadow(0 8px 20px rgba(0,0,0,0.5))',
