@@ -29,6 +29,45 @@ export class VaultPersistence {
     return fileName;
   }
 
+  /**
+   * Scans the vault folder and sets `status: archived` on any thread note
+   * whose thread_id is NOT in `activeThreadIds` and currently has `status: waiting`.
+   * Call this at startup to clean up stale notes from before the archive-on-close
+   * feature was introduced.
+   */
+  async archiveOrphanedNotes(activeThreadIds: Set<string>): Promise<number> {
+    let count = 0;
+    const files = this.app.vault.getMarkdownFiles().filter(
+      (f) => f.path.startsWith(this.folder + '/'),
+    );
+
+    for (const file of files) {
+      try {
+        const content = await this.app.vault.read(file);
+        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+        if (!fmMatch) continue;
+
+        const fm = fmMatch[1];
+        const idMatch = fm.match(/^thread_id:\s*(.+)$/m);
+        const statusMatch = fm.match(/^status:\s*(.+)$/m);
+        if (!idMatch || !statusMatch) continue;
+
+        const threadId = idMatch[1].trim();
+        const status = statusMatch[1].trim();
+        if (status !== 'waiting') continue;
+        if (activeThreadIds.has(threadId)) continue;
+
+        // Replace status in the frontmatter only
+        const updated = content.replace(/^(status:\s*)waiting$/m, '$1archived');
+        await this.app.vault.modify(file, updated);
+        count++;
+      } catch {
+        // skip unreadable files
+      }
+    }
+    return count;
+  }
+
   async loadAllThreads(): Promise<Thread[]> {
     const threads: Thread[] = [];
     const files = this.app.vault.getMarkdownFiles().filter(
