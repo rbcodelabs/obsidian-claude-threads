@@ -46,6 +46,13 @@ export class MobileView extends ItemView {
   private lastRenderedPermissionCount = -1;
   private streamingEl: HTMLElement | null = null;
 
+  // Context summary banner (mirrors desktop behaviour)
+  private summaryBannerEl: HTMLElement | null = null;
+  private summaryBannerTimer: ReturnType<typeof setTimeout> | null = null;
+  private threadAccessTimes: Map<string, number> = new Map();
+  private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;
+  private static readonly BANNER_AUTO_DISMISS_MS = 10_000;
+
   // Cleanup handles
   private unsubStore: (() => void) | null = null;
   private unsubConnectionState: (() => void) | null = null;
@@ -98,6 +105,7 @@ export class MobileView extends ItemView {
     this.unsubConnectionState?.();
     this.scrollObserver?.disconnect();
     this.scrollObserver = null;
+    this.hideSummaryBanner(true);
   }
 
   // ── UI construction ───────────────────────────────────────────────────
@@ -308,8 +316,16 @@ export class MobileView extends ItemView {
       this.showingList = false;
       this.convTitleEl.textContent = thread.title || 'Untitled';
       this.showPanel('conversation');
+
+      const previousId = this.store!.getActiveThreadId();
+      const priorAccessTime = this.threadAccessTimes.get(thread.id);
+      this.threadAccessTimes.set(thread.id, Date.now());
+
       this.store!.setActiveThreadId(thread.id);
       this.relayClient!.sendCommand({ type: 'set_active_thread', threadId: thread.id });
+
+      // Show context recap banner when returning to a thread after a real break
+      this.maybeShowSummaryBanner(thread, previousId, priorAccessTime);
     });
   }
 
@@ -590,6 +606,73 @@ export class MobileView extends ItemView {
     this.rootEl.style.bottom = '';
   }
 
+  // ── Summary peek banner ───────────────────────────────────────────────
+
+  private maybeShowSummaryBanner(
+    thread: SerializedThread,
+    previousId: string | null,
+    priorAccessTime: number | undefined,
+  ): void {
+    this.hideSummaryBanner(true); // clear any stale banner immediately
+
+    // Only fire when genuinely switching between two different threads
+    if (!previousId || previousId === thread.id) return;
+
+    const summary = thread.summary || thread.recap;
+    if (!summary) return;
+
+    // Skip if the user was just here — only show when returning after a real break
+    const elapsed = priorAccessTime !== undefined ? Date.now() - priorAccessTime : Infinity;
+    if (elapsed < MobileView.BANNER_IDLE_THRESHOLD_MS) return;
+
+    this.showSummaryBanner(thread, summary);
+  }
+
+  private showSummaryBanner(thread: SerializedThread, summary: string): void {
+    const banner = this.conversationEl.createDiv('ct-summary-banner');
+    this.summaryBannerEl = banner;
+
+    const header = banner.createDiv('ct-summary-banner-header');
+    header.createSpan({ cls: 'ct-summary-banner-label', text: '↺ Context' });
+    header.createSpan({
+      cls: 'ct-summary-banner-time',
+      text: `Last active ${relativeTimeAgo(thread.updatedAt)}`,
+    });
+
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-summary-banner-close',
+      text: '×',
+      attr: { title: 'Dismiss' },
+    });
+    closeBtn.addEventListener('click', () => this.hideSummaryBanner(false));
+
+    banner.createEl('p', { cls: 'ct-summary-banner-text', text: summary });
+
+    this.summaryBannerTimer = setTimeout(
+      () => this.hideSummaryBanner(false),
+      MobileView.BANNER_AUTO_DISMISS_MS,
+    );
+  }
+
+  private hideSummaryBanner(immediate: boolean): void {
+    if (this.summaryBannerTimer !== null) {
+      clearTimeout(this.summaryBannerTimer);
+      this.summaryBannerTimer = null;
+    }
+    if (!this.summaryBannerEl) return;
+    const el = this.summaryBannerEl;
+    this.summaryBannerEl = null;
+
+    if (immediate) {
+      el.remove();
+      return;
+    }
+
+    // Animate out then remove
+    el.addClass('ct-summary-banner-out');
+    setTimeout(() => el.remove(), 300);
+  }
+
   // ── Panel switching ───────────────────────────────────────────────────
 
   /** Directly show/hide panels without relying on CSS class cascades. */
@@ -697,6 +780,19 @@ function relativeTime(ts: number): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
   return `${Math.floor(diff / 86_400_000)}d`;
+}
+
+/** Format a timestamp as a human-readable "time ago" string for the summary banner. */
+function relativeTimeAgo(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  return `${days}d ago`;
 }
 
 /** Resize an image file to max 1024px on longest side, returning a base64 JPEG. */
