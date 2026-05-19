@@ -490,6 +490,11 @@ export class AgentDashboard extends ItemView {
     this.scheduleRender();
   }
 
+  /** Focus the dispatch input so the user can type a task immediately. */
+  public focusDispatchInput(): void {
+    this.dispatchInput?.focus();
+  }
+
   /** Open the most recently completed unreviewed thread and mark it reviewed.
    *  Can be called repeatedly to triage through the queue. */
   public jumpToLatestUnreviewed(): void {
