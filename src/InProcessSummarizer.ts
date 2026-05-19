@@ -115,7 +115,7 @@ export class InProcessSummarizer {
   unload(): void {}
 }
 
-function parseJsonResult(text: string): SummarizeResult {
+export function parseJsonResult(text: string): SummarizeResult {
   const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
   try {
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;

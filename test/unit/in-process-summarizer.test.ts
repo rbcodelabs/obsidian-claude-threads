@@ -105,3 +105,50 @@ describe('InProcessSummarizer.generateForkPrompt', () => {
     expect(result).toBe('Fix the bug.');
   });
 });
+
+describe('InProcessSummarizer.summarize', () => {
+  let summarizer: InProcessSummarizer;
+
+  beforeEach(() => {
+    summarizer = new InProcessSummarizer();
+    mockQuery.mockReset();
+  });
+
+  it('returns correct title and summary from a valid JSON response', async () => {
+    mockQuery.mockReturnValue(mockQueryResult('{"title":"Fix auth","summary":"Fixes JWT validation"}'));
+
+    const messages = [makeMessage('user', 'Hello'), makeMessage('assistant', 'Hi')];
+    const result = await summarizer.summarize(messages, '/usr/bin/claude', 'haiku', '');
+
+    expect(result).toEqual({ title: 'Fix auth', summary: 'Fixes JWT validation' });
+  });
+
+  it('strips markdown fences and parses correctly', async () => {
+    const fenced = '```json\n{"title":"Fix auth","summary":"Fixes JWT validation"}\n```';
+    mockQuery.mockReturnValue(mockQueryResult(fenced));
+
+    const messages = [makeMessage('user', 'Hello')];
+    const result = await summarizer.summarize(messages, '/usr/bin/claude', 'haiku', '');
+
+    expect(result).toEqual({ title: 'Fix auth', summary: 'Fixes JWT validation' });
+  });
+
+  it('falls back to { title: "", summary: rawText } for a non-JSON response', async () => {
+    mockQuery.mockReturnValue(mockQueryResult('not json at all'));
+
+    const messages = [makeMessage('user', 'Hello')];
+    const result = await summarizer.summarize(messages, '/usr/bin/claude', 'haiku', '');
+
+    expect(result).toEqual({ title: '', summary: 'not json at all' });
+  });
+
+  it('calls onProgress with "Summarizing…"', async () => {
+    mockQuery.mockReturnValue(mockQueryResult('{"title":"t","summary":"s"}'));
+
+    const onProgress = vi.fn();
+    const messages = [makeMessage('user', 'Hello')];
+    await summarizer.summarize(messages, '/usr/bin/claude', 'haiku', '', onProgress);
+
+    expect(onProgress).toHaveBeenCalledWith('Summarizing…');
+  });
+});

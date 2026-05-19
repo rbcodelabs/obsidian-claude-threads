@@ -9,6 +9,7 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
+import { isDefaultThreadTitle } from './thread-title-utils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -2000,7 +2001,7 @@ export class ThreadsView extends ItemView {
   private applyAutoTitle(threadId: string, title: string): void {
     const thread = this.manager.getThread(threadId);
     if (!thread || !title) return;
-    if (/^Thread \d+$/.test(thread.title)) {
+    if (isDefaultThreadTitle(thread.title)) {
       this.manager.renameThread(threadId, title);
     }
   }
