@@ -192,6 +192,26 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
 
+    // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
+    // threads may be missing from memory even though their vault notes still exist.
+    // Scan the vault folder and reload any threads not already in memory.
+    if (this.settings.saveThreadsToVault) {
+      try {
+        const vaultThreads = await this.persistence.loadAllThreads();
+        const knownIds = new Set(this.manager.getThreads().map((t) => t.id));
+        const recovered = vaultThreads.filter((t) => !knownIds.has(t.id));
+        if (recovered.length > 0) {
+          this.manager.loadThreads(recovered);
+          console.log(`[ClaudeThreads] Recovered ${recovered.length} thread(s) from vault notes`);
+          // Write recovered threads back into data.json immediately so they survive
+          // the next restart even if saveSettings() on unload is skipped.
+          await this.saveSettings();
+        }
+      } catch (err) {
+        console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
+      }
+    }
+
     // Archive orphaned vault notes: thread notes written before the archive-on-close
     // feature existed still carry status=waiting even though their tabs are long gone.
     // Flip them to archived so they land in the right Bases Kanban column.
