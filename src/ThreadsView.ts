@@ -966,8 +966,13 @@ export class ThreadsView extends ItemView {
     cwdChip.createSpan({ cls: 'ct-edited-file-chip-name', text: shortenPath(cwd) });
     setTooltip(cwdChip, cwd);
 
-    // Most recently edited first; in icon-only mode the first 3 still show full names
-    const files = [...this.editedFilesSet].reverse();
+    // Vault files first (most-recently-edited within each group), then non-vault files.
+    const adapter = this.app.vault.adapter as { basePath?: string };
+    const vaultBase = adapter.basePath ?? '';
+    const reversed = [...this.editedFilesSet].reverse();
+    const vaultFiles = reversed.filter(f => vaultBase && f.startsWith(vaultBase + path.sep));
+    const nonVaultFiles = reversed.filter(f => !vaultBase || !f.startsWith(vaultBase + path.sep));
+    const files = [...vaultFiles, ...nonVaultFiles];
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
       const showFull = !iconOnly || i < 3;
