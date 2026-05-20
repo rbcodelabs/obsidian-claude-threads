@@ -140,13 +140,13 @@ export class VaultPersistence {
 
       const fm = frontmatterMatch[1];
       const get = (key: string) => {
-        const m = fm.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
+        const m = fm.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'));
         return m ? m[1].trim() : undefined;
       };
 
       const id = get('thread_id');
-      const cwd = get('cwd');
-      if (!id || !cwd) return null;
+      if (!id) return null;
+      const cwd = get('cwd') ?? '';
 
       const titleMatch = content.match(/^# (.+)$/m);
       const title = titleMatch ? titleMatch[1] : (get('title')?.replace(/^"|"$/g, '') ?? 'Untitled');
