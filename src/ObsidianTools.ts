@@ -31,6 +31,23 @@ const insertAtCursorSchema = {
   text: z.string().describe('Text to insert at the current cursor position in the active editor'),
 };
 
+const listCommandsSchema = {
+  query: z
+    .string()
+    .optional()
+    .describe(
+      'Optional filter — returns only commands whose name or ID contains this string (case-insensitive)',
+    ),
+};
+
+const executeCommandSchema = {
+  commandId: z
+    .string()
+    .describe(
+      'The command ID to execute (e.g. "editor:toggle-bold", "obsidian-git:push"). Use obsidian_list_commands to discover available IDs.',
+    ),
+};
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
@@ -612,6 +629,77 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Command tools ─────────────────────────────────────────────────────────────
+  // Obsidian's command registry is not in the official TS types; cast via unknown.
+  type ObsidianCommandsRegistry = {
+    commands: Record<string, { id: string; name: string }>;
+    executeCommandById: (id: string) => boolean;
+  };
+
+  const boundListCommands = tool(
+    'obsidian_list_commands',
+    'Returns all registered Obsidian commands with their ID and name, sorted alphabetically by ID. Optionally filter by a query string. Use this to discover command IDs before calling obsidian_execute_command.',
+    listCommandsSchema,
+    async (args, _extra) => {
+      try {
+        const registry = (app as unknown as { commands: ObsidianCommandsRegistry }).commands;
+        const all = Object.values(registry.commands);
+        const { query } = args;
+        const filtered = query
+          ? all.filter(
+              (cmd) =>
+                cmd.id.toLowerCase().includes(query.toLowerCase()) ||
+                cmd.name.toLowerCase().includes(query.toLowerCase()),
+            )
+          : all;
+        filtered.sort((a, b) => a.id.localeCompare(b.id));
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(filtered, null, 2) }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundExecuteCommand = tool(
+    'obsidian_execute_command',
+    'Executes an Obsidian command by its ID (e.g. "obsidian-git:push", "editor:toggle-bold"). Use obsidian_list_commands to discover available command IDs. Returns success or failure.',
+    executeCommandSchema,
+    async (args, _extra) => {
+      try {
+        const registry = (app as unknown as { commands: ObsidianCommandsRegistry }).commands;
+        if (!(args.commandId in registry.commands)) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: `Unknown command: "${args.commandId}". Use obsidian_list_commands to see available commands.`,
+              }, null, 2),
+            }],
+            isError: true,
+          };
+        }
+        const ok = registry.executeCommandById(args.commandId);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ success: ok, commandId: args.commandId }, null, 2),
+          }],
+          ...(ok ? {} : { isError: true }),
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }, null, 2) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -627,6 +715,8 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundScheduleWakeup,
       boundEnterWorktree,
       boundExitWorktree,
+      boundListCommands,
+      boundExecuteCommand,
     ],
     alwaysLoad: true,
   });
