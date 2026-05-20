@@ -2366,9 +2366,11 @@
   font-size: var(--font-ui-small);
   line-height: 1.5;
   word-break: break-word;
-  /* Prevent code blocks from expanding beyond bubble width */
+  /* min-width:0 prevents flexbox from blowing out max-width constraints.
+     overflow is intentionally NOT set to hidden — doing so clips the scroll
+     region of .ct-mobile-table-scroll wrappers, making tables unscrollable.
+     Code blocks are self-contained via their own max-width:100% + overflow-x:auto. */
   min-width: 0;
-  overflow: hidden;
 }
 
 .ct-mobile-message-user .ct-mobile-message-content {
@@ -2442,13 +2444,20 @@
 .ct-mobile-message-assistant .ct-mobile-message-content blockquote p {
   margin: 0;
 }
+/* Scrollable wrapper injected around every <table> by wrapTablesForMobileScroll().
+   The wrapper owns the horizontal scroll so only the table pans — not the whole
+   message — and paragraph text is never affected. */
+.ct-mobile-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  margin: 6px 0;
+}
 .ct-mobile-message-assistant .ct-mobile-message-content table {
   border-collapse: collapse;
-  width: 100%;
+  width: 100%;       /* fills wrapper; wider content overflows and wrapper scrolls */
   font-size: var(--font-ui-smaller);
-  margin: 6px 0;
-  display: block;
-  overflow-x: auto;
+  margin: 0;         /* spacing handled by .ct-mobile-table-scroll */
 }
 .ct-mobile-message-assistant .ct-mobile-message-content th,
 .ct-mobile-message-assistant .ct-mobile-message-content td {

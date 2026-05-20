@@ -401,6 +401,7 @@ export class MobileView extends ItemView {
       try {
         const html = marked.parse(content) as string;
         contentEl.appendChild(sanitizeHTMLToDom(html));
+        this.wrapTablesForMobileScroll(contentEl);
       } catch {
         contentEl.createEl('p', { text: content });
       }
@@ -436,6 +437,7 @@ export class MobileView extends ItemView {
       try {
         const html = marked.parse(msg.content) as string;
         content.appendChild(sanitizeHTMLToDom(html));
+        this.wrapTablesForMobileScroll(content);
       } catch {
         content.createEl('p', { text: msg.content });
       }
@@ -459,6 +461,26 @@ export class MobileView extends ItemView {
     }
   }
 
+
+  /**
+   * Wraps every <table> inside `container` in a <div class="ct-mobile-table-scroll">
+   * so that wide tables scroll horizontally in isolation, leaving paragraph text
+   * completely unaffected. Must be called after the parsed HTML has been appended
+   * to the DOM — the wrapper div is the element that owns overflow-x:auto, which
+   * requires that its parent (.ct-mobile-message-content) does NOT have
+   * overflow:hidden (that would clip the scroll region).
+   */
+  private wrapTablesForMobileScroll(container: HTMLElement): void {
+    const tables = Array.from(container.querySelectorAll('table'));
+    for (const table of tables) {
+      // Guard against double-wrapping if called more than once on the same element.
+      if (table.parentElement?.classList.contains('ct-mobile-table-scroll')) continue;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'ct-mobile-table-scroll';
+      table.parentNode?.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    }
+  }
 
   /** Renders tool-call pills using the same ct-tool-pill classes as the desktop view. */
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], active: boolean): void {
