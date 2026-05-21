@@ -602,6 +602,8 @@ function buildEnvironmentSystemPrompt(
     '- set_working_directory takes effect on the next turn and resets session continuity. Set it before starting a task, not mid-conversation.',
     '- obsidian_enter_worktree / obsidian_exit_worktree: use these instead of the built-in EnterWorktree/ExitWorktree tools. They read the effective cwd updated by set_working_directory, so they always target the right git repo.',
     '- ScheduleWakeup injects the given prompt as a new message into this thread after the delay.',
+    '- obsidian_list_commands returns all registered Obsidian commands (id + name); pass a query to filter. Call this before obsidian_execute_command to look up the correct command ID.',
+    '- obsidian_execute_command triggers any Obsidian command by ID — useful for vault-bridge sync, git push, toggling editor modes, etc.',
   );
 
   return lines.join('\n');
