@@ -1153,7 +1153,7 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  async forkThread(threadId: string): Promise<void> {
+  async forkThread(threadId: string, initialFocus?: string): Promise<void> {
     const thread = this.manager.getThread(threadId);
     if (!thread || thread.messages.filter(m => m.role !== 'compact').length === 0) {
       new Notice('Nothing to fork — thread has no messages yet.');
@@ -1168,8 +1168,11 @@ export class ThreadsView extends ItemView {
       );
       await this.plugin.saveSettings();
       this.setActiveThread(forkedThread.id);
-      await this.manager.sendMessage(forkedThread.id, prompt);
-    }).open();
+      // Fire-and-forget: switch to the new thread and close the modal immediately
+      // without waiting for Claude's response. The first message appears as the
+      // thread loads, giving instant feedback instead of a frozen "Opening..." state.
+      void this.manager.sendMessage(forkedThread.id, prompt);
+    }, initialFocus).open();
   }
 
   private createStreamingEl(): void {
@@ -1724,6 +1727,15 @@ export class ThreadsView extends ItemView {
     // Dismiss the context banner as soon as the user sends — they're back in the thread
     this.hideSummaryBanner(false);
 
+    // /fork [optional focus] — open ForkModal without sending a message to Claude.
+    // Detected before the user bubble renders so no stray bubble is left behind.
+    const forkMatch = typed.match(/^\/fork(?:\s+([\s\S]+))?$/i);
+    if (forkMatch) {
+      const focusArea = (forkMatch[1] ?? '').trim();
+      await this.forkThread(this.activeThreadId!, focusArea || undefined);
+      return;
+    }
+
     let text = typed;
     if (attachment) {
       text = typed
@@ -2140,6 +2152,7 @@ class ForkModal extends Modal {
   private plugin: ClaudeThreadsPlugin;
   private sourceThread: Thread;
   private onFork: (prompt: string) => Promise<void>;
+  private initialFocus: string;
 
   private focusInput!: HTMLInputElement;
   private promptTextarea!: HTMLTextAreaElement;
@@ -2154,11 +2167,13 @@ class ForkModal extends Modal {
     plugin: ClaudeThreadsPlugin,
     sourceThread: Thread,
     onFork: (prompt: string) => Promise<void>,
+    initialFocus?: string,
   ) {
     super(app);
     this.plugin = plugin;
     this.sourceThread = sourceThread;
     this.onFork = onFork;
+    this.initialFocus = initialFocus ?? '';
   }
 
   onOpen(): void {
@@ -2183,6 +2198,9 @@ class ForkModal extends Modal {
     });
     this.focusInput.addClass('ct-fork-input');
     this.focusInput.style.cssText = 'width:100%;margin-top:4px;';
+    if (this.initialFocus) {
+      this.focusInput.value = this.initialFocus;
+    }
 
     this.statusEl = contentEl.createDiv({ cls: 'ct-fork-status' });
     this.statusEl.style.display = 'none';
