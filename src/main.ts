@@ -311,6 +311,32 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'interrupt-active-thread',
+      name: 'Interrupt active thread',
+      callback: async () => {
+        const threadId = this.getView()?.getActiveThreadId();
+        if (threadId) {
+          await this.manager.interrupt(threadId);
+        }
+      },
+    });
+
+    this.addCommand({
+      id: 'summarize-active-thread',
+      name: 'Summarize active thread',
+      callback: async () => {
+        await this.activateView();
+        const view = this.getView();
+        const threadId = view?.getActiveThreadId();
+        if (view && threadId && this.settings.summarizationEnabled) {
+          await view.summarizeThread(threadId);
+        } else if (!this.settings.summarizationEnabled) {
+          new Notice('Thread summarization is disabled. Enable it in Settings > Claude Threads > Summarization.');
+        }
+      },
+    });
+
     // Initialize relay client if remote access is enabled
     this.initDesktopRelayClient();
   }
@@ -699,6 +725,9 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       return;
     }
 
+    // ── Appearance ────────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Appearance' });
+
     new Setting(containerEl)
       .setName('Layout density')
       .setDesc('Controls how compact or spacious the conversation view feels.')
@@ -726,6 +755,9 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         }),
       );
 
+    // ── Setup ─────────────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Setup' });
+
     new Setting(containerEl)
       .setName('Debug logging')
       .setDesc('Enable verbose console logs for stream events, session lifecycle, and relay connections. Turn on only when diagnosing issues — it produces a lot of output during active sessions.')
@@ -739,7 +771,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Claude binary path')
-      .setDesc('Path to the claude executable')
+      .setDesc('Path to the claude executable. Leave empty to use the default ($PATH lookup).')
       .addText((text) =>
         text
           .setPlaceholder('/opt/homebrew/bin/claude')
@@ -753,7 +785,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Default working directory')
-      .setDesc('Default cwd for new threads. Leave empty to use vault root.')
+      .setDesc('Starting directory for new threads. Leave empty to use the vault root.')
       .addText((text) =>
         text
           .setPlaceholder(this.plugin.getEffectiveCwd())
@@ -765,29 +797,25 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Context footer command')
-      .setDesc(
-        'Shell command that provides contextual info for the footer bar below the input area. ' +
-        'Receives JSON on stdin with the active thread\'s cwd. ' +
-        'Output is split on two spaces into labelled pills (branch, PR, dev URL, etc.). ' +
-        'Leave empty to disable. Compatible with the Claude Code statusLine script.',
-      )
-      .addText((text) => {
+      .setName('Extra environment variables')
+      .setDesc('KEY=VALUE pairs (one per line) merged into the Claude process environment. Useful for AWS SSO — set AWS_PROFILE and AWS_REGION here.')
+      .addTextArea((text) =>
         text
-          .setPlaceholder('bash $HOME/claude-config/bin/statusline-command.sh')
-          .setValue(this.plugin.settings.statusLineCommand)
+          .setPlaceholder('AWS_PROFILE=my-sso-profile\nAWS_REGION=us-east-1')
+          .setValue(this.plugin.settings.extraEnv)
           .onChange(async (value) => {
-            this.plugin.settings.statusLineCommand = value;
+            this.plugin.settings.extraEnv = value;
+            this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
-            // Live-update the footer in the open view
-            this.plugin.getView()?.updateStatusLineCommand();
-          });
-        text.inputEl.style.width = '100%';
-      });
+          }),
+      );
+
+    // ── Vault ─────────────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Vault' });
 
     new Setting(containerEl)
       .setName('Save threads to vault')
-      .setDesc('Auto-save conversations as Obsidian notes')
+      .setDesc('Auto-save conversations as Obsidian notes after each response.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.saveThreadsToVault).onChange(async (value) => {
           this.plugin.settings.saveThreadsToVault = value;
@@ -797,7 +825,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Vault folder')
-      .setDesc('Folder where thread notes are saved')
+      .setDesc('Folder where thread notes are saved (relative to vault root).')
       .addText((text) =>
         text
           .setPlaceholder('Claude')
@@ -807,6 +835,26 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName('Context footer command')
+      .setDesc(
+        'Shell command that populates the context bar below the input area. ' +
+        'Receives JSON on stdin with the active thread\'s cwd. ' +
+        'Output is split on double-spaces into labelled pills (git branch, PR, dev URL, etc.). ' +
+        'Leave empty to disable. Compatible with the Claude Code statusLine script.',
+      )
+      .addText((text) => {
+        text
+          .setPlaceholder('bash $HOME/claude-config/bin/statusline-command.sh')
+          .setValue(this.plugin.settings.statusLineCommand)
+          .onChange(async (value) => {
+            this.plugin.settings.statusLineCommand = value;
+            await this.plugin.saveSettings();
+            this.plugin.getView()?.updateStatusLineCommand();
+          });
+        text.inputEl.style.width = '100%';
+      });
 
     // ── Projects ──────────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Projects' });
@@ -860,30 +908,17 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         }),
       );
 
-    // ─────────────────────────────────────────────────────────────────────
-
-    new Setting(containerEl)
-      .setName('Extra environment variables')
-      .setDesc('KEY=VALUE pairs (one per line) merged into the Claude process environment. Useful for AWS SSO: set AWS_PROFILE and AWS_REGION here.')
-      .addTextArea((text) =>
-        text
-          .setPlaceholder('AWS_PROFILE=my-sso-profile\nAWS_REGION=us-east-1')
-          .setValue(this.plugin.settings.extraEnv)
-          .onChange(async (value) => {
-            this.plugin.settings.extraEnv = value;
-            this.plugin.manager.updateSettings(this.plugin.settings);
-            await this.plugin.saveSettings();
-          }),
-      );
+    // ── Claude Behavior ───────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Claude Behavior' });
 
     new Setting(containerEl)
       .setName('Permission mode')
-      .setDesc('How Claude handles tool permissions')
+      .setDesc('How Claude handles tool-use permission prompts.')
       .addDropdown((drop) =>
         drop
+          .addOption('default', 'Prompt for permissions')
           .addOption('acceptEdits', 'Accept edits automatically')
           .addOption('bypassPermissions', 'Bypass all permissions (trusted directories only)')
-          .addOption('default', 'Prompt for permissions')
           .setValue(this.plugin.settings.permissionMode)
           .onChange(async (value) => {
             this.plugin.settings.permissionMode = value as PluginSettings['permissionMode'];
@@ -892,7 +927,10 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl('h3', { text: 'Always allowed tools' });
+    containerEl.createEl('p', {
+      text: 'Always-allowed tools are granted permission automatically without prompting. Tools are added here when you choose "Always allow" in a permission prompt. You can remove individual entries below.',
+      cls: 'ct-settings-desc',
+    });
 
     const allowedList = containerEl.createDiv({ cls: 'ct-allowed-tools-list' });
     const renderAllowedTools = () => {
@@ -917,11 +955,31 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     };
     renderAllowedTools();
 
-    containerEl.createEl('h3', { text: 'Opus expert escalation' });
+    new Setting(containerEl)
+      .setName('Add always-allowed tool')
+      .setDesc('Manually allow a tool by name (e.g. mcp__obsidian__read_file, Bash, Read).')
+      .addText((text) =>
+        text.setPlaceholder('Tool name').then((t) => {
+          (t as unknown as { inputEl: HTMLInputElement }).inputEl.id = 'ct-new-allowed-tool';
+        }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText('Add').setCta().onClick(async () => {
+          const input = containerEl.querySelector<HTMLInputElement>('#ct-new-allowed-tool');
+          const tool = input?.value.trim() ?? '';
+          if (!tool) return;
+          if (!this.plugin.settings.alwaysAllowedTools.includes(tool)) {
+            this.plugin.settings.alwaysAllowedTools.push(tool);
+            await this.plugin.saveSettings();
+            renderAllowedTools();
+          }
+          if (input) input.value = '';
+        }),
+      );
 
     new Setting(containerEl)
-      .setName('Enable Opus escalation')
-      .setDesc('When the escalation keyword is present in a message, route that turn to claude-opus instead of the default model.')
+      .setName('Opus escalation')
+      .setDesc('When the escalation keyword appears in a message, route that turn to claude-opus instead of the default model. The keyword is stripped before sending.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.opusEscalationEnabled).onChange(async (value) => {
           this.plugin.settings.opusEscalationEnabled = value;
@@ -932,7 +990,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Escalation keyword')
-      .setDesc('Word or phrase that triggers Opus. Include it anywhere in your message (e.g. "/opus"). It is stripped from the prompt before sending.')
+      .setDesc('Word or phrase that triggers Opus (e.g. "/opus").')
       .addText((text) =>
         text
           .setPlaceholder('/opus')
@@ -944,11 +1002,16 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
-    containerEl.createEl('h3', { text: 'Thread summarization (local model)' });
+    // ── Summarization ─────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Summarization' });
+    containerEl.createEl('p', {
+      text: 'Generates a short summary and suggested title for each thread using the Claude CLI. Useful for keeping the agent dashboard readable at a glance.',
+      cls: 'ct-settings-desc',
+    });
 
     new Setting(containerEl)
       .setName('Enable summarization')
-      .setDesc('Show a summarize button in each thread using a local model')
+      .setDesc('Show a Summarize button in each thread and enable the "Summarize active thread" command.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.summarizationEnabled).onChange(async (value) => {
           this.plugin.settings.summarizationEnabled = value;
@@ -958,7 +1021,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Auto-summarize after response')
-      .setDesc('Automatically regenerate summary after each assistant turn')
+      .setDesc('Automatically regenerate the summary after each assistant turn.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoSummarize).onChange(async (value) => {
           this.plugin.settings.autoSummarize = value;
@@ -967,8 +1030,8 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Claude summarization model')
-      .setDesc('Model alias passed to claude --model. Use "haiku" for fast/cheap, "sonnet" for higher quality.')
+      .setName('Summarization model')
+      .setDesc('Model alias passed to claude --model. Use "haiku" for fast and cheap, "sonnet" for higher quality.')
       .addText((text) =>
         text
           .setPlaceholder('haiku')
@@ -979,7 +1042,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
-    // ── Remote Access ─────────────────────────────────────────────────────────
+    // ── Remote Access ─────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Remote Access' });
     containerEl.createEl('p', {
       text: 'Connect Obsidian Mobile to this desktop instance and control Claude Threads sessions in real time.',
@@ -1040,11 +1103,10 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             }),
         );
 
-      // Connection status indicator
       const isConnected = this.plugin.relayClient?.isConnected() ?? false;
       new Setting(containerEl)
         .setName('Connection status')
-        .setDesc(isConnected ? 'Relay connected' : 'Relay not connected');
+        .setDesc(isConnected ? 'Mobile relay connected' : 'Mobile relay not connected');
 
       new Setting(containerEl)
         .setName('Relay URL')
