@@ -1115,7 +1115,7 @@ export class ThreadsView extends ItemView {
     );
   }
 
-  private async summarizeThread(threadId: string): Promise<void> {
+  async summarizeThread(threadId: string): Promise<void> {
     const thread = this.manager.getThread(threadId);
     if (!thread || thread.messages.length === 0) return;
 
