@@ -16,6 +16,7 @@ import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
+import { setDebugLogging, debugLog } from './logger';
 
 // View-type string constants. Must match the values exported by each view module.
 // Defined here as literals so both desktop and mobile code can reference them without
@@ -65,16 +66,19 @@ export default class ClaudeThreadsPlugin extends Plugin {
     addIcon('alert-circle', '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>');
     addIcon('brain-circuit', '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/>');
 
-    // Enable SDK verbose debug logging so MCP connection errors surface to the console.
+    await this.loadSettings();
+
+    // Apply debug logging preference before any subsystems start.
+    setDebugLogging(this.settings.debugLogging ?? false);
+
+    // Enable SDK verbose debug logging when debug mode is on.
     // The SDK checks process.env.DEBUG_SDK lazily via a memoized fn — set it before any SDK call.
     // Desktop only: process.env is a Node.js global not available on mobile.
-    if (!Platform.isMobile && !process.env.DEBUG_SDK) {
+    if (!Platform.isMobile && this.settings.debugLogging && !process.env.DEBUG_SDK) {
       process.env.DEBUG_SDK = '1';
       process.env.CLAUDE_CODE_DEBUG_LOGS_DIR = `${process.env.HOME}/.claude/debug/claude-threads`;
-      console.log('[ClaudeThreads] SDK debug logging enabled → ~/.claude/debug/claude-threads/');
+      debugLog('[ClaudeThreads] SDK debug logging enabled → ~/.claude/debug/claude-threads/');
     }
-
-    await this.loadSettings();
 
     if (Platform.isMobile) {
       await this.onloadMobile();
@@ -138,7 +142,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             const ids = this.pendingWakeups.get(threadId) ?? [];
             ids.push(id);
             this.pendingWakeups.set(threadId, ids);
-            console.log(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
+            debugLog(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
         });
         const mcpDebug = {
@@ -146,7 +150,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
           name: (mcpServer as unknown as Record<string, unknown>).name,
           hasInstance: 'instance' in mcpServer,
         };
-        console.log(`[ClaudeThreads] Obsidian MCP server created for thread ${threadId}:`, mcpDebug);
+        debugLog(`[ClaudeThreads] Obsidian MCP server created for thread ${threadId}:`, mcpDebug);
         return { obsidian: mcpServer };
       } catch (err) {
         console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
@@ -718,6 +722,17 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         toggle.setValue(this.plugin.settings.wakeLockEnabled).onChange(async (value) => {
           this.plugin.settings.wakeLockEnabled = value;
           this.plugin.wakeLock.setEnabled(value);
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Debug logging')
+      .setDesc('Enable verbose console logs for stream events, session lifecycle, and relay connections. Turn on only when diagnosing issues — it produces a lot of output during active sessions.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.debugLogging ?? false).onChange(async (value) => {
+          this.plugin.settings.debugLogging = value;
+          setDebugLogging(value);
           await this.plugin.saveSettings();
         }),
       );

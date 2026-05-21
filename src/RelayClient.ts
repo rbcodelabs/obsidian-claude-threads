@@ -19,6 +19,7 @@ import type {
   ConnectionState,
 } from './relay-protocol';
 import type { Thread, ChatMessage } from './types';
+import { debugLog } from './logger';
 
 type FrameListener = (frame: RelayFrame) => void;
 type ConnectionStateListener = (state: ConnectionState) => void;
@@ -192,7 +193,7 @@ export class RelayClient {
 
     ws.addEventListener('open', () => {
       this.reconnectAttempt = 0;
-      console.log(`[RelayClient] Connected as ${this.mode}`);
+      debugLog(`[RelayClient] Connected as ${this.mode}`);
 
       if (this.mode === 'desktop') {
         this.sendSnapshot();
@@ -209,7 +210,7 @@ export class RelayClient {
     });
 
     ws.addEventListener('close', (_event) => {
-      console.log(`[RelayClient] WebSocket closed (${this.mode})`);
+      debugLog(`[RelayClient] WebSocket closed (${this.mode})`);
       this.ws = null;
       this.stopPingPong();
 
@@ -333,7 +334,7 @@ export class RelayClient {
     // Diagnostic logging — visible in desktop DevTools console
     const totalMessages = threads.reduce((sum, t) => sum + t.messages.length, 0);
     const payloadJson = JSON.stringify({ type: 'snapshot', threads, activeThreadId: this.activeThreadIdForDesktop });
-    console.log(
+    debugLog(
       `[RelayClient] Sending snapshot: ${threads.length} threads, ${totalMessages} total messages, ${(payloadJson.length / 1024).toFixed(1)} KB`,
       threads.map(t => `${t.title}: ${t.messages.length} msgs`),
     );
@@ -471,7 +472,7 @@ export class RelayClient {
     if (this.destroyed) return;
     const delay = BACKOFF[Math.min(this.reconnectAttempt, BACKOFF.length - 1)];
     this.reconnectAttempt++;
-    console.log(`[RelayClient] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`);
+    debugLog(`[RelayClient] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.openWebSocket();
