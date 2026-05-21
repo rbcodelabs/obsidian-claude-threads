@@ -1,6 +1,7 @@
 import { query, type Options, type Query, type CanUseTool, type SDKUserMessage, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
+import { debugLog } from './logger';
 
 export interface SessionCallbacks {
   onToken: (text: string) => void;
@@ -91,12 +92,12 @@ export class ClaudeSession {
         type: (v as unknown as Record<string, unknown>).type,
         hasInstance: 'instance' in v,
       }));
-      console.log('[ClaudeThreads] MCP servers attached to session:', JSON.stringify(mcpDebug));
+      debugLog('[ClaudeThreads] MCP servers attached to session:', JSON.stringify(mcpDebug));
     } else {
       console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
     }
 
-    console.log('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
+    debugLog('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
     const promptArg: string | AsyncIterable<SDKUserMessage> =
       images && images.length > 0
@@ -139,7 +140,7 @@ export class ClaudeSession {
 
     try {
       for await (const msg of q) {
-        console.log('[ClaudeThreads] msg.type:', msg.type, (msg as Record<string, unknown>).subtype ?? '');
+        debugLog('[ClaudeThreads] msg.type:', msg.type, (msg as Record<string, unknown>).subtype ?? '');
         switch (msg.type) {
           case 'stream_event': {
             const evt = msg.event;
