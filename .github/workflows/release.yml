@@ -28,6 +28,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Update versions.json
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          MIN_APP=$(jq -r '.minAppVersion' manifest.json)
+          # Prepend new version entry (jq merges left-to-right, so put new key first)
+          jq --arg v "$VERSION" --arg m "$MIN_APP" \
+            '{($v): $m} + .' versions.json > versions.tmp && mv versions.tmp versions.json
+
       - name: Create release and upload assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,8 +46,10 @@ jobs:
             dist/main.js \
             dist/styles.css \
             manifest.json \
+            versions.json \
           || gh release upload "${{ github.ref_name }}" \
             --clobber \
             dist/main.js \
             dist/styles.css \
-            manifest.json
+            manifest.json \
+            versions.json
