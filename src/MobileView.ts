@@ -14,6 +14,7 @@ import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
+import { formatToolName } from './ClaudeSession';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -487,8 +488,8 @@ export class MobileView extends ItemView {
     const wrapper = parent.createDiv('ct-tools');
     for (const tool of tools) {
       const pill = wrapper.createDiv(active ? 'ct-tool-pill ct-tool-active' : 'ct-tool-pill');
-      pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
-      pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+      pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
+      if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
   }
 
@@ -498,7 +499,7 @@ export class MobileView extends ItemView {
     card.createDiv({ cls: 'ct-mobile-permission-label', text: 'Permission request' });
 
     const body = card.createDiv('ct-mobile-permission-body');
-    body.createEl('code', { cls: 'ct-mobile-permission-tool', text: permission.toolName });
+    body.createEl('code', { cls: 'ct-mobile-permission-tool', text: formatToolName(permission.toolName) });
     if (permission.detail) {
       body.createEl('p', { cls: 'ct-mobile-permission-detail', text: permission.detail });
     }
