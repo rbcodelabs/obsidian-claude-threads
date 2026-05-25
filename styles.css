@@ -733,6 +733,21 @@
   min-width: 0;
 }
 
+/* Icon inside tool pill */
+.ct-tool-pill-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.ct-tool-pill-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.ct-tool-active .ct-tool-pill-icon {
+  color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
+}
+
 /* Tool name badge: monospace chip showing "bash", "read", etc. */
 .ct-tool-pill-name {
   font-family: var(--font-monospace);

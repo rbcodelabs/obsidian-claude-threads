@@ -10,6 +10,7 @@ import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
+import { formatToolName, getToolIcon } from './ClaudeSession';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -1218,13 +1219,19 @@ export class ThreadsView extends ItemView {
           const tool = buf.tools[i];
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
+          const iconEl = document.createElement('span');
+          iconEl.className = 'ct-tool-pill-icon';
+          setIcon(iconEl, getToolIcon(tool.name));
           const badge = document.createElement('span');
           badge.className = 'ct-tool-pill-name';
-          badge.textContent = tool.name.toLowerCase();
-          const label = document.createElement('span');
-          label.className = 'ct-tool-pill-text';
-          label.textContent = tool.summary;
-          pill.append(badge, label);
+          badge.textContent = formatToolName(tool.name);
+          pill.append(iconEl, badge);
+          if (tool.summary) {
+            const label = document.createElement('span');
+            label.className = 'ct-tool-pill-text';
+            label.textContent = tool.summary;
+            pill.append(label);
+          }
           this.streamingEl!.prepend(pill);
         }
         // Restore accumulated text and re-render it into the streaming bubble.
@@ -1286,8 +1293,10 @@ export class ThreadsView extends ItemView {
     const wrapper = parent.createDiv('ct-tools');
     for (const tool of tools) {
       const pill = wrapper.createDiv('ct-tool-pill');
-      pill.createSpan({ cls: 'ct-tool-pill-name', text: tool.name.toLowerCase() });
-      pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+      const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
+      setIcon(iconEl, getToolIcon(tool.name));
+      pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
+      if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
   }
 
@@ -1304,7 +1313,7 @@ export class ThreadsView extends ItemView {
     header.createSpan({ cls: 'ct-permission-label', text: 'Permission request' });
 
     const body = card.createDiv('ct-permission-body');
-    body.createEl('code', { cls: 'ct-permission-tool', text: toolName });
+    body.createEl('code', { cls: 'ct-permission-tool', text: formatToolName(toolName) });
     if (detail) {
       body.createEl('p', { cls: 'ct-permission-detail', text: detail });
     }
@@ -1381,13 +1390,19 @@ export class ThreadsView extends ItemView {
         if (this.streamingEl) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
+          const iconEl = document.createElement('span');
+          iconEl.className = 'ct-tool-pill-icon';
+          setIcon(iconEl, getToolIcon(event.record.name));
           const badge = document.createElement('span');
           badge.className = 'ct-tool-pill-name';
-          badge.textContent = event.record.name.toLowerCase();
-          const label = document.createElement('span');
-          label.className = 'ct-tool-pill-text';
-          label.textContent = event.record.summary;
-          pill.append(badge, label);
+          badge.textContent = formatToolName(event.record.name);
+          pill.append(iconEl, badge);
+          if (event.record.summary) {
+            const label = document.createElement('span');
+            label.className = 'ct-tool-pill-text';
+            label.textContent = event.record.summary;
+            pill.append(label);
+          }
           this.streamingEl.prepend(pill);
         }
         if (event.record.name === 'Write' || event.record.name === 'Edit') {

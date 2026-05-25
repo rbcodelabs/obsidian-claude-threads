@@ -3,6 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, ImageAttachment, ImageMediaType } from './types';
 import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
+import { formatToolName } from './ClaudeSession';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -403,7 +404,7 @@ export class AgentDashboard extends ItemView {
 
     if (hasPending) {
       const pendingInfo = this.manager.getPendingPermission(thread.id);
-      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ?? 'permission' });
+      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'permission' });
       if (pendingInfo?.detail) {
         activityEl.createSpan({ cls: 'ct-agents-permission-detail', text: pendingInfo.detail });
       }
