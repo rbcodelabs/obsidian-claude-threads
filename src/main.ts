@@ -810,6 +810,15 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    // macOS privacy notice
+    const macOSNote = containerEl.createDiv({ cls: 'ct-settings-notice' });
+    macOSNote.createEl('strong', { text: 'macOS users: ' });
+    macOSNote.appendText(
+      'When Claude accesses folders like ~/Documents or ~/projects for the first time, ' +
+      'macOS will show a privacy permission dialog. This is expected — click Allow to let ' +
+      'Claude read and write files in that folder. These prompts only appear once per folder.',
+    );
+
     // ── Vault ─────────────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Vault' });
 

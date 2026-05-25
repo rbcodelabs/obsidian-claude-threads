@@ -1719,6 +1719,17 @@
   margin: 0 0 8px;
 }
 
+/* Settings: informational notice block (e.g. macOS privacy notice) */
+.ct-settings-notice {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0 16px;
+}
+
 .ct-projects-list {
   margin-bottom: 8px;
 }
@@ -1985,6 +1996,29 @@
   font-size: var(--font-ui-smaller);
 }
 
+/* ── AWS SSO reauth button ────────────────────────────────────────────────── */
+
+.ct-aws-reauth-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: var(--font-ui-smaller);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-orange, #e67700) 12%, transparent);
+  color: var(--color-orange, #e67700);
+  border: 1px solid color-mix(in srgb, var(--color-orange, #e67700) 40%, transparent);
+  cursor: pointer;
+}
+.ct-aws-reauth-btn:hover {
+  background: color-mix(in srgb, var(--color-orange, #e67700) 22%, transparent);
+}
+.ct-aws-reauth-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── Context footer (status line) ────────────────────────────────────────── */
 
 .ct-context-footer {
@@ -2218,6 +2252,15 @@
 
 .ct-mobile-thread-icon-empty {
   color: var(--text-faint);
+}
+
+.ct-mobile-thread-icon-permission {
+  color: var(--color-orange, #e67700);
+  font-weight: bold;
+}
+
+.ct-mobile-thread-item-permission {
+  background: color-mix(in srgb, var(--color-orange, #e67700) 8%, transparent);
 }
 
 @keyframes ct-spin {

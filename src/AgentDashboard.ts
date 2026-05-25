@@ -428,6 +428,39 @@ export class AgentDashboard extends ItemView {
       });
     } else {
       activityEl.setText(this.getActivityText(thread, state));
+
+      // ── AWS SSO reauth button ────────────────────────────────────────────
+      // When the session failed due to an expired SSO token, show a one-click
+      // "Re-authenticate" button so the user doesn't have to leave Obsidian.
+      if (state === 'error' && isAwsSsoError(thread.lastError)) {
+        const profile = extractAwsProfile(this.plugin.settings.extraEnv ?? '');
+        const reauthBtn = body.createEl('button', {
+          cls: 'ct-aws-reauth-btn',
+          text: '🔑 Re-authenticate AWS SSO',
+        });
+        reauthBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          reauthBtn.setText('Authenticating…');
+          reauthBtn.disabled = true;
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { exec } = require('child_process') as typeof import('child_process');
+            const cmd = profile ? `aws sso login --profile ${profile}` : 'aws sso login';
+            await new Promise<void>((resolve, reject) => {
+              exec(cmd, (err, _stdout, stderr) => {
+                if (err) reject(new Error(stderr?.trim() || err.message));
+                else resolve();
+              });
+            });
+            new Notice('AWS SSO login successful — retry your request');
+            reauthBtn.setText('✓ Done — retry your request');
+          } catch (err) {
+            new Notice(`AWS SSO login failed: ${(err as Error).message}`);
+            reauthBtn.setText('🔑 Re-authenticate AWS SSO');
+            reauthBtn.disabled = false;
+          }
+        });
+      }
     }
 
     const meta = row.createDiv('ct-agents-row-meta');
@@ -737,4 +770,21 @@ function shortenPath(p: string, vaultRoot?: string): string {
   if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
   const parts = p.split('/');
   return parts.length > 4 ? '…/' + parts.slice(-2).join('/') : p;
+}
+
+/**
+ * Returns true when the error message looks like an AWS SSO token expiry that
+ * requires running `aws sso login` to refresh credentials.
+ */
+function isAwsSsoError(err?: string): boolean {
+  if (!err) return false;
+  return /token.*expir|expir.*token|aws sso login|sso.*session.*expir|Error loading SSO/i.test(err);
+}
+
+/**
+ * Extracts the AWS_PROFILE value from a KEY=VALUE extra-env block, if present.
+ */
+function extractAwsProfile(extraEnv: string): string | null {
+  const match = extraEnv.match(/(?:^|\n)AWS_PROFILE=([^\s]+)/);
+  return match ? match[1] : null;
 }

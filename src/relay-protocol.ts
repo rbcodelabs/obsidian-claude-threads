@@ -38,6 +38,7 @@ export interface SerializedThread {
   lastError?: string;
   model?: string;
   projectId?: string;
+  reviewed?: boolean;
 }
 
 // ── Desktop → Mobile frames ────────────────────────────────────────────────
