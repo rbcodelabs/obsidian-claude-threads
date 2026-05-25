@@ -46,6 +46,7 @@ function serializeThread(thread: Thread): SerializedThread {
     lastError: thread.lastError,
     model: thread.model,
     projectId: thread.projectId,
+    reviewed: thread.reviewed,
   };
 }
 

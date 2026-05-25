@@ -214,6 +214,13 @@ export class MobileView extends ItemView {
       this.updateStreamingEl(activeId);
     }
 
+    // If there's a pending permission for the active thread and the user is on the
+    // list view, override the back-navigation guard and bring them to the conversation
+    // panel so they don't miss the permission card.
+    if (activeId && permCount > 0 && this.showingList) {
+      this.showingList = false;
+    }
+
     // Switch to conversation panel when there's an active thread and the user
     // hasn't explicitly navigated back to the list.
     if (activeId && !this.showingList) {
@@ -253,18 +260,21 @@ export class MobileView extends ItemView {
       return;
     }
 
-    // Group threads by status, each group sorted by updatedAt descending
+    // Group threads by status, each group sorted by updatedAt descending.
+    // Labels intentionally mirror the desktop Agent Dashboard: Working / New / Reviewed / Failed / Ready.
     const byUpdated = (a: SerializedThread, b: SerializedThread) => b.updatedAt - a.updatedAt;
-    const running  = threads.filter(t => this.store!.isStreaming(t.id)).sort(byUpdated);
-    const failed   = threads.filter(t => !this.store!.isStreaming(t.id) && t.lastError).sort(byUpdated);
-    const active   = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0).sort(byUpdated);
-    const empty    = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length === 0).sort(byUpdated);
+    const running    = threads.filter(t => this.store!.isStreaming(t.id)).sort(byUpdated);
+    const failed     = threads.filter(t => !this.store!.isStreaming(t.id) && t.lastError).sort(byUpdated);
+    const unreviewed = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && !t.reviewed).sort(byUpdated);
+    const reviewed   = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && t.reviewed).sort(byUpdated);
+    const empty      = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length === 0).sort(byUpdated);
 
     const groups: Array<{ label: string; threads: SerializedThread[] }> = [
-      { label: 'Running', threads: running },
-      { label: 'Failed',  threads: failed },
-      { label: 'Active',  threads: active },
-      { label: 'Ready',   threads: empty },
+      { label: 'Working',  threads: running },
+      { label: 'Failed',   threads: failed },
+      { label: 'New',      threads: unreviewed },
+      { label: 'Reviewed', threads: reviewed },
+      { label: 'Ready',    threads: empty },
     ];
 
     for (const group of groups) {
@@ -282,15 +292,19 @@ export class MobileView extends ItemView {
   private renderThreadRow(thread: SerializedThread, activeId: string | null, container: HTMLElement): void {
     const isActive = thread.id === activeId;
     const isStreaming = this.store!.isStreaming(thread.id);
+    const hasPendingPermission = this.store!.getPendingPermissionsForThread(thread.id).length > 0;
 
     const item = container.createDiv({
-      cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}`,
+      cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}${hasPendingPermission ? ' ct-mobile-thread-item-permission' : ''}`,
     });
 
-    // Left: status icon
+    // Left: status icon — permission badge takes priority over streaming indicator
     let icon = '›';
     let iconCls = 'ct-mobile-thread-icon';
-    if (isStreaming) {
+    if (hasPendingPermission) {
+      icon = '?';
+      iconCls += ' ct-mobile-thread-icon-permission';
+    } else if (isStreaming) {
       icon = '✽';
       iconCls += ' ct-mobile-thread-icon-running';
     } else if (thread.lastError) {
