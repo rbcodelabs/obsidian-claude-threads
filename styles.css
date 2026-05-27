@@ -348,6 +348,35 @@
   color: var(--interactive-accent-hover, var(--interactive-accent));
 }
 
+/* Close/archive current thread button in the title row */
+.ct-title-close {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-left: 2px;
+  align-self: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.ct-title-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-title-close:hover {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
 /* Main area */
 .ct-main {
   display: flex;

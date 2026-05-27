@@ -83,6 +83,8 @@ export class ThreadsView extends ItemView {
   // Slash command autocomplete
   // New-thread button
   private newThreadBtn!: HTMLButtonElement;
+  // Close/archive current thread button
+  private closeThreadBtn!: HTMLButtonElement;
 
   // Summary peek banner (shown on tab reactivation)
   private summaryBannerEl: HTMLElement | null = null;
@@ -330,6 +332,11 @@ export class ThreadsView extends ItemView {
     this.newThreadBtn = titleRow.createEl('button', { cls: 'ct-tab-new', attr: { title: 'New thread' } });
     setIcon(this.newThreadBtn, 'square-pen');
     this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
+    this.closeThreadBtn = titleRow.createEl('button', { cls: 'ct-title-close', attr: { title: 'Close thread' } });
+    setIcon(this.closeThreadBtn, 'x');
+    this.closeThreadBtn.addEventListener('click', () => {
+      if (this.activeThreadId) this.closeThread(this.activeThreadId);
+    });
     this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
@@ -542,6 +549,11 @@ export class ThreadsView extends ItemView {
     const threads = this.manager.getThreads();
     const hasRunning = threads.some(t => t.id !== this.activeThreadId && this.manager.isRunning(t.id));
     this.titleEl.classList.toggle('ct-title-has-background', hasRunning);
+
+    // Hide close button when there is only one thread (nothing to switch to)
+    if (this.closeThreadBtn) {
+      this.closeThreadBtn.classList.toggle('ct-hidden', threads.length <= 1);
+    }
   }
 
 
