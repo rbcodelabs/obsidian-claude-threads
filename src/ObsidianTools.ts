@@ -63,7 +63,7 @@ export interface ObsidianMcpServerOptions {
   onForkRequested?: (focusArea: string) => Promise<{ threadTitle: string }>;
   /**
    * Initial effective cwd for this session. Pre-seeds the in-session cwd tracker so
-   * obsidian_enter_worktree knows which repo to operate on from the first turn.
+   * enter_worktree knows which repo to operate on from the first turn.
    */
   initialCwd?: string;
 }
@@ -476,12 +476,12 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
   // updated immediately whenever set_working_directory is called.
 
   const boundEnterWorktree = tool(
-    'obsidian_enter_worktree',
+    'enter_worktree',
     [
       'Creates a new git worktree for the repo at the current effective working directory and switches this session to use it.',
       'The worktree is an isolated copy of the repo on a new branch — changes there do not affect the main checkout.',
       'After this call the session cwd is updated to the worktree path (takes effect next turn).',
-      'Use obsidian_exit_worktree to remove the worktree and restore the original repo path.',
+      'Use exit_worktree to remove the worktree and restore the original repo path.',
       'Use this instead of the built-in EnterWorktree tool when running inside the Obsidian plugin.',
     ].join(' '),
     {
@@ -566,9 +566,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
   );
 
   const boundExitWorktree = tool(
-    'obsidian_exit_worktree',
+    'exit_worktree',
     [
-      'Removes a git worktree created by obsidian_enter_worktree and restores the session working directory to the original repo root.',
+      'Removes a git worktree created by enter_worktree and restores the session working directory to the original repo root.',
       'If no path is provided, removes the current effective working directory if it is a tracked worktree.',
       'Use this instead of the built-in ExitWorktree tool when running inside the Obsidian plugin.',
     ].join(' '),
