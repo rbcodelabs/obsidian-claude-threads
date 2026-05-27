@@ -86,6 +86,9 @@ export class ThreadsView extends ItemView {
   // Close/archive current thread button
   private closeThreadBtn!: HTMLButtonElement;
 
+  // Thread switcher inline panel
+  private switcherPanelEl: HTMLElement | null = null;
+
   // Summary peek banner (shown on tab reactivation)
   private summaryBannerEl: HTMLElement | null = null;
   private summaryBannerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -612,6 +615,7 @@ export class ThreadsView extends ItemView {
   }
 
   private setActiveThread(id: string): void {
+    this.closeSwitcherPanel();
     const previousId = this.activeThreadId;
 
     // Persist the draft for the thread we're leaving before switching
@@ -1801,40 +1805,94 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  private openThreadSwitcher(event: MouseEvent): void {
-    const menu = new Menu();
-    const threads = this.manager.getThreads();
+  private openThreadSwitcher(_event: MouseEvent): void {
+    // Toggle: close if already open
+    if (this.switcherPanelEl) {
+      this.closeSwitcherPanel();
+      return;
+    }
 
-    for (const thread of [...threads].reverse()) {
+    const titleRow = this.titleEl.closest('.ct-title-row') as HTMLElement ?? this.rootEl;
+    const panel = titleRow.createDiv('ct-switcher-panel');
+    this.switcherPanelEl = panel;
+
+    const threads = [...this.manager.getThreads()].reverse();
+
+    if (threads.length === 0) {
+      panel.createDiv({ cls: 'ct-switcher-empty', text: 'No threads yet.' });
+    }
+
+    for (const thread of threads) {
       const isActive = thread.id === this.activeThreadId;
       const isRunning = this.manager.isRunning(thread.id);
-      menu.addItem(item => {
-        item.setTitle(thread.title)
-          .setIcon(isRunning ? 'loader' : isActive ? 'check' : 'message-square')
-          .onClick(() => this.setActiveThread(thread.id));
-        if (isActive) (item as any).dom?.classList?.add('is-active');
+      const hasError = !!thread.lastError;
+
+      let stateClass = 'idle';
+      let iconChar = '✓';
+      if (isRunning)                         { stateClass = 'running'; iconChar = '✽'; }
+      else if (hasError)                     { stateClass = 'error';   iconChar = '✗'; }
+      else if (thread.messages.length === 0) { stateClass = 'empty';   iconChar = '○'; }
+
+      const row = panel.createDiv({
+        cls: `ct-agents-row ct-agents-row-${stateClass}${isActive ? ' ct-agents-row-active' : ''}`,
+      });
+
+      row.createDiv({ cls: `ct-agents-icon ct-agents-icon-${stateClass}`, text: iconChar });
+
+      const body = row.createDiv('ct-agents-row-body');
+      body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+
+      const preview = thread.summary || thread.recap ||
+        (() => {
+          const last = [...thread.messages].reverse().find(m => m.role === 'assistant');
+          if (!last) return '';
+          const t = last.content.replace(/```[\s\S]*?```/g, '[code]').replace(/\n/g, ' ').trim();
+          return t.length > 80 ? t.slice(0, 80) + '…' : t;
+        })();
+      if (preview) {
+        body.createDiv({ cls: 'ct-agents-row-activity', text: preview });
+      }
+
+      const meta = row.createDiv('ct-agents-row-meta');
+      meta.createDiv({ cls: 'ct-agents-row-time', text: this.relativeTime(thread.updatedAt) });
+
+      row.addEventListener('click', () => {
+        this.closeSwitcherPanel();
+        this.setActiveThread(thread.id);
       });
     }
 
-    menu.addSeparator();
+    // Footer: new chat
+    const footer = panel.createDiv('ct-switcher-footer');
+    const newBtn = footer.createEl('button', { cls: 'ct-switcher-new-btn', text: '+ New chat' });
+    newBtn.addEventListener('click', () => {
+      this.closeSwitcherPanel();
+      void this.openNewThread();
+    });
 
-    const projects = this.manager.getProjects();
-    menu.addItem(item =>
-      item.setTitle('New chat')
-        .setIcon('square-pen')
-        .onClick(() => this.createThreadWithProject(null)),
-    );
-    if (projects.length > 0) {
-      for (const project of projects) {
-        menu.addItem(item =>
-          item.setTitle(`New chat in ${project.name}`)
-            .setIcon('folder')
-            .onClick(() => this.createThreadWithProject(project.id)),
-        );
-      }
-    }
+    // Close on outside click (next tick so this click doesn't immediately re-close)
+    setTimeout(() => {
+      const outsideHandler = (e: MouseEvent) => {
+        if (!panel.contains(e.target as Node) && !this.titleEl.contains(e.target as Node)) {
+          this.closeSwitcherPanel();
+          document.removeEventListener('mousedown', outsideHandler, true);
+        }
+      };
+      document.addEventListener('mousedown', outsideHandler, true);
+    }, 0);
+  }
 
-    menu.showAtMouseEvent(event);
+  private closeSwitcherPanel(): void {
+    this.switcherPanelEl?.remove();
+    this.switcherPanelEl = null;
+  }
+
+  private relativeTime(ts: number): string {
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return 'just now';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return `${Math.floor(diff / 86_400_000)}d ago`;
   }
 
   async openNewThread(event?: MouseEvent): Promise<void> {
