@@ -27,6 +27,85 @@
   background: transparent;
 }
 
+/* Title bar — replaces the tab bar */
+.ct-title-row {
+  display: flex;
+  align-items: center;
+  background: var(--tab-container-background, var(--background-secondary));
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 0 4px;
+  height: 40px;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.ct-title-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  text-align: left;
+  height: 32px;
+  transition: background 0.1s;
+}
+
+.ct-title-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-title-icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+}
+
+.ct-title-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-title-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-title-chevron {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  display: flex;
+  align-items: center;
+  transition: transform 0.15s;
+}
+
+.ct-title-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Rename input inside the title bar */
+.ct-title-rename-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  font-size: var(--font-ui-small);
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--interactive-accent);
+  border-radius: 3px;
+}
+
 .ct-root {
   display: flex;
   flex-direction: column;
