@@ -1816,51 +1816,98 @@ export class ThreadsView extends ItemView {
     const panel = titleRow.createDiv('ct-switcher-panel');
     this.switcherPanelEl = panel;
 
-    const threads = [...this.manager.getThreads()].reverse();
+    const allThreads = this.manager.getThreads();
+    const running: Thread[] = [];
+    const unreviewed: Thread[] = [];
+    const reviewed: Thread[] = [];
+    const errors: Thread[] = [];
+    const empty: Thread[] = [];
 
-    if (threads.length === 0) {
-      panel.createDiv({ cls: 'ct-switcher-empty', text: 'No threads yet.' });
+    for (const t of allThreads) {
+      if (this.manager.isRunning(t.id)) running.push(t);
+      else if (t.lastError) errors.push(t);
+      else if (t.messages.length > 0) {
+        if (t.reviewed) reviewed.push(t);
+        else unreviewed.push(t);
+      } else empty.push(t);
     }
 
-    for (const thread of threads) {
-      const isActive = thread.id === this.activeThreadId;
-      const isRunning = this.manager.isRunning(thread.id);
-      const hasError = !!thread.lastError;
+    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
+    running.sort(byRecency);
+    unreviewed.sort(byRecency);
+    reviewed.sort(byRecency);
+    errors.sort(byRecency);
+    empty.sort(byRecency);
 
-      let stateClass = 'idle';
-      let iconChar = '✓';
-      if (isRunning)                         { stateClass = 'running'; iconChar = '✽'; }
-      else if (hasError)                     { stateClass = 'error';   iconChar = '✗'; }
-      else if (thread.messages.length === 0) { stateClass = 'empty';   iconChar = '○'; }
+    const listEl = panel.createDiv('ct-agents-list');
 
-      const row = panel.createDiv({
-        cls: `ct-agents-row ct-agents-row-${stateClass}${isActive ? ' ct-agents-row-active' : ''}`,
-      });
+    if (allThreads.length === 0) {
+      listEl.createDiv({ cls: 'ct-agents-empty', text: 'No threads yet.' });
+    }
 
-      row.createDiv({ cls: `ct-agents-icon ct-agents-icon-${stateClass}`, text: iconChar });
+    const renderSwitcherGroup = (label: string, threads: Thread[], state: string): void => {
+      const group = listEl.createDiv('ct-agents-group');
+      const labelEl = group.createDiv('ct-agents-group-label');
+      labelEl.createSpan({ text: label });
 
-      const body = row.createDiv('ct-agents-row-body');
-      body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+      for (const thread of threads) {
+        const isActive = thread.id === this.activeThreadId;
+        const row = group.createDiv({
+          cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}`,
+        });
 
-      const preview = thread.summary || thread.recap ||
-        (() => {
-          const last = [...thread.messages].reverse().find(m => m.role === 'assistant');
-          if (!last) return '';
-          const t = last.content.replace(/```[\s\S]*?```/g, '[code]').replace(/\n/g, ' ').trim();
-          return t.length > 80 ? t.slice(0, 80) + '…' : t;
-        })();
-      if (preview) {
-        body.createDiv({ cls: 'ct-agents-row-activity', text: preview });
+        // Icon
+        const iconEl = row.createDiv('ct-agents-icon');
+        switch (state) {
+          case 'running': iconEl.addClass('ct-agents-icon-running'); iconEl.setText('✽'); break;
+          case 'error':   iconEl.addClass('ct-agents-icon-error');   iconEl.setText('✗'); break;
+          case 'empty':   iconEl.addClass('ct-agents-icon-empty');   iconEl.setText('○'); break;
+          default:        iconEl.addClass('ct-agents-icon-idle');    iconEl.setText('✓'); break;
+        }
+
+        const body = row.createDiv('ct-agents-row-body');
+        body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+
+        // Summary for idle threads (same as AgentDashboard)
+        const summary = thread.summary || thread.recap;
+        if (summary && state === 'idle') {
+          body.createDiv({ cls: 'ct-agents-row-summary', text: summary });
+        }
+
+        // Activity line
+        let activityText = '';
+        if (state === 'running') {
+          activityText = this.manager.getThreadActivity(thread.id) || 'Working...';
+        } else if (state === 'error') {
+          activityText = thread.lastError ?? 'Error occurred';
+        } else if (state === 'empty') {
+          activityText = 'Ready to start';
+        } else {
+          const lastAssistant = [...thread.messages].reverse().find(m => m.role === 'assistant');
+          if (lastAssistant) {
+            const t = lastAssistant.content.replace(/```[\s\S]*?```/g, '[code]').replace(/\n/g, ' ').trim();
+            activityText = t.length > 90 ? t.slice(0, 90) + '…' : t;
+          } else {
+            activityText = 'Completed';
+          }
+        }
+        body.createDiv({ cls: 'ct-agents-row-activity', text: activityText });
+
+        const meta = row.createDiv('ct-agents-row-meta');
+        meta.createDiv({ cls: 'ct-agents-row-time', text: this.relativeTime(thread.updatedAt) });
+
+        row.addEventListener('click', () => {
+          this.closeSwitcherPanel();
+          this.setActiveThread(thread.id);
+        });
       }
+    };
 
-      const meta = row.createDiv('ct-agents-row-meta');
-      meta.createDiv({ cls: 'ct-agents-row-time', text: this.relativeTime(thread.updatedAt) });
-
-      row.addEventListener('click', () => {
-        this.closeSwitcherPanel();
-        this.setActiveThread(thread.id);
-      });
-    }
+    if (running.length > 0)   renderSwitcherGroup('Working',  running,    'running');
+    if (unreviewed.length > 0) renderSwitcherGroup('New',      unreviewed, 'idle');
+    if (reviewed.length > 0)  renderSwitcherGroup('Reviewed', reviewed,   'idle');
+    if (errors.length > 0)    renderSwitcherGroup('Failed',   errors,     'error');
+    if (empty.length > 0)     renderSwitcherGroup('Ready',    empty,      'empty');
 
     // Footer: new chat
     const footer = panel.createDiv('ct-switcher-footer');
