@@ -618,6 +618,16 @@ export class ThreadsView extends ItemView {
     this.closeSwitcherPanel();
     const previousId = this.activeThreadId;
 
+    // Mark the thread as reviewed when the user explicitly opens it.
+    // This covers all entry paths: switcher dropdown clicks, focusThread()
+    // calls (including programmatic callers like obsidian-voice), keyboard
+    // navigation, and openThreadInChatView().
+    const threadToReview = this.manager.getThread(id);
+    if (threadToReview && !threadToReview.reviewed) {
+      threadToReview.reviewed = true;
+      this.plugin.saveSettings();
+    }
+
     // Persist the draft for the thread we're leaving before switching
     this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
