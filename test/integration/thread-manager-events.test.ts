@@ -68,7 +68,7 @@ beforeEach(() => {
 });
 
 describe('send message → event flow', () => {
-  it('emits streaming_start, token, message, done in order', async () => {
+  it('emits user_message_added, streaming_start, token, message, done in order', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', '/cwd');
     const events: ThreadEvent[] = [];
@@ -78,7 +78,7 @@ describe('send message → event flow', () => {
     await driveResponse('Hi there');
     await sendPromise;
 
-    expect(events.map(e => e.type)).toEqual(['streaming_start', 'token', 'message', 'done']);
+    expect(events.map(e => e.type)).toEqual(['user_message_added', 'streaming_start', 'token', 'message', 'done']);
   });
 
   it('appends user and assistant messages to the thread', async () => {

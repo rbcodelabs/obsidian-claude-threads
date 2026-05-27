@@ -1333,6 +1333,30 @@ export class ThreadsView extends ItemView {
 
   private handleEvent(event: ThreadEvent): void {
     switch (event.type) {
+      case 'user_message_added': {
+        // Only create the bubble when the message came from an external caller
+        // (e.g. the voice plugin). When the message originates from the input box,
+        // handleSendMessage() already inserted the bubble synchronously before
+        // calling sendMessage(), so pendingUserEl is already set — skip it here
+        // to avoid a duplicate.
+        if (!this.pendingUserEl) {
+          const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+          this.pendingUserEl = userEl;
+          const content = userEl.createDiv('ct-message-content');
+          content.createEl('p', { text: event.message.content });
+          if (event.message.images && event.message.images.length > 0) {
+            const imgRow = content.createDiv('ct-message-images');
+            for (const img of event.message.images) {
+              const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
+              thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+              thumb.title = img.name;
+            }
+          }
+          this.scrollToBottom();
+        }
+        break;
+      }
+
       case 'streaming_start': {
         this.streamingContent = '';
         if (!this.streamingEl) {

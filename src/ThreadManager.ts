@@ -30,7 +30,8 @@ export type ThreadEvent =
   | { type: 'thread_renamed'; threadId: string; title: string }
   | { type: 'permission_request'; toolName: string; detail: string }
   | { type: 'permission_resolved' }
-  | { type: 'active_thread_changed' };
+  | { type: 'active_thread_changed' }
+  | { type: 'user_message_added'; message: ChatMessage };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -309,6 +310,7 @@ export class ThreadManager {
     };
     thread.messages.push(userMsg);
     thread.updatedAt = Date.now();
+    this.emit(threadId, { type: 'user_message_added', message: userMsg });
 
     const session = new ClaudeSession(this.settings.claudeBinaryPath);
     this.sessions.set(threadId, session);
