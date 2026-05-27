@@ -144,6 +144,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.pendingWakeups.set(threadId, ids);
             debugLog(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
+          onForkRequested: async (focusArea: string) => {
+            const sourceThread = this.manager.getThread(threadId);
+            if (!sourceThread || sourceThread.messages.filter(m => m.role !== 'compact').length === 0) {
+              throw new Error('Thread has no messages to fork from.');
+            }
+            const forkPrompt = await this.inProcessSummarizer.generateForkPrompt(
+              sourceThread.messages,
+              focusArea,
+              this.settings.claudeBinaryPath,
+              this.settings.inprocessModel,
+              this.settings.extraEnv,
+            );
+            const forkedThread = this.manager.createThread(
+              `Fork: ${sourceThread.title.slice(0, 40)}`,
+              sourceThread.cwd,
+              sourceThread.projectId,
+            );
+            await this.saveSettings();
+            // Fire-and-forget: the tool returns as soon as the thread is created and
+            // the first message is queued — no need to wait for Claude's response.
+            void this.manager.sendMessage(forkedThread.id, forkPrompt);
+            new Notice(`Fork created: "${forkedThread.title}"`);
+            return { threadTitle: forkedThread.title };
+          },
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,

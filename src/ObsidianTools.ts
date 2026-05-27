@@ -56,6 +56,12 @@ export interface ObsidianMcpServerOptions {
   /** Called when the agent schedules a wakeup. delayMs is the delay in milliseconds. */
   onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => void;
   /**
+   * Called when the agent requests a fork of the current conversation.
+   * focusArea is an optional description of what the new thread should focus on.
+   * Resolves with the new thread title on success, or throws on failure.
+   */
+  onForkRequested?: (focusArea: string) => Promise<{ threadTitle: string }>;
+  /**
    * Initial effective cwd for this session. Pre-seeds the in-session cwd tracker so
    * obsidian_enter_worktree knows which repo to operate on from the first turn.
    */
@@ -700,6 +706,53 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  const boundForkConversation = tool(
+    'fork_conversation',
+    [
+      'Forks the current conversation into a new, self-contained thread.',
+      'A separate Claude call distills the conversation history into a focused starting prompt for the new thread.',
+      'The new thread inherits the same working directory and project as the current one.',
+      'Use this when the conversation has grown long, when you want to explore a different angle without losing the current thread,',
+      'or when the user asks to start fresh with focused context.',
+      'The current thread continues unaffected — the fork is a new independent thread.',
+    ].join(' '),
+    {
+      focus_area: z
+        .string()
+        .optional()
+        .describe(
+          'What the new thread should focus on. Examples: "the auth bug", "refactoring the API layer", "next deployment steps". Leave empty to continue and extend the current work.',
+        ),
+    },
+    async (args, _extra) => {
+      if (!options.onForkRequested) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'fork_conversation is not available in this context.' }) }],
+          isError: true,
+        };
+      }
+      try {
+        const { threadTitle } = await options.onForkRequested(args.focus_area ?? '');
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              threadTitle,
+              message: `Fork created: "${threadTitle}". The user can switch to it from the notification that appeared in Obsidian.`,
+            }, null, 2),
+          }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -717,6 +770,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundExitWorktree,
       boundListCommands,
       boundExecuteCommand,
+      boundForkConversation,
     ],
     alwaysLoad: true,
   });
