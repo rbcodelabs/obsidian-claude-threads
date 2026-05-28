@@ -2,10 +2,11 @@ import { query, type Options, type Query, type CanUseTool, type SDKUserMessage, 
 import type { ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import { debugLog } from './logger';
-// Re-export from the mobile-safe utility module. Desktop callers that already
-// import formatToolName/getToolIcon from ClaudeSession continue to work, while
-// mobile code can import directly from toolNameUtils without touching the SDK.
-export { formatToolName, getToolIcon } from './toolNameUtils';
+// Import from the mobile-safe utility module, then re-export so that desktop
+// callers that already import formatToolName/getToolIcon from ClaudeSession
+// continue to work without changes.
+import { formatToolName, getToolIcon } from './toolNameUtils';
+export { formatToolName, getToolIcon };
 
 export interface SessionCallbacks {
   onToken: (text: string) => void;
