@@ -81,7 +81,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
 
     if (Platform.isMobile) {
-      await this.onloadMobile();
+      try {
+        await this.onloadMobile();
+      } catch (err) {
+        console.error('[ClaudeThreads] Mobile initialization failed:', err);
+        new Notice('Claude Threads failed to load on mobile. Check the developer console for details.');
+      }
     } else {
       await this.onloadDesktop();
     }

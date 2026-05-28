@@ -14,7 +14,7 @@ import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
-import { formatToolName } from './ClaudeSession';
+import { formatToolName } from './toolNameUtils';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
