@@ -27,6 +27,7 @@ export interface AskQuestion {
 export interface ToolCallRecord {
   name: string;
   summary: string;
+  timestamp?: number;
 }
 
 export interface ChatMessage {

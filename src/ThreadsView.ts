@@ -735,6 +735,21 @@ export class ThreadsView extends ItemView {
     return `${days}d ago`;
   }
 
+  /** Formats a UNIX-ms timestamp as a short wall-clock time, e.g. "3:45 PM".
+   *  If the timestamp is from a different calendar day, prefixes the date: "May 27, 3:45 PM". */
+  private formatShortTime(timestamp: number): string {
+    const d = new Date(timestamp);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (sameDay) return time;
+    const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${date}, ${time}`;
+  }
+
   // ---------------------------------------------------------------------------
   // Context footer (status line)
   // ---------------------------------------------------------------------------
@@ -1256,8 +1271,10 @@ export class ThreadsView extends ItemView {
       content.createEl('p', { text: msg.content });
     }
 
+    const footer = el.createDiv('ct-message-footer');
+    footer.createSpan({ cls: 'ct-message-ts', text: this.formatShortTime(msg.timestamp) });
     if (msg.cost && msg.cost > 0) {
-      el.createEl('span', { cls: 'ct-cost', text: `$${msg.cost.toFixed(4)}` });
+      footer.createSpan({ cls: 'ct-cost', text: `$${msg.cost.toFixed(4)}` });
     }
   }
 
@@ -1269,6 +1286,9 @@ export class ThreadsView extends ItemView {
       setIcon(iconEl, getToolIcon(tool.name));
       pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
       if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+      if (tool.timestamp) {
+        pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
+      }
     }
   }
 
