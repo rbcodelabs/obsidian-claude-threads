@@ -18,6 +18,8 @@ export class AgentDashboard extends ItemView {
   private headerCountEl!: HTMLElement;
   private searchBarEl!: HTMLElement;
   private searchInputEl!: HTMLInputElement;
+  private searchClearBtn!: HTMLButtonElement;
+  private searchBtn!: HTMLButtonElement;
   private searchQuery = '';
   private dispatchInput!: HTMLTextAreaElement;
   private dispatchRow!: HTMLElement;
@@ -86,20 +88,34 @@ export class AgentDashboard extends ItemView {
 
     const headerRight = header.createDiv('ct-agents-header-right');
     this.headerCountEl = headerRight.createDiv('ct-agents-count');
-    const searchBtn = headerRight.createEl('button', {
+    this.searchBtn = headerRight.createEl('button', {
       cls: 'ct-agents-search-btn clickable-icon',
       attr: { title: 'Search threads', 'aria-label': 'Search threads' },
     });
-    setIcon(searchBtn, 'search');
-    searchBtn.addEventListener('click', () => this.toggleSearch());
+    setIcon(this.searchBtn, 'search');
+    this.searchBtn.addEventListener('click', () => this.toggleSearch());
 
     this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
-    this.searchInputEl = this.searchBarEl.createEl('input', {
+    const searchFieldEl = this.searchBarEl.createDiv('ct-agents-search-field');
+    this.searchInputEl = searchFieldEl.createEl('input', {
       cls: 'ct-agents-search-input',
       attr: { type: 'text', placeholder: 'Search threads…' },
     });
+    this.searchClearBtn = searchFieldEl.createEl('button', {
+      cls: 'ct-agents-search-clear ct-hidden',
+      attr: { type: 'button', 'aria-label': 'Clear search' },
+    });
+    setIcon(this.searchClearBtn, 'x');
+    this.searchClearBtn.addEventListener('click', () => {
+      this.searchInputEl.value = '';
+      this.searchQuery = '';
+      this.searchClearBtn.addClass('ct-hidden');
+      this.searchInputEl.focus();
+      this.render();
+    });
     this.searchInputEl.addEventListener('input', () => {
       this.searchQuery = this.searchInputEl.value.toLowerCase().trim();
+      this.searchClearBtn.toggleClass('ct-hidden', this.searchInputEl.value === '');
       this.render();
     });
     this.searchInputEl.addEventListener('keydown', (e) => {
@@ -682,6 +698,9 @@ export class AgentDashboard extends ItemView {
   private toggleSearch(): void {
     if (this.searchBarEl.hasClass('ct-hidden')) {
       this.searchBarEl.removeClass('ct-hidden');
+      setIcon(this.searchBtn, 'x');
+      this.searchBtn.setAttribute('title', 'Close search');
+      this.searchBtn.setAttribute('aria-label', 'Close search');
       this.searchInputEl.focus();
     } else {
       this.closeSearch();
@@ -692,6 +711,10 @@ export class AgentDashboard extends ItemView {
     this.searchBarEl.addClass('ct-hidden');
     this.searchQuery = '';
     this.searchInputEl.value = '';
+    this.searchClearBtn.addClass('ct-hidden');
+    setIcon(this.searchBtn, 'search');
+    this.searchBtn.setAttribute('title', 'Search threads');
+    this.searchBtn.setAttribute('aria-label', 'Search threads');
     this.render();
   }
 

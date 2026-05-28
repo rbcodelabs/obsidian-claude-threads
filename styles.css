@@ -1516,8 +1516,17 @@
 }
 
 .ct-agents-search-bar {
-  padding: 0 12px 8px;
+  padding: 6px 10px;
   flex-shrink: 0;
+  border-top: 1px solid var(--background-modifier-border);
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-agents-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .ct-agents-search-input {
@@ -1526,7 +1535,7 @@
   background: var(--background-modifier-form-field);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
-  padding: 4px 8px;
+  padding: 5px 28px 5px 8px;
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   outline: none;
@@ -1534,6 +1543,33 @@
 
 .ct-agents-search-input:focus {
   border-color: var(--interactive-accent);
+}
+
+.ct-agents-search-clear {
+  position: absolute;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ct-agents-search-clear:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ct-agents-search-clear svg {
+  width: 12px;
+  height: 12px;
 }
 
 .ct-agents-list {
