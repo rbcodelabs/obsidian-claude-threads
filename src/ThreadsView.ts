@@ -1271,10 +1271,18 @@ export class ThreadsView extends ItemView {
       content.createEl('p', { text: msg.content });
     }
 
-    const footer = el.createDiv('ct-message-footer');
-    footer.createSpan({ cls: 'ct-message-ts', text: this.formatShortTime(msg.timestamp) });
-    if (msg.cost && msg.cost > 0) {
-      footer.createSpan({ cls: 'ct-cost', text: `$${msg.cost.toFixed(4)}` });
+    // Show the footer row only for:
+    //  - user messages (always — marks when the user sent)
+    //  - assistant messages that carry a cost (the terminal message of a turn)
+    // Intermediate assistant messages in a multi-step response have no cost
+    // and get no footer, keeping the view clean.
+    const hasCost = !!msg.cost && msg.cost > 0;
+    if (msg.role === 'user' || hasCost) {
+      const footer = el.createDiv('ct-message-footer');
+      footer.createSpan({ cls: 'ct-message-ts', text: this.formatShortTime(msg.timestamp) });
+      if (hasCost) {
+        footer.createSpan({ cls: 'ct-cost', text: `$${msg.cost!.toFixed(4)}` });
+      }
     }
   }
 
