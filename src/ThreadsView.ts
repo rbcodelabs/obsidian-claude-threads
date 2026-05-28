@@ -57,8 +57,9 @@ export class ThreadsView extends ItemView {
   // The user-message bubble we just inserted, so we can remove it on interrupt
   private pendingUserEl: HTMLElement | null = null;
 
-  // The raw typed text from the last send, so we can restore it on interrupt
-  private lastSentText = '';
+  // The raw typed text from the last send per thread, so we can restore it on interrupt.
+  // Keyed by thread ID so switching between threads doesn't cross-contaminate drafts.
+  private lastSentTexts: Map<string, string> = new Map();
 
   // Inline permission cards waiting for user response (threadId -> card state)
   private pendingPermissions: Map<string, {
@@ -1476,6 +1477,9 @@ export class ThreadsView extends ItemView {
           this.clearStreamingState();
         }
         this.taskPills.clear();
+        // Message completed normally — discard the saved sent text so it can't
+        // bleed into another thread if the user later stops a different thread.
+        if (this.activeThreadId) this.lastSentTexts.delete(this.activeThreadId);
         this.setRunningState(false);
         break;
       }
@@ -1494,9 +1498,10 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         // Restore the sent message so the user can edit and re-send
-        if (this.lastSentText) {
-          this.inputEl.value = this.lastSentText;
-          this.lastSentText = '';
+        const lastSent = this.activeThreadId ? this.lastSentTexts.get(this.activeThreadId) : undefined;
+        if (lastSent) {
+          this.inputEl.value = lastSent;
+          this.lastSentTexts.delete(this.activeThreadId!);
         }
         this.setRunningState(false);
         break;
@@ -1721,7 +1726,7 @@ export class ThreadsView extends ItemView {
     if (!typed && !attachment && images.length === 0) return;
     if (!this.activeThreadId) return;
 
-    this.lastSentText = typed;
+    this.lastSentTexts.set(this.activeThreadId, typed);
     this.inputEl.value = '';
     this.pendingAttachment = null;
     this.pendingImages = [];
