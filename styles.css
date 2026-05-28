@@ -995,7 +995,9 @@
   justify-content: space-between;
   gap: 8px;
   margin-top: 3px;
-  padding: 0 2px;
+  /* Match .ct-message-assistant .ct-message-content padding so the
+     timestamp lines up with the text above it. */
+  padding: 0 10px;
 }
 
 .ct-message-ts {
@@ -1003,9 +1005,11 @@
   color: var(--text-faint);
 }
 
-/* User bubble footer has only the timestamp; parent flex aligns it to the right. */
+/* User bubble: right-align and remove the 10px indentation —
+   the bubble's own layout handles horizontal position. */
 .ct-message-user .ct-message-footer {
   justify-content: flex-end;
+  padding: 0;
 }
 
 .ct-cost {
