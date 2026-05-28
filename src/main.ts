@@ -223,11 +223,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
     // threads may be missing from memory even though their vault notes still exist.
     // Scan the vault folder and reload any threads not already in memory.
+    //
+    // Important guards:
+    //   - Skip threads whose vault note is already marked `archived` — those were
+    //     deliberately closed by the user and must not be resurrected on reload.
+    //   - Reset `active` status to `waiting` — the SDK session is gone after any
+    //     reload so there's nothing to resume; showing them as running would be wrong.
     if (this.settings.saveThreadsToVault) {
       try {
         const vaultThreads = await this.persistence.loadAllThreads();
         const knownIds = new Set(this.manager.getThreads().map((t) => t.id));
-        const recovered = vaultThreads.filter((t) => !knownIds.has(t.id));
+        const recovered = vaultThreads.filter(
+          (t) => !knownIds.has(t.id) && t.status !== 'archived',
+        );
+        for (const t of recovered) {
+          if (t.status === 'active') t.status = 'waiting';
+        }
         if (recovered.length > 0) {
           this.manager.loadThreads(recovered);
           console.log(`[ClaudeThreads] Recovered ${recovered.length} thread(s) from vault notes`);
