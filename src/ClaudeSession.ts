@@ -164,7 +164,7 @@ export class ClaudeSession {
                   block.name,
                   block.input as Record<string, unknown>,
                 );
-                const record: ToolCallRecord = { name: block.name, summary };
+                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now() };
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
                 callbacks.onToolUse(record);

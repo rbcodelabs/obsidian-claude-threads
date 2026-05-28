@@ -924,6 +924,15 @@
   min-width: 0;
 }
 
+.ct-tool-pill-ts {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.75em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  padding-left: 8px;
+}
+
 /* Active/running tool — pulsing left border + warm tint */
 .ct-tool-active {
   border-left-color: var(--color-yellow);
@@ -980,11 +989,28 @@
 }
 
 /* Cost label */
+.ct-message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 3px;
+  padding: 0 2px;
+}
+
+.ct-message-ts {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/* User bubble footer has only the timestamp; parent flex aligns it to the right. */
+.ct-message-user .ct-message-footer {
+  justify-content: flex-end;
+}
+
 .ct-cost {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
-  align-self: flex-end;
-  margin-top: -2px;
 }
 
 /* Compaction divider — timeline marker style */
