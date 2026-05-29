@@ -1491,6 +1491,7 @@ export class ThreadsView extends ItemView {
 
       case 'dequeued': {
         const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
+        this.pendingUserEl = userEl; // prevent the subsequent 'send' event from creating a duplicate bubble
         userEl.createDiv('ct-message-content').createEl('p', { text: event.text });
         this.scrollToBottom();
         break;
