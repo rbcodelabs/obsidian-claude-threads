@@ -1364,6 +1364,7 @@
 
 .ct-input:focus {
   outline: none;
+  box-shadow: none;
   /* Focus ring lives on .ct-floating-panel via :focus-within */
 }
 
