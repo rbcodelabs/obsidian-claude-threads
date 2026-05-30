@@ -26,7 +26,7 @@ export class AgentDashboard extends ItemView {
   private searchClearBtn!: HTMLButtonElement;
   private searchBtn!: HTMLButtonElement;
   private searchQuery = '';
-  private kanbanMode = true;
+  private kanbanMode = false;
   private dispatchInput!: HTMLTextAreaElement;
   private dispatchRow!: HTMLElement;
   private pasteChipsEl!: HTMLElement;
@@ -83,6 +83,8 @@ export class AgentDashboard extends ItemView {
 
   async onOpen(): Promise<void> {
     this.activeThreadId = this.plugin.getActiveThreadId();
+    // Restore the last-used view mode (defaults to list view / false)
+    this.kanbanMode = this.plugin.settings.agentDashboardKanbanMode ?? false;
     this.buildUI();
     this.render();
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
