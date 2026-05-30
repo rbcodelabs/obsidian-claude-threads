@@ -5,6 +5,7 @@ import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapte
 // The actual classes are loaded via lazy require() inside onloadDesktop() instead.
 import type { ThreadsView } from './ThreadsView';
 import type { AgentDashboard } from './AgentDashboard';
+import type { KanbanView } from './KanbanView';
 import type { ThreadManager } from './ThreadManager';
 import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
@@ -23,6 +24,7 @@ import { setDebugLogging, debugLog } from './logger';
 // triggering a static import of the desktop-only view modules.
 const VIEW_TYPE = 'claude-threads:chat';
 const AGENT_VIEW_TYPE = 'claude-threads:agents';
+const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
 // Symbol.for('nodejs.event_target') marker. Node's isEventTarget() checks
@@ -104,6 +106,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { ThreadsView } = require('./ThreadsView') as typeof import('./ThreadsView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { AgentDashboard } = require('./AgentDashboard') as typeof import('./AgentDashboard');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { KanbanView } = require('./KanbanView') as typeof import('./KanbanView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { ThreadManager } = require('./ThreadManager') as typeof import('./ThreadManager');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -269,6 +273,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Register the views
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
+    this.registerView(KANBAN_VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
 
     // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
@@ -289,6 +294,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
       id: 'open-agent-dashboard',
       name: 'Open Agent Dashboard',
       callback: () => this.activateAgentView(),
+    });
+
+    this.addCommand({
+      id: 'open-kanban-board',
+      name: 'Open Kanban Board',
+      callback: () => this.activateKanbanView(),
     });
 
     this.addCommand({
@@ -538,6 +549,17 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (!leaf) {
       leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
       await leaf.setViewState({ type: AGENT_VIEW_TYPE, active: true });
+    }
+    workspace.revealLeaf(leaf);
+  }
+
+  async activateKanbanView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(KANBAN_VIEW_TYPE)[0];
+    if (!leaf) {
+      // Open kanban as a new tab in the main area (it's a wide board)
+      leaf = workspace.getLeaf('tab') as WorkspaceLeaf;
+      await leaf.setViewState({ type: KANBAN_VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
   }

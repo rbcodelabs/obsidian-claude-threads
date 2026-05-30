@@ -4,6 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, ImageAttachment, ImageMediaType } from './types';
 import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
+import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -94,6 +95,15 @@ export class AgentDashboard extends ItemView {
     });
     setIcon(this.searchBtn, 'search');
     this.searchBtn.addEventListener('click', () => this.toggleSearch());
+
+    const kanbanBtn = headerRight.createEl('button', {
+      cls: 'ct-kanban-toggle clickable-icon',
+      attr: { title: 'Open Kanban Board', 'aria-label': 'Open Kanban Board' },
+    });
+    setIcon(kanbanBtn, 'layout-grid');
+    kanbanBtn.addEventListener('click', () => {
+      this.plugin.activateKanbanView();
+    });
 
     this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
     const searchFieldEl = this.searchBarEl.createDiv('ct-agents-search-field');
@@ -776,38 +786,3 @@ export class AgentDashboard extends ItemView {
   }
 }
 
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
-}
-
-function shortenPath(p: string, vaultRoot?: string): string {
-  if (vaultRoot && p.startsWith(vaultRoot)) {
-    const rel = p.slice(vaultRoot.length).replace(/^\//, '');
-    return rel || '/';
-  }
-  const home = process.env.HOME ?? '';
-  if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
-  const parts = p.split('/');
-  return parts.length > 4 ? '…/' + parts.slice(-2).join('/') : p;
-}
-
-/**
- * Returns true when the error message looks like an AWS SSO token expiry that
- * requires running `aws sso login` to refresh credentials.
- */
-function isAwsSsoError(err?: string): boolean {
-  if (!err) return false;
-  return /token.*expir|expir.*token|aws sso login|sso.*session.*expir|Error loading SSO/i.test(err);
-}
-
-/**
- * Extracts the AWS_PROFILE value from a KEY=VALUE extra-env block, if present.
- */
-function extractAwsProfile(extraEnv: string): string | null {
-  const match = extraEnv.match(/(?:^|\n)AWS_PROFILE=([^\s]+)/);
-  return match ? match[1] : null;
-}
