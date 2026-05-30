@@ -1191,11 +1191,18 @@
   flex-direction: column;
 }
 
-.ct-panel-context:not(:has(:not(.ct-hidden))) {
+/* Hide status bar when it has no text so it doesn't trip the :has checks below */
+.ct-status-bar:empty {
   display: none;
 }
 
-.ct-panel-context:has(:not(.ct-hidden)) {
+/* Hide the whole context zone when every child is either .ct-hidden or empty */
+.ct-panel-context:not(:has(:not(.ct-hidden):not(:empty))) {
+  display: none;
+}
+
+/* Only draw the divider when something is actually visible */
+.ct-panel-context:has(:not(.ct-hidden):not(:empty)) {
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
