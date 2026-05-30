@@ -4,6 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, ImageAttachment, ImageMediaType } from './types';
 import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
+import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -21,7 +22,6 @@ export class AgentDashboard extends ItemView {
   private searchClearBtn!: HTMLButtonElement;
   private searchBtn!: HTMLButtonElement;
   private searchQuery = '';
-  private kanbanMode = false;
   private dispatchInput!: HTMLTextAreaElement;
   private dispatchRow!: HTMLElement;
   private pasteChipsEl!: HTMLElement;
@@ -62,8 +62,6 @@ export class AgentDashboard extends ItemView {
 
   async onOpen(): Promise<void> {
     this.activeThreadId = this.plugin.getActiveThreadId();
-    // Restore the last-used view mode (defaults to list view / false)
-    this.kanbanMode = this.plugin.settings.agentDashboardKanbanMode ?? false;
     this.buildUI();
     this.render();
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
@@ -98,17 +96,13 @@ export class AgentDashboard extends ItemView {
     setIcon(this.searchBtn, 'search');
     this.searchBtn.addEventListener('click', () => this.toggleSearch());
 
-    const kanbanToggleBtn = headerRight.createEl('button', {
+    const kanbanBtn = headerRight.createEl('button', {
       cls: 'ct-kanban-toggle clickable-icon',
-      attr: { title: 'Toggle view', 'aria-label': 'Toggle kanban/list view' },
+      attr: { title: 'Open Kanban Board', 'aria-label': 'Open Kanban Board' },
     });
-    this.updateKanbanToggleIcon(kanbanToggleBtn);
-    kanbanToggleBtn.addEventListener('click', () => {
-      this.kanbanMode = !this.kanbanMode;
-      this.plugin.settings.agentDashboardKanbanMode = this.kanbanMode;
-      this.plugin.saveSettings();
-      this.updateKanbanToggleIcon(kanbanToggleBtn);
-      this.render();
+    setIcon(kanbanBtn, 'layout-grid');
+    kanbanBtn.addEventListener('click', () => {
+      this.plugin.activateKanbanView();
     });
 
     this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
@@ -337,11 +331,6 @@ export class AgentDashboard extends ItemView {
   }
 
   render(): void {
-    if (this.kanbanMode) {
-      this.renderKanban();
-      return;
-    }
-
     this.listEl.empty();
     this.activityEls.clear();
     this.timeEls.clear();
@@ -511,262 +500,6 @@ export class AgentDashboard extends ItemView {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
       this.plugin.openThreadInChatView(thread.id);
     });
-  }
-
-  private updateKanbanToggleIcon(btn: HTMLElement): void {
-    // Show the icon for what the view would switch TO
-    setIcon(btn, this.kanbanMode ? 'list' : 'layout-grid');
-    btn.setAttribute('title', this.kanbanMode ? 'Switch to list view' : 'Switch to kanban view');
-  }
-
-  private renderKanban(): void {
-    this.listEl.empty();
-    this.activityEls.clear();
-    this.timeEls.clear();
-    this.rowEls.clear();
-
-    const q = this.searchQuery;
-    const allThreads = this.manager.getThreads();
-    const threads = q
-      ? allThreads.filter(t =>
-          t.title.toLowerCase().includes(q) ||
-          (t.summary ?? '').toLowerCase().includes(q) ||
-          (t.recap ?? '').toLowerCase().includes(q)
-        )
-      : allThreads;
-
-    const running: Thread[] = [];
-    const permReqs: Thread[] = [];
-    const unreviewed: Thread[] = [];
-    const reviewed: Thread[] = [];
-    const errors: Thread[] = [];
-    const empty: Thread[] = [];
-
-    for (const t of threads) {
-      if (this.manager.isRunning(t.id)) {
-        if (this.manager.hasPendingPermission(t.id)) permReqs.push(t);
-        else running.push(t);
-      } else if (t.lastError) {
-        errors.push(t);
-      } else if (t.messages.length > 0) {
-        if (t.reviewed) reviewed.push(t);
-        else unreviewed.push(t);
-      } else {
-        empty.push(t);
-      }
-    }
-
-    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
-    running.sort(byRecency);
-    permReqs.sort(byRecency);
-    unreviewed.sort(byRecency);
-    reviewed.sort(byRecency);
-    errors.sort(byRecency);
-    empty.sort(byRecency);
-
-    if (threads.length === 0) {
-      const emptyEl = this.listEl.createDiv('ct-agents-empty');
-      if (q) {
-        emptyEl.createDiv({ text: 'No threads match your search.' });
-      } else {
-        emptyEl.createDiv({ text: 'No threads yet.' });
-        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
-      }
-      this.updateHeader(0, 0);
-      return;
-    }
-
-    const board = this.listEl.createDiv('ct-kanban-board');
-
-    type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?: string; badge?: number };
-    const cols: ColDef[] = [
-      { label: 'Working', threads: running, state: 'running' },
-      { label: 'Awaiting', threads: permReqs, state: 'running', accentClass: 'ct-kanban-col-permission' },
-      { label: 'New', threads: unreviewed, state: 'idle', badge: unreviewed.length > 0 ? unreviewed.length : undefined },
-      { label: 'Done', threads: reviewed, state: 'idle' },
-      { label: 'Failed', threads: errors, state: 'error' },
-      { label: 'Ready', threads: empty, state: 'empty' },
-    ];
-
-    for (const col of cols) {
-      const alwaysShow = col.label === 'Working' || col.label === 'New';
-      if (!alwaysShow && col.threads.length === 0) continue;
-      this.renderKanbanColumn(board, col.label, col.threads, col.state, col.accentClass, col.badge);
-    }
-
-    this.updateHeader(threads.length, running.length + permReqs.length);
-  }
-
-  private renderKanbanColumn(
-    board: HTMLElement,
-    label: string,
-    threads: Thread[],
-    state: RowState,
-    accentClass?: string,
-    badge?: number,
-  ): void {
-    const col = board.createDiv('ct-kanban-col' + (accentClass ? ' ' + accentClass : ''));
-
-    const header = col.createDiv('ct-kanban-col-header');
-    const headerLeft = header.createDiv('ct-kanban-col-header-left');
-    headerLeft.createSpan({ cls: 'ct-kanban-col-label', text: label });
-    if (badge !== undefined) {
-      headerLeft.createSpan({ cls: 'ct-agents-group-badge ct-kanban-badge', text: String(badge) });
-    }
-    header.createSpan({ cls: 'ct-kanban-col-count', text: String(threads.length) });
-
-    const body = col.createDiv('ct-kanban-col-body');
-    if (threads.length === 0) {
-      body.createDiv({ cls: 'ct-kanban-col-empty', text: 'Nothing here' });
-    }
-    for (const thread of threads) {
-      this.renderKanbanCard(thread, state, body);
-    }
-  }
-
-  private renderKanbanCard(thread: Thread, state: RowState, parent: HTMLElement): void {
-    const isActive = thread.id === this.activeThreadId;
-    const isUnreviewed = state === 'idle' && !thread.reviewed;
-    const hasPending = state === 'running' && this.manager.hasPendingPermission(thread.id);
-
-    const card = parent.createDiv({
-      cls: [
-        'ct-kanban-card',
-        `ct-kanban-card-${state}`,
-        isActive ? 'ct-agents-row-active' : '',
-        isUnreviewed ? 'ct-kanban-card-unreviewed' : '',
-        hasPending ? 'ct-kanban-card-permission' : '',
-      ].filter(Boolean).join(' '),
-    });
-    this.rowEls.set(thread.id, card);
-
-    // Header: icon + title
-    const cardHeader = card.createDiv('ct-kanban-card-header');
-    const iconEl = cardHeader.createDiv('');
-    if (hasPending) {
-      iconEl.className = 'ct-kanban-card-icon ct-kanban-icon-permission';
-      iconEl.setText('?');
-    } else {
-      this.applyKanbanStateIcon(iconEl, state);
-    }
-    cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
-
-    // Summary (idle threads only)
-    const summary = thread.summary || thread.recap;
-    if (summary && state === 'idle') {
-      card.createDiv({ cls: 'ct-kanban-card-summary', text: summary });
-    }
-
-    if (hasPending) {
-      const pendingInfo = this.manager.getPendingPermission(thread.id);
-      const permContent = card.createDiv('ct-kanban-card-permission-content');
-      const toolRow = permContent.createDiv('ct-kanban-card-perm-tool');
-      toolRow.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'permission' });
-      if (pendingInfo?.detail) {
-        toolRow.createSpan({ cls: 'ct-agents-permission-detail ct-kanban-perm-detail', text: pendingInfo.detail });
-      }
-      const activityEl = permContent.createDiv('ct-kanban-card-activity');
-      this.activityEls.set(thread.id, activityEl);
-
-      const btns = card.createDiv('ct-kanban-perm-actions');
-      const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
-      deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
-      const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
-      allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
-      const always = btns.createEl('button', { text: 'Always', cls: 'ct-permission-btn ct-permission-always' });
-      always.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (pendingInfo) {
-          this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
-          await this.plugin.saveSettings();
-        }
-        this.manager.resolvePermission(thread.id, true);
-      });
-    } else {
-      const activityEl = card.createDiv({ cls: 'ct-kanban-card-activity' });
-      this.activityEls.set(thread.id, activityEl);
-      activityEl.setText(this.getActivityText(thread, state));
-
-      // AWS SSO reauth button for expired tokens
-      if (state === 'error' && isAwsSsoError(thread.lastError)) {
-        const profile = extractAwsProfile(this.plugin.settings.extraEnv ?? '');
-        const reauthBtn = card.createEl('button', {
-          cls: 'ct-aws-reauth-btn',
-          text: '🔑 Re-authenticate AWS SSO',
-        });
-        reauthBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          reauthBtn.setText('Authenticating…');
-          reauthBtn.disabled = true;
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const { exec } = require('child_process') as typeof import('child_process');
-            const cmd = profile ? `aws sso login --profile ${profile}` : 'aws sso login';
-            await new Promise<void>((resolve, reject) => {
-              exec(cmd, (err, _stdout, stderr) => {
-                if (err) reject(new Error(stderr?.trim() || err.message));
-                else resolve();
-              });
-            });
-            new Notice('AWS SSO login successful — retry your request');
-            reauthBtn.setText('✓ Done — retry your request');
-          } catch (err) {
-            new Notice(`AWS SSO login failed: ${(err as Error).message}`);
-            reauthBtn.setText('🔑 Re-authenticate AWS SSO');
-            reauthBtn.disabled = false;
-          }
-        });
-      }
-    }
-
-    // Footer chips
-    const footer = card.createDiv('ct-kanban-card-footer');
-
-    const timeEl = footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-time', text: relativeTime(thread.updatedAt) });
-    this.timeEls.set(thread.id, timeEl);
-
-    if ((thread.editedFiles?.length ?? 0) > 0) {
-      const filesChip = footer.createDiv('ct-kanban-chip ct-kanban-chip-files');
-      const iconSpan = filesChip.createSpan();
-      setIcon(iconSpan, 'file-text');
-      filesChip.createSpan({ text: String(thread.editedFiles!.length) });
-    }
-
-    if (thread.prUrl) {
-      const prChip = footer.createEl('a', { cls: 'ct-kanban-chip ct-kanban-chip-pr', text: 'PR' });
-      prChip.href = '#';
-      prChip.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.open(thread.prUrl, '_blank');
-      });
-    }
-
-    if (thread.cwd) {
-      footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
-    }
-
-    if (thread.messages.length > 0) {
-      const msgChip = footer.createDiv('ct-kanban-chip ct-kanban-chip-msgs');
-      const iconSpan = msgChip.createSpan();
-      setIcon(iconSpan, 'message-circle');
-      msgChip.createSpan({ text: String(thread.messages.length) });
-    }
-
-    card.addEventListener('click', () => {
-      if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
-      this.plugin.openThreadInChatView(thread.id);
-    });
-  }
-
-  private applyKanbanStateIcon(el: HTMLElement, state: RowState): void {
-    el.className = `ct-kanban-card-icon ct-kanban-icon-${state}`;
-    switch (state) {
-      case 'running': el.setText('✽'); break;
-      case 'idle':    el.setText('✓'); break;
-      case 'error':   el.setText('✗'); break;
-      default:        el.setText('○'); break;
-    }
   }
 
   private applyStateIcon(el: HTMLElement, state: RowState): void {
@@ -1053,38 +786,3 @@ export class AgentDashboard extends ItemView {
   }
 }
 
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return 'just now';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
-}
-
-function shortenPath(p: string, vaultRoot?: string): string {
-  if (vaultRoot && p.startsWith(vaultRoot)) {
-    const rel = p.slice(vaultRoot.length).replace(/^\//, '');
-    return rel || '/';
-  }
-  const home = process.env.HOME ?? '';
-  if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
-  const parts = p.split('/');
-  return parts.length > 4 ? '…/' + parts.slice(-2).join('/') : p;
-}
-
-/**
- * Returns true when the error message looks like an AWS SSO token expiry that
- * requires running `aws sso login` to refresh credentials.
- */
-function isAwsSsoError(err?: string): boolean {
-  if (!err) return false;
-  return /token.*expir|expir.*token|aws sso login|sso.*session.*expir|Error loading SSO/i.test(err);
-}
-
-/**
- * Extracts the AWS_PROFILE value from a KEY=VALUE extra-env block, if present.
- */
-function extractAwsProfile(extraEnv: string): string | null {
-  const match = extraEnv.match(/(?:^|\n)AWS_PROFILE=([^\s]+)/);
-  return match ? match[1] : null;
-}

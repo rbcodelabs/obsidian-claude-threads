@@ -131,8 +131,6 @@ export interface PluginSettings {
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
-  /** When true the agent dashboard shows the kanban board; when false (default) it shows the list view. */
-  agentDashboardKanbanMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -154,7 +152,6 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   layoutDensity: 'comfortable',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   debugLogging: false,
-  agentDashboardKanbanMode: false,
   remoteAccess: {
     enabled: false,
     roomId: '',
