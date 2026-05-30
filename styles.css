@@ -1369,10 +1369,19 @@
   overflow-y: auto;
 }
 
+.ct-input:hover {
+  background: transparent;
+}
+
 .ct-input:focus {
   outline: none;
   box-shadow: none;
   /* Focus ring lives on .ct-floating-panel via :focus-within */
+}
+
+/* Lift the whole panel background on hover instead of just the textarea */
+.ct-floating-panel:hover:not(:focus-within) {
+  background: var(--background-modifier-hover);
 }
 
 .ct-input:disabled {
