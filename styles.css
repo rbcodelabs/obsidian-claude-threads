@@ -3136,7 +3136,9 @@
 }
 
 .ct-kanban-col {
-  flex: 0 0 230px;
+  flex: 1 1 230px;
+  min-width: 230px;
+  max-width: 380px;
   display: flex;
   flex-direction: column;
   background: var(--background-secondary);
