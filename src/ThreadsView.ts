@@ -89,6 +89,7 @@ export class ThreadsView extends ItemView {
 
   // Thread switcher inline panel
   private switcherPanelEl: HTMLElement | null = null;
+  private switcherOutsideHandler: ((e: MouseEvent) => void) | null = null;
 
   // Summary peek banner (shown on tab reactivation)
   private summaryBannerEl: HTMLElement | null = null;
@@ -108,7 +109,7 @@ export class ThreadsView extends ItemView {
   private skillDropdownIndex = 0;
 
   private fileDropdown: HTMLElement | null = null;
-  private fileDropdownItems: { path: string; basename: string }[] = [];
+  private fileDropdownItems: { path: string; basename: string; isThis?: boolean }[] = [];
   private fileDropdownIndex = 0;
 
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
@@ -388,7 +389,12 @@ export class ThreadsView extends ItemView {
         }
         if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault();
-          this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename);
+          const selectedItem = this.fileDropdownItems[this.fileDropdownIndex];
+          if (selectedItem.isThis) {
+            this.insertThisMention();
+          } else {
+            this.insertFileMention(selectedItem.basename);
+          }
           return;
         }
         if (e.key === 'Escape') {
@@ -1788,6 +1794,16 @@ export class ThreadsView extends ItemView {
         : `\`\`\`\n${attachment}\n\`\`\``;
     }
 
+    // Resolve @this — substitute the currently open file before the mention resolver runs
+    if (/@this\b/.test(text)) {
+      const activeFile = this.app.workspace.getActiveFile();
+      if (activeFile) {
+        text = text.replace(/@this\b/g, `@[[${activeFile.basename}]]`);
+      } else {
+        new Notice('@this: no file is currently open in the editor');
+      }
+    }
+
     // Resolve @[[basename]] file mentions — append each file's content as context
     const mentionRegex = /@\[\[([^\]]+)\]\]/g;
     const mentions = [...text.matchAll(mentionRegex)].map(m => m[1]);
@@ -1964,7 +1980,8 @@ export class ThreadsView extends ItemView {
         const meta = row.createDiv('ct-agents-row-meta');
         meta.createDiv({ cls: 'ct-agents-row-time', text: this.relativeTime(thread.updatedAt) });
 
-        row.addEventListener('click', () => {
+        row.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
           this.closeSwitcherPanel();
           this.setActiveThread(thread.id);
         });
@@ -1990,9 +2007,9 @@ export class ThreadsView extends ItemView {
       const outsideHandler = (e: MouseEvent) => {
         if (!panel.contains(e.target as Node) && !this.titleEl.contains(e.target as Node)) {
           this.closeSwitcherPanel();
-          document.removeEventListener('mousedown', outsideHandler, true);
         }
       };
+      this.switcherOutsideHandler = outsideHandler;
       document.addEventListener('mousedown', outsideHandler, true);
     }, 0);
   }
@@ -2000,6 +2017,10 @@ export class ThreadsView extends ItemView {
   private closeSwitcherPanel(): void {
     this.switcherPanelEl?.remove();
     this.switcherPanelEl = null;
+    if (this.switcherOutsideHandler) {
+      document.removeEventListener('mousedown', this.switcherOutsideHandler, true);
+      this.switcherOutsideHandler = null;
+    }
   }
 
   private relativeTime(ts: number): string {
@@ -2171,11 +2192,17 @@ export class ThreadsView extends ItemView {
 
   private showFileDropdown(query: string): void {
     const q = query.toLowerCase();
+    // Show @this at the top whenever the query is a prefix of "this" (includes empty query)
+    const showThis = 'this'.startsWith(q);
     const files = this.app.vault.getMarkdownFiles()
       .filter(f => q === '' || f.basename.toLowerCase().includes(q))
-      .slice(0, 20);
-    if (files.length === 0) { this.hideFileDropdown(); return; }
-    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
+      .slice(0, showThis ? 19 : 20);
+    const allItems: { path: string; basename: string; isThis?: boolean }[] = [
+      ...(showThis ? [{ path: '', basename: 'this', isThis: true as const }] : []),
+      ...files.map(f => ({ path: f.path, basename: f.basename })),
+    ];
+    if (allItems.length === 0) { this.hideFileDropdown(); return; }
+    this.fileDropdownItems = allItems;
     if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
     if (!this.fileDropdown) {
       this.fileDropdown = this.inputRowEl.createDiv('ct-file-dropdown');
@@ -2192,13 +2219,19 @@ export class ThreadsView extends ItemView {
       });
       const nameRow = item.createDiv({ cls: 'ct-skill-name' });
       nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
-      nameRow.createSpan({ text: file.basename });
-      const pathParts = file.path.split('/');
-      if (pathParts.length > 1) {
-        const folder = pathParts.slice(0, -1).join('/');
-        item.createDiv({ cls: 'ct-skill-desc', text: folder });
+      if (file.isThis) {
+        nameRow.createSpan({ text: 'this' });
+        item.createDiv({ cls: 'ct-skill-desc', text: 'currently open file' });
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertThisMention(); });
+      } else {
+        nameRow.createSpan({ text: file.basename });
+        const pathParts = file.path.split('/');
+        if (pathParts.length > 1) {
+          const folder = pathParts.slice(0, -1).join('/');
+          item.createDiv({ cls: 'ct-skill-desc', text: folder });
+        }
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
       }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
     });
   }
 
@@ -2209,6 +2242,19 @@ export class ThreadsView extends ItemView {
     while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
     start++;
     const inserted = `@[[${basename}]] `;
+    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
+    this.hideFileDropdown();
+    this.inputEl.focus();
+  }
+
+  private insertThisMention(): void {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = '@this ';
     this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
     this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
     this.hideFileDropdown();
