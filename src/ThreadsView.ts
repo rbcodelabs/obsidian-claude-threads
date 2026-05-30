@@ -11,6 +11,7 @@ import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
+import { SttController } from './stt';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -111,6 +112,12 @@ export class ThreadsView extends ItemView {
   private fileDropdown: HTMLElement | null = null;
   private fileDropdownItems: { path: string; basename: string; isThis?: boolean }[] = [];
   private fileDropdownIndex = 0;
+
+  // Speech-to-text controller (one per view, shared across mic buttons)
+  private sttController: SttController | null = null;
+
+  // ResizeObserver for the floating input panel (keeps --ct-panel-height current)
+  private panelResizeObserver: ResizeObserver | null = null;
 
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
     { name: 'compact', description: 'Summarize conversation history to free up context' },
@@ -313,6 +320,9 @@ export class ThreadsView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.stopStatusLineInterval();
+    this.sttController?.destroy();
+    this.panelResizeObserver?.disconnect();
+    this.panelResizeObserver = null;
   }
 
   private buildUI(): void {
@@ -346,10 +356,14 @@ export class ThreadsView extends ItemView {
 
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
-    this.statusBar = this.mainEl.createDiv('ct-status-bar');
-    this.editedFilesEl = this.mainEl.createDiv('ct-edited-files ct-hidden');
 
-    this.inputRowEl = this.mainEl.createDiv('ct-input-row');
+    const floatingPanel = this.mainEl.createDiv('ct-floating-panel');
+    const panelContext = floatingPanel.createDiv('ct-panel-context');
+
+    this.statusBar = panelContext.createDiv('ct-status-bar');
+    this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
+
+    this.inputRowEl = floatingPanel.createDiv('ct-input-row');
     this.pasteChipsEl = this.inputRowEl.createDiv('ct-paste-chips ct-hidden');
 
     const inputControls = this.inputRowEl.createDiv('ct-input-controls');
@@ -493,9 +507,23 @@ export class ThreadsView extends ItemView {
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
 
+    // Mic button for speech-to-text
+    this.sttController = new SttController(this.app);
+    const micBtn = this.sttController.createMicButton(this.inputEl);
+    inputActions.appendChild(micBtn);
+
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
-    this.contextFooterEl = this.mainEl.createDiv('ct-context-footer ct-hidden');
+    this.contextFooterEl = panelContext.createDiv('ct-context-footer ct-hidden');
+
+    // Keep messages scroll clearance in sync with the floating panel height
+    this.panelResizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const height = entry.contentRect.height;
+        this.messagesEl.style.setProperty('--ct-panel-height', `${height}px`);
+      }
+    });
+    this.panelResizeObserver.observe(floatingPanel);
   }
 
   private renderProjectBar(): void {

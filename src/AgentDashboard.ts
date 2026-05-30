@@ -5,6 +5,7 @@ import type { Thread, ImageAttachment, ImageMediaType } from './types';
 import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
+import { SttController } from './stt';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -43,6 +44,9 @@ export class AgentDashboard extends ItemView {
   private rowEls: Map<string, HTMLElement> = new Map();
   private activeThreadId: string | null = null;
 
+  // Speech-to-text controller for the dispatch input
+  private sttController: SttController | null = null;
+
   // Debounce full re-render on state changes
   private renderPending = false;
   // Debounce activity-only refresh
@@ -74,6 +78,7 @@ export class AgentDashboard extends ItemView {
     this.unsubscribe?.();
     if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.timeInterval) clearInterval(this.timeInterval);
+    this.sttController?.destroy();
   }
 
   private buildUI(): void {
@@ -181,6 +186,11 @@ export class AgentDashboard extends ItemView {
 
     dispatchBtn.addEventListener('click', () => this.dispatch());
     attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
+
+    // Mic button for speech-to-text
+    this.sttController = new SttController(this.app);
+    const micBtn = this.sttController.createMicButton(this.dispatchInput);
+    inputActions.appendChild(micBtn);
 
     this.dispatchInput.addEventListener('keydown', (e) => {
       if (this.fileDropdown) {
