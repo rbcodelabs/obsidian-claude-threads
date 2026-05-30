@@ -520,7 +520,8 @@ export class ThreadsView extends ItemView {
     this.panelResizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         const height = entry.contentRect.height;
-        this.messagesEl.style.setProperty('--ct-panel-height', `${height}px`);
+        // +16 = 8px bottom offset + 8px breathing room above the panel
+        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 16}px`);
       }
     });
     this.panelResizeObserver.observe(floatingPanel);
