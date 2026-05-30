@@ -1167,23 +1167,23 @@
 /* Floating input panel */
 .ct-floating-panel {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: 8px;
+  left: 10px;
+  right: 10px;
   z-index: 10;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-/* Highlight the whole panel border when the textarea is focused */
+/* Highlight the whole panel border + glow when the textarea is focused */
 .ct-floating-panel:focus-within {
   border-color: var(--interactive-accent);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1), 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 25%, transparent);
 }
 
 .ct-panel-context {
@@ -1191,11 +1191,18 @@
   flex-direction: column;
 }
 
-.ct-panel-context:not(:has(:not(.ct-hidden))) {
+/* Hide status bar when it has no text so it doesn't trip the :has checks below */
+.ct-status-bar:empty {
   display: none;
 }
 
-.ct-panel-context:has(:not(.ct-hidden)) {
+/* Hide the whole context zone when every child is either .ct-hidden or empty */
+.ct-panel-context:not(:has(:not(.ct-hidden):not(:empty))) {
+  display: none;
+}
+
+/* Only draw the divider when something is actually visible */
+.ct-panel-context:has(:not(.ct-hidden):not(:empty)) {
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -1209,20 +1216,29 @@
   flex-shrink: 0;
 }
 
-/* Flex row: borderless textarea fills the left, button column sits flush on the right */
+/* Flex row: borderless textarea fills the left, send/stop anchored top-right */
 .ct-input-controls {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0;
 }
 
-/* Send / stop / more / mic stacked vertically, flush to the right edge of the panel */
+/* Send + stop only — stacked, top-aligned with the textarea */
 .ct-input-actions {
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
   padding-left: 6px;
+}
+
+/* Secondary actions row: mic + more, right-aligned below the textarea */
+.ct-input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-top: 2px;
 }
 
 /* Paste attachment chips */
@@ -1362,9 +1378,19 @@
   overflow-y: auto;
 }
 
+.ct-input:hover {
+  background: transparent;
+}
+
 .ct-input:focus {
   outline: none;
+  box-shadow: none;
   /* Focus ring lives on .ct-floating-panel via :focus-within */
+}
+
+/* Lift the whole panel background on hover instead of just the textarea */
+.ct-floating-panel:hover:not(:focus-within) {
+  background: var(--background-modifier-hover);
 }
 
 .ct-input:disabled {

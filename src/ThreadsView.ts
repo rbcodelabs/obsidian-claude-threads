@@ -380,7 +380,10 @@ export class ThreadsView extends ItemView {
       text: '■',
       attr: { title: 'Stop' },
     });
-    this.moreBtn = inputActions.createEl('button', {
+
+    // Secondary actions live in a footer row below the textarea
+    const inputFooter = this.inputRowEl.createDiv('ct-input-footer');
+    this.moreBtn = inputFooter.createEl('button', {
       cls: 'ct-more-btn',
       attr: { title: 'More actions' },
     });
@@ -507,10 +510,10 @@ export class ThreadsView extends ItemView {
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
 
-    // Mic button for speech-to-text
+    // Mic button for speech-to-text — lives in the footer row alongside more-btn
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
-    inputActions.appendChild(micBtn);
+    inputFooter.appendChild(micBtn);
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
@@ -520,7 +523,8 @@ export class ThreadsView extends ItemView {
     this.panelResizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         const height = entry.contentRect.height;
-        this.messagesEl.style.setProperty('--ct-panel-height', `${height}px`);
+        // +16 = 8px bottom offset + 8px breathing room above the panel
+        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 16}px`);
       }
     });
     this.panelResizeObserver.observe(floatingPanel);
