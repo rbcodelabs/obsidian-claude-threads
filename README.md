@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.5.2-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.8.0-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -31,14 +31,15 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done)
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
-- **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context
+- **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching
+- **Push-to-talk voice input** — hold a configurable hotkey to dictate a message via speech-to-text (uses the Claude Code STT pipeline); transcript populates the input box ready to send or edit
 - **Projects** — group threads by vault sub-folder with a shared context prompt injected into every message
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
@@ -119,6 +120,8 @@ Type `@` anywhere in the input box to search vault files by name. A dropdown app
 
 Selecting a file inserts `@[[filename]]` into your message. When you send the message, the plugin resolves each mention and appends the file's full content as context for Claude — useful for asking Claude to work with a specific note, doc, or config file without copying and pasting.
 
+Type `@this` (no search needed) to instantly reference the currently active file in Obsidian. It resolves to the same `@[[filename]]` injection at send time.
+
 ### Model switching
 
 `/model` sets the model for all subsequent turns in a thread:
@@ -147,6 +150,12 @@ Open the **Agent Dashboard** from the ribbon or command palette to see all threa
 This combination means you can dispatch several threads in parallel, switch to other work, then return to the dashboard to understand the state of every agent without reading through each conversation.
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
+
+Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout with columns for each agent state: idle, running, waiting for permission, and done. List view is the default; the preference is persisted across reloads.
+
+### Push-to-talk voice input
+
+Hold the configured push-to-talk key (default: none — set it in Settings → Push to Talk Hotkey) and speak. The microphone activates while you hold the key; releasing it stops recording and transcribes your speech using the Claude Code STT pipeline. The transcript populates the input box so you can review and edit before sending. The floating input panel highlights while recording so you always know the mic is live.
 
 ### Permissions
 
