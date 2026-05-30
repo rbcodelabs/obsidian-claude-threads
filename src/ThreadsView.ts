@@ -89,6 +89,7 @@ export class ThreadsView extends ItemView {
 
   // Thread switcher inline panel
   private switcherPanelEl: HTMLElement | null = null;
+  private switcherOutsideHandler: ((e: MouseEvent) => void) | null = null;
 
   // Summary peek banner (shown on tab reactivation)
   private summaryBannerEl: HTMLElement | null = null;
@@ -1979,7 +1980,8 @@ export class ThreadsView extends ItemView {
         const meta = row.createDiv('ct-agents-row-meta');
         meta.createDiv({ cls: 'ct-agents-row-time', text: this.relativeTime(thread.updatedAt) });
 
-        row.addEventListener('click', () => {
+        row.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
           this.closeSwitcherPanel();
           this.setActiveThread(thread.id);
         });
@@ -2005,9 +2007,9 @@ export class ThreadsView extends ItemView {
       const outsideHandler = (e: MouseEvent) => {
         if (!panel.contains(e.target as Node) && !this.titleEl.contains(e.target as Node)) {
           this.closeSwitcherPanel();
-          document.removeEventListener('mousedown', outsideHandler, true);
         }
       };
+      this.switcherOutsideHandler = outsideHandler;
       document.addEventListener('mousedown', outsideHandler, true);
     }, 0);
   }
@@ -2015,6 +2017,10 @@ export class ThreadsView extends ItemView {
   private closeSwitcherPanel(): void {
     this.switcherPanelEl?.remove();
     this.switcherPanelEl = null;
+    if (this.switcherOutsideHandler) {
+      document.removeEventListener('mousedown', this.switcherOutsideHandler, true);
+      this.switcherOutsideHandler = null;
+    }
   }
 
   private relativeTime(ts: number): string {
