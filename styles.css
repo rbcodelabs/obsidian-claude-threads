@@ -1178,6 +1178,12 @@
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
+  transition: border-color 0.15s;
+}
+
+/* Highlight the whole panel border when the textarea is focused */
+.ct-floating-panel:focus-within {
+  border-color: var(--interactive-accent);
 }
 
 .ct-panel-context {
@@ -1193,28 +1199,30 @@
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
-/* Input row */
+/* Input row — no background or border; the floating panel provides those */
 .ct-input-row {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 6px;
+  padding: 8px 10px 8px 10px;
   position: relative;
   flex-shrink: 0;
 }
 
+/* Flex row: borderless textarea fills the left, button column sits flush on the right */
 .ct-input-controls {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: flex-end;
+  gap: 0;
 }
 
-/* Send + more stacked vertically on the right of the textarea */
+/* Send / stop / more / mic stacked vertically, flush to the right edge of the panel */
 .ct-input-actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
+  padding-left: 6px;
 }
 
 /* Paste attachment chips */
@@ -1340,10 +1348,11 @@
 .ct-input {
   flex: 1;
   resize: none;
-  background: var(--background-modifier-form-field);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  padding: 7px 10px;
+  /* No individual border or background — the panel is the visual container */
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 6px 4px 6px 0;
   font-size: var(--font-ui-small);
   font-family: inherit;
   color: var(--text-normal);
@@ -1351,12 +1360,11 @@
   min-height: 34px;
   line-height: 1.5;
   overflow-y: auto;
-  transition: border-color 0.1s;
 }
 
 .ct-input:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  /* Focus ring lives on .ct-floating-panel via :focus-within */
 }
 
 .ct-input:disabled {
