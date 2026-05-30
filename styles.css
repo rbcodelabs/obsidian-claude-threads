@@ -1216,20 +1216,29 @@
   flex-shrink: 0;
 }
 
-/* Flex row: borderless textarea fills the left, button column sits flush on the right */
+/* Flex row: borderless textarea fills the left, send/stop anchored top-right */
 .ct-input-controls {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0;
 }
 
-/* Send / stop / more / mic stacked vertically, flush to the right edge of the panel */
+/* Send + stop only — stacked, top-aligned with the textarea */
 .ct-input-actions {
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
   padding-left: 6px;
+}
+
+/* Secondary actions row: mic + more, right-aligned below the textarea */
+.ct-input-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-top: 2px;
 }
 
 /* Paste attachment chips */
