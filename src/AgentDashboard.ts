@@ -6,6 +6,9 @@ import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle }
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
 import { SttController } from './stt';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -36,6 +39,19 @@ export class AgentDashboard extends ItemView {
   private fileDropdown: HTMLElement | null = null;
   private fileDropdownItems: { path: string; basename: string }[] = [];
   private fileDropdownIndex = 0;
+
+  // / slash command autocomplete state
+  private skills: { name: string; description: string }[] = [];
+  private skillDropdown: HTMLElement | null = null;
+  private skillDropdownItems: { name: string; description: string }[] = [];
+  private skillDropdownIndex = 0;
+
+  private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
+    { name: 'compact', description: 'Summarize conversation history to free up context' },
+    { name: 'clear', description: 'Clear conversation history and start fresh' },
+    { name: 'cost', description: 'Show token usage and cost for this session' },
+    { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
+  ];
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -82,6 +98,7 @@ export class AgentDashboard extends ItemView {
   }
 
   private buildUI(): void {
+    this.loadSkills();
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('ct-agents-root');
@@ -216,6 +233,29 @@ export class AgentDashboard extends ItemView {
           return;
         }
       }
+      if (this.skillDropdown) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.skillDropdownIndex = Math.min(this.skillDropdownIndex + 1, this.skillDropdownItems.length - 1);
+          this.renderSkillDropdown();
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.skillDropdownIndex = Math.max(this.skillDropdownIndex - 1, 0);
+          this.renderSkillDropdown();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name);
+          return;
+        }
+        if (e.key === 'Escape') {
+          this.hideSkillDropdown();
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.dispatch();
@@ -225,15 +265,22 @@ export class AgentDashboard extends ItemView {
     this.dispatchInput.addEventListener('input', () => {
       const atQuery = this.getAtQuery();
       if (atQuery !== null) {
+        this.hideSkillDropdown();
         this.showFileDropdown(atQuery);
         return;
       }
       this.hideFileDropdown();
+      const slashQuery = this.getSlashQuery();
+      if (slashQuery !== null) this.showSkillDropdown(slashQuery);
+      else this.hideSkillDropdown();
     });
 
     this.dispatchInput.addEventListener('blur', () => {
       // Delay so mousedown on a dropdown item fires before blur hides it
-      setTimeout(() => this.hideFileDropdown(), 150);
+      setTimeout(() => {
+        this.hideFileDropdown();
+        this.hideSkillDropdown();
+      }, 150);
     });
 
     // Paste: capture image files from clipboard
@@ -711,6 +758,115 @@ export class AgentDashboard extends ItemView {
     this.fileDropdown = null;
     this.fileDropdownItems = [];
     this.fileDropdownIndex = 0;
+  }
+
+  // ── / slash command helpers ─────────────────────────────────────────────
+
+  private loadSkills(): void {
+    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+    try {
+      this.skills = fs.readdirSync(skillsDir).map(entry => {
+        const name = entry.replace(/\.md$/, '');
+        const entryPath = path.join(skillsDir, entry);
+        const isDir = fs.statSync(entryPath).isDirectory();
+        let filePath = isDir ? '' : entryPath;
+        if (isDir) {
+          const candidates = ['index.md', 'skill.md', name + '.md'];
+          const found = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
+          if (found) {
+            filePath = path.join(entryPath, found);
+          } else {
+            const first = fs.readdirSync(entryPath).find(f => f.endsWith('.md'));
+            if (first) filePath = path.join(entryPath, first);
+          }
+        }
+        return { name, description: filePath ? this.readSkillDescription(filePath) : '' };
+      });
+    } catch {
+      this.skills = [];
+    }
+  }
+
+  private readSkillDescription(filePath: string): string {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8').slice(0, 2000);
+      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+      if (fmMatch) {
+        const fm = fmMatch[1];
+        const inline = fm.match(/^description:\s+([^>|\n][^\n]*)/m);
+        if (inline) return inline[1].trim();
+        const block = fm.match(/^description:\s*>-?\s*\n((?:[ \t]+[^\n]*\n?)+)/m);
+        if (block) return block[1].replace(/^[ \t]+/mg, '').replace(/\n/g, ' ').trim();
+      }
+      const body = content.replace(/^---[\s\S]*?---\n/, '');
+      for (const line of body.split('\n')) {
+        const clean = line.replace(/^#+\s*/, '').trim();
+        if (clean && !clean.startsWith('---')) return clean;
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
+  private getSlashQuery(): string | null {
+    const val = this.dispatchInput.value;
+    const pos = this.dispatchInput.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    const word = val.slice(start + 1, pos);
+    return word.startsWith('/') ? word.slice(1) : null;
+  }
+
+  private showSkillDropdown(query: string): void {
+    const q = query.toLowerCase();
+    const builtins = AgentDashboard.BUILTIN_COMMANDS.filter(c => c.name.startsWith(q));
+    const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
+    const matches = [...builtins, ...skills];
+    if (matches.length === 0) { this.hideSkillDropdown(); return; }
+    this.skillDropdownItems = matches;
+    if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
+    if (!this.skillDropdown) {
+      this.skillDropdown = this.dispatchRow.createDiv('ct-skill-dropdown');
+    }
+    this.renderSkillDropdown();
+  }
+
+  private renderSkillDropdown(): void {
+    if (!this.skillDropdown) return;
+    this.skillDropdown.empty();
+    this.skillDropdownItems.forEach((skill, i) => {
+      const item = this.skillDropdown!.createDiv({
+        cls: `ct-skill-item${i === this.skillDropdownIndex ? ' ct-skill-item-active' : ''}`,
+      });
+      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
+      nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
+      nameRow.createSpan({ text: skill.name });
+      if (skill.description) {
+        item.createDiv({ cls: 'ct-skill-desc', text: skill.description });
+      }
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertSkill(skill.name); });
+    });
+  }
+
+  private insertSkill(skillName: string): void {
+    const val = this.dispatchInput.value;
+    const pos = this.dispatchInput.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = '/' + skillName + ' ';
+    this.dispatchInput.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.dispatchInput.selectionStart = this.dispatchInput.selectionEnd = start + inserted.length;
+    this.hideSkillDropdown();
+    this.dispatchInput.focus();
+  }
+
+  private hideSkillDropdown(): void {
+    this.skillDropdown?.remove();
+    this.skillDropdown = null;
+    this.skillDropdownItems = [];
+    this.skillDropdownIndex = 0;
   }
 
   // ── Search ──────────────────────────────────────────────────────────────
