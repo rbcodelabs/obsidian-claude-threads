@@ -1113,6 +1113,30 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    // ── Speech to Text ────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Speech to Text' });
+
+    new Setting(containerEl)
+      .setName('OpenAI API Key')
+      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text.inputEl.placeholder = 'sk-…';
+        // Populate with a masked placeholder if a key already exists (synchronous API)
+        const storageR = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
+        if (storageR && storageR.getSecret('openai-api-key')) {
+          text.inputEl.placeholder = '••••••••';
+        }
+        text.onChange((value) => {
+          const trimmed = value.trim();
+          const storageW = (this.app as unknown as { secretStorage?: { setSecret: (id: string, val: string) => void } }).secretStorage;
+          if (storageW && trimmed) {
+            storageW.setSecret('openai-api-key', trimmed);
+          }
+        });
+        text.inputEl.style.width = '100%';
+      });
+
     // ── Remote Access ─────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Remote Access' });
     containerEl.createEl('p', {
