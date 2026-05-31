@@ -218,6 +218,19 @@ Projects group threads by vault sub-folder and inject shared context into every 
 
 **Managing projects:** Edit the name, folder, or context prompt at any time in Settings → Projects. Deleting a project keeps all its threads — they just lose the project association.
 
+### Vault Bridges integration
+
+If you have the [Vault Bridges](https://github.com/rbcodelabs/obsidian-vault-bridges) plugin installed, Claude agents can inspect and configure bridges directly via MCP — no config-file editing or Obsidian restarts required.
+
+Two tools are exposed:
+
+| Tool | What it does |
+|---|---|
+| `obsidian_list_vault_bridges` | Returns all currently configured bridges. Agents should call this first to check what already exists before adding a new one. |
+| `obsidian_add_vault_bridge` | Adds a new bridge live via the Vault Bridges API. The bridge is registered immediately — the status bar updates, per-bridge push/pull commands are wired up, and settings are saved. If a bridge with the same `repoPath` + `vaultPath` already exists, the existing record is returned without creating a duplicate. |
+
+Both tools return a clear error if the vault-bridges plugin is not installed or not enabled.
+
 ## Settings
 
 | Setting | Description |
