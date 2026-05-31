@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -644,6 +644,106 @@ function formatRoomIdAsCode(roomId: string): string {
   return groups.join('-');
 }
 
+function maskOpenAiKey(key: string | null | undefined): string {
+  if (!key) return 'No key set';
+  if (key.length <= 12) return '••••••••';
+  return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/** Modal for entering a new OpenAI API key directly. */
+class OpenAiKeyModal extends Modal {
+  constructor(app: App, private settingTab: ClaudeThreadsSettingTab) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'OpenAI API Key' });
+    contentEl.createEl('p', {
+      text: 'Paste your API key from platform.openai.com/api-keys',
+      cls: 'setting-item-description',
+    });
+
+    const input = contentEl.createEl('input', {
+      type: 'password',
+      placeholder: 'sk-…',
+      cls: 'ct-openai-key-input',
+    });
+    input.style.width = '100%';
+    input.style.marginBottom = '1rem';
+
+    const buttonRow = contentEl.createDiv('ct-modal-button-row');
+
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+
+    const saveBtn = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => {
+      const trimmed = input.value.trim();
+      if (!trimmed) return;
+      this.app.secretStorage.setSecret('openai-api-key', trimmed);
+      this.close();
+      this.settingTab.display();
+    });
+
+    // Allow Enter to save
+    input.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') saveBtn.click();
+    });
+
+    // Focus the input after the modal animates in
+    setTimeout(() => input.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/** Modal for linking an OpenAI key from an existing Obsidian secret. */
+class LinkOpenAiSecretModal extends Modal {
+  constructor(app: App, private settingTab: ClaudeThreadsSettingTab) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'Link Existing Secret' });
+    contentEl.createEl('p', {
+      text: 'Select a secret already stored by another plugin to use as your OpenAI API key.',
+      cls: 'setting-item-description',
+    });
+
+    const pickerContainer = contentEl.createDiv('ct-secret-picker');
+
+    const secretPicker = new SecretComponent(this.app, pickerContainer);
+    secretPicker.onChange((secretName: string) => {
+      if (!secretName) return;
+      const actualValue = this.app.secretStorage.getSecret(secretName);
+      if (actualValue) {
+        this.app.secretStorage.setSecret('openai-api-key', actualValue);
+        new Notice('Key linked successfully');
+        this.close();
+        this.settingTab.display();
+      } else {
+        new Notice('That secret has no value stored');
+      }
+    });
+
+    const cancelBtn = contentEl.createEl('button', { text: 'Cancel', cls: 'ct-modal-cancel' });
+    cancelBtn.style.marginTop = '1rem';
+    cancelBtn.addEventListener('click', () => this.close());
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 class ClaudeThreadsSettingTab extends PluginSettingTab {
   constructor(
     app: App,
@@ -1122,18 +1222,32 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     // ── Speech to Text ────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Speech to Text' });
 
-    new Setting(containerEl)
-      .setName('OpenAI API Key')
-      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
-      .addText((text) => {
-        text.inputEl.type = 'password';
-        text.inputEl.placeholder = this.app.secretStorage.getSecret('openai-api-key') ? '••••••••' : 'sk-…';
-        text.inputEl.style.width = '100%';
-        text.onChange((value) => {
-          const trimmed = value.trim();
-          if (trimmed) this.app.secretStorage.setSecret('openai-api-key', trimmed);
-        });
+    {
+      const existingKey = this.app.secretStorage.getSecret('openai-api-key');
+      const maskedKey = maskOpenAiKey(existingKey);
+      const openAiSetting = new Setting(containerEl)
+        .setName('OpenAI API Key')
+        .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.');
+
+      openAiSetting.descEl.createEl('br');
+      openAiSetting.descEl.createEl('span', {
+        text: maskedKey,
+        cls: 'ct-openai-key-display',
       });
+
+      openAiSetting
+        .addButton((btn) => {
+          if (!existingKey) btn.setCta();
+          btn.setButtonText(existingKey ? 'Set key' : 'Set key').onClick(() => {
+            new OpenAiKeyModal(this.app, this).open();
+          });
+        })
+        .addButton((btn) => {
+          btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
+            new LinkOpenAiSecretModal(this.app, this).open();
+          });
+        });
+    }
 
     new Setting(containerEl)
       .setName('PTT Hotkey')
