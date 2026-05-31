@@ -41,6 +41,8 @@ export class ThreadsView extends ItemView {
   private moreBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
   private editedFilesEl!: HTMLElement;
+  private cwdChipEl!: HTMLElement;
+  private cwdChipNameEl!: HTMLElement;
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
@@ -383,7 +385,16 @@ export class ThreadsView extends ItemView {
 
     // Secondary actions live in a footer row below the textarea
     const inputFooter = this.inputRowEl.createDiv('ct-input-footer');
-    this.moreBtn = inputFooter.createEl('button', {
+
+    // CWD chip — always visible, left-aligned in the footer
+    this.cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
+    const cwdFooterIcon = this.cwdChipEl.createSpan('ct-edited-file-chip-icon');
+    setIcon(cwdFooterIcon, 'folder');
+    this.cwdChipNameEl = this.cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
+
+    // Right-side buttons group (menu + mic)
+    const footerActions = inputFooter.createDiv('ct-input-footer-actions');
+    this.moreBtn = footerActions.createEl('button', {
       cls: 'ct-more-btn',
       attr: { title: 'More actions' },
     });
@@ -510,10 +521,10 @@ export class ThreadsView extends ItemView {
     this.sendBtn.addEventListener('click', () => this.sendMessage());
     this.stopBtn.addEventListener('click', () => this.stopMessage());
 
-    // Mic button for speech-to-text — lives in the footer row alongside more-btn
+    // Mic button for speech-to-text — lives in the footer actions group alongside more-btn
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
-    inputFooter.appendChild(micBtn);
+    footerActions.appendChild(micBtn);
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
@@ -980,15 +991,6 @@ export class ThreadsView extends ItemView {
     const iconOnly = this.editedFilesSet.size > ThreadsView.COMPACT_THRESHOLD;
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
 
-    // CWD chip — pinned at the start of the row
-    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    const cwdChip = list.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd' });
-    const cwdIcon = cwdChip.createSpan('ct-edited-file-chip-icon');
-    setIcon(cwdIcon, 'folder');
-    cwdChip.createSpan({ cls: 'ct-edited-file-chip-name', text: shortenPath(cwd) });
-    setTooltip(cwdChip, cwd);
-
     // Vault files first (most-recently-edited within each group), then non-vault files.
     const adapter = this.app.vault.adapter as { basePath?: string };
     const vaultBase = adapter.basePath ?? '';
@@ -1091,13 +1093,22 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  private renderCwdChip(): void {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
+    this.cwdChipNameEl.textContent = shortenPath(cwd);
+    setTooltip(this.cwdChipEl, cwd);
+  }
+
   private renderThreadInfo(): void {
     this.threadInfoBar.empty();
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    // Show model badge only; cwd is now shown in the edited-files row
+    this.renderCwdChip();
+
+    // Show model badge only; cwd is now shown in the footer row
     const hasContent = !!thread.model;
 
     // Hide the bar entirely when there's nothing to show
