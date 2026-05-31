@@ -187,4 +187,53 @@ test.describe('Claude Threads UI', () => {
   // Verify manually in Obsidian: enable Settings > Keep computer awake, start a response,
   // and confirm the "Keeping awake" item appears in the Obsidian status bar.
   test.skip('wake lock status bar — harness does not wire up the real plugin WakeLockService or Obsidian status bar; verify manually in Obsidian by enabling Settings -> Keep computer awake and starting a response', async ({ page }) => {});
+
+  // ─── Compress view ──────────────────────────────────────────────────────────
+
+  test('compress view menu item', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Open the more menu — "Compress view" should be the first item
+    await page.click('.ct-more-btn');
+    await page.waitForSelector('.menu');
+    await expect(page).toHaveScreenshot('compress-view-menu.png', { fullPage: true });
+  });
+
+  test('compressed messages', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Toggle compress view via the more menu
+    await page.click('.ct-more-btn');
+    await page.waitForSelector('.menu');
+    await page.getByText('Compress view').click();
+    // Wait for the compressed layout to render
+    await page.waitForSelector('.ct-message-compressed');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('compress-view-active.png', { fullPage: true });
+  });
+
+  test('compressed message expand', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Activate compress view
+    await page.click('.ct-more-btn');
+    await page.waitForSelector('.menu');
+    await page.getByText('Compress view').click();
+    await page.waitForSelector('.ct-message-compressed');
+    await page.waitForTimeout(200);
+    // Expand the first compressed message
+    await page.click('.ct-expand-btn');
+    await page.waitForSelector('.ct-full-content:not(.ct-hidden)');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('compress-view-expanded.png', { fullPage: true });
+  });
 });

@@ -46,6 +46,7 @@ The empty-string fallback means \`jwt.verify\` runs with \`''\` as the secret, w
       { name: 'Read', summary: 'Read: .env.example' },
     ],
     cost: 0.0023,
+    summary: 'Found JWT_SECRET missing in staging; fixed auth.ts to fail fast and documented the Vercel env var steps.',
   },
   {
     id: 'msg-t1-3',
@@ -99,6 +100,7 @@ Run with \`npm test -- --testPathPattern=auth\` to verify. All three cases shoul
       { name: 'Edit', summary: 'Edit: src/middleware/auth.ts' },
     ],
     cost: 0.0041,
+    summary: 'Added three-case Jest test suite for auth middleware covering missing secret, valid token, and invalid token.',
   },
 ];
 
@@ -127,6 +129,7 @@ const thread2Messages: ChatMessage[] = [
 
 The co-planning feature is the most ambitious but could be a real differentiator — no one does async collaborative itinerary editing well right now.`,
     timestamp: T2 + 60000,
+    summary: 'Proposed four social features for HipTrip; recommended the "Going too?" destination-matching nudge as the best impact/effort pick.',
   },
 ];
 

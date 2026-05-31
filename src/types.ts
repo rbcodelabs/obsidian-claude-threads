@@ -41,6 +41,8 @@ export interface ChatMessage {
   preTokens?: number;
   /** Images attached to this message (user role only). Stored as base64 for display. */
   images?: ImageAttachment[];
+  /** AI-generated 1-sentence summary used in compressed view. */
+  summary?: string;
 }
 
 export interface ThreadDraft {
