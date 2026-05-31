@@ -135,6 +135,13 @@ export interface PluginSettings {
   debugLogging: boolean;
   /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
   hasSeenWelcome: boolean;
+  /**
+   * Hotkey for push-to-talk recording. Serialized as e.g. "Alt+Space" or "Control+Shift+Space".
+   * Empty string disables PTT. Default: "Alt+Space" (Option+Space on Mac).
+   */
+  pttKey: string;
+  /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
+  openAIKey: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -157,6 +164,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   debugLogging: false,
   hasSeenWelcome: false,
+  pttKey: 'Alt+Space',
+  openAIKey: '',
   remoteAccess: {
     enabled: false,
     roomId: '',

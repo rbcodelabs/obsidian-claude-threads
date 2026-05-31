@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -14,6 +14,7 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
+import { serializeKey } from './stt';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
@@ -794,6 +795,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.projects = this.settings.projects ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Clear any garbage written by the SecretComponent picker (stores key names, not values)
+    const storedKey = this.app.secretStorage.getSecret('openai-api-key');
+    if (storedKey && !storedKey.startsWith('sk-')) {
+      this.app.secretStorage.setSecret('openai-api-key', '');
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -820,6 +826,64 @@ function formatRoomIdAsCode(roomId: string): string {
     groups.push(roomId.slice(i, i + 8).toUpperCase());
   }
   return groups.join('-');
+}
+
+function maskOpenAiKey(key: string | null | undefined): string {
+  if (!key) return 'No key set';
+  if (key.length <= 12) return '••••••••';
+  return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/** Modal for entering a new OpenAI API key directly. */
+class OpenAiKeyModal extends Modal {
+  constructor(app: App, private settingTab: ClaudeThreadsSettingTab) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'OpenAI API Key' });
+    contentEl.createEl('p', {
+      text: 'Paste your API key from platform.openai.com/api-keys',
+      cls: 'setting-item-description',
+    });
+
+    const input = contentEl.createEl('input', {
+      type: 'password',
+      placeholder: 'sk-…',
+      cls: 'ct-openai-key-input',
+    });
+    input.style.width = '100%';
+    input.style.marginBottom = '1rem';
+
+    const buttonRow = contentEl.createDiv('ct-modal-button-row');
+
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+
+    const saveBtn = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => {
+      const trimmed = input.value.trim();
+      if (!trimmed) return;
+      this.app.secretStorage.setSecret('openai-api-key', trimmed);
+      this.close();
+      this.settingTab.display();
+    });
+
+    // Allow Enter to save
+    input.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') saveBtn.click();
+    });
+
+    // Focus the input after the modal animates in
+    setTimeout(() => input.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 class ClaudeThreadsSettingTab extends PluginSettingTab {
@@ -1300,25 +1364,88 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     // ── Speech to Text ────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Speech to Text' });
 
-    new Setting(containerEl)
-      .setName('OpenAI API Key')
-      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
-      .addText((text) => {
-        text.inputEl.type = 'password';
-        text.inputEl.placeholder = 'sk-…';
-        // Populate with a masked placeholder if a key already exists (synchronous API)
-        const storageR = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
-        if (storageR && storageR.getSecret('openai-api-key')) {
-          text.inputEl.placeholder = '••••••••';
-        }
-        text.onChange((value) => {
-          const trimmed = value.trim();
-          const storageW = (this.app as unknown as { secretStorage?: { setSecret: (id: string, val: string) => void } }).secretStorage;
-          if (storageW && trimmed) {
-            storageW.setSecret('openai-api-key', trimmed);
-          }
+    {
+      const existingKey = this.app.secretStorage.getSecret('openai-api-key');
+      const maskedKey = maskOpenAiKey(existingKey);
+      const openAiSetting = new Setting(containerEl)
+        .setName('OpenAI API Key')
+        .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.');
+
+      openAiSetting.descEl.createEl('br');
+      openAiSetting.descEl.createEl('span', {
+        text: maskedKey,
+        cls: 'ct-openai-key-display',
+      });
+
+      openAiSetting
+        .addButton((btn) => {
+          if (!existingKey) btn.setCta();
+          btn.setButtonText(existingKey ? 'Change' : 'Set key').onClick(() => {
+            new OpenAiKeyModal(this.app, this).open();
+          });
+        })
+        .addButton((btn) => {
+          btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
+            const tmp = document.body.createDiv();
+            tmp.style.display = 'none';
+            const picker = new SecretComponent(this.app, tmp);
+            picker.onChange((secretName: string) => {
+              tmp.remove();
+              if (!secretName) return;
+              const actualValue = this.app.secretStorage.getSecret(secretName);
+              if (actualValue) {
+                this.app.secretStorage.setSecret('openai-api-key', actualValue);
+                new Notice('Key linked');
+                this.display();
+              } else {
+                new Notice('That secret has no value stored');
+              }
+            });
+            // SecretComponent renders a button — click it immediately to open the picker
+            const inner = tmp.querySelector('button, input') as HTMLElement | null;
+            if (inner) {
+              inner.click();
+            } else {
+              tmp.remove();
+              new Notice('Secret picker not available');
+            }
+          });
         });
-        text.inputEl.style.width = '100%';
+    }
+
+    new Setting(containerEl)
+      .setName('PTT Hotkey')
+      .setDesc('Hold this key while focused in any input to record. Default: Alt+Space (Option+Space on Mac).')
+      .addButton((btn) => {
+        const updateLabel = () => {
+          btn.setButtonText(this.plugin.settings.pttKey || 'Click to set');
+        };
+        updateLabel();
+        btn.onClick(() => {
+          btn.setButtonText('Press a key…');
+          btn.buttonEl.classList.add('mod-warning');
+          const capture = (e: KeyboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const key = serializeKey(e);
+            if (!key) return; // bare modifier — wait for a real key
+            window.removeEventListener('keydown', capture, true);
+            btn.buttonEl.classList.remove('mod-warning');
+            this.plugin.settings.pttKey = key;
+            void this.plugin.saveSettings();
+            updateLabel();
+          };
+          window.addEventListener('keydown', capture, true);
+        });
+      })
+      .addExtraButton((btn) => {
+        btn.setIcon('rotate-ccw').setTooltip('Reset to Alt+Space');
+        btn.onClick(() => {
+          this.plugin.settings.pttKey = 'Alt+Space';
+          void this.plugin.saveSettings();
+          // Re-render settings tab to update button label
+          this.display();
+        });
       });
 
     // ── Remote Access ─────────────────────────────────────────────────────

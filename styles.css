@@ -3563,3 +3563,17 @@
 .ct-full-content {
   margin-top: 8px;
 }
+
+/* ── OpenAI key setting ──────────────────────────────────────────────────── */
+.ct-openai-key-display {
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+
+.ct-modal-button-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
