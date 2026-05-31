@@ -324,6 +324,38 @@ export class ThreadManager {
     const pendingToolCalls: ToolCallRecord[] = [];
     let completedSuccessfully = false;
 
+    // Validate the thread's cwd before snapshotting it. If the directory no longer
+    // exists (e.g. a worktree was cleaned up), Node.js throws ENOENT when spawning
+    // the child process and the SDK surfaces it as a misleading "binary not found"
+    // error. Detect this early, fall back to a valid ancestor, and persist the fix
+    // so future messages in this thread also use the valid path.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const nodePath = require('path') as typeof import('path');
+      if (thread.cwd && !fs.existsSync(thread.cwd)) {
+        let fallback = thread.cwd;
+        while (fallback && fallback !== nodePath.dirname(fallback)) {
+          fallback = nodePath.dirname(fallback);
+          // Skip internal .claude/worktrees container dirs — keep going up to the repo root
+          if (fs.existsSync(fallback) && !fallback.includes('.claude') && !fallback.includes('worktrees')) {
+            break;
+          }
+        }
+        if (!fallback || !fs.existsSync(fallback)) {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          fallback = this.vaultRoot || (require('os') as typeof import('os')).homedir();
+        }
+        console.warn(
+          `[ClaudeThreads] cwd "${thread.cwd}" no longer exists (worktree removed?); ` +
+          `falling back to "${fallback}". Update the thread's working directory if needed.`
+        );
+        thread.cwd = fallback;
+        this.emit(threadId, { type: 'cwd_changed', cwd: fallback });
+      }
+    }
+
     // Snapshot the cwd at session start. If obsidian_set_working_directory fires
     // mid-session, thread.cwd changes but this value stays fixed. We use it in
     // onDone to decide whether the resulting sessionId is safe to resume.
