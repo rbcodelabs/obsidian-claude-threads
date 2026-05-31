@@ -217,6 +217,46 @@ export default class ClaudeThreadsPlugin extends Plugin {
             new Notice(`Fork created: "${forkedThread.title}"`);
             return { threadTitle: forkedThread.title };
           },
+          threadId,
+          getThreadDetail: (id: string) => {
+            const t = this.manager.getThread(id);
+            if (!t) return undefined;
+            const nonCompact = t.messages.filter((m: { role: string }) => m.role !== 'compact');
+            return {
+              id: t.id,
+              title: t.title,
+              status: t.status ?? 'waiting',
+              isRunning: this.manager.isRunning(id),
+              projectId: t.projectId,
+              cwd: t.cwd,
+              updatedAt: t.updatedAt,
+              messageCount: nonCompact.length,
+              messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                timestamp: m.timestamp,
+              })),
+            };
+          },
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; projectId?: string; cwd?: string; updatedAt: number; messages: Array<{ role: string }> }) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status ?? 'waiting',
+            isRunning: this.manager.isRunning(t.id),
+            projectId: t.projectId,
+            cwd: t.cwd,
+            updatedAt: t.updatedAt,
+            messageCount: t.messages.filter(m => m.role !== 'compact').length,
+          })),
+          getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            vaultFolder: p.vaultFolder,
+          })),
+          isThreadRunning: (id: string) => this.manager.isRunning(id),
+          sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,

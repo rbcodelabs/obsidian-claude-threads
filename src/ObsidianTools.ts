@@ -48,6 +48,44 @@ const executeCommandSchema = {
     ),
 };
 
+// ── Thread-state snapshot types ───────────────────────────────────────────────
+// Plain data types used by the thread-coordination tools below.
+// These are intentionally decoupled from ThreadManager internals so this file
+// stays self-contained and can be used in isolation (e.g. tests).
+
+export interface ThreadSnapshot {
+  id: string;
+  title: string;
+  /** ThreadStatus value or 'waiting' if unset */
+  status: string;
+  /** True while Claude is actively processing a request on this thread */
+  isRunning: boolean;
+  projectId?: string;
+  cwd?: string;
+  updatedAt: number;
+  /** Number of non-compact messages */
+  messageCount: number;
+}
+
+export interface ThreadMessageSnapshot {
+  id: string;
+  /** 'user' | 'assistant' */
+  role: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface ThreadDetail extends ThreadSnapshot {
+  messages: ThreadMessageSnapshot[];
+}
+
+export interface ProjectSnapshot {
+  id: string;
+  name: string;
+  description?: string;
+  vaultFolder?: string;
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
@@ -66,6 +104,18 @@ export interface ObsidianMcpServerOptions {
    * enter_worktree knows which repo to operate on from the first turn.
    */
   initialCwd?: string;
+  /** ID of the current thread. Used by obsidian_get_current_thread. */
+  threadId?: string;
+  /** Returns full detail (metadata + messages) for a thread by ID. */
+  getThreadDetail?: (id: string) => ThreadDetail | undefined;
+  /** Returns metadata snapshots for all threads. */
+  getAllThreads?: () => ThreadSnapshot[];
+  /** Returns all projects. */
+  getAllProjects?: () => ProjectSnapshot[];
+  /** Returns true if the given thread is currently processing a request. */
+  isThreadRunning?: (id: string) => boolean;
+  /** Sends a message to a thread, triggering Claude to process it. */
+  sendMessageToThread?: (id: string, message: string) => Promise<void>;
 }
 
 /**
@@ -753,6 +803,157 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Thread-coordination tools ────────────────────────────────────────────────
+
+  const boundGetCurrentThread = tool(
+    'obsidian_get_current_thread',
+    'Returns metadata about the current thread: id, title, status, isRunning, project, cwd, and message count. Useful for understanding your own context before coordinating with other threads.',
+    {},
+    async (_args, _extra) => {
+      try {
+        const { threadId } = options;
+        if (!threadId || !options.getThreadDetail) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
+        }
+        const detail = options.getThreadDetail(threadId);
+        if (!detail) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Current thread not found: ${threadId}` }) }], isError: true };
+        }
+        const { messages: _msgs, ...meta } = detail;
+        return { content: [{ type: 'text' as const, text: JSON.stringify(meta, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundListThreads = tool(
+    'obsidian_list_threads',
+    'Returns all threads with their id, title, status, isRunning flag, project, cwd, updatedAt, and message count. Use this to discover other running threads before coordinating with them.',
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.getAllThreads) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
+        }
+        const threads = options.getAllThreads();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(threads, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundListProjects = tool(
+    'obsidian_list_projects',
+    'Returns all projects with their id, name, description, and vaultFolder. Useful for understanding what workspaces exist and which cwd a new thread should use.',
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.getAllProjects) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Project state not available in this context.' }) }], isError: true };
+        }
+        const projects = options.getAllProjects();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(projects, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundGetThreadMessages = tool(
+    'obsidian_get_thread_messages',
+    'Returns the live message history of any thread by ID. Use limit to get just the most recent N messages (default 20). Useful for reading what another thread has done or decided before coordinating.',
+    {
+      threadId: z.string().describe('ID of the thread to read'),
+      limit: z.number().int().positive().optional().describe('Return only the last N messages (default 20)'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.getThreadDetail) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
+        }
+        const detail = options.getThreadDetail(args.threadId);
+        if (!detail) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Thread not found: ${args.threadId}` }) }], isError: true };
+        }
+        const limit = args.limit ?? 20;
+        const messages = detail.messages.slice(-limit);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(messages, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundWaitForThread = tool(
+    'obsidian_wait_for_thread',
+    'Blocks until the specified thread finishes processing its current request (isRunning becomes false), then returns. Returns immediately if the thread is already idle. Use after obsidian_send_message_to_thread to wait for a response before reading results.',
+    {
+      threadId: z.string().describe('ID of the thread to wait for'),
+      timeoutSeconds: z.number().optional().describe('Maximum seconds to wait before giving up (default 120)'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.isThreadRunning) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
+        }
+        const timeoutMs = Math.min((args.timeoutSeconds ?? 120) * 1000, 600_000);
+        const start = Date.now();
+        const pollMs = 1_000;
+
+        while (options.isThreadRunning(args.threadId)) {
+          const elapsed = Date.now() - start;
+          if (elapsed >= timeoutMs) {
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ done: false, timedOut: true, elapsedSeconds: Math.round(elapsed / 1000) }) }],
+              isError: true,
+            };
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+        }
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ done: true, elapsedSeconds: Math.round((Date.now() - start) / 1000) }) }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundSendMessageToThread = tool(
+    'obsidian_send_message_to_thread',
+    'Sends a user message to another thread, triggering Claude to process it. The call returns as soon as the message is queued — use obsidian_wait_for_thread to block until the response is ready. Cannot send to the current thread.',
+    {
+      threadId: z.string().describe('ID of the thread to send the message to'),
+      message: z.string().describe('The message text to send'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.sendMessageToThread) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread messaging not available in this context.' }) }], isError: true };
+        }
+        if (args.threadId === options.threadId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot send a message to the current thread.' }) }], isError: true };
+        }
+        await options.sendMessageToThread(args.threadId, args.message);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -771,6 +972,12 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundListCommands,
       boundExecuteCommand,
       boundForkConversation,
+      boundGetCurrentThread,
+      boundListThreads,
+      boundListProjects,
+      boundGetThreadMessages,
+      boundWaitForThread,
+      boundSendMessageToThread,
     ],
     alwaysLoad: true,
   });
