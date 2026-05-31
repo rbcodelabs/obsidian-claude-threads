@@ -1,4 +1,4 @@
-import { App, setIcon, Notice } from 'obsidian';
+import { App, setIcon, setTooltip, Notice } from 'obsidian';
 import type { ImageAttachment, ImageMediaType } from './types';
 import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
 import { SttController } from './stt';
@@ -19,6 +19,34 @@ export interface DispatchInputOptions {
   builtinCommands?: { name: string; description: string }[];
   /** Called with the raw payload after the user submits */
   onSend: (payload: DispatchPayload) => Promise<void> | void;
+
+  // ── New optional features ──────────────────────────────────────────────────
+  /** Show a stop (■) button alongside send; toggle via setStreaming() */
+  showStopBtn?: boolean;
+  /** Called when the stop button is clicked or Escape is pressed while streaming */
+  onStop?: () => void;
+  /** Include "@this (currently open file)" as the first option in the file dropdown */
+  showThisMention?: boolean;
+  /** Show a CWD folder chip in the footer row; updated via setCwd() */
+  showCwdChip?: boolean;
+  /** Called when the CWD chip is clicked */
+  onCwdClick?: (e: MouseEvent) => void;
+  /** Intercept pastes ≥500 chars as an attachment chip instead of inline text */
+  captureLongPaste?: boolean;
+  /** Called on every textarea keystroke */
+  onInput?: () => void;
+  /** Called when a chip is added or removed */
+  onChipChange?: () => void;
+  /** Slot for the caller to inject extra buttons into the footer actions area */
+  appendFooterActions?: (container: HTMLElement) => void;
+  /** Override the textarea CSS class (default: 'ct-agents-dispatch-input') */
+  inputCls?: string;
+  /** Minimum text length to allow sending when no attachment/images (default: 0) */
+  minTextLength?: number;
+  /** Text/symbol for the send button (default: '▶') */
+  sendBtnText?: string;
+  /** Title tooltip for the send button (default: 'Start task') */
+  sendBtnTitle?: string;
 }
 
 export class DispatchInput {
@@ -31,12 +59,17 @@ export class DispatchInput {
   private pasteChipsEl!: HTMLElement;
   private hiddenFileInput!: HTMLInputElement;
 
+  private sendBtn!: HTMLButtonElement;
+  private stopBtn: HTMLButtonElement | null = null;
+  private cwdChipNameEl: HTMLElement | null = null;
+  private cwdChipEl: HTMLElement | null = null;
+
   private pendingImages: ImageAttachment[] = [];
   private pendingAttachment: string | null = null;
 
   // @mention dropdown
   private fileDropdown: HTMLElement | null = null;
-  private fileDropdownItems: { path: string; basename: string }[] = [];
+  private fileDropdownItems: { path: string; basename: string; isThis?: boolean }[] = [];
   private fileDropdownIndex = 0;
 
   // /slash dropdown
@@ -68,7 +101,7 @@ export class DispatchInput {
     this.inputRow = this.rootEl.createDiv('ct-agents-dispatch-row');
 
     this.inputEl = this.inputRow.createEl('textarea', {
-      cls: 'ct-agents-dispatch-input',
+      cls: this.options.inputCls ?? 'ct-agents-dispatch-input',
       attr: {
         placeholder: this.options.placeholder ?? 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
       },
@@ -78,10 +111,21 @@ export class DispatchInput {
 
     const sendBtn = inputActions.createEl('button', {
       cls: 'ct-send-btn ct-agents-dispatch-btn',
-      text: '▶',
-      attr: { title: 'Start task' },
+      text: this.options.sendBtnText ?? '▶',
+      attr: { title: this.options.sendBtnTitle ?? 'Start task' },
     });
     sendBtn.addEventListener('click', () => this.send());
+    this.sendBtn = sendBtn;
+
+    // Optional stop button (shown/hidden via setStreaming())
+    if (this.options.showStopBtn) {
+      this.stopBtn = inputActions.createEl('button', {
+        cls: 'ct-stop-btn ct-hidden',
+        text: '■',
+        attr: { title: 'Stop' },
+      });
+      this.stopBtn.addEventListener('click', () => this.options.onStop?.());
+    }
 
     const attachBtn = inputActions.createEl('button', {
       cls: 'ct-more-btn ct-agents-dispatch-attach-btn',
@@ -111,7 +155,36 @@ export class DispatchInput {
     // Mic button for speech-to-text
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
-    inputActions.appendChild(micBtn);
+
+    // Footer row — render when CWD chip or extra footer actions are requested
+    const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions);
+    if (needsFooter) {
+      const inputFooter = this.rootEl.createDiv('ct-input-footer');
+
+      if (this.options.showCwdChip) {
+        const cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
+        const cwdIcon = cwdChipEl.createSpan('ct-edited-file-chip-icon');
+        setIcon(cwdIcon, 'folder');
+        this.cwdChipNameEl = cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
+        this.cwdChipEl = cwdChipEl;
+        if (this.options.onCwdClick) {
+          cwdChipEl.addEventListener('click', (e) => this.options.onCwdClick!(e));
+        }
+      } else {
+        this.cwdChipNameEl = null;
+        this.cwdChipEl = null;
+      }
+
+      const footerActionsEl = inputFooter.createDiv('ct-input-footer-actions');
+      this.options.appendFooterActions?.(footerActionsEl);
+      // Mic lives in footer when footer is present
+      footerActionsEl.appendChild(micBtn);
+    } else {
+      this.cwdChipNameEl = null;
+      this.cwdChipEl = null;
+      // Mic lives in the input actions row when there is no footer
+      inputActions.appendChild(micBtn);
+    }
 
     // Keyboard handlers
     this.inputEl.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -124,13 +197,23 @@ export class DispatchInput {
       }, 150);
     });
 
-    // Paste: capture image files from clipboard
+    // Paste: capture image files and (optionally) long text from clipboard
     this.inputEl.addEventListener('paste', (e) => {
       const files = Array.from(e.clipboardData?.files ?? []);
       const imageFiles = files.filter(f => f.type.startsWith('image/'));
       if (imageFiles.length > 0) {
         e.preventDefault();
         imageFiles.forEach(f => this.addImageAttachment(f));
+        return;
+      }
+      if (this.options.captureLongPaste) {
+        const plainText = e.clipboardData?.getData('text/plain') ?? '';
+        if (plainText.length >= 500) {
+          e.preventDefault();
+          this.setPendingAttachment(plainText);
+          this.options.onChipChange?.();
+          return;
+        }
       }
     });
 
@@ -168,6 +251,52 @@ export class DispatchInput {
     this.hideSkillDropdown();
   }
 
+  // ── Public getters / setters ──────────────────────────────────────────────
+
+  getValue(): string { return this.inputEl?.value ?? ''; }
+
+  setValue(v: string): void { if (this.inputEl) this.inputEl.value = v; }
+
+  setStreaming(v: boolean): void {
+    if (!this.options.showStopBtn) return;
+    if (v) {
+      this.sendBtn.addClass('ct-hidden');
+      this.stopBtn?.removeClass('ct-hidden');
+    } else {
+      this.sendBtn.removeClass('ct-hidden');
+      this.stopBtn?.addClass('ct-hidden');
+      this.inputEl?.focus();
+    }
+  }
+
+  setCwd(displayText: string, tooltip: string): void {
+    if (!this.cwdChipNameEl || !this.cwdChipEl) return;
+    this.cwdChipNameEl.textContent = displayText;
+    setTooltip(this.cwdChipEl, tooltip);
+  }
+
+  getPendingAttachment(): string | null { return this.pendingAttachment; }
+
+  setPendingAttachment(v: string | null): void {
+    this.pendingAttachment = v;
+    this.renderChips();
+  }
+
+  getPendingImages(): ImageAttachment[] { return this.pendingImages.slice(); }
+
+  setPendingImages(imgs: ImageAttachment[]): void {
+    this.pendingImages = [...imgs];
+    this.renderChips();
+  }
+
+  clearAttachments(): void {
+    this.pendingAttachment = null;
+    this.pendingImages = [];
+    this.renderChips();
+  }
+
+  triggerSend(): void { this.send(); }
+
   // ── Send ─────────────────────────────────────────────────────────────────
 
   private async send(): Promise<void> {
@@ -175,7 +304,7 @@ export class DispatchInput {
     const text = this.inputEl.value.trim();
     const attachment = this.pendingAttachment;
     const images = this.pendingImages.slice();
-    if (text.length < 2 && !attachment && images.length === 0) return;
+    if (!text && !attachment && images.length === 0) return;
 
     this.dispatching = true;
     this.inputEl.value = '';
@@ -203,6 +332,7 @@ export class DispatchInput {
         name: file.name || 'image',
       });
       this.renderChips();
+      this.options.onChipChange?.();
     };
     reader.readAsDataURL(file);
   }
@@ -216,6 +346,7 @@ export class DispatchInput {
     reader.onload = () => {
       this.pendingAttachment = `${file.name}\n${reader.result as string}`;
       this.renderChips();
+      this.options.onChipChange?.();
     };
     reader.onerror = () => new Notice(`Could not read "${file.name}".`);
     reader.readAsText(file);
@@ -239,6 +370,7 @@ export class DispatchInput {
       removeBtn.addEventListener('click', () => {
         this.pendingAttachment = null;
         this.renderChips();
+        this.options.onChipChange?.();
       });
     }
 
@@ -251,6 +383,7 @@ export class DispatchInput {
       removeBtn.addEventListener('click', () => {
         this.pendingImages = this.pendingImages.filter(i => i !== img);
         this.renderChips();
+        this.options.onChipChange?.();
       });
     });
   }
@@ -268,11 +401,16 @@ export class DispatchInput {
 
   private showFileDropdown(query: string): void {
     const q = query.toLowerCase();
+    const showThis = this.options.showThisMention && 'this'.startsWith(q);
     const files = this.app.vault.getMarkdownFiles()
       .filter(f => q === '' || f.basename.toLowerCase().includes(q))
-      .slice(0, 20);
-    if (files.length === 0) { this.hideFileDropdown(); return; }
-    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
+      .slice(0, showThis ? 19 : 20);
+    const allItems: { path: string; basename: string; isThis?: boolean }[] = [
+      ...(showThis ? [{ path: '', basename: 'this', isThis: true as const }] : []),
+      ...files.map(f => ({ path: f.path, basename: f.basename })),
+    ];
+    if (allItems.length === 0) { this.hideFileDropdown(); return; }
+    this.fileDropdownItems = allItems;
     if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
     if (!this.fileDropdown) {
       this.fileDropdown = this.inputRow.createDiv('ct-file-dropdown');
@@ -289,13 +427,19 @@ export class DispatchInput {
       });
       const nameRow = item.createDiv({ cls: 'ct-skill-name' });
       nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
-      nameRow.createSpan({ text: file.basename });
-      const pathParts = file.path.split('/');
-      if (pathParts.length > 1) {
-        const folder = pathParts.slice(0, -1).join('/');
-        item.createDiv({ cls: 'ct-skill-desc', text: folder });
+      if (file.isThis) {
+        nameRow.createSpan({ text: 'this' });
+        item.createDiv({ cls: 'ct-skill-desc', text: 'currently open file' });
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertThisMention(); });
+      } else {
+        nameRow.createSpan({ text: file.basename });
+        const pathParts = file.path.split('/');
+        if (pathParts.length > 1) {
+          const folder = pathParts.slice(0, -1).join('/');
+          item.createDiv({ cls: 'ct-skill-desc', text: folder });
+        }
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
       }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
     });
   }
 
@@ -306,6 +450,19 @@ export class DispatchInput {
     while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
     start++;
     const inserted = `@[[${basename}]] `;
+    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
+    this.hideFileDropdown();
+    this.inputEl.focus();
+  }
+
+  private insertThisMention(): void {
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    let start = pos - 1;
+    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
+    start++;
+    const inserted = '@this ';
     this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
     this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
     this.hideFileDropdown();
@@ -434,7 +591,16 @@ export class DispatchInput {
     if (this.fileDropdown) {
       if (e.key === 'ArrowDown') { e.preventDefault(); this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1); this.renderFileDropdown(); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0); this.renderFileDropdown(); return; }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const selectedItem = this.fileDropdownItems[this.fileDropdownIndex];
+        if (selectedItem.isThis) {
+          this.insertThisMention();
+        } else {
+          this.insertFileMention(selectedItem.basename);
+        }
+        return;
+      }
       if (e.key === 'Escape') { this.hideFileDropdown(); return; }
     }
     if (this.skillDropdown) {
@@ -442,6 +608,11 @@ export class DispatchInput {
       if (e.key === 'ArrowUp') { e.preventDefault(); this.skillDropdownIndex = Math.max(this.skillDropdownIndex - 1, 0); this.renderSkillDropdown(); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name); return; }
       if (e.key === 'Escape') { this.hideSkillDropdown(); return; }
+    }
+    // Escape while streaming triggers stop
+    if (e.key === 'Escape' && this.options.showStopBtn && this.stopBtn && !this.stopBtn.hasClass('ct-hidden')) {
+      this.options.onStop?.();
+      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -454,11 +625,13 @@ export class DispatchInput {
     if (atQuery !== null) {
       this.hideSkillDropdown();
       this.showFileDropdown(atQuery);
+      this.options.onInput?.();
       return;
     }
     this.hideFileDropdown();
     const slashQuery = this.getSlashQuery();
     if (slashQuery !== null) this.showSkillDropdown(slashQuery);
     else this.hideSkillDropdown();
+    this.options.onInput?.();
   }
 }

@@ -1,17 +1,16 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
-import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
-import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
+import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
-import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { SttController } from './stt';
+import { DispatchInput } from './DispatchInput';
+import { shortenPath } from './dashboardUtils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -33,23 +32,16 @@ export class ThreadsView extends ItemView {
   private threadInfoBar!: HTMLElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
-  private inputEl!: HTMLTextAreaElement;
   private inputRowEl!: HTMLElement;
-  private pasteChipsEl!: HTMLElement;
-  private sendBtn!: HTMLButtonElement;
-  private stopBtn!: HTMLButtonElement;
   private moreBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
   private editedFilesEl!: HTMLElement;
-  private cwdChipEl!: HTMLElement;
-  private cwdChipNameEl!: HTMLElement;
+
+  // Shared dispatch input component
+  private dispatchInput!: DispatchInput;
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
-
-  // Pending paste attachments
-  private pendingAttachment: string | null = null;
-  private pendingImages: ImageAttachment[] = [];
 
   // Debounce timer for persisting per-thread drafts to settings
   private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,18 +97,6 @@ export class ThreadsView extends ItemView {
   // restored when the user switches back to a thread that is still in progress.
   // Cleared on 'message' or 'done' for the corresponding thread.
   private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[] }> = new Map();
-
-  private skills: { name: string; description: string }[] = [];
-  private skillDropdown: HTMLElement | null = null;
-  private skillDropdownItems: { name: string; description: string }[] = [];
-  private skillDropdownIndex = 0;
-
-  private fileDropdown: HTMLElement | null = null;
-  private fileDropdownItems: { path: string; basename: string; isThis?: boolean }[] = [];
-  private fileDropdownIndex = 0;
-
-  // Speech-to-text controller (one per view, shared across mic buttons)
-  private sttController: SttController | null = null;
 
   // ResizeObserver for the floating input panel (keeps --ct-panel-height current)
   private panelResizeObserver: ResizeObserver | null = null;
@@ -262,7 +242,7 @@ export class ThreadsView extends ItemView {
       this.renderProjectBar();
       this.setActiveThread(thread.id);
       if (initialPrompt) {
-        this.inputEl.value = initialPrompt;
+        this.dispatchInput?.setValue(initialPrompt);
       }
       return { threadId: thread.id, title: thread.title };
     };
@@ -322,7 +302,7 @@ export class ThreadsView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.stopStatusLineInterval();
-    this.sttController?.destroy();
+    this.dispatchInput?.destroy();
     this.panelResizeObserver?.disconnect();
     this.panelResizeObserver = null;
   }
@@ -366,165 +346,34 @@ export class ThreadsView extends ItemView {
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
     this.inputRowEl = floatingPanel.createDiv('ct-input-row');
-    this.pasteChipsEl = this.inputRowEl.createDiv('ct-paste-chips ct-hidden');
 
-    const inputControls = this.inputRowEl.createDiv('ct-input-controls');
-
-    this.loadSkills();
-    this.inputEl = inputControls.createEl('textarea', {
-      cls: 'ct-input',
-      attr: { placeholder: 'Message Claude…' },
+    this.dispatchInput = new DispatchInput({
+      app: this.app,
+      placeholder: 'Message Claude…',
+      inputCls: 'ct-input',
+      sendBtnText: '↵',
+      sendBtnTitle: 'Send message',
+      showStopBtn: true,
+      onStop: () => this.stopMessage(),
+      showThisMention: true,
+      showCwdChip: true,
+      captureLongPaste: true,
+      builtinCommands: ThreadsView.BUILTIN_COMMANDS,
+      onInput: () => this.scheduleDraftSave(),
+      onChipChange: () => this.scheduleDraftSave(),
+      appendFooterActions: (container) => {
+        this.moreBtn = container.createEl('button', {
+          cls: 'ct-more-btn',
+          attr: { title: 'More actions' },
+        });
+        setIcon(this.moreBtn, 'menu');
+        this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
+      },
+      onSend: async ({ text, images, attachment }) => {
+        await this.handleSendFromDispatch(text, images, attachment);
+      },
     });
-    const inputActions = inputControls.createDiv('ct-input-actions');
-    this.sendBtn = inputActions.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
-    this.stopBtn = inputActions.createEl('button', {
-      cls: 'ct-stop-btn ct-hidden',
-      text: '■',
-      attr: { title: 'Stop' },
-    });
-
-    // Secondary actions live in a footer row below the textarea
-    const inputFooter = this.inputRowEl.createDiv('ct-input-footer');
-
-    // CWD chip — always visible, left-aligned in the footer
-    this.cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
-    const cwdFooterIcon = this.cwdChipEl.createSpan('ct-edited-file-chip-icon');
-    setIcon(cwdFooterIcon, 'folder');
-    this.cwdChipNameEl = this.cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
-
-    // Right-side buttons group (menu + mic)
-    const footerActions = inputFooter.createDiv('ct-input-footer-actions');
-    this.moreBtn = footerActions.createEl('button', {
-      cls: 'ct-more-btn',
-      attr: { title: 'More actions' },
-    });
-    setIcon(this.moreBtn, 'menu');
-    this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
-
-    this.inputEl.addEventListener('keydown', (e) => {
-      if (this.fileDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          const selectedItem = this.fileDropdownItems[this.fileDropdownIndex];
-          if (selectedItem.isThis) {
-            this.insertThisMention();
-          } else {
-            this.insertFileMention(selectedItem.basename);
-          }
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideFileDropdown();
-          return;
-        }
-      }
-      if (this.skillDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.min(this.skillDropdownIndex + 1, this.skillDropdownItems.length - 1);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.max(this.skillDropdownIndex - 1, 0);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name);
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideSkillDropdown();
-          return;
-        }
-      }
-      if (e.key === 'Escape' && !this.stopBtn.hasClass('ct-hidden')) {
-        e.preventDefault();
-        this.stopMessage();
-        return;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        this.sendMessage();
-      }
-    });
-    this.inputEl.addEventListener('input', () => {
-      const atQuery = this.getAtQuery();
-      if (atQuery !== null) {
-        this.hideSkillDropdown();
-        this.showFileDropdown(atQuery);
-        this.scheduleDraftSave();
-        return;
-      }
-      this.hideFileDropdown();
-      const query = this.getSlashQuery();
-      if (query !== null) this.showSkillDropdown(query);
-      else this.hideSkillDropdown();
-      this.scheduleDraftSave();
-    });
-    this.inputEl.addEventListener('blur', () => {
-      setTimeout(() => {
-        this.hideSkillDropdown();
-        this.hideFileDropdown();
-      }, 150);
-    });
-    this.inputEl.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files ?? []);
-      const imageFiles = files.filter(f => f.type.startsWith('image/'));
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        imageFiles.forEach(f => this.addImageAttachment(f));
-        return;
-      }
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      if (text.length >= 500) {
-        e.preventDefault();
-        this.addPasteAttachment(text);
-      }
-    });
-    this.inputRowEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      this.inputRowEl.addClass('ct-drag-over');
-    });
-    this.inputRowEl.addEventListener('dragleave', (e) => {
-      if (!this.inputRowEl.contains(e.relatedTarget as Node | null)) {
-        this.inputRowEl.removeClass('ct-drag-over');
-      }
-    });
-    this.inputRowEl.addEventListener('drop', (e) => {
-      e.preventDefault();
-      this.inputRowEl.removeClass('ct-drag-over');
-      const files = Array.from(e.dataTransfer?.files ?? []);
-      for (const file of files) {
-        if (file.type.startsWith('image/')) {
-          this.addImageAttachment(file);
-        } else {
-          this.addFileAsTextAttachment(file);
-        }
-      }
-    });
-    this.sendBtn.addEventListener('click', () => this.sendMessage());
-    this.stopBtn.addEventListener('click', () => this.stopMessage());
-
-    // Mic button for speech-to-text — lives in the footer actions group alongside more-btn
-    this.sttController = new SttController(this.app);
-    const micBtn = this.sttController.createMicButton(this.inputEl);
-    footerActions.appendChild(micBtn);
+    this.dispatchInput.mount(this.inputRowEl);
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
@@ -628,13 +477,15 @@ export class ThreadsView extends ItemView {
 
   /** Snapshot the current input box state into the given thread object. */
   private saveDraftToThread(threadId: string | null): void {
-    if (!threadId || !this.inputEl) return;
+    if (!threadId || !this.dispatchInput) return;
     const thread = this.manager.getThread(threadId);
     if (!thread) return;
-    const text = this.inputEl.value;
-    const hasContent = text.length > 0 || this.pendingAttachment !== null || this.pendingImages.length > 0;
+    const text = this.dispatchInput.getValue();
+    const attachment = this.dispatchInput.getPendingAttachment();
+    const images = this.dispatchInput.getPendingImages();
+    const hasContent = text.length > 0 || attachment !== null || images.length > 0;
     if (hasContent) {
-      thread.draft = { text, attachment: this.pendingAttachment, images: [...this.pendingImages] };
+      thread.draft = { text, attachment, images };
     } else {
       delete thread.draft;
     }
@@ -642,13 +493,12 @@ export class ThreadsView extends ItemView {
 
   /** Restore the input box state from a thread's saved draft (or clear it). */
   private restoreDraftFromThread(threadId: string): void {
-    if (!this.inputEl) return;
+    if (!this.dispatchInput) return;
     const thread = this.manager.getThread(threadId);
     const draft = thread?.draft;
-    this.inputEl.value = draft?.text ?? '';
-    this.pendingAttachment = draft?.attachment ?? null;
-    this.pendingImages = draft ? [...draft.images] : [];
-    this.renderPasteChips();
+    this.dispatchInput.setValue(draft?.text ?? '');
+    this.dispatchInput.setPendingAttachment(draft?.attachment ?? null);
+    this.dispatchInput.setPendingImages(draft ? [...draft.images] : []);
   }
 
   /**
@@ -1096,8 +946,7 @@ export class ThreadsView extends ItemView {
   private renderCwdChip(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    this.cwdChipNameEl.textContent = shortenPath(cwd);
-    setTooltip(this.cwdChipEl, cwd);
+    this.dispatchInput?.setCwd(shortenPath(cwd), cwd);
   }
 
   private renderThreadInfo(): void {
@@ -1579,7 +1428,7 @@ export class ThreadsView extends ItemView {
         // Restore the sent message so the user can edit and re-send
         const lastSent = this.activeThreadId ? this.lastSentTexts.get(this.activeThreadId) : undefined;
         if (lastSent) {
-          this.inputEl.value = lastSent;
+          this.dispatchInput?.setValue(lastSent);
           this.lastSentTexts.delete(this.activeThreadId!);
         }
         this.setRunningState(false);
@@ -1697,15 +1546,11 @@ export class ThreadsView extends ItemView {
   }
 
   private setRunningState(running: boolean): void {
+    this.dispatchInput?.setStreaming(running);
     if (running) {
-      this.sendBtn.addClass('ct-hidden');
-      this.stopBtn.removeClass('ct-hidden');
       this.updateStatusBar();
     } else {
-      this.sendBtn.removeClass('ct-hidden');
-      this.stopBtn.addClass('ct-hidden');
       this.statusBar.setText('');
-      this.inputEl.focus();
     }
   }
 
@@ -1726,104 +1571,24 @@ export class ThreadsView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
-  private addPasteAttachment(content: string): void {
-    this.pendingAttachment = content;
-    this.renderPasteChips();
-    this.scheduleDraftSave();
-  }
 
-  private addFileAsTextAttachment(file: File): void {
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Filename on the first line so the chip label and Claude's context both show it
-      this.addPasteAttachment(`${file.name}\n${reader.result as string}`);
-    };
-    reader.onerror = () => new Notice(`Could not read "${file.name}".`);
-    reader.readAsText(file);
-  }
-
-  private addImageAttachment(file: File): void {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1];
-      this.pendingImages.push({
-        base64,
-        mediaType: file.type as ImageMediaType,
-        name: file.name || 'image',
-      });
-      this.renderPasteChips();
-      this.scheduleDraftSave();
-    };
-    reader.readAsDataURL(file);
-  }
-
-  private renderPasteChips(): void {
-    this.pasteChipsEl.empty();
-    if (!this.pendingAttachment && this.pendingImages.length === 0) {
-      this.pasteChipsEl.addClass('ct-hidden');
-      return;
-    }
-    this.pasteChipsEl.removeClass('ct-hidden');
-
-    if (this.pendingAttachment) {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip');
-      const firstLine = this.pendingAttachment.split('\n')[0].trim().slice(0, 40);
-      chip.createSpan({ cls: 'ct-paste-chip-icon', text: '📄' });
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: firstLine || 'pasted text' });
-      chip.createSpan({ cls: 'ct-paste-chip-meta', text: `${this.pendingAttachment.length.toLocaleString()} chars` });
-      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
-      removeBtn.addEventListener('click', () => {
-        this.pendingAttachment = null;
-        this.renderPasteChips();
-        this.scheduleDraftSave();
-      });
-    }
-
-    this.pendingImages.forEach((img, idx) => {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
-      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
-      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
-      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
-      removeBtn.addEventListener('click', () => {
-        this.pendingImages.splice(idx, 1);
-        this.renderPasteChips();
-        this.scheduleDraftSave();
-      });
-    });
-  }
-
-  private async sendMessage(): Promise<void> {
-    const typed = this.inputEl.value.trim();
-    const attachment = this.pendingAttachment;
-    const images = this.pendingImages.slice();
-    if (!typed && !attachment && images.length === 0) return;
+  private async handleSendFromDispatch(
+    typed: string,
+    images: ImageAttachment[],
+    attachment: string | null,
+  ): Promise<void> {
     if (!this.activeThreadId) return;
 
     this.lastSentTexts.set(this.activeThreadId, typed);
-    this.inputEl.value = '';
-    this.pendingAttachment = null;
-    this.pendingImages = [];
-    this.renderPasteChips();
+
     // Clear any saved draft for this thread so it doesn't reappear
-    if (this.activeThreadId) {
-      const thread = this.manager.getThread(this.activeThreadId);
-      if (thread) delete thread.draft;
-    }
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (thread) delete thread.draft;
 
-    // Dismiss the context banner as soon as the user sends — they're back in the thread
-    this.hideSummaryBanner(false);
-
-    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    // Dismiss the context banner as soon as the user sends
     this.hideSummaryBanner(false);
 
     // /fork [optional focus] — open ForkModal without sending a message to Claude.
-    // Detected before the user bubble renders so no stray bubble is left behind.
     const forkMatch = typed.match(/^\/fork(?:\s+([\s\S]+))?$/i);
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
@@ -1848,7 +1613,7 @@ export class ThreadsView extends ItemView {
       }
     }
 
-    // Resolve @[[basename]] file mentions — append each file's content as context
+    // Resolve @[[basename]] file mentions
     const mentionRegex = /@\[\[([^\]]+)\]\]/g;
     const mentions = [...text.matchAll(mentionRegex)].map(m => m[1]);
     if (mentions.length > 0) {
@@ -1859,9 +1624,7 @@ export class ThreadsView extends ItemView {
           try {
             const content = await this.app.vault.cachedRead(file);
             fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
-          } catch {
-            // Skip unreadable files
-          }
+          } catch { /* skip */ }
         }
       }
       if (fileContextParts.length > 0) {
@@ -1894,8 +1657,8 @@ export class ThreadsView extends ItemView {
     if (modelMatch) {
       const arg = (modelMatch[1] ?? '').toLowerCase();
       if (!arg) {
-        const thread = this.manager.getThread(this.activeThreadId);
-        const current = thread?.model ?? 'default';
+        const currentThread = this.manager.getThread(this.activeThreadId);
+        const current = currentThread?.model ?? 'default';
         const infoEl = this.messagesEl.createDiv('ct-compact-divider');
         infoEl.createSpan({ cls: 'ct-compact-label', text: `Model: ${current}` });
         this.scrollToBottom();
@@ -2116,200 +1879,6 @@ export class ThreadsView extends ItemView {
     await this.plugin.saveSettings();
     this.renderProjectBar(); // update thread count badges
     this.setActiveThread(thread.id);
-  }
-
-  private loadSkills(): void {
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-    try {
-      this.skills = fs.readdirSync(skillsDir).map(entry => {
-        const name = entry.replace(/\.md$/, '');
-        const entryPath = path.join(skillsDir, entry);
-        const isDir = fs.statSync(entryPath).isDirectory();
-        let filePath = isDir ? '' : entryPath;
-        if (isDir) {
-          const candidates = ['index.md', 'skill.md', name + '.md'];
-          const found = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
-          if (found) {
-            filePath = path.join(entryPath, found);
-          } else {
-            const first = fs.readdirSync(entryPath).find(f => f.endsWith('.md'));
-            if (first) filePath = path.join(entryPath, first);
-          }
-        }
-        return { name, description: filePath ? this.readSkillDescription(filePath) : '' };
-      });
-    } catch {
-      this.skills = [];
-    }
-  }
-
-  private readSkillDescription(filePath: string): string {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8').slice(0, 2000);
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (fmMatch) {
-        const fm = fmMatch[1];
-        const inline = fm.match(/^description:\s+([^>|\n][^\n]*)/m);
-        if (inline) return inline[1].trim();
-        const block = fm.match(/^description:\s*>-?\s*\n((?:[ \t]+[^\n]*\n?)+)/m);
-        if (block) return block[1].replace(/^[ \t]+/mg, '').replace(/\n/g, ' ').trim();
-      }
-      const body = content.replace(/^---[\s\S]*?---\n/, '');
-      for (const line of body.split('\n')) {
-        const clean = line.replace(/^#+\s*/, '').trim();
-        if (clean && !clean.startsWith('---')) return clean;
-      }
-      return '';
-    } catch {
-      return '';
-    }
-  }
-
-  private getSlashQuery(): string | null {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('/') ? word.slice(1) : null;
-  }
-
-  private showSkillDropdown(query: string): void {
-    const q = query.toLowerCase();
-    const builtins = ThreadsView.BUILTIN_COMMANDS.filter(c => c.name.startsWith(q));
-    const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
-    const matches = [...builtins, ...skills];
-    if (matches.length === 0) { this.hideSkillDropdown(); return; }
-    this.skillDropdownItems = matches;
-    if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
-    if (!this.skillDropdown) {
-      this.skillDropdown = this.inputRowEl.createDiv('ct-skill-dropdown');
-    }
-    this.renderSkillDropdown();
-  }
-
-  private renderSkillDropdown(): void {
-    if (!this.skillDropdown) return;
-    this.skillDropdown.empty();
-    this.skillDropdownItems.forEach((skill, i) => {
-      const item = this.skillDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.skillDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
-      nameRow.createSpan({ text: skill.name });
-      if (skill.description) {
-        item.createDiv({ cls: 'ct-skill-desc', text: skill.description });
-      }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertSkill(skill.name); });
-    });
-  }
-
-  private insertSkill(skillName: string): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = '/' + skillName + ' ';
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideSkillDropdown();
-    this.inputEl.focus();
-  }
-
-  private hideSkillDropdown(): void {
-    this.skillDropdown?.remove();
-    this.skillDropdown = null;
-    this.skillDropdownItems = [];
-    this.skillDropdownIndex = 0;
-  }
-
-  private getAtQuery(): string | null {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('@') ? word.slice(1) : null;
-  }
-
-  private showFileDropdown(query: string): void {
-    const q = query.toLowerCase();
-    // Show @this at the top whenever the query is a prefix of "this" (includes empty query)
-    const showThis = 'this'.startsWith(q);
-    const files = this.app.vault.getMarkdownFiles()
-      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
-      .slice(0, showThis ? 19 : 20);
-    const allItems: { path: string; basename: string; isThis?: boolean }[] = [
-      ...(showThis ? [{ path: '', basename: 'this', isThis: true as const }] : []),
-      ...files.map(f => ({ path: f.path, basename: f.basename })),
-    ];
-    if (allItems.length === 0) { this.hideFileDropdown(); return; }
-    this.fileDropdownItems = allItems;
-    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
-    if (!this.fileDropdown) {
-      this.fileDropdown = this.inputRowEl.createDiv('ct-file-dropdown');
-    }
-    this.renderFileDropdown();
-  }
-
-  private renderFileDropdown(): void {
-    if (!this.fileDropdown) return;
-    this.fileDropdown.empty();
-    this.fileDropdownItems.forEach((file, i) => {
-      const item = this.fileDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
-      if (file.isThis) {
-        nameRow.createSpan({ text: 'this' });
-        item.createDiv({ cls: 'ct-skill-desc', text: 'currently open file' });
-        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertThisMention(); });
-      } else {
-        nameRow.createSpan({ text: file.basename });
-        const pathParts = file.path.split('/');
-        if (pathParts.length > 1) {
-          const folder = pathParts.slice(0, -1).join('/');
-          item.createDiv({ cls: 'ct-skill-desc', text: folder });
-        }
-        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
-      }
-    });
-  }
-
-  private insertFileMention(basename: string): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = `@[[${basename}]] `;
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideFileDropdown();
-    this.inputEl.focus();
-  }
-
-  private insertThisMention(): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = '@this ';
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideFileDropdown();
-    this.inputEl.focus();
-  }
-
-  private hideFileDropdown(): void {
-    this.fileDropdown?.remove();
-    this.fileDropdown = null;
-    this.fileDropdownItems = [];
-    this.fileDropdownIndex = 0;
   }
 
   navigateTab(direction: 1 | -1): void {
@@ -2546,18 +2115,5 @@ class ForkModal extends Modal {
   }
 }
 
-/**
- * Returns a display-friendly version of an absolute path.
- * Replaces the home directory with ~ and keeps only the last two path segments
- * so the cwd badge stays compact even for deeply-nested repos.
- */
-function shortenPath(fullPath: string): string {
-  const home = os.homedir();
-  const withTilde = fullPath.startsWith(home)
-    ? '~' + fullPath.slice(home.length)
-    : fullPath;
-  const parts = withTilde.split('/').filter(Boolean);
-  if (parts.length <= 3) return withTilde;
-  return '.../' + parts.slice(-2).join('/');
-}
+
 

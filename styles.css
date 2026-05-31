@@ -1879,11 +1879,19 @@
   padding-bottom: 2px;
 }
 
+/* Shared dispatch root — acts as positioning context for dropdowns */
+.ct-dispatch-root {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 /* Inner row: textarea + stacked action buttons (mirrors ct-input-controls) */
 .ct-agents-dispatch-row {
   display: flex;
   gap: 6px;
   align-items: flex-start;
+  position: relative;
 }
 
 .ct-agents-dispatch-input {
