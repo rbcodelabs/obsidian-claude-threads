@@ -17,6 +17,12 @@ const sharedConfig = {
     'fs':                               resolve('./mocks/fs.ts'),
     'path':                             resolve('./mocks/path.ts'),
     'os':                               resolve('./mocks/os.ts'),
+    // child_process is statically imported by ThreadsView — stub it so the
+    // IIFE bundle doesn't crash at load time in the browser harness.
+    'child_process':                    resolve('./mocks/child-process.ts'),
+    // electron is used in dynamic require() calls inside click handlers;
+    // inject a no-op so those code paths don't crash when reached in tests.
+    'electron':                         resolve('./mocks/electron.ts'),
     '@anthropic-ai/claude-agent-sdk':   resolve('./mocks/claude-sdk.ts'),
   },
   define: {

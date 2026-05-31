@@ -16,7 +16,8 @@ test.describe('Mobile View', () => {
   test('mobile connected view', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(mobileHarnessUrl('mobile-connected'));
-    await page.waitForSelector('.ct-mobile-thread-list');
+    // The harness seeds an active thread, so the conv panel is shown first (not the list).
+    await page.waitForSelector('.ct-mobile-conv-panel');
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot('mobile-connected.png', { fullPage: true });
   });

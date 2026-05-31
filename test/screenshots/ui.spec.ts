@@ -7,11 +7,12 @@ test.describe('Claude Threads UI', () => {
   test('main view', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
-    // Switch to the HipTrip thread which shows a markdown table
-    await page.getByText('HipTrip feature id').click();
+    // Switch to the HipTrip thread which shows a markdown table (thread switcher
+    // is now a dropdown — use the harness API to focus directly).
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });
@@ -19,7 +20,7 @@ test.describe('Claude Threads UI', () => {
   test('slash command autocomplete', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     await page.click('.ct-input');
@@ -31,7 +32,7 @@ test.describe('Claude Threads UI', () => {
   test('permission card', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Trigger the inline permission card (3-param: threadId, toolName, detail)
@@ -49,7 +50,7 @@ test.describe('Claude Threads UI', () => {
   test('fork conversation menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open the more menu
@@ -62,7 +63,7 @@ test.describe('Claude Threads UI', () => {
   test('fork conversation modal', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open the more menu and click Fork
@@ -77,7 +78,7 @@ test.describe('Claude Threads UI', () => {
   test('fork conversation modal after generation', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open fork modal
@@ -96,7 +97,7 @@ test.describe('Claude Threads UI', () => {
   test('edited files card with focus button', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     // Thread 1 (Fix auth middleware) has editedFiles seeded — wait for the card
     await page.waitForSelector('.ct-edited-files:not(.ct-hidden)');
     await page.waitForTimeout(500);
@@ -111,7 +112,7 @@ test.describe('Claude Threads UI', () => {
   test('@ file mention autocomplete', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
 
@@ -135,7 +136,7 @@ test.describe('Claude Threads UI', () => {
   test('context recap banner', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
 
@@ -161,7 +162,7 @@ test.describe('Claude Threads UI', () => {
   test.skip('agent dashboard permission buttons — AgentDashboard not mounted in harness; add it to test/harness/index.ts and expose as window.__dashboard to un-skip', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForTimeout(500);
 
     // Trigger a permission request on thread 1

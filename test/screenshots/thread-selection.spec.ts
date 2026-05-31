@@ -15,7 +15,7 @@ const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 test.describe('ThreadsView — initial thread selection', () => {
   test('defaults to the most recently created thread on open, not the oldest', async ({ page }) => {
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
 
     const activeId: string = await page.evaluate(() => (window as any).__view.getActiveThreadId());
@@ -29,17 +29,17 @@ test.describe('ThreadsView — initial thread selection', () => {
 
   test('active tab in the UI matches the most recently created thread', async ({ page }) => {
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForTimeout(200);
 
-    // The active tab element should contain the title of the newest thread
-    const activeTab = page.locator('.ct-tab.ct-tab-active');
-    await expect(activeTab).toContainText('Fix auth middleware');
+    // The title button shows the active thread title
+    const titleEl = page.locator('.ct-title-text');
+    await expect(titleEl).toContainText('Fix auth middleware');
   });
 
   test('focusThread switches to the targeted thread', async ({ page }) => {
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
 
     // Simulate focusThread being called (e.g. from openThreadInChatView)
     await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
@@ -47,7 +47,7 @@ test.describe('ThreadsView — initial thread selection', () => {
     const activeId: string = await page.evaluate(() => (window as any).__view.getActiveThreadId());
     expect(activeId).toBe('thread-brainstorm');
 
-    const activeTab = page.locator('.ct-tab.ct-tab-active');
-    await expect(activeTab).toContainText('HipTrip feature');
+    const titleEl = page.locator('.ct-title-text');
+    await expect(titleEl).toContainText('HipTrip feature');
   });
 });
