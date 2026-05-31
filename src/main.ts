@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -611,6 +611,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.projects = this.settings.projects ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Clear any garbage written by the SecretComponent picker (stores key names, not values)
+    const storedKey = this.app.secretStorage.getSecret('openai-api-key');
+    if (storedKey && !storedKey.startsWith('sk-')) {
+      this.app.secretStorage.setSecret('openai-api-key', '');
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -1117,16 +1122,18 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     // ── Speech to Text ────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Speech to Text' });
 
-    const openAiSetting = new Setting(containerEl)
+    new Setting(containerEl)
       .setName('OpenAI API Key')
-      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.');
-    const secretComp = new SecretComponent(this.app, openAiSetting.controlEl);
-    const existingKey = this.app.secretStorage.getSecret('openai-api-key');
-    if (existingKey) secretComp.setValue(existingKey);
-    secretComp.onChange((value) => {
-      const trimmed = value.trim();
-      if (trimmed) this.app.secretStorage.setSecret('openai-api-key', trimmed);
-    });
+      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text.inputEl.placeholder = this.app.secretStorage.getSecret('openai-api-key') ? '••••••••' : 'sk-…';
+        text.inputEl.style.width = '100%';
+        text.onChange((value) => {
+          const trimmed = value.trim();
+          if (trimmed) this.app.secretStorage.setSecret('openai-api-key', trimmed);
+        });
+      });
 
     new Setting(containerEl)
       .setName('PTT Hotkey')

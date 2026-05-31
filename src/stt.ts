@@ -221,7 +221,8 @@ export class SttController {
   }
 
   private getApiKey(): string | null {
-    return (this.app.secretStorage as SecretStorage | undefined)?.getSecret('openai-api-key') ?? null;
+    const key = (this.app.secretStorage as SecretStorage | undefined)?.getSecret('openai-api-key');
+    return key ? key.trim() || null : null;
   }
 }
 
@@ -277,7 +278,12 @@ async function transcribeAudio(blob: Blob, apiKey: string): Promise<string> {
   });
 
   if (!res.ok) {
-    throw new Error(`Whisper API error: ${res.status}`);
+    let detail = '';
+    try {
+      const err = await res.json() as { error?: { message?: string } };
+      detail = err?.error?.message ? `: ${err.error.message}` : '';
+    } catch { /* ignore parse errors */ }
+    throw new Error(`Whisper API error ${res.status}${detail}`);
   }
 
   const json = await res.json() as { text?: string };
