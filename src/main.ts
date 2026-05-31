@@ -1203,6 +1203,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         .addButton((btn) => {
           btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
             const tmp = document.body.createDiv();
+            tmp.style.display = 'none';
             const picker = new SecretComponent(this.app, tmp);
             picker.onChange((secretName: string) => {
               tmp.remove();
@@ -1216,6 +1217,14 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
                 new Notice('That secret has no value stored');
               }
             });
+            // SecretComponent renders a button — click it immediately to open the picker
+            const inner = tmp.querySelector('button, input') as HTMLElement | null;
+            if (inner) {
+              inner.click();
+            } else {
+              tmp.remove();
+              new Notice('Secret picker not available');
+            }
           });
         });
     }
