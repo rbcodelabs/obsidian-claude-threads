@@ -373,7 +373,7 @@ export class ThreadsView extends ItemView {
     this.loadSkills();
     this.inputEl = inputControls.createEl('textarea', {
       cls: 'ct-input',
-      attr: { placeholder: 'Message Claude... (Enter to send, Shift+Enter for newline)' },
+      attr: { placeholder: 'Message Claude…' },
     });
     const inputActions = inputControls.createDiv('ct-input-actions');
     this.sendBtn = inputActions.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
@@ -1477,6 +1477,7 @@ export class ThreadsView extends ItemView {
             pill.append(label);
           }
           this.streamingEl.prepend(pill);
+          this.scrollToBottom();
         }
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
           const filePath = event.record.summary.replace(/^[^:]+: /, '');
