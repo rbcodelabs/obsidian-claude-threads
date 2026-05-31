@@ -10,7 +10,7 @@
  */
 
 import { Notice } from 'obsidian';
-import type { App } from 'obsidian';
+import type { App, SecretStorage } from 'obsidian';
 
 type MicButtonState = 'idle' | 'recording' | 'processing';
 
@@ -221,9 +221,7 @@ export class SttController {
   }
 
   private getApiKey(): string | null {
-    const storage = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
-    if (!storage) return null;
-    return storage.getSecret('openai-api-key');
+    return (this.app.secretStorage as SecretStorage | undefined)?.getSecret('openai-api-key') ?? null;
   }
 }
 

@@ -136,6 +136,8 @@ export interface PluginSettings {
    * Empty string disables PTT. Default: "Alt+Space" (Option+Space on Mac).
    */
   pttKey: string;
+  /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
+  openAIKey: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -158,6 +160,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   debugLogging: false,
   pttKey: 'Alt+Space',
+  openAIKey: '',
   remoteAccess: {
     enabled: false,
     roomId: '',

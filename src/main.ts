@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -1117,26 +1117,16 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     // ── Speech to Text ────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Speech to Text' });
 
-    new Setting(containerEl)
+    const openAiSetting = new Setting(containerEl)
       .setName('OpenAI API Key')
-      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
-      .addText((text) => {
-        text.inputEl.type = 'password';
-        text.inputEl.placeholder = 'sk-…';
-        // Populate with a masked placeholder if a key already exists (synchronous API)
-        const storageR = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
-        if (storageR && storageR.getSecret('openai-api-key')) {
-          text.inputEl.placeholder = '••••••••';
-        }
-        text.onChange((value) => {
-          const trimmed = value.trim();
-          const storageW = (this.app as unknown as { secretStorage?: { setSecret: (id: string, val: string) => void } }).secretStorage;
-          if (storageW && trimmed) {
-            storageW.setSecret('openai-api-key', trimmed);
-          }
-        });
-        text.inputEl.style.width = '100%';
-      });
+      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.');
+    const secretComp = new SecretComponent(this.app, openAiSetting.controlEl);
+    const existingKey = this.app.secretStorage.getSecret('openai-api-key');
+    if (existingKey) secretComp.setValue(existingKey);
+    secretComp.onChange((value) => {
+      const trimmed = value.trim();
+      if (trimmed) this.app.secretStorage.setSecret('openai-api-key', trimmed);
+    });
 
     new Setting(containerEl)
       .setName('PTT Hotkey')
