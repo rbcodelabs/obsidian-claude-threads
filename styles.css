@@ -3500,3 +3500,17 @@
   animation: ct-spin 0.8s linear infinite;
   transform-origin: center;
 }
+
+/* ── OpenAI key setting ──────────────────────────────────────────────────── */
+.ct-openai-key-display {
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+}
+
+.ct-modal-button-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}

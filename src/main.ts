@@ -1238,7 +1238,7 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       openAiSetting
         .addButton((btn) => {
           if (!existingKey) btn.setCta();
-          btn.setButtonText(existingKey ? 'Set key' : 'Set key').onClick(() => {
+          btn.setButtonText(existingKey ? 'Change' : 'Set key').onClick(() => {
             new OpenAiKeyModal(this.app, this).open();
           });
         })
