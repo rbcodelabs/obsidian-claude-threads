@@ -17,6 +17,8 @@ const sharedConfig = {
     'fs':                               resolve('./mocks/fs.ts'),
     'path':                             resolve('./mocks/path.ts'),
     'os':                               resolve('./mocks/os.ts'),
+    'child_process':                    resolve('./mocks/child-process.ts'),
+    'electron':                         resolve('./mocks/electron.ts'),
     '@anthropic-ai/claude-agent-sdk':   resolve('./mocks/claude-sdk.ts'),
   },
   define: {

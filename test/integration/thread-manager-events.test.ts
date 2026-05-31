@@ -159,6 +159,50 @@ describe('send message → event flow', () => {
     expect(events.find(e => e.type === 'dequeued')).toBeTruthy();
   });
 
+  it('preserves images when a message is queued and later dequeued', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    const attachment = { type: 'base64' as const, mediaType: 'image/png' as const, data: 'abc123', name: 'shot.png' };
+
+    const p1 = manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Second', [attachment]); // queues with image
+
+    // queued event should carry the image
+    const queuedEvt = events.find(e => e.type === 'queued');
+    expect(queuedEvt).toBeTruthy();
+    expect((queuedEvt as Extract<ThreadEvent, { type: 'queued' }>).images).toEqual([attachment]);
+
+    // Drive first session to completion
+    const firstCallbacks = mock.callbacks!;
+    const firstResolve = mock.resolve!;
+    firstCallbacks.onToken('Reply 1');
+    firstCallbacks.onMessage('Reply 1', []);
+    firstCallbacks.onDone('sess-1', 0.001, 1);
+    firstResolve();
+
+    // Wait for second session to start
+    await vi.waitFor(() => expect(mock.callbacks).not.toBe(firstCallbacks));
+
+    // The second ClaudeSession.run() call should have received the image
+    expect(mock.images).toEqual([attachment]);
+
+    // dequeued event should also carry the image
+    const dequeuedEvt = events.find(e => e.type === 'dequeued');
+    expect(dequeuedEvt).toBeTruthy();
+    expect((dequeuedEvt as Extract<ThreadEvent, { type: 'dequeued' }>).images).toEqual([attachment]);
+
+    // Drive second session to completion
+    mock.callbacks!.onToken('Reply 2');
+    mock.callbacks!.onMessage('Reply 2', []);
+    mock.callbacks!.onDone('sess-2', 0.001, 1);
+    mock.resolve!();
+
+    await p1;
+  });
+
   it('emits error event and cleans up session on failure', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', '/cwd');

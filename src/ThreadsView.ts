@@ -1542,7 +1542,16 @@ export class ThreadsView extends ItemView {
       case 'dequeued': {
         const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
         this.pendingUserEl = userEl; // prevent the subsequent 'send' event from creating a duplicate bubble
-        userEl.createDiv('ct-message-content').createEl('p', { text: event.text });
+        const dqContent = userEl.createDiv('ct-message-content');
+        if (event.text) dqContent.createEl('p', { text: event.text });
+        if (event.images && event.images.length > 0) {
+          const imgRow = dqContent.createDiv('ct-message-images');
+          for (const img of event.images) {
+            const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
+            thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+            thumb.title = img.name;
+          }
+        }
         this.scrollToBottom();
         break;
       }
