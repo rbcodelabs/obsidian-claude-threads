@@ -3500,3 +3500,51 @@
   animation: ct-spin 0.8s linear infinite;
   transform-origin: center;
 }
+
+/* ── Kanban floating dispatch panel ──────────────────────────────────── */
+
+/* Positioning context for the absolute floating panel */
+.ct-agents-root {
+  position: relative;
+}
+
+/* The floating panel itself */
+.ct-kanban-dispatch {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  z-index: 20;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Focus glow matching the conversation view floating panel */
+.ct-kanban-dispatch:focus-within {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1), 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+}
+
+.ct-kanban-dispatch:hover:not(:focus-within) {
+  border-color: var(--background-modifier-border-hover, var(--interactive-accent));
+}
+
+/* The dispatch-root inside the panel gets the agents-dispatch padding */
+.ct-kanban-dispatch .ct-dispatch-root {
+  padding: 8px;
+}
+
+/* Extra bottom padding on the board so cards don't hide under the panel */
+.ct-kanban-board {
+  padding-bottom: 80px;
+}
+
+/* Drag-over highlight for the kanban dispatch panel */
+.ct-kanban-dispatch .ct-drag-over {
+  border-color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary));
+}

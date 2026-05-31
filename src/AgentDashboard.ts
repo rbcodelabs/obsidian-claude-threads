@@ -1,14 +1,11 @@
 import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
-import type { Thread, ImageAttachment, ImageMediaType } from './types';
-import { MAX_ATTACHMENT_BYTES, buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
+import type { Thread } from './types';
+import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
-import { SttController } from './stt';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { DispatchInput } from './DispatchInput';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -26,32 +23,7 @@ export class AgentDashboard extends ItemView {
   private searchClearBtn!: HTMLButtonElement;
   private searchBtn!: HTMLButtonElement;
   private searchQuery = '';
-  private dispatchInput!: HTMLTextAreaElement;
-  private dispatchRow!: HTMLElement;
-  private pasteChipsEl!: HTMLElement;
-  private hiddenFileInput!: HTMLInputElement;
-
-  // Pending attachments for the dispatch box
-  private pendingImages: ImageAttachment[] = [];
-  private pendingAttachment: string | null = null;
-
-  // @ file mention dropdown state
-  private fileDropdown: HTMLElement | null = null;
-  private fileDropdownItems: { path: string; basename: string }[] = [];
-  private fileDropdownIndex = 0;
-
-  // / slash command autocomplete state
-  private skills: { name: string; description: string }[] = [];
-  private skillDropdown: HTMLElement | null = null;
-  private skillDropdownItems: { name: string; description: string }[] = [];
-  private skillDropdownIndex = 0;
-
-  private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
-    { name: 'compact', description: 'Summarize conversation history to free up context' },
-    { name: 'clear', description: 'Clear conversation history and start fresh' },
-    { name: 'cost', description: 'Show token usage and cost for this session' },
-    { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
-  ];
+  private dispatchComponent!: DispatchInput;
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -59,9 +31,6 @@ export class AgentDashboard extends ItemView {
   // Row elements for active-thread highlighting
   private rowEls: Map<string, HTMLElement> = new Map();
   private activeThreadId: string | null = null;
-
-  // Speech-to-text controller for the dispatch input
-  private sttController: SttController | null = null;
 
   // Debounce full re-render on state changes
   private renderPending = false;
@@ -94,11 +63,10 @@ export class AgentDashboard extends ItemView {
     this.unsubscribe?.();
     if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.timeInterval) clearInterval(this.timeInterval);
-    this.sttController?.destroy();
+    this.dispatchComponent?.destroy();
   }
 
   private buildUI(): void {
-    this.loadSkills();
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('ct-agents-root');
@@ -157,166 +125,48 @@ export class AgentDashboard extends ItemView {
     this.listEl = root.createDiv('ct-agents-list');
 
     const dispatchEl = root.createDiv('ct-agents-dispatch');
+    this.dispatchComponent = new DispatchInput({
+      app: this.app,
+      placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
+      builtinCommands: [
+        { name: 'compact', description: 'Summarize conversation history to free up context' },
+        { name: 'clear', description: 'Clear conversation history and start fresh' },
+        { name: 'cost', description: 'Show token usage and cost for this session' },
+        { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
+      ],
+      onSend: async ({ text, images, attachment }) => {
+        let messageText = buildMessageWithAttachment(text, attachment);
 
-    // Image chip strip — hidden until images are attached
-    this.pasteChipsEl = dispatchEl.createDiv('ct-paste-chips ct-agents-dispatch-chips ct-hidden');
-
-    // Input row: textarea + stacked action buttons (mirrors chat ct-input-controls layout)
-    this.dispatchRow = dispatchEl.createDiv('ct-agents-dispatch-row');
-    const dispatchRow = this.dispatchRow;
-    this.dispatchInput = dispatchRow.createEl('textarea', {
-      cls: 'ct-agents-dispatch-input',
-      attr: { placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)' },
-    });
-
-    const inputActions = dispatchRow.createDiv('ct-input-actions');
-
-    const dispatchBtn = inputActions.createEl('button', {
-      cls: 'ct-send-btn ct-agents-dispatch-btn',
-      text: '▶',
-      attr: { title: 'Start task' },
-    });
-
-    const attachBtn = inputActions.createEl('button', {
-      cls: 'ct-more-btn ct-agents-dispatch-attach-btn',
-      attr: { title: 'Attach file' },
-    });
-    setIcon(attachBtn, 'paperclip');
-
-    // Hidden file picker (triggered by attach button)
-    this.hiddenFileInput = document.createElement('input');
-    this.hiddenFileInput.type = 'file';
-    this.hiddenFileInput.accept = '*';
-    this.hiddenFileInput.multiple = true;
-    this.hiddenFileInput.style.display = 'none';
-    this.hiddenFileInput.addEventListener('change', () => {
-      for (const f of Array.from(this.hiddenFileInput.files ?? [])) {
-        if (f.type.startsWith('image/')) {
-          this.addImageAttachment(f);
-        } else {
-          this.addFileAsTextAttachment(f);
+        // Resolve @[[basename]] file mentions — append each file's content as context
+        const mentionRegex = /@\[\[([^\]]+)\]\]/g;
+        const mentions = [...messageText.matchAll(mentionRegex)].map(m => m[1]);
+        if (mentions.length > 0) {
+          const fileContextParts: string[] = [];
+          for (const basename of mentions) {
+            const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
+            if (file) {
+              try {
+                const content = await this.app.vault.cachedRead(file);
+                fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
+              } catch { /* skip */ }
+            }
+          }
+          if (fileContextParts.length > 0) {
+            messageText = messageText + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
+          }
         }
-      }
-      this.hiddenFileInput.value = '';
-    });
-    dispatchRow.appendChild(this.hiddenFileInput);
 
-    dispatchBtn.addEventListener('click', () => this.dispatch());
-    attachBtn.addEventListener('click', () => this.hiddenFileInput.click());
-
-    // Mic button for speech-to-text
-    this.sttController = new SttController(this.app);
-    const micBtn = this.sttController.createMicButton(this.dispatchInput);
-    inputActions.appendChild(micBtn);
-
-    this.dispatchInput.addEventListener('keydown', (e) => {
-      if (this.fileDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          this.insertFileMention(this.fileDropdownItems[this.fileDropdownIndex].basename);
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideFileDropdown();
-          return;
-        }
-      }
-      if (this.skillDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.min(this.skillDropdownIndex + 1, this.skillDropdownItems.length - 1);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.max(this.skillDropdownIndex - 1, 0);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name);
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideSkillDropdown();
-          return;
-        }
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        this.dispatch();
-      }
+        const titleHint = deriveDispatchTitle(text, attachment, images.length);
+        const threadId = await this.plugin.dispatchNewThread(
+          messageText,
+          images.length > 0 ? images : undefined,
+          titleHint,
+        );
+        await this.plugin.openThreadInChatView(threadId);
+        this.render();
+      },
     });
-
-    this.dispatchInput.addEventListener('input', () => {
-      const atQuery = this.getAtQuery();
-      if (atQuery !== null) {
-        this.hideSkillDropdown();
-        this.showFileDropdown(atQuery);
-        return;
-      }
-      this.hideFileDropdown();
-      const slashQuery = this.getSlashQuery();
-      if (slashQuery !== null) this.showSkillDropdown(slashQuery);
-      else this.hideSkillDropdown();
-    });
-
-    this.dispatchInput.addEventListener('blur', () => {
-      // Delay so mousedown on a dropdown item fires before blur hides it
-      setTimeout(() => {
-        this.hideFileDropdown();
-        this.hideSkillDropdown();
-      }, 150);
-    });
-
-    // Paste: capture image files from clipboard
-    this.dispatchInput.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files ?? []);
-      const imageFiles = files.filter(f => f.type.startsWith('image/'));
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        imageFiles.forEach(f => this.addImageAttachment(f));
-      }
-    });
-
-    // Drag-and-drop images onto the dispatch area
-    dispatchEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dispatchEl.addClass('ct-drag-over');
-    });
-    // Only clear the highlight when the pointer truly leaves the container,
-    // not when it crosses an internal child element boundary.
-    dispatchEl.addEventListener('dragleave', (e) => {
-      if (!dispatchEl.contains(e.relatedTarget as Node | null)) {
-        dispatchEl.removeClass('ct-drag-over');
-      }
-    });
-    dispatchEl.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dispatchEl.removeClass('ct-drag-over');
-      const files = Array.from(e.dataTransfer?.files ?? []);
-      for (const file of files) {
-        if (file.type.startsWith('image/')) {
-          this.addImageAttachment(file);
-        } else {
-          this.addFileAsTextAttachment(file);
-        }
-      }
-    });
+    this.dispatchComponent.mount(dispatchEl);
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
@@ -609,7 +459,7 @@ export class AgentDashboard extends ItemView {
 
   /** Focus the dispatch input so the user can type a task immediately. */
   public focusDispatchInput(): void {
-    this.dispatchInput?.focus();
+    this.dispatchComponent?.focus();
   }
 
   /** Open the most recently completed unreviewed thread and mark it reviewed.
@@ -625,248 +475,6 @@ export class AgentDashboard extends ItemView {
     }
     this.markReviewed(candidate.id);
     this.plugin.openThreadInChatView(candidate.id);
-  }
-
-  private addImageAttachment(file: File): void {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1];
-      this.pendingImages.push({
-        base64,
-        mediaType: file.type as ImageMediaType,
-        name: file.name || 'image',
-      });
-      this.renderDispatchChips();
-    };
-    reader.readAsDataURL(file);
-  }
-
-  private addFileAsTextAttachment(file: File): void {
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Filename on the first line so the chip label and Claude's context both show it
-      this.pendingAttachment = `${file.name}\n${reader.result as string}`;
-      this.renderDispatchChips();
-    };
-    reader.onerror = () => new Notice(`Could not read "${file.name}".`);
-    reader.readAsText(file);
-  }
-
-  private renderDispatchChips(): void {
-    this.pasteChipsEl.empty();
-    if (!this.pendingAttachment && this.pendingImages.length === 0) {
-      this.pasteChipsEl.addClass('ct-hidden');
-      return;
-    }
-    this.pasteChipsEl.removeClass('ct-hidden');
-
-    if (this.pendingAttachment) {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip');
-      const fileName = this.pendingAttachment.split('\n')[0].trim().slice(0, 40);
-      chip.createSpan({ cls: 'ct-paste-chip-icon', text: '📄' });
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: fileName || 'attached file' });
-      chip.createSpan({ cls: 'ct-paste-chip-meta', text: `${this.pendingAttachment.length.toLocaleString()} chars` });
-      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
-      removeBtn.addEventListener('click', () => {
-        this.pendingAttachment = null;
-        this.renderDispatchChips();
-      });
-    }
-
-    this.pendingImages.forEach((img) => {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
-      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
-      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
-      const removeBtn = chip.createEl('button', {
-        cls: 'ct-paste-chip-remove',
-        text: '×',
-        attr: { title: 'Remove' },
-      });
-      // Remove by identity rather than index — safe against re-render races
-      removeBtn.addEventListener('click', () => {
-        this.pendingImages = this.pendingImages.filter(i => i !== img);
-        this.renderDispatchChips();
-      });
-    });
-  }
-
-  // ── @ file mention helpers ──────────────────────────────────────────────
-
-  private getAtQuery(): string | null {
-    const val = this.dispatchInput.value;
-    const pos = this.dispatchInput.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('@') ? word.slice(1) : null;
-  }
-
-  private showFileDropdown(query: string): void {
-    const q = query.toLowerCase();
-    const files = this.app.vault.getMarkdownFiles()
-      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
-      .slice(0, 20);
-    if (files.length === 0) { this.hideFileDropdown(); return; }
-    this.fileDropdownItems = files.map(f => ({ path: f.path, basename: f.basename }));
-    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
-    if (!this.fileDropdown) {
-      this.fileDropdown = this.dispatchRow.createDiv('ct-file-dropdown');
-    }
-    this.renderFileDropdown();
-  }
-
-  private renderFileDropdown(): void {
-    if (!this.fileDropdown) return;
-    this.fileDropdown.empty();
-    this.fileDropdownItems.forEach((file, i) => {
-      const item = this.fileDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
-      nameRow.createSpan({ text: file.basename });
-      const pathParts = file.path.split('/');
-      if (pathParts.length > 1) {
-        const folder = pathParts.slice(0, -1).join('/');
-        item.createDiv({ cls: 'ct-skill-desc', text: folder });
-      }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
-    });
-  }
-
-  private insertFileMention(basename: string): void {
-    const val = this.dispatchInput.value;
-    const pos = this.dispatchInput.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = `@[[${basename}]] `;
-    this.dispatchInput.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.dispatchInput.selectionStart = this.dispatchInput.selectionEnd = start + inserted.length;
-    this.hideFileDropdown();
-    this.dispatchInput.focus();
-  }
-
-  private hideFileDropdown(): void {
-    this.fileDropdown?.remove();
-    this.fileDropdown = null;
-    this.fileDropdownItems = [];
-    this.fileDropdownIndex = 0;
-  }
-
-  // ── / slash command helpers ─────────────────────────────────────────────
-
-  private loadSkills(): void {
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-    try {
-      this.skills = fs.readdirSync(skillsDir).map(entry => {
-        const name = entry.replace(/\.md$/, '');
-        const entryPath = path.join(skillsDir, entry);
-        const isDir = fs.statSync(entryPath).isDirectory();
-        let filePath = isDir ? '' : entryPath;
-        if (isDir) {
-          const candidates = ['index.md', 'skill.md', name + '.md'];
-          const found = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
-          if (found) {
-            filePath = path.join(entryPath, found);
-          } else {
-            const first = fs.readdirSync(entryPath).find(f => f.endsWith('.md'));
-            if (first) filePath = path.join(entryPath, first);
-          }
-        }
-        return { name, description: filePath ? this.readSkillDescription(filePath) : '' };
-      });
-    } catch {
-      this.skills = [];
-    }
-  }
-
-  private readSkillDescription(filePath: string): string {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8').slice(0, 2000);
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (fmMatch) {
-        const fm = fmMatch[1];
-        const inline = fm.match(/^description:\s+([^>|\n][^\n]*)/m);
-        if (inline) return inline[1].trim();
-        const block = fm.match(/^description:\s*>-?\s*\n((?:[ \t]+[^\n]*\n?)+)/m);
-        if (block) return block[1].replace(/^[ \t]+/mg, '').replace(/\n/g, ' ').trim();
-      }
-      const body = content.replace(/^---[\s\S]*?---\n/, '');
-      for (const line of body.split('\n')) {
-        const clean = line.replace(/^#+\s*/, '').trim();
-        if (clean && !clean.startsWith('---')) return clean;
-      }
-      return '';
-    } catch {
-      return '';
-    }
-  }
-
-  private getSlashQuery(): string | null {
-    const val = this.dispatchInput.value;
-    const pos = this.dispatchInput.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('/') ? word.slice(1) : null;
-  }
-
-  private showSkillDropdown(query: string): void {
-    const q = query.toLowerCase();
-    const builtins = AgentDashboard.BUILTIN_COMMANDS.filter(c => c.name.startsWith(q));
-    const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
-    const matches = [...builtins, ...skills];
-    if (matches.length === 0) { this.hideSkillDropdown(); return; }
-    this.skillDropdownItems = matches;
-    if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
-    if (!this.skillDropdown) {
-      this.skillDropdown = this.dispatchRow.createDiv('ct-skill-dropdown');
-    }
-    this.renderSkillDropdown();
-  }
-
-  private renderSkillDropdown(): void {
-    if (!this.skillDropdown) return;
-    this.skillDropdown.empty();
-    this.skillDropdownItems.forEach((skill, i) => {
-      const item = this.skillDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.skillDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
-      nameRow.createSpan({ text: skill.name });
-      if (skill.description) {
-        item.createDiv({ cls: 'ct-skill-desc', text: skill.description });
-      }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertSkill(skill.name); });
-    });
-  }
-
-  private insertSkill(skillName: string): void {
-    const val = this.dispatchInput.value;
-    const pos = this.dispatchInput.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = '/' + skillName + ' ';
-    this.dispatchInput.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.dispatchInput.selectionStart = this.dispatchInput.selectionEnd = start + inserted.length;
-    this.hideSkillDropdown();
-    this.dispatchInput.focus();
-  }
-
-  private hideSkillDropdown(): void {
-    this.skillDropdown?.remove();
-    this.skillDropdown = null;
-    this.skillDropdownItems = [];
-    this.skillDropdownIndex = 0;
   }
 
   // ── Search ──────────────────────────────────────────────────────────────
@@ -894,61 +502,5 @@ export class AgentDashboard extends ItemView {
     this.render();
   }
 
-  // ────────────────────────────────────────────────────────────────────────
-
-  private dispatching = false;
-
-  private async dispatch(): Promise<void> {
-    if (this.dispatching) return;
-    const text = this.dispatchInput.value.trim();
-    const attachment = this.pendingAttachment;
-    const images = this.pendingImages.slice();
-    if (text.length < 2 && !attachment && images.length === 0) return;
-
-    this.dispatching = true;
-    this.dispatchInput.value = '';
-    this.pendingAttachment = null;
-    this.pendingImages = [];
-    this.renderDispatchChips();
-
-    try {
-      // Build the full message body, wrapping any file attachment in a code fence
-      let messageText = buildMessageWithAttachment(text, attachment);
-
-      // Resolve @[[basename]] file mentions — append each file's content as context
-      const mentionRegex = /@\[\[([^\]]+)\]\]/g;
-      const mentions = [...messageText.matchAll(mentionRegex)].map(m => m[1]);
-      if (mentions.length > 0) {
-        const fileContextParts: string[] = [];
-        for (const basename of mentions) {
-          const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
-          if (file) {
-            try {
-              const content = await this.app.vault.cachedRead(file);
-              fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
-            } catch {
-              // Skip unreadable files
-            }
-          }
-        }
-        if (fileContextParts.length > 0) {
-          messageText = messageText + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
-        }
-      }
-
-      // Derive a readable title: prefer typed text, then attachment filename, then images
-      const titleHint = deriveDispatchTitle(text, attachment, images.length);
-
-      const threadId = await this.plugin.dispatchNewThread(
-        messageText,
-        images.length > 0 ? images : undefined,
-        titleHint,
-      );
-      await this.plugin.openThreadInChatView(threadId);
-      this.render();
-    } finally {
-      this.dispatching = false;
-    }
-  }
 }
 
