@@ -13,8 +13,8 @@ export type ThreadEvent =
   | { type: 'error'; error: Error }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
-  | { type: 'queued'; text: string }
-  | { type: 'dequeued'; text: string }
+  | { type: 'queued'; text: string; images?: ImageAttachment[] }
+  | { type: 'dequeued'; text: string; images?: ImageAttachment[] }
   | { type: 'status'; status: 'compacting' | 'requesting' | null }
   | { type: 'compact'; message: ChatMessage }
   | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
@@ -37,7 +37,7 @@ export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
-  private queuedMessages: Map<string, string[]> = new Map();
+  private queuedMessages: Map<string, { text: string; images?: ImageAttachment[] }[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
@@ -244,7 +244,7 @@ export class ThreadManager {
 
   getQueuedMessage(id: string): string | undefined {
     const queue = this.queuedMessages.get(id);
-    return queue && queue.length > 0 ? queue[0] : undefined;
+    return queue && queue.length > 0 ? queue[0].text : undefined;
   }
 
   getQueuedCount(id: string): number {
@@ -287,9 +287,9 @@ export class ThreadManager {
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) {
       const queue = this.queuedMessages.get(threadId) ?? [];
-      queue.push(userText);
+      queue.push({ text: userText, images });
       this.queuedMessages.set(threadId, queue);
-      this.emit(threadId, { type: 'queued', text: userText });
+      this.emit(threadId, { type: 'queued', text: userText, images });
       return;
     }
 
@@ -492,8 +492,8 @@ export class ThreadManager {
       if (queue && queue.length > 0) {
         const next = queue.shift()!;
         if (queue.length === 0) this.queuedMessages.delete(threadId);
-        this.emit(threadId, { type: 'dequeued', text: next });
-        await this.sendMessage(threadId, next);
+        this.emit(threadId, { type: 'dequeued', text: next.text, images: next.images });
+        await this.sendMessage(threadId, next.text, next.images);
       }
     }
   }
