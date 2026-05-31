@@ -10,10 +10,8 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
-    // Switch to the HipTrip thread (which shows a markdown table) via the title-bar thread switcher
-    await page.click('.ct-title-btn');
-    await page.waitForSelector('.ct-switcher-panel');
-    await page.getByText('HipTrip feature ideas').click();
+    // Switch to the HipTrip thread which shows a markdown table (use API since tabs were removed)
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });

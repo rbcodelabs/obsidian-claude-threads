@@ -10,6 +10,7 @@ import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
+import { resolveProjectName } from './pathUtils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { SttController } from './stt';
 
@@ -1108,11 +1109,16 @@ export class ThreadsView extends ItemView {
 
     this.renderCwdChip();
 
-    // Show model badge only; cwd is now shown in the footer row
-    const hasContent = !!thread.model;
+    // Show project badge and/or model badge; cwd is now shown in the footer row
+    const projectName = resolveProjectName(thread.cwd ?? '');
+    const hasContent = !!(projectName || thread.model);
 
     // Hide the bar entirely when there's nothing to show
     this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
+
+    if (projectName) {
+      this.threadInfoBar.createSpan({ cls: 'ct-project-badge', text: projectName });
+    }
 
     if (thread.model) {
       this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });

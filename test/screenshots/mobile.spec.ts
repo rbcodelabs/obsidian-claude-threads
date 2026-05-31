@@ -16,7 +16,7 @@ test.describe('Mobile View', () => {
   test('mobile connected view', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(mobileHarnessUrl('mobile-connected'));
-    // Connected view starts on the conversation panel (active thread set), not the list panel
+    // Connected view starts on the conversation panel (list panel is hidden when there's an active thread)
     await page.waitForSelector('.ct-mobile-conv-panel');
     await page.waitForTimeout(300);
     await expect(page).toHaveScreenshot('mobile-connected.png', { fullPage: true });
