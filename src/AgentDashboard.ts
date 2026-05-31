@@ -546,12 +546,13 @@ export class AgentDashboard extends ItemView {
       }
     }
 
+    if (thread.cwd) {
+      body.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
+    }
+
     const meta = row.createDiv('ct-agents-row-meta');
     const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });
     this.timeEls.set(thread.id, timeEl);
-    if (thread.cwd) {
-      meta.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
-    }
 
     row.addEventListener('click', () => {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
