@@ -131,6 +131,8 @@ export interface PluginSettings {
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
+  /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
+  hasSeenWelcome: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -152,6 +154,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   layoutDensity: 'comfortable',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   debugLogging: false,
+  hasSeenWelcome: false,
   remoteAccess: {
     enabled: false,
     roomId: '',

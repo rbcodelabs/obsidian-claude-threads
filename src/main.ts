@@ -26,6 +26,46 @@ const VIEW_TYPE = 'claude-threads:chat';
 const AGENT_VIEW_TYPE = 'claude-threads:agents';
 const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
+// Welcome guide content — written to vault on first install
+const WELCOME_GUIDE = `# Getting Started with Claude Threads
+
+Welcome! Claude Threads turns Obsidian into a multi-agent workspace powered by the Claude CLI.
+
+## The three panels
+
+| Panel | Location | What it does |
+|---|---|---|
+| **Chat** | Left sidebar | Full conversation history for each thread |
+| **Agent Dashboard** | Right sidebar | Dispatch tasks, track running agents, review results |
+| **This guide** | Center | You're reading it — save it anywhere in your vault |
+
+Reopen the panels any time from the ribbon icons (left edge of the window) or via the command palette (\`Cmd+P\`).
+
+## Starting your first task
+
+1. Click the **Agent Dashboard** ribbon icon or press \`Cmd+P\` → "Open Agent Dashboard"
+2. Type a task in the **dispatch box** at the top — e.g. \`Summarize the README in my project folder\`
+3. Hit **Enter** — Claude spins up a new thread and starts working
+4. Watch progress in the dashboard; click any thread row to open the full conversation in Chat
+
+## Tips
+
+- **Projects**: Group threads by folder. Create a project in the dashboard to scope Claude's working directory.
+- **Permission mode**: Set to "Accept Edits" in Settings → Claude Threads to let Claude edit files without prompting.
+- **Multiple threads**: Run several agents in parallel — each gets its own row in the dashboard.
+- **Keyboard shortcuts**: \`Cmd+]\` / \`Cmd+[\` to cycle threads in Chat; \`Cmd+1–9\` to jump to a specific thread.
+- **Interrupt**: Use "Interrupt active thread" from the command palette to stop a running agent mid-task.
+
+## Settings
+
+Open **Settings → Claude Threads** to configure:
+- Claude binary path (auto-detected from Homebrew/PATH)
+- Default working directory
+- Vault folder for saving thread notes
+- Summarization and auto-compact options
+- Remote access (pair with Obsidian Mobile)
+`;
+
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
 // Symbol.for('nodejs.event_target') marker. Node's isEventTarget() checks
 // obj?.constructor?.[kIsNodeEventTarget], i.e. AbortSignal[symbol] (the constructor,
@@ -414,6 +454,86 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // Initialize relay client if remote access is enabled
     this.initDesktopRelayClient();
+
+    // First-run onboarding: auto-open panels + welcome guide for brand-new installs.
+    // Migration guard: if the user already has threads they're upgrading from a prior
+    // version — mark hasSeenWelcome silently rather than hijacking their layout.
+    if (!this.settings.hasSeenWelcome) {
+      if (this.settings.threads.length === 0) {
+        this.app.workspace.onLayoutReady(() => {
+          this.firstRunSetup().catch(console.error);
+        });
+      } else {
+        // Existing user upgrading — skip onboarding, just flip the flag
+        this.settings.hasSeenWelcome = true;
+        this.saveSettings().catch(console.error);
+      }
+    }
+  }
+
+  private async firstRunSetup(): Promise<void> {
+    const { workspace, vault } = this.app;
+
+    // 1. Write welcome guide to vault
+    const guidePath = `${this.settings.vaultFolder}/Getting Started with Claude Threads.md`;
+    try {
+      if (!vault.getAbstractFileByPath(guidePath)) {
+        const folderPath = this.settings.vaultFolder;
+        if (!vault.getAbstractFileByPath(folderPath)) {
+          await vault.createFolder(folderPath);
+        }
+        await vault.create(guidePath, WELCOME_GUIDE);
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to create welcome guide:', err);
+    }
+
+    // 2. Open chat view in the LEFT sidebar
+    try {
+      if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
+        const chatLeaf = workspace.getLeftLeaf(false) as WorkspaceLeaf;
+        await chatLeaf.setViewState({ type: VIEW_TYPE, active: false });
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open chat in left sidebar:', err);
+    }
+
+    // 3. Open welcome guide in the CENTER editor
+    try {
+      const guideFile = vault.getAbstractFileByPath(guidePath);
+      if (guideFile) {
+        // TFile is available on the obsidian global — cast is safe here
+        const { TFile } = await import('obsidian');
+        if (guideFile instanceof TFile) {
+          const centerLeaf = workspace.getLeaf('tab');
+          await centerLeaf.openFile(guideFile);
+          workspace.revealLeaf(centerLeaf);
+        }
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open welcome guide:', err);
+    }
+
+    // 4. Open agent dashboard in the RIGHT sidebar
+    try {
+      const existingDash = workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
+      if (!existingDash) {
+        const dashLeaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+        await dashLeaf.setViewState({ type: AGENT_VIEW_TYPE, active: true });
+        workspace.revealLeaf(dashLeaf);
+      } else {
+        workspace.revealLeaf(existingDash);
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open agent dashboard:', err);
+    }
+
+    // 5. Welcome notice
+    new Notice('Welcome to Claude Threads! Check the guide to get started.');
+
+    // 6. Persist the flag so this never fires again
+    this.settings.hasSeenWelcome = true;
+    await this.saveSettings();
   }
 
   private async onloadMobile(): Promise<void> {
