@@ -100,6 +100,11 @@ export class ThreadsView extends ItemView {
   private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;  // show only after 1 min away
   private static readonly BANNER_AUTO_DISMISS_MS   = 10_000;  // auto-hide after 10 sec
 
+  // Compressed view state
+  private compressedView = false;
+  // Maps message id → summary text span, for async DOM updates after summary generation
+  private summaryTextEls: Map<string, HTMLElement> = new Map();
+
   // Per-thread streaming buffers. Accumulates tokens and tool calls for every
   // running thread (active or background) so the streaming UI can be fully
   // restored when the user switches back to a thread that is still in progress.
@@ -1126,6 +1131,13 @@ export class ThreadsView extends ItemView {
     const menu = new Menu();
     menu.addItem(item =>
       item
+        .setTitle(this.compressedView ? 'Expand view' : 'Compress view')
+        .setIcon(this.compressedView ? 'maximize-2' : 'minimize-2')
+        .onClick(() => this.toggleCompressView())
+    );
+    menu.addSeparator();
+    menu.addItem(item =>
+      item
         .setTitle('Summarize thread')
         .setIcon('brain-circuit')
         .onClick(() => this.summarizeThread(thread.id))
@@ -1139,6 +1151,12 @@ export class ThreadsView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
+  private toggleCompressView(): void {
+    this.compressedView = !this.compressedView;
+    this.summaryTextEls.clear();
+    void this.renderMessages();
+  }
+
   private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
     return this.plugin.inProcessSummarizer.summarize(
       messages,
@@ -1147,6 +1165,27 @@ export class ThreadsView extends ItemView {
       this.plugin.settings.extraEnv,
       onProgress,
     );
+  }
+
+  private async generateMessageSummary(msg: ChatMessage): Promise<void> {
+    if (msg.summary) return;
+    try {
+      const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
+        msg.content,
+        this.plugin.settings.claudeBinaryPath,
+        this.plugin.settings.inprocessModel,
+        this.plugin.settings.extraEnv,
+      );
+      msg.summary = summary;
+      await this.plugin.saveSettings();
+      // Update the DOM span if still visible
+      const el = this.summaryTextEls.get(msg.id);
+      if (el) el.textContent = summary;
+    } catch (err) {
+      console.error('[Claude Threads] message summary error:', err);
+      const el = this.summaryTextEls.get(msg.id);
+      if (el) el.textContent = msg.content.slice(0, 120) + '…';
+    }
   }
 
   async summarizeThread(threadId: string): Promise<void> {
@@ -1308,7 +1347,44 @@ export class ThreadsView extends ItemView {
 
     const content = el.createDiv('ct-message-content');
     if (msg.role === 'assistant') {
-      content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+      if (this.compressedView) {
+        el.addClass('ct-message-compressed');
+        // Collapsed row: summary text only
+        const collapsedRow = content.createDiv('ct-compressed-row');
+        const summaryTextEl = collapsedRow.createSpan({
+          cls: 'ct-compressed-summary',
+          text: msg.summary ?? 'Summarizing…',
+        });
+        this.summaryTextEls.set(msg.id, summaryTextEl);
+
+        // Expand button lives outside collapsedRow so it stays visible after expand
+        const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+        setIcon(expandBtn, 'chevron-down');
+
+        // Full content (hidden by default)
+        const fullContent = content.createDiv('ct-full-content ct-hidden');
+        fullContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+
+        let expanded = false;
+        expandBtn.addEventListener('click', () => {
+          expanded = !expanded;
+          if (expanded) {
+            collapsedRow.addClass('ct-hidden');
+            fullContent.removeClass('ct-hidden');
+          } else {
+            collapsedRow.removeClass('ct-hidden');
+            fullContent.addClass('ct-hidden');
+          }
+          setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+        });
+
+        // Kick off lazy summary generation if not cached
+        if (!msg.summary) {
+          void this.generateMessageSummary(msg);
+        }
+      } else {
+        content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+      }
       const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
       setIcon(copyBtn, 'copy');
       copyBtn.addEventListener('click', () => {
