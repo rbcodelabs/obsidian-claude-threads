@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git push*)",
+            "command": "jq -r 'if (.tool_input.command | test(\"git push\")) then {\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"QUALITY GATE: You just pushed to git. Before declaring this work done you MUST: (1) run pnpm tsc --noEmit (or npx tsc --noEmit), (2) run npm test, (3) run npm run test:screenshots and verify all pass, (4) confirm new user-facing flows have E2E/screenshot tests, (5) confirm docs updated if behavior changed, (6) do NOT merge locally — push branch, open PR, ExitWorktree with keep. Do not tell the user the work is done until this checklist is complete.\"}} | tojson else empty end'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
