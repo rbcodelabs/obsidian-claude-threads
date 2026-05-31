@@ -198,7 +198,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.wakeLock = new WakeLockService({ enabled: this.settings.wakeLockEnabled });
     const statusBarItem = this.addStatusBarItem();
     statusBarItem.style.display = 'none';
-    statusBarItem.setText('☕ Keeping awake');
+    statusBarItem.setText('☕');
     statusBarItem.title = 'Claude Threads: keeping computer awake during active sessions';
     this.wakeLock.onChange((isActive) => {
       statusBarItem.style.display = isActive ? 'inline-block' : 'none';
