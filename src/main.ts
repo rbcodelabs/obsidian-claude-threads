@@ -224,10 +224,34 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubStatus);
 
+    // Persist cwd repairs to data.json. repairStaleCwds() (called below at load
+    // time) already calls saveSettings() directly, but the session-start safety-net
+    // in ThreadManager also emits cwd_changed — catch those here so the repaired
+    // path survives the next plugin reload.
+    const unsubCwdRepair = this.manager.subscribe((_threadId, event) => {
+      if (event.type === 'cwd_changed') {
+        this.saveSettings().catch(console.error);
+      }
+    });
+    this.register(unsubCwdRepair);
+
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
+
+    // Repair any threads whose cwd points to a deleted worktree. Worktrees created
+    // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
+    // exit_worktree, the worktree-cleanup skill, or the Agent tool's auto-cleanup.
+    // When that happens outside the plugin, the persisted cwd becomes a dangling path
+    // that causes a misleading "binary not found" ENOENT on the next message send.
+    {
+      const repairedCount = this.manager.repairStaleCwds();
+      if (repairedCount > 0) {
+        console.log(`[ClaudeThreads] Repaired ${repairedCount} thread(s) with stale working director${repairedCount === 1 ? 'y' : 'ies'}`);
+        await this.saveSettings();
+      }
+    }
 
     // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
     // threads may be missing from memory even though their vault notes still exist.
