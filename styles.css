@@ -1142,7 +1142,9 @@
 }
 
 .ct-edited-file-chip:hover {
-  background: var(--background-modifier-hover);
+  /* Solid opaque background — --background-modifier-hover is semi-transparent
+     in most Obsidian themes, which lets chat text bleed through the panel. */
+  background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-secondary));
   color: var(--text-accent);
   border-color: var(--interactive-accent);
 }
@@ -1232,13 +1234,29 @@
   padding-left: 6px;
 }
 
-/* Secondary actions row: mic + more, right-aligned below the textarea */
+/* Secondary actions row: cwd chip left, mic+menu right */
 .ct-input-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 4px;
   padding-top: 2px;
+}
+
+/* CWD chip in the footer — same chip style but interactive (can hover) */
+.ct-footer-cwd {
+  pointer-events: auto;
+  cursor: default;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Right-side button group (menu + mic) stays together */
+.ct-input-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 /* Paste attachment chips */
@@ -1388,9 +1406,10 @@
   /* Focus ring lives on .ct-floating-panel via :focus-within */
 }
 
-/* Lift the whole panel background on hover instead of just the textarea */
+/* Subtle border lift on hover — keep background solid (--background-modifier-hover is
+   semi-transparent in most themes, which bleeds chat text through the panel). */
 .ct-floating-panel:hover:not(:focus-within) {
-  background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border-hover, var(--interactive-accent));
 }
 
 .ct-input:disabled {
