@@ -702,48 +702,6 @@ class OpenAiKeyModal extends Modal {
   }
 }
 
-/** Modal for linking an OpenAI key from an existing Obsidian secret. */
-class LinkOpenAiSecretModal extends Modal {
-  constructor(app: App, private settingTab: ClaudeThreadsSettingTab) {
-    super(app);
-  }
-
-  onOpen(): void {
-    const { contentEl } = this;
-    contentEl.empty();
-
-    contentEl.createEl('h2', { text: 'Link Existing Secret' });
-    contentEl.createEl('p', {
-      text: 'Select a secret already stored by another plugin to use as your OpenAI API key.',
-      cls: 'setting-item-description',
-    });
-
-    const pickerContainer = contentEl.createDiv('ct-secret-picker');
-
-    const secretPicker = new SecretComponent(this.app, pickerContainer);
-    secretPicker.onChange((secretName: string) => {
-      if (!secretName) return;
-      const actualValue = this.app.secretStorage.getSecret(secretName);
-      if (actualValue) {
-        this.app.secretStorage.setSecret('openai-api-key', actualValue);
-        new Notice('Key linked successfully');
-        this.close();
-        this.settingTab.display();
-      } else {
-        new Notice('That secret has no value stored');
-      }
-    });
-
-    const cancelBtn = contentEl.createEl('button', { text: 'Cancel', cls: 'ct-modal-cancel' });
-    cancelBtn.style.marginTop = '1rem';
-    cancelBtn.addEventListener('click', () => this.close());
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
-}
-
 class ClaudeThreadsSettingTab extends PluginSettingTab {
   constructor(
     app: App,
@@ -1244,7 +1202,20 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         })
         .addButton((btn) => {
           btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
-            new LinkOpenAiSecretModal(this.app, this).open();
+            const tmp = document.body.createDiv();
+            const picker = new SecretComponent(this.app, tmp);
+            picker.onChange((secretName: string) => {
+              tmp.remove();
+              if (!secretName) return;
+              const actualValue = this.app.secretStorage.getSecret(secretName);
+              if (actualValue) {
+                this.app.secretStorage.setSecret('openai-api-key', actualValue);
+                new Notice('Key linked');
+                this.display();
+              } else {
+                new Notice('That secret has no value stored');
+              }
+            });
           });
         });
     }
