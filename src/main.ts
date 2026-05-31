@@ -14,6 +14,7 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
+import { serializeKey } from './stt';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
@@ -1135,6 +1136,41 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           }
         });
         text.inputEl.style.width = '100%';
+      });
+
+    new Setting(containerEl)
+      .setName('PTT Hotkey')
+      .setDesc('Hold this key while focused in any input to record. Default: Alt+Space (Option+Space on Mac).')
+      .addButton((btn) => {
+        const updateLabel = () => {
+          btn.setButtonText(this.plugin.settings.pttKey || 'Click to set');
+        };
+        updateLabel();
+        btn.onClick(() => {
+          btn.setButtonText('Press a key…');
+          btn.buttonEl.classList.add('mod-warning');
+          const capture = (e: KeyboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const key = serializeKey(e);
+            if (!key) return; // bare modifier — wait for a real key
+            window.removeEventListener('keydown', capture, true);
+            btn.buttonEl.classList.remove('mod-warning');
+            this.plugin.settings.pttKey = key;
+            void this.plugin.saveSettings();
+            updateLabel();
+          };
+          window.addEventListener('keydown', capture, true);
+        });
+      })
+      .addExtraButton((btn) => {
+        btn.setIcon('rotate-ccw').setTooltip('Reset to Alt+Space');
+        btn.onClick(() => {
+          this.plugin.settings.pttKey = 'Alt+Space';
+          void this.plugin.saveSettings();
+          // Re-render settings tab to update button label
+          this.display();
+        });
       });
 
     // ── Remote Access ─────────────────────────────────────────────────────

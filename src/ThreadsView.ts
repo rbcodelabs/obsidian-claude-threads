@@ -525,6 +525,7 @@ export class ThreadsView extends ItemView {
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
     footerActions.appendChild(micBtn);
+    this.sttController.attachPttToTextarea(this.inputEl, () => this.plugin.settings.pttKey ?? '');
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 

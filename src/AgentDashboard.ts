@@ -208,6 +208,7 @@ export class AgentDashboard extends ItemView {
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.dispatchInput);
     inputActions.appendChild(micBtn);
+    this.sttController.attachPttToTextarea(this.dispatchInput, () => this.plugin.settings.pttKey ?? '');
 
     this.dispatchInput.addEventListener('keydown', (e) => {
       if (this.fileDropdown) {

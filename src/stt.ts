@@ -1,11 +1,12 @@
 /**
  * Speech-to-text support via OpenAI Whisper.
  *
- * SttController manages a single MediaRecorder session and provides a
- * createMicButton() factory that wires a <button> to that session.
- * Multiple buttons (dispatch + chat input) can share the same controller —
- * pressing any one of them will stop an already-running recording from any
- * other input, insert the transcript there, and leave all buttons in sync.
+ * SttController manages a single MediaRecorder session and provides:
+ *  - createMicButton(): factory for click-to-toggle mic buttons
+ *  - attachPttToTextarea(): hold-to-record keyboard shortcut for an input
+ *
+ * Multiple buttons (dispatch + chat input) share the same controller so
+ * pressing any one stops an already-running recording from another input.
  */
 
 import { Notice } from 'obsidian';
@@ -25,6 +26,9 @@ export class SttController {
   private chunks: Blob[] = [];
   private activeEntry: MicButtonEntry | null = null;
   private entries: MicButtonEntry[] = [];
+  /** True while a PTT keydown is active — prevents click-toggle confusion. */
+  private pttActive = false;
+  private pttCleanupFns: Array<() => void> = [];
 
   constructor(app: App) {
     this.app = app;
@@ -56,6 +60,50 @@ export class SttController {
     return btn;
   }
 
+  /**
+   * Attach push-to-talk behaviour to a textarea.
+   *
+   * getKey() is called on every event so changes to the hotkey take effect
+   * immediately without re-attaching. keydown starts recording; keyup on
+   * document stops it (handles focus loss between press and release).
+   *
+   * Returns a cleanup function. Also stored internally so destroy() covers it.
+   */
+  attachPttToTextarea(textarea: HTMLTextAreaElement, getKey: () => string): () => void {
+    const entry = this.entries.find(e => e.targetInput === textarea);
+    if (!entry) return () => {};
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      const key = getKey();
+      if (!key || !matchesKey(e, key)) return;
+      if (this.recorder && this.recorder.state === 'recording') return;
+      e.preventDefault();
+      this.pttActive = true;
+      void this.beginRecording(entry);
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      const key = getKey();
+      if (!key || !matchesKey(e, key)) return;
+      if (!this.pttActive) return;
+      this.pttActive = false;
+      if (this.recorder && this.recorder.state === 'recording') {
+        this.recorder.stop();
+      }
+    };
+
+    textarea.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    const cleanup = () => {
+      textarea.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+    };
+    this.pttCleanupFns.push(cleanup);
+    return cleanup;
+  }
+
   /** Stop any active recording and release resources (call on view close). */
   destroy(): void {
     if (this.recorder && this.recorder.state !== 'inactive') {
@@ -65,10 +113,12 @@ export class SttController {
     this.chunks = [];
     this.activeEntry = null;
     this.entries = [];
+    for (const fn of this.pttCleanupFns) fn();
+    this.pttCleanupFns = [];
   }
 
   private async handleClick(entry: MicButtonEntry): Promise<void> {
-    // If another entry is recording, stop it (no transcription) and reset
+    // If another entry is recording, cancel it (no transcription)
     if (this.activeEntry && this.activeEntry !== entry) {
       this.stopRecording(false);
     }
@@ -79,14 +129,16 @@ export class SttController {
       return;
     }
 
-    // Verify API key before touching the mic
+    void this.beginRecording(entry);
+  }
+
+  private async beginRecording(entry: MicButtonEntry): Promise<void> {
     const apiKey = this.getApiKey();
     if (!apiKey) {
       new Notice('No OpenAI API key set — add one in Settings > Claude Threads > Speech to Text');
       return;
     }
 
-    // Start recording
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -108,7 +160,7 @@ export class SttController {
     };
 
     this.recorder.onstop = async () => {
-      // Stop all tracks so the OS mic indicator goes away
+      // Stop all tracks so the OS mic indicator disappears immediately
       stream.getTracks().forEach(t => t.stop());
 
       if (!this.activeEntry) return;
@@ -121,7 +173,6 @@ export class SttController {
       }
 
       target.setState('processing');
-      // Set all other buttons to idle while we wait
       for (const e of this.entries) {
         if (e !== target) e.setState('idle');
       }
@@ -157,7 +208,6 @@ export class SttController {
   private stopRecording(transcribe: boolean): void {
     if (!this.recorder || this.recorder.state === 'inactive') return;
     if (!transcribe) {
-      // Swap onstop so it doesn't transcribe
       this.recorder.onstop = () => {
         if (this.activeEntry) {
           this.activeEntry.setState('idle');
@@ -171,14 +221,50 @@ export class SttController {
   }
 
   private getApiKey(): string | null {
-    // app.secretStorage is available since Obsidian 1.11.4 — synchronous API
     const storage = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
     if (!storage) return null;
     return storage.getSecret('openai-api-key');
   }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Key serialization helpers ────────────────────────────────────────────────
+
+/**
+ * Convert a KeyboardEvent into a canonical hotkey string, e.g. "Alt+Space".
+ * Returns empty string for bare modifier presses — not a valid hotkey.
+ */
+export function serializeKey(e: KeyboardEvent): string {
+  const modifiers = ['Control', 'Shift', 'Alt', 'Meta'];
+  if (modifiers.includes(e.key)) return '';
+  const parts: string[] = [];
+  if (e.ctrlKey) parts.push('Control');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.altKey) parts.push('Alt');
+  if (e.metaKey) parts.push('Meta');
+  parts.push(e.key === ' ' ? 'Space' : e.key);
+  return parts.join('+');
+}
+
+/**
+ * Return true if a KeyboardEvent matches a stored hotkey string.
+ */
+export function matchesKey(e: KeyboardEvent, keyStr: string): boolean {
+  if (!keyStr) return false;
+  const parts = keyStr.split('+');
+  const rawKey = parts[parts.length - 1];
+  const modifiers = ['Control', 'Shift', 'Alt', 'Meta'];
+  if (modifiers.includes(rawKey)) return false; // malformed — no terminal key
+  const expectedKey = rawKey === 'Space' ? ' ' : rawKey;
+  return (
+    e.key === expectedKey &&
+    e.ctrlKey === parts.includes('Control') &&
+    e.shiftKey === parts.includes('Shift') &&
+    e.altKey === parts.includes('Alt') &&
+    e.metaKey === parts.includes('Meta')
+  );
+}
+
+// ── Audio / DOM helpers ──────────────────────────────────────────────────────
 
 async function transcribeAudio(blob: Blob, apiKey: string): Promise<string> {
   const ext = blob.type.includes('ogg') ? 'recording.ogg' : 'recording.webm';
@@ -205,13 +291,11 @@ function insertAtCursor(el: HTMLTextAreaElement, text: string): void {
   const end = el.selectionEnd ?? el.value.length;
   const before = el.value.slice(0, start);
   const after = el.value.slice(end);
-  // Add a space separator if inserting into non-empty content
   const separator = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n') ? ' ' : '';
   el.value = before + separator + text + after;
   const cursor = start + separator.length + text.length;
   el.selectionStart = cursor;
   el.selectionEnd = cursor;
-  // Fire input event so any listeners (draft save, autocomplete) know the value changed
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.focus();
 }
@@ -222,7 +306,7 @@ function applyState(btn: HTMLButtonElement, state: MicButtonState): void {
   switch (state) {
     case 'recording':
       btn.classList.add('stt-recording');
-      btn.setAttribute('title', 'Recording… click to stop');
+      btn.setAttribute('title', 'Recording… release PTT key or click to stop');
       btn.innerHTML = micSvg();
       break;
     case 'processing':
@@ -240,7 +324,6 @@ function applyState(btn: HTMLButtonElement, state: MicButtonState): void {
 }
 
 function micSvg(): string {
-  // Simple microphone icon (Lucide-style)
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
