@@ -48,6 +48,27 @@ const executeCommandSchema = {
     ),
 };
 
+const addVaultBridgeSchema = {
+  name: z.string().describe('Human-readable label for the bridge (e.g. "Agentic PM Playbook")'),
+  repoPath: z.string().describe('Absolute local path to the git repository root'),
+  vaultPath: z
+    .string()
+    .describe('Vault-relative destination path (e.g. "Playbooks/Agentic PM Playbook")'),
+  sourcePath: z
+    .string()
+    .optional()
+    .describe('Subfolder within the repo to copy. Omit to sync the whole repo.'),
+  branch: z.string().optional().describe('Git branch to pull from. Defaults to "main".'),
+  autoSync: z
+    .boolean()
+    .optional()
+    .describe('Pull this bridge when Obsidian opens. Defaults to true.'),
+  syncNow: z
+    .boolean()
+    .optional()
+    .describe('Immediately sync after adding. Defaults to false.'),
+};
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
@@ -753,6 +774,111 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Vault Bridges tools ───────────────────────────────────────────────────
+  // These reach into the vault-bridges plugin API (if installed) so agents can
+  // inspect and configure bridges without editing data.json or restarting Obsidian.
+
+  type VaultBridgesPlugin = {
+    api: {
+      getBridges(): Array<{
+        id: string;
+        name: string;
+        repoPath: string;
+        sourcePath: string;
+        vaultPath: string;
+        branch: string;
+        autoSync: boolean;
+        status: string;
+        lastSynced?: string;
+        lastPulled?: string;
+        lastPushed?: string;
+        isDirty?: boolean;
+        lastError?: string;
+      }>;
+      addBridge(options: {
+        name: string;
+        repoPath: string;
+        vaultPath: string;
+        sourcePath?: string;
+        branch?: string;
+        autoSync?: boolean;
+        syncNow?: boolean;
+      }): Promise<{ id: string; name: string; repoPath: string; vaultPath: string; branch: string; status: string }>;
+    };
+  };
+
+  function getVaultBridgesPlugin(): VaultBridgesPlugin | null {
+    return (app as unknown as { plugins: { plugins: Record<string, unknown> } })
+      .plugins?.plugins?.['vault-bridges'] as VaultBridgesPlugin | null ?? null;
+  }
+
+  const boundListVaultBridges = tool(
+    'obsidian_list_vault_bridges',
+    'Returns all configured Vault Bridges. Use this before adding a bridge to avoid duplicates. Returns an empty array if the vault-bridges plugin is not installed.',
+    {},
+    async (_args, _extra) => {
+      try {
+        const vb = getVaultBridgesPlugin();
+        if (!vb) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({ error: 'vault-bridges plugin is not installed or not enabled.' }),
+            }],
+            isError: true,
+          };
+        }
+        const bridges = vb.api.getBridges();
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(bridges, null, 2) }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundAddVaultBridge = tool(
+    'obsidian_add_vault_bridge',
+    [
+      'Adds a new Vault Bridge (a live link between a local git repo and a vault folder).',
+      'If a bridge with the same repoPath + vaultPath already exists, the existing bridge is returned without creating a duplicate.',
+      'Call obsidian_list_vault_bridges first to check what is already configured.',
+      'Requires the vault-bridges plugin to be installed and enabled.',
+    ].join(' '),
+    addVaultBridgeSchema,
+    async (args, _extra) => {
+      try {
+        const vb = getVaultBridgesPlugin();
+        if (!vb) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({ error: 'vault-bridges plugin is not installed or not enabled.' }),
+            }],
+            isError: true,
+          };
+        }
+        const bridge = await vb.api.addBridge({
+          name: args.name,
+          repoPath: args.repoPath,
+          vaultPath: args.vaultPath,
+          sourcePath: args.sourcePath,
+          branch: args.branch,
+          autoSync: args.autoSync,
+          syncNow: args.syncNow,
+        });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(bridge, null, 2) }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -771,6 +897,8 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundListCommands,
       boundExecuteCommand,
       boundForkConversation,
+      boundListVaultBridges,
+      boundAddVaultBridge,
     ],
     alwaysLoad: true,
   });
