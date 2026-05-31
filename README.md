@@ -218,6 +218,84 @@ Projects group threads by vault sub-folder and inject shared context into every 
 
 **Managing projects:** Edit the name, folder, or context prompt at any time in Settings → Projects. Deleting a project keeps all its threads — they just lose the project association.
 
+## Agent tools reference
+
+Every Claude thread runs with a built-in MCP server that exposes tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. These tools are available automatically; no configuration is required.
+
+### Vault tools
+
+Read and search your Obsidian vault from within any thread.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `obsidian_search_vault` | `query`, `limit?` | Full-text search across all Markdown files. Tokenizes multi-word queries so each term is matched independently. Returns results ranked by relevance (filename hits weighted 10×) with a ~300-char excerpt from the densest matching region. Default limit: 20. |
+| `obsidian_get_note_metadata` | `path` | Returns the full metadata cache entry for a note: frontmatter, tags, wikilinks, and headings. |
+| `obsidian_get_backlinks` | `path` | Returns all notes that link to the specified file, with source path and original link text. |
+| `obsidian_get_outgoing_links` | `path` | Returns all wikilinks and Markdown links a note makes to other files, with display text and resolved vault paths. |
+
+### UI tools
+
+Interact with the active Obsidian workspace.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `obsidian_get_active_file` | — | Returns metadata (path, basename, extension, size, mtime, ctime) for the file currently open in the editor, or `null` if nothing is open. |
+| `obsidian_get_open_tabs` | — | Returns all open tabs with path, title, view type, and which one is active. |
+| `obsidian_navigate_to_file` | `path`, `newLeaf?` | Opens a vault file in the editor. Pass `newLeaf: true` to open in a new tab. |
+| `obsidian_insert_at_cursor` | `text` | Inserts text at the cursor in the active editor, replacing any current selection. |
+| `obsidian_list_commands` | `query?` | Returns all registered Obsidian commands (id + name), sorted alphabetically. Pass a `query` string to filter. Use this to discover command IDs before calling `obsidian_execute_command`. |
+| `obsidian_execute_command` | `commandId` | Runs any Obsidian command by its ID (e.g. `obsidian-git:push`, `editor:toggle-bold`). Returns success or failure. |
+
+### Session tools
+
+Control the current thread's session state.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `set_working_directory` | `path` | Changes the working directory for this session. Accepts an absolute path; `~` is expanded. Takes effect on the next turn. |
+| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. The `reason` field is shown in the UI. |
+| `enter_worktree` | `branch?`, `baseBranch?`, `repoPath?` | Creates a git worktree for the current repo and switches the session cwd to it. Use this instead of the built-in SDK `EnterWorktree` — this version tracks the in-session cwd correctly after `set_working_directory`. |
+| `exit_worktree` | `worktreePath?`, `force?` | Removes the worktree and restores the session cwd to the original repo root. Defaults to the current effective cwd. Pass `force: true` to remove even if there are uncommitted changes. |
+| `fork_conversation` | `focus_area?` | Forks the current conversation into a new independent thread. A lightweight Claude call distills the history into a focused starting prompt. The current thread continues unaffected. |
+
+### Thread coordination tools
+
+Discover, read, and message other running threads. These tools enable agent-to-agent delegation — one thread can assign work to another, wait for it to finish, and read the result.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `isRunning`, `projectId`, `cwd`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. |
+| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag. |
+| `obsidian_list_projects` | — | Returns all configured projects: `id`, `name`, `description`, `vaultFolder`. Useful for deciding which project context a new thread should use. |
+| `obsidian_get_thread_messages` | `threadId`, `limit?` | Returns the live message history for any thread. Messages are filtered to `user` and `assistant` roles (internal compaction markers are excluded). Default: last 20 messages. |
+| `obsidian_wait_for_thread` | `threadId`, `timeoutSeconds?` | Blocks until the target thread finishes its current request (`isRunning` → `false`). Polls every second. Returns `{ done: true, elapsedSeconds }` on success, or `{ timedOut: true }` if the timeout is reached (default 120s, max 600s). Returns immediately if the thread is already idle. |
+| `obsidian_send_message_to_thread` | `threadId`, `message` | Queues a user message on another thread and triggers Claude to process it. Returns immediately once the message is enqueued — use `obsidian_wait_for_thread` to block until the response is ready. Cannot send to the current thread. |
+
+**`isRunning` vs `status`:** `status` is a persisted field (`waiting`, `active`, `error`, `archived`) that reflects the last known state. `isRunning` is a live flag that is `true` only while Claude is actively streaming a response. Use `isRunning` for coordination decisions; use `status` to filter out archived or errored threads.
+
+#### Coordination pattern
+
+A typical delegation loop:
+
+1. Call `obsidian_list_threads` to find a peer, or `fork_conversation` to create a dedicated one
+2. Call `obsidian_send_message_to_thread` to assign a task
+3. Call `obsidian_wait_for_thread` to block until the peer finishes
+4. Call `obsidian_get_thread_messages` to read the result
+
+```
+Thread A                              Thread B
+  │                                      │
+  ├─ obsidian_list_threads               │
+  ├─ obsidian_send_message_to_thread ───►│ (Claude receives message)
+  ├─ obsidian_wait_for_thread            │
+  │   (polls isRunning every 1s)         ├─ ... processes task ...
+  │◄────────────────────────────────────┤ (isRunning → false)
+  └─ obsidian_get_thread_messages        │
+       (reads the result)
+```
+
+This pattern works across any combination of threads — you can fan out to multiple peers simultaneously by sending messages to several threads before waiting on any of them.
+
 ## Settings
 
 | Setting | Description |
