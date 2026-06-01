@@ -98,6 +98,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
   // Tracks pending ScheduleWakeup timeout IDs keyed by threadId for cleanup on unload.
   pendingWakeups = new Map<string, number[]>();
 
+  // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).
+  private pendingBgTaskTimers = new Map<string, number>();
+
+  /** Maximum number of poll attempts per thread before giving up on background task monitoring. */
+  private static readonly BG_TASK_MAX_POLLS = 10;
+  /** How long to wait between background task poll attempts. */
+  private static readonly BG_TASK_POLL_INTERVAL_MS = 30_000;
+
   async onload(): Promise<void> {
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
@@ -337,6 +345,29 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubCwdRepair);
 
+    // Background task monitoring: when a session ends with unresolved background
+    // tasks, schedule an automatic poll to check completion.
+    const unsubBgTasks = this.manager.subscribe((threadId, event) => {
+      if (event.type === 'background_tasks_pending') {
+        this.scheduleBgTaskPoll(threadId, event.tasks);
+      } else if (event.type === 'task_notification') {
+        // A background task resolved. If no tasks remain, cancel the poll timer.
+        const remaining = this.manager.getPendingBackgroundTasks(threadId);
+        if (remaining.length === 0) {
+          this.cancelBgTaskPoll(threadId);
+        }
+        // Show a notice when the notification arrives on an idle thread (the
+        // ThreadsView task-pill handles it when the thread is actively streaming).
+        if (!this.manager.isRunning(threadId)) {
+          const icon = event.status === 'completed' ? '✓' : '✗';
+          new Notice(`Background task ${icon}: ${event.summary}`, 5000);
+        }
+        // Persist the updated (cleared) pending task list.
+        this.saveSettings().catch(console.error);
+      }
+    });
+    this.register(unsubBgTasks);
+
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
@@ -394,6 +425,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.persistence.archiveOrphanedNotes(activeIds).then((n) => {
         if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
       }).catch(console.error);
+    }
+
+    // Resume background task monitoring for any threads that still had pending
+    // tasks when the plugin was last unloaded (e.g. Obsidian restart mid-task).
+    for (const thread of this.manager.getThreads()) {
+      const pending = this.manager.getPendingBackgroundTasks(thread.id);
+      if (pending.length > 0) {
+        debugLog(`[ClaudeThreads] Resuming bg task monitoring for thread ${thread.id} (${pending.length} task(s) pending)`);
+        this.scheduleBgTaskPoll(thread.id, pending);
+      }
     }
 
     // Register the views
@@ -714,8 +755,83 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     this.pendingWakeups.clear();
 
+    // Cancel background task poll timers.
+    for (const id of this.pendingBgTaskTimers.values()) {
+      window.clearTimeout(id);
+    }
+    this.pendingBgTaskTimers.clear();
+
     // Persist thread state
     await this.saveSettings();
+  }
+
+  // ── Background task monitoring ───────────────────────────────────────────────
+
+  /**
+   * Schedule a poll for pending background tasks. Fires after BG_TASK_POLL_INTERVAL_MS,
+   * then resumes the thread with a lightweight monitor prompt that asks Claude to check
+   * task status via TaskOutput/Monitor and report or re-schedule as needed.
+   *
+   * Only one timer is active per thread at a time. If a timer already exists it is
+   * cancelled before the new one is registered.
+   */
+  private scheduleBgTaskPoll(threadId: string, tasks: import('./types').PendingBackgroundTask[]): void {
+    this.cancelBgTaskPoll(threadId);
+
+    // Filter to tasks that haven't exceeded the poll limit.
+    const activeTasks = tasks.filter(t => t.pollCount < ClaudeThreadsPlugin.BG_TASK_MAX_POLLS);
+    if (activeTasks.length === 0) {
+      console.warn(`[ClaudeThreads] Background task polling gave up for thread ${threadId} after ${ClaudeThreadsPlugin.BG_TASK_MAX_POLLS} attempts`);
+      new Notice(
+        `Background task check timed out after ${ClaudeThreadsPlugin.BG_TASK_MAX_POLLS} attempts. Resume the thread manually to check status.`,
+        10_000,
+      );
+      this.manager.clearAllPendingBackgroundTasks(threadId);
+      this.saveSettings().catch(console.error);
+      return;
+    }
+
+    const elapsed = (taskMs: number) => {
+      const secs = Math.round((Date.now() - taskMs) / 1000);
+      return secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+    };
+    const taskList = activeTasks
+      .map(t => `- ${t.description} (running for ${elapsed(t.startedAt)})`)
+      .join('\n');
+    const pollPrompt =
+      `[Background Monitor] The following background task(s) were started in this session and ` +
+      `may still be running:\n${taskList}\n\n` +
+      `Please check each task's status using TaskOutput or Monitor. ` +
+      `If a task has completed or failed, report the result. ` +
+      `If tasks are still running, use ScheduleWakeup to check again in 30 seconds.`;
+
+    const id = window.setTimeout(async () => {
+      this.pendingBgTaskTimers.delete(threadId);
+      try {
+        if (!this.manager.getThread(threadId)) {
+          debugLog(`[ClaudeThreads] Bg task poll skipped — thread ${threadId} no longer exists`);
+          return;
+        }
+        this.manager.incrementPendingTaskPollCount(threadId);
+        await this.manager.sendMessage(threadId, pollPrompt);
+      } catch (err) {
+        console.error(`[ClaudeThreads] Background task poll failed for thread ${threadId}:`, err);
+      }
+    }, ClaudeThreadsPlugin.BG_TASK_POLL_INTERVAL_MS) as unknown as number;
+
+    this.pendingBgTaskTimers.set(threadId, id);
+    debugLog(
+      `[ClaudeThreads] Background task poll scheduled for thread ${threadId} ` +
+      `in ${ClaudeThreadsPlugin.BG_TASK_POLL_INTERVAL_MS / 1000}s (${activeTasks.length} task(s))`,
+    );
+  }
+
+  private cancelBgTaskPoll(threadId: string): void {
+    const id = this.pendingBgTaskTimers.get(threadId);
+    if (id !== undefined) {
+      window.clearTimeout(id);
+      this.pendingBgTaskTimers.delete(threadId);
+    }
   }
 
   private detectClaudeBinary(): void {

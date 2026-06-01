@@ -51,6 +51,19 @@ export interface ThreadDraft {
   images: ImageAttachment[];
 }
 
+/**
+ * A background task started during a session (Bash with run_in_background: true)
+ * that hasn't received a completion notification yet.
+ */
+export interface PendingBackgroundTask {
+  taskId: string;
+  description: string;
+  /** Epoch ms when the task was started. */
+  startedAt: number;
+  /** Number of times the plugin has polled for this task's status. */
+  pollCount: number;
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -76,6 +89,12 @@ export interface Thread {
   prUrl?: string;
   /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
   lastSummarizedAt?: number;
+  /**
+   * Background tasks (Bash run_in_background: true) that started during a session
+   * but didn't emit a task_notification before the stream ended. The plugin polls
+   * these automatically and clears them when completions arrive.
+   */
+  pendingBackgroundTasks?: PendingBackgroundTask[];
 }
 
 /**

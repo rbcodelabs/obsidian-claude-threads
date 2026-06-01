@@ -1,5 +1,5 @@
 import { ClaudeSession } from './ClaudeSession';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
@@ -20,6 +20,7 @@ export type ThreadEvent =
   | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
   | { type: 'task_progress'; taskId: string; description: string; lastToolName?: string }
   | { type: 'task_notification'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
+  | { type: 'background_tasks_pending'; tasks: PendingBackgroundTask[] }
   | { type: 'notification'; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
@@ -338,6 +339,37 @@ export class ThreadManager {
     return this.threadActivity.get(id);
   }
 
+  // ── Background task tracking ─────────────────────────────────────────────────
+
+  getPendingBackgroundTasks(threadId: string): PendingBackgroundTask[] {
+    return this.threads.get(threadId)?.pendingBackgroundTasks ?? [];
+  }
+
+  /** Remove a single resolved task from the thread's pending list. */
+  clearPendingBackgroundTask(threadId: string, taskId: string): void {
+    const thread = this.threads.get(threadId);
+    if (!thread?.pendingBackgroundTasks) return;
+    thread.pendingBackgroundTasks = thread.pendingBackgroundTasks.filter(t => t.taskId !== taskId);
+    if (thread.pendingBackgroundTasks.length === 0) {
+      delete thread.pendingBackgroundTasks;
+    }
+  }
+
+  /** Clear ALL pending background tasks for a thread (e.g. when giving up after max polls). */
+  clearAllPendingBackgroundTasks(threadId: string): void {
+    const thread = this.threads.get(threadId);
+    if (thread) delete thread.pendingBackgroundTasks;
+  }
+
+  /** Increment pollCount on all pending tasks for a thread. */
+  incrementPendingTaskPollCount(threadId: string): void {
+    const thread = this.threads.get(threadId);
+    if (!thread?.pendingBackgroundTasks) return;
+    for (const task of thread.pendingBackgroundTasks) {
+      task.pollCount++;
+    }
+  }
+
   /**
    * Detect whether the message triggers Opus escalation. Returns the model
    * string to pass to ClaudeSession if escalation should occur, or undefined
@@ -406,6 +438,8 @@ export class ThreadManager {
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
     let completedSuccessfully = false;
+    // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
+    const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
 
     // Safety net: repairStaleCwds() runs at plugin load and catches most stale
     // worktree cwds, but a worktree could be deleted between load and this send.
@@ -526,6 +560,23 @@ export class ThreadManager {
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
+
+          // If any background tasks started but never notified, persist them so
+          // main.ts can schedule polling resumption after the session closes.
+          if (activeBgTasks.size > 0) {
+            const newPending: PendingBackgroundTask[] = Array.from(activeBgTasks.entries()).map(
+              ([taskId, { description, startedAt }]) => ({ taskId, description, startedAt, pollCount: 0 }),
+            );
+            // Merge with any already-persisted tasks (dedup by taskId).
+            const existing = thread.pendingBackgroundTasks ?? [];
+            const existingIds = new Set(existing.map(t => t.taskId));
+            thread.pendingBackgroundTasks = [
+              ...existing,
+              ...newPending.filter(t => !existingIds.has(t.taskId)),
+            ];
+            this.emit(threadId, { type: 'background_tasks_pending', tasks: thread.pendingBackgroundTasks });
+          }
+
           this.emit(threadId, { type: 'done' });
         },
         onInterrupted: (_sessionId) => {
@@ -581,6 +632,11 @@ export class ThreadManager {
         },
         onTaskStarted: (taskId, description, skipTranscript) => {
           this.threadActivity.set(threadId, description);
+          // Background tasks use skipTranscript=true. Track them so we can detect
+          // if they're still running when the session ends.
+          if (skipTranscript) {
+            activeBgTasks.set(taskId, { description, startedAt: Date.now() });
+          }
           this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript });
         },
         onTaskProgress: (taskId, description, lastToolName) => {
@@ -588,7 +644,14 @@ export class ThreadManager {
           this.threadActivity.set(threadId, description + suffix);
           this.emit(threadId, { type: 'task_progress', taskId, description, lastToolName });
         },
-        onTaskNotification: (taskId, status, summary) => this.emit(threadId, { type: 'task_notification', taskId, status, summary }),
+        onTaskNotification: (taskId, status, summary) => {
+          // Task resolved — remove from background tracking set.
+          activeBgTasks.delete(taskId);
+          // Also clear from persisted state (handles notifications that arrive
+          // on a poll-resume after a previous session missed them).
+          this.clearPendingBackgroundTask(threadId, taskId);
+          this.emit(threadId, { type: 'task_notification', taskId, status, summary });
+        },
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
         onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
