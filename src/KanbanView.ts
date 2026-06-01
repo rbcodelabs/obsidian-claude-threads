@@ -116,7 +116,8 @@ export class KanbanView extends ItemView {
     const dispatchWrapper = root.createDiv('ct-kanban-dispatch');
     this.dispatchInput = new DispatchInput({
       app: this.app,
-      placeholder: 'Dispatch a new task… (Enter to start)',
+      placeholder: 'Dispatch a new task…',
+      inlineLayout: true,
       builtinCommands: [
         { name: 'compact', description: 'Summarize conversation history to free up context' },
         { name: 'clear', description: 'Clear conversation history and start fresh' },

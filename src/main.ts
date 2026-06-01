@@ -772,16 +772,19 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   getView(): ThreadsView | null {
-    // getLeavesOfType only returns leaves registered with VIEW_TYPE, which is
-    // always ThreadsView on desktop. Safe to cast without instanceof.
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-    return (leaf?.view as ThreadsView) ?? null;
+    const view = leaf?.view;
+    // Guard against half-initialised or mismatched view objects (can occur during
+    // workspace restore when the leaf exists but the view class hasn't fully loaded).
+    if (!view || typeof (view as any).getActiveThreadId !== 'function') return null;
+    return view as ThreadsView;
   }
 
   getAgentDashboard(): AgentDashboard | null {
-    // Same reasoning as getView().
     const leaf = this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
-    return (leaf?.view as AgentDashboard) ?? null;
+    const view = leaf?.view;
+    if (!view || typeof (view as any).focusDispatchInput !== 'function') return null;
+    return view as AgentDashboard;
   }
 
   async loadSettings(): Promise<void> {

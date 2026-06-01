@@ -611,7 +611,7 @@
   min-height: 0; /* allow flex shrink without pushing siblings out */
   overflow-y: auto;
   padding: 12px 8px;
-  padding-bottom: var(--ct-panel-height, 120px);
+  padding-bottom: var(--ct-panel-height, 140px); /* fallback ≈ 100px panel + 42px clearance */
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1434,6 +1434,7 @@
   height: 34px;
   border-radius: 8px;
   border: none;
+  box-shadow: none;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1471,6 +1472,7 @@
   height: 24px;  /* shorter — visually secondary */
   border-radius: 6px;
   border: none;
+  box-shadow: none;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2058,7 +2060,7 @@
 /* Compact — tighter padding, smaller gaps */
 .ct-root[data-density="compact"] .ct-messages {
   padding: 6px;
-  padding-bottom: var(--ct-panel-height, 120px);
+  padding-bottom: var(--ct-panel-height, 140px);
   gap: 4px;
 }
 
@@ -2107,7 +2109,7 @@
 /* Spacious — more breathing room */
 .ct-root[data-density="spacious"] .ct-messages {
   padding: 20px 16px;
-  padding-bottom: var(--ct-panel-height, 120px);
+  padding-bottom: var(--ct-panel-height, 140px);
   gap: 24px;
 }
 
@@ -3469,6 +3471,7 @@
   height: 24px;
   border-radius: 6px;
   border: none;
+  box-shadow: none;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3596,7 +3599,7 @@
 /* The floating panel itself */
 .ct-kanban-dispatch {
   position: absolute;
-  bottom: 16px;
+  bottom: 36px;
   left: 50%;
   transform: translateX(-50%);
   width: min(560px, calc(100% - 32px));
@@ -3620,7 +3623,62 @@
 
 /* The dispatch-root inside the panel gets the agents-dispatch padding */
 .ct-kanban-dispatch .ct-dispatch-root {
-  padding: 8px;
+  padding: 8px 10px;
+}
+
+/* Strip Obsidian's theme button chrome (border, background, shadow) for all
+   buttons inside the kanban dispatch panel — same reset as .ct-root button. */
+.ct-kanban-dispatch button {
+  box-shadow: none;
+  background: transparent;
+  border: none;
+}
+
+/* Re-apply the send button's accent — it needs to stay prominent. */
+.ct-kanban-dispatch .ct-send-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.ct-kanban-dispatch .ct-send-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+/* ── Inline layout (used by Kanban dispatch) ───────────────────────────────── */
+
+/* Single row: [left-actions] [textarea] [right-actions] */
+.ct-dispatch-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Left-side button group (attach + mic) */
+.ct-dispatch-left-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Inline textarea: borderless + transparent — the panel is the visual container */
+.ct-kanban-dispatch .ct-agents-dispatch-input {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 6px 4px;
+  min-height: 34px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.ct-kanban-dispatch .ct-agents-dispatch-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Right-side actions column in inline mode: just send/stop */
+.ct-dispatch-inline-row .ct-input-actions {
+  padding-left: 2px;
 }
 
 /* Extra bottom padding on the board so cards don't hide under the panel */

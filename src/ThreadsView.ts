@@ -30,7 +30,6 @@ export class ThreadsView extends ItemView {
   private tabBar!: HTMLElement;
   private titleEl!: HTMLButtonElement;
   private titleTextEl!: HTMLSpanElement;
-  private threadInfoBar!: HTMLElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
   private inputRowEl!: HTMLElement;
@@ -70,6 +69,11 @@ export class ThreadsView extends ItemView {
   private statusLineRefreshTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly STATUS_LINE_INTERVAL_MS = 30_000;
 
+  // Status bar layering: context is the persistent baseline (project/model),
+  // transient overrides it temporarily (queued, retrying, compacting, etc.)
+  private statusContextText = '';
+  private statusTransientText = '';
+
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
 
@@ -97,6 +101,14 @@ export class ThreadsView extends ItemView {
   private compressedView = false;
   // Maps message id → summary text span, for async DOM updates after summary generation
   private summaryTextEls: Map<string, HTMLElement> = new Map();
+  // Cache for group summaries (consecutive assistant turns between user messages).
+  // Key = ':'-joined message IDs of the group. In-memory only; regenerates on reload.
+  private groupSummaryCache: Map<string, string> = new Map();
+  // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
+  // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
+  // and discard their results if the view has been toggled/navigated away since they were enqueued.
+  private summaryQueue: Promise<void> = Promise.resolve();
+  private summaryGeneration = 0;
 
   // Per-thread streaming buffers. Accumulates tokens and tool calls for every
   // running thread (active or background) so the streaming UI can be fully
@@ -340,7 +352,6 @@ export class ThreadsView extends ItemView {
     this.closeThreadBtn.addEventListener('click', () => {
       if (this.activeThreadId) this.closeThread(this.activeThreadId);
     });
-    this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
@@ -389,8 +400,11 @@ export class ThreadsView extends ItemView {
     this.panelResizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         const height = entry.contentRect.height;
-        // +16 = 8px bottom offset + 8px breathing room above the panel
-        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 16}px`);
+        // Breakdown: 8px bottom-offset (panel's `bottom: 8px`) + 2px border +
+        // 24px shadow-blur (box-shadow: 0 4px 24px) + 8px breathing room = 42px.
+        // This ensures the last message sits above the panel *and* its upward
+        // shadow so tool-call pills never appear visually behind the panel.
+        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 42}px`);
       }
     });
     this.panelResizeObserver.observe(floatingPanel);
@@ -537,6 +551,8 @@ export class ThreadsView extends ItemView {
     // Persist the draft for the thread we're leaving before switching
     this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
+    this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
+    this.groupSummaryCache.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -952,31 +968,35 @@ export class ThreadsView extends ItemView {
   private renderCwdChip(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    this.dispatchInput?.setCwd(shortenPath(cwd), cwd);
+
+    // Build a human-readable label for the CWD chip.
+    // When we can resolve a real git project name, prefer "project · branch"
+    // over a raw filesystem path — much more meaningful for worktrees.
+    const projectName = resolveProjectName(cwd);
+    let displayText: string;
+    if (projectName) {
+      const lastSegment = cwd.replace(/\/$/, '').split('/').pop() ?? '';
+      // Show branch/worktree suffix when it differs from the project root name
+      displayText = (lastSegment && lastSegment !== projectName)
+        ? `${projectName} · ${lastSegment}`
+        : projectName;
+    } else {
+      displayText = shortenPath(cwd);
+    }
+
+    this.dispatchInput?.setCwd(displayText, cwd);
   }
 
   private renderThreadInfo(): void {
-    this.threadInfoBar.empty();
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
     this.renderCwdChip();
 
-    // Show project badge and/or model badge; cwd is now shown in the footer row
-    const projectName = resolveProjectName(thread.cwd ?? '');
-    const hasContent = !!(projectName || thread.model);
-
-    // Hide the bar entirely when there's nothing to show
-    this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
-
-    if (projectName) {
-      this.threadInfoBar.createSpan({ cls: 'ct-project-badge', text: projectName });
-    }
-
-    if (thread.model) {
-      this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
-    }
+    // Status bar: only show a non-default model override (purely operational info).
+    // Project name lives in the CWD chip now.
+    this.updateStatusContext(thread.model ?? '');
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -1008,7 +1028,9 @@ export class ThreadsView extends ItemView {
 
   private toggleCompressView(): void {
     this.compressedView = !this.compressedView;
+    this.summaryGeneration++; // cancel any queued summary jobs from the previous render
     this.summaryTextEls.clear();
+    this.groupSummaryCache.clear();
     void this.renderMessages();
   }
 
@@ -1022,25 +1044,122 @@ export class ThreadsView extends ItemView {
     );
   }
 
-  private async generateMessageSummary(msg: ChatMessage): Promise<void> {
+  private generateMessageSummary(msg: ChatMessage): void {
     if (msg.summary) return;
-    try {
-      const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
-        msg.content,
-        this.plugin.settings.claudeBinaryPath,
-        this.plugin.settings.inprocessModel,
-        this.plugin.settings.extraEnv,
-      );
-      msg.summary = summary;
-      await this.plugin.saveSettings();
-      // Update the DOM span if still visible
-      const el = this.summaryTextEls.get(msg.id);
-      if (el) el.textContent = summary;
-    } catch (err) {
-      console.error('[Claude Threads] message summary error:', err);
-      const el = this.summaryTextEls.get(msg.id);
-      if (el) el.textContent = msg.content.slice(0, 120) + '…';
+    // Capture the current generation so we can detect stale jobs after awaiting.
+    const gen = this.summaryGeneration;
+    // Chain onto the serial queue — only ONE summarizeMessage() call runs at a time, no matter
+    // how many messages need summaries. Each job checks `gen` before starting and after the
+    // async call so that toggling compress-off (or switching threads) discards pending work.
+    this.summaryQueue = this.summaryQueue.then(async () => {
+      if (gen !== this.summaryGeneration) return; // view was toggled or thread changed — skip
+      if (msg.summary) return; // already summarised by an earlier job in the queue
+      try {
+        const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
+          msg.content,
+          this.plugin.settings.claudeBinaryPath,
+          this.plugin.settings.inprocessModel,
+          this.plugin.settings.extraEnv,
+        );
+        if (gen !== this.summaryGeneration) return; // stale after the async call — discard
+        msg.summary = summary;
+        await this.plugin.saveSettings();
+        // Update the DOM span if still visible
+        const el = this.summaryTextEls.get(msg.id);
+        if (el) el.textContent = summary;
+      } catch (err) {
+        if (gen !== this.summaryGeneration) return;
+        console.error('[Claude Threads] message summary error:', err);
+        const el = this.summaryTextEls.get(msg.id);
+        if (el) el.textContent = msg.content.slice(0, 120) + '…';
+      }
+    });
+  }
+
+  /**
+   * Render a run of consecutive assistant messages as a single collapsible block.
+   * A single-message group falls through to the normal appendMessage path so that
+   * the existing per-message summary/expand logic is reused.
+   */
+  private async appendAssistantGroup(group: ChatMessage[]): Promise<void> {
+    if (group.length === 0) return;
+    if (group.length === 1) {
+      // Single message — reuse normal compressed rendering
+      await this.appendMessage(group[0]);
+      return;
     }
+
+    const groupKey = group.map(m => m.id).join(':');
+    const cachedSummary = this.groupSummaryCache.get(groupKey);
+
+    const el = this.messagesEl.createDiv('ct-message ct-message-assistant ct-message-compressed');
+
+    const content = el.createDiv('ct-message-content');
+    const collapsedRow = content.createDiv('ct-compressed-row');
+    const summaryTextEl = collapsedRow.createSpan({
+      cls: 'ct-compressed-summary',
+      text: cachedSummary ?? 'Summarizing…',
+    });
+
+    const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+    setIcon(expandBtn, 'chevron-down');
+
+    // Full content (hidden) — render each sub-message with its tool calls
+    const fullContent = content.createDiv('ct-full-content ct-hidden');
+    for (const msg of group) {
+      const msgEl = fullContent.createDiv('ct-message ct-message-assistant');
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        this.renderToolCalls(msgEl, msg.toolCalls);
+      }
+      const msgContent = msgEl.createDiv('ct-message-content');
+      msgContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+    }
+
+    let expanded = false;
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        collapsedRow.addClass('ct-hidden');
+        fullContent.removeClass('ct-hidden');
+      } else {
+        collapsedRow.removeClass('ct-hidden');
+        fullContent.addClass('ct-hidden');
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
+
+    // Enqueue group summary generation if not yet cached
+    if (!cachedSummary) {
+      this.generateGroupSummary(group, groupKey, summaryTextEl);
+    }
+  }
+
+  /** Generate a single summary for a group of consecutive assistant messages. */
+  private generateGroupSummary(group: ChatMessage[], groupKey: string, el: HTMLElement): void {
+    const gen = this.summaryGeneration;
+    this.summaryQueue = this.summaryQueue.then(async () => {
+      if (gen !== this.summaryGeneration) return;
+      const already = this.groupSummaryCache.get(groupKey);
+      if (already) { el.textContent = already; return; }
+      try {
+        // Concatenate all turns into one block so the summarizer sees the full run
+        const combined = group.map(m => m.content).join('\n\n');
+        const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
+          combined,
+          this.plugin.settings.claudeBinaryPath,
+          this.plugin.settings.inprocessModel,
+          this.plugin.settings.extraEnv,
+        );
+        if (gen !== this.summaryGeneration) return;
+        this.groupSummaryCache.set(groupKey, summary);
+        el.textContent = summary;
+      } catch (err) {
+        if (gen !== this.summaryGeneration) return;
+        console.error('[Claude Threads] group summary error:', err);
+        // Fall back to last message's content truncated
+        el.textContent = group[group.length - 1].content.slice(0, 120) + '…';
+      }
+    });
   }
 
   async summarizeThread(threadId: string): Promise<void> {
@@ -1052,7 +1171,7 @@ export class ThreadsView extends ItemView {
     this.moreBtn.addClass('ct-summarize-spinning');
 
     const onProgress = (status: string) => {
-      this.statusBar.setText(status);
+      this.showStatusTransient(status);
     };
 
     try {
@@ -1062,7 +1181,7 @@ export class ThreadsView extends ItemView {
       // message) uses applyAutoTitle which guards against overwriting a user-set name.
       if (result.title) this.manager.renameThread(thread.id, result.title);
       await this.plugin.saveSettings();
-      this.statusBar.setText('');
+      this.clearTransientStatus();
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1073,7 +1192,7 @@ export class ThreadsView extends ItemView {
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
       console.error('[Claude Threads] summarize error:', err);
-      this.statusBar.setText('');
+      this.clearTransientStatus();
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1132,8 +1251,27 @@ export class ThreadsView extends ItemView {
       return;
     }
 
-    for (const msg of thread.messages) {
-      await this.appendMessage(msg);
+    if (this.compressedView) {
+      // In compressed view, consecutive assistant messages (between user/compact turns)
+      // are grouped into a single collapsible block so agentic runs collapse as one unit.
+      let i = 0;
+      while (i < thread.messages.length) {
+        const msg = thread.messages[i];
+        if (msg.role === 'assistant') {
+          const group: ChatMessage[] = [];
+          while (i < thread.messages.length && thread.messages[i].role === 'assistant') {
+            group.push(thread.messages[i++]);
+          }
+          await this.appendAssistantGroup(group);
+        } else {
+          await this.appendMessage(msg);
+          i++;
+        }
+      }
+    } else {
+      for (const msg of thread.messages) {
+        await this.appendMessage(msg);
+      }
     }
 
     if (this.manager.isRunning(this.activeThreadId)) {
@@ -1233,9 +1371,9 @@ export class ThreadsView extends ItemView {
           setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
         });
 
-        // Kick off lazy summary generation if not cached
+        // Enqueue lazy summary generation if not cached (serial — never concurrent)
         if (!msg.summary) {
-          void this.generateMessageSummary(msg);
+          this.generateMessageSummary(msg);
         }
       } else {
         content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
@@ -1377,7 +1515,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'escalated': {
-        this.statusBar.setText(`⚡ Using ${event.model} for this turn`);
+        this.showStatusTransient(`⚡ Using ${event.model} for this turn`);
         break;
       }
 
@@ -1533,7 +1671,7 @@ export class ThreadsView extends ItemView {
 
       case 'status': {
         if (event.status === 'compacting') {
-          this.statusBar.setText('Compacting context...');
+          this.showStatusTransient('Compacting context...');
         } else if (event.status === null) {
           this.updateStatusBar();
         }
@@ -1600,7 +1738,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'api_retry': {
-        this.statusBar.setText(`Retrying (${event.attempt}/${event.maxRetries})...`);
+        this.showStatusTransient(`Retrying (${event.attempt}/${event.maxRetries})...`);
         break;
       }
 
@@ -1610,9 +1748,9 @@ export class ThreadsView extends ItemView {
             ? ` Resets ${new Date(event.resetsAt).toLocaleTimeString()}.`
             : '';
           new Notice(`Rate limit reached.${resetMsg}`, 0);
-          this.statusBar.setText('Rate limited');
+          this.showStatusTransient('Rate limited');
         } else if (event.limitStatus === 'allowed_warning') {
-          this.statusBar.setText('Approaching rate limit');
+          this.showStatusTransient('Approaching rate limit');
         }
         break;
       }
@@ -1636,12 +1774,35 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  // ── Status bar helpers ────────────────────────────────────────────────────
+  // The status bar has two logical layers:
+  //   context  — persistent: GitHub project + model, set on every thread switch
+  //   transient — temporary: queued, retrying, compacting, etc.
+  // Transient overrides context while active; clearing it restores context.
+
+  private showStatusTransient(text: string): void {
+    this.statusTransientText = text;
+    this.statusBar.setText(text);
+  }
+
+  private clearTransientStatus(): void {
+    this.statusTransientText = '';
+    this.statusBar.setText(this.statusContextText);
+  }
+
+  private updateStatusContext(text: string): void {
+    this.statusContextText = text;
+    if (!this.statusTransientText) {
+      this.statusBar.setText(text);
+    }
+  }
+
   private setRunningState(running: boolean): void {
     this.dispatchInput?.setStreaming(running);
     if (running) {
       this.updateStatusBar();
     } else {
-      this.statusBar.setText('');
+      this.clearTransientStatus();
     }
   }
 
@@ -1652,9 +1813,9 @@ export class ThreadsView extends ItemView {
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
       const countSuffix = count > 1 ? ` (+${count - 1} more)` : '';
-      this.statusBar.setText(`Queued: "${preview}"${countSuffix}`);
+      this.showStatusTransient(`Queued: "${preview}"${countSuffix}`);
     } else {
-      this.statusBar.setText('');
+      this.clearTransientStatus();
     }
   }
 
@@ -1772,13 +1933,20 @@ export class ThreadsView extends ItemView {
       return;
     }
 
-    try {
-      await this.manager.sendMessage(this.activeThreadId, text || ' ', images.length > 0 ? images : undefined);
-    } catch (err) {
-      const errEl = this.messagesEl.createDiv('ct-message ct-error');
-      errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
-      this.setRunningState(false);
-    }
+    // Fire-and-forget: do NOT await sendMessage. Awaiting it keeps
+    // DispatchInput.dispatching = true for the entire response, which blocks
+    // the user from sending to any other thread while this one is running.
+    // UI state (stop button ↔ send button) is managed by the event system
+    // (streaming_start → setRunningState(true), done/error → setRunningState(false))
+    // so there is nothing useful the await was providing.
+    const sendThreadId = this.activeThreadId;
+    this.manager.sendMessage(sendThreadId, text || ' ', images.length > 0 ? images : undefined)
+      .catch(err => {
+        const errEl = this.messagesEl.createDiv('ct-message ct-error');
+        errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
+        // Only update running state if we're still looking at the thread that errored
+        if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+      });
   }
 
   private async stopMessage(): Promise<void> {

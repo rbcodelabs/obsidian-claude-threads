@@ -39,6 +39,12 @@ export interface DispatchInputOptions {
   onChipChange?: () => void;
   /** Slot for the caller to inject extra buttons into the footer actions area */
   appendFooterActions?: (container: HTMLElement) => void;
+  /**
+   * When true, renders a compact single-row layout suitable for wider panels:
+   *   [attach · mic]  [textarea (auto-grow)]  [send/stop]
+   * No footer row is rendered in this mode.
+   */
+  inlineLayout?: boolean;
   /** Override the textarea CSS class (default: 'ct-agents-dispatch-input') */
   inputCls?: string;
   /** Minimum text length to allow sending when no attachment/images (default: 0) */
@@ -97,13 +103,18 @@ export class DispatchInput {
     // Paste chips strip — hidden until attachments are added
     this.pasteChipsEl = this.rootEl.createDiv('ct-paste-chips ct-dispatch-chips ct-hidden');
 
-    // Input row: textarea + stacked action buttons
-    this.inputRow = this.rootEl.createDiv('ct-agents-dispatch-row');
+    // Input row: textarea + action buttons
+    const isInline = !!this.options.inlineLayout;
+    this.inputRow = this.rootEl.createDiv(isInline ? 'ct-dispatch-inline-row' : 'ct-agents-dispatch-row');
+
+    // In inline mode, action buttons sit to the LEFT of the textarea (created first so they appear left)
+    const leftActionsEl = isInline ? this.inputRow.createDiv('ct-dispatch-left-actions') : null;
 
     this.inputEl = this.inputRow.createEl('textarea', {
       cls: this.options.inputCls ?? 'ct-agents-dispatch-input',
       attr: {
         placeholder: this.options.placeholder ?? 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
+        rows: '1',
       },
     });
 
@@ -127,10 +138,10 @@ export class DispatchInput {
       this.stopBtn.addEventListener('click', () => this.options.onStop?.());
     }
 
-    const attachBtn = inputActions.createEl('button', {
-      cls: 'ct-more-btn ct-agents-dispatch-attach-btn',
-      attr: { title: 'Attach file' },
-    });
+    // Build attach button (appended into footer or inputActions below)
+    const attachBtn = document.createElement('button');
+    attachBtn.className = 'ct-more-btn ct-agents-dispatch-attach-btn';
+    attachBtn.title = 'Attach file';
     setIcon(attachBtn, 'paperclip');
 
     // Hidden file picker triggered by attachBtn
@@ -156,34 +167,44 @@ export class DispatchInput {
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
 
-    // Footer row — render when CWD chip or extra footer actions are requested
-    const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions);
-    if (needsFooter) {
-      const inputFooter = this.rootEl.createDiv('ct-input-footer');
+    if (isInline) {
+      // ── Inline layout: attach + mic sit LEFT of the textarea ─────────────
+      this.cwdChipNameEl = null;
+      this.cwdChipEl = null;
+      leftActionsEl!.appendChild(attachBtn);
+      leftActionsEl!.appendChild(micBtn);
+    } else {
+      // ── Column layout: footer row or fallback to input-actions column ────
+      const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions);
+      if (needsFooter) {
+        const inputFooter = this.rootEl.createDiv('ct-input-footer');
 
-      if (this.options.showCwdChip) {
-        const cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
-        const cwdIcon = cwdChipEl.createSpan('ct-edited-file-chip-icon');
-        setIcon(cwdIcon, 'folder');
-        this.cwdChipNameEl = cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
-        this.cwdChipEl = cwdChipEl;
-        if (this.options.onCwdClick) {
-          cwdChipEl.addEventListener('click', (e) => this.options.onCwdClick!(e));
+        if (this.options.showCwdChip) {
+          const cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
+          const cwdIcon = cwdChipEl.createSpan('ct-edited-file-chip-icon');
+          setIcon(cwdIcon, 'folder');
+          this.cwdChipNameEl = cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
+          this.cwdChipEl = cwdChipEl;
+          if (this.options.onCwdClick) {
+            cwdChipEl.addEventListener('click', (e) => this.options.onCwdClick!(e));
+          }
+        } else {
+          this.cwdChipNameEl = null;
+          this.cwdChipEl = null;
         }
+
+        const footerActionsEl = inputFooter.createDiv('ct-input-footer-actions');
+        this.options.appendFooterActions?.(footerActionsEl);
+        // Attach + mic live in the footer bottom row (keeps input area compact)
+        footerActionsEl.appendChild(attachBtn);
+        footerActionsEl.appendChild(micBtn);
       } else {
         this.cwdChipNameEl = null;
         this.cwdChipEl = null;
+        // No footer — fall back to putting attach + mic in the input actions column
+        inputActions.appendChild(attachBtn);
+        inputActions.appendChild(micBtn);
       }
-
-      const footerActionsEl = inputFooter.createDiv('ct-input-footer-actions');
-      this.options.appendFooterActions?.(footerActionsEl);
-      // Mic lives in footer when footer is present
-      footerActionsEl.appendChild(micBtn);
-    } else {
-      this.cwdChipNameEl = null;
-      this.cwdChipEl = null;
-      // Mic lives in the input actions row when there is no footer
-      inputActions.appendChild(micBtn);
     }
 
     // Keyboard handlers
@@ -244,6 +265,13 @@ export class DispatchInput {
   }
 
   focus(): void { this.inputEl?.focus(); }
+
+  /** Resize the textarea to fit its content (used in inline layout). */
+  private autoGrow(): void {
+    if (!this.inputEl) return;
+    this.inputEl.style.height = 'auto';
+    this.inputEl.style.height = `${this.inputEl.scrollHeight}px`;
+  }
 
   destroy(): void {
     this.sttController?.destroy();
@@ -308,6 +336,7 @@ export class DispatchInput {
 
     this.dispatching = true;
     this.inputEl.value = '';
+    this.autoGrow();
     this.pendingAttachment = null;
     this.pendingImages = [];
     this.renderChips();
@@ -621,6 +650,7 @@ export class DispatchInput {
   }
 
   private onInput(): void {
+    this.autoGrow();
     const atQuery = this.getAtQuery();
     if (atQuery !== null) {
       this.hideSkillDropdown();

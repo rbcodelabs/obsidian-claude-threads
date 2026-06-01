@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.8.0-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.11.0-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -31,7 +31,8 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done)
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done); the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
+- **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
@@ -42,6 +43,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Push-to-talk voice input** — hold a configurable hotkey to dictate a message via speech-to-text (uses the Claude Code STT pipeline); transcript populates the input box ready to send or edit
 - **Projects** — group threads by vault sub-folder with a shared context prompt injected into every message
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
+- **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
 - **Keep computer awake** — prevents the Mac from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses `caffeinate -i` on macOS, Web Lock API as fallback)
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response
@@ -151,7 +153,7 @@ This combination means you can dispatch several threads in parallel, switch to o
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
 
-Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout with columns for each agent state: idle, running, waiting for permission, and done. List view is the default; the preference is persisted across reloads.
+Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout with columns for each agent state: **Working**, **Awaiting** (permission), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The Kanban view has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving the board. List view is the default; the preference persists across reloads.
 
 ### Push-to-talk voice input
 
@@ -197,6 +199,20 @@ Opening this URL on any device with Obsidian Mobile + Claude Threads installed w
 <p align="center">
   <img src="docs/screenshot-mobile-connected.png" width="800" alt="Mobile remote access — desktop sessions mirrored to your phone in real time" />
 </p>
+
+### Compressed conversation view
+
+Long agentic threads — especially ones with many tool calls spread across dozens of turns — can be hard to scan. Toggle **Compress view** from the `⋯` menu (top-right of the conversation panel) to collapse the history into a scannable list of one-line summaries.
+
+**How it works:**
+
+- Each entry represents one *exchange*: a user message followed by all the consecutive assistant turns that came back before the next user message (i.e., a full agentic run)
+- The summary for each entry is generated by running the combined content of all assistant turns through a lightweight background process — so you get one meaningful summary ("Investigated codebase, added 4 MCP tools, wrote tests") rather than N fragments
+- Summaries are generated lazily in a serial queue (one at a time) so toggling compress view on a 50-message thread won't spawn 50 simultaneous Claude processes
+- Click the **⌄** arrow on any entry to expand it and read the full response with all tool calls intact
+- Toggle the menu item again (now labelled **Expand view**) to return to the normal conversation view
+
+Summaries are cached in memory for the session. They regenerate on the next reload — which keeps storage simple while keeping the background work cheap (the in-process model is fast and inexpensive).
 
 ### Thread summaries
 
@@ -306,7 +322,7 @@ This pattern works across any combination of threads — you can fan out to mult
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Permission mode | `Accept edits automatically`, `Bypass all permissions`, or `Prompt for permissions` |
-| Layout density | `Comfortable` or `Compact` — controls message spacing and padding |
+| Layout density | `Comfortable`, `Compact`, or `Spacious` — controls message spacing and padding |
 | Enable summarization | Show the summarize button and auto-summarize |
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |

@@ -124,6 +124,9 @@ export class ThreadManager {
     for (const t of threads) {
       // Migrate threads persisted before status was introduced.
       if (!t.status) t.status = 'waiting';
+      // Migrate threads persisted before updatedAt was introduced so that the
+      // Kanban byRecency sort never sees undefined (NaN comparisons break sort).
+      if (!t.updatedAt) t.updatedAt = t.createdAt;
       this.threads.set(t.id, t);
     }
   }
