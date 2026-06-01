@@ -310,6 +310,8 @@ export class ThreadsView extends ItemView {
               if (result.summary && shouldFullSummarize) summarizeThread.summary = result.summary;
               if (result.title) this.applyAutoTitle(summarizeThread.id, result.title);
               this.plugin.saveSettings();
+              // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
+              this.manager.notifySummaryUpdated(summarizeThread.id);
               if (this.activeThreadId === summarizeThread.id) {
                 this.renderTitleBar();
                 this.renderThreadInfo();
