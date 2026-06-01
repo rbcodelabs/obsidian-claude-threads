@@ -1,24 +1,19 @@
-/** Mock for the 'child_process' Node module — no-ops for the test harness */
-
-const mockStdin = {
-  write: (_data: string): boolean => true,
-  end: (): void => { /* no-op */ },
-};
-
-const mockChildProcess = { stdin: mockStdin };
+/** Stub for Node's child_process module in the Playwright browser harness. */
 
 type ExecCallback = (err: Error | null, stdout: string, stderr: string) => void;
 
-export function exec(
-  _cmd: string,
-  _opts: unknown,
-  cb?: ExecCallback
-): typeof mockChildProcess {
-  const callback: ExecCallback | undefined =
-    typeof _opts === 'function' ? (_opts as ExecCallback) : cb;
-  if (callback) {
-    // Call async so the child reference is returned before the callback fires
-    Promise.resolve().then(() => callback(null, '', ''));
-  }
-  return mockChildProcess;
+interface StubChildProcess {
+  stdin: { write: (_data: string) => void; end: () => void };
 }
+
+export const exec = (
+  _cmd: string,
+  _optsOrCb?: Record<string, unknown> | ExecCallback,
+  _cb?: ExecCallback,
+): StubChildProcess => {
+  // Normalise overloaded signatures: exec(cmd, cb) or exec(cmd, opts, cb)
+  const callback = typeof _optsOrCb === 'function' ? _optsOrCb : _cb;
+  // Invoke asynchronously so callers can chain .stdin before the callback fires
+  if (callback) setTimeout(() => callback(null, '', ''), 0);
+  return { stdin: { write: () => {}, end: () => {} } };
+};

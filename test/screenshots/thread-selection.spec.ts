@@ -32,8 +32,9 @@ test.describe('ThreadsView — initial thread selection', () => {
     await page.waitForSelector('.ct-title-row');
     await page.waitForTimeout(200);
 
-    // The title bar should show the newest thread's title (tabs were replaced by title-row)
-    await expect(page.locator('.ct-title-text')).toContainText('Fix auth middleware');
+    // The title button shows the active thread title
+    const titleEl = page.locator('.ct-title-text');
+    await expect(titleEl).toContainText('Fix auth middleware');
   });
 
   test('focusThread switches to the targeted thread', async ({ page }) => {
@@ -46,7 +47,7 @@ test.describe('ThreadsView — initial thread selection', () => {
     const activeId: string = await page.evaluate(() => (window as any).__view.getActiveThreadId());
     expect(activeId).toBe('thread-brainstorm');
 
-    // Title bar should reflect the newly focused thread
-    await expect(page.locator('.ct-title-text')).toContainText('HipTrip feature');
+    const titleEl = page.locator('.ct-title-text');
+    await expect(titleEl).toContainText('HipTrip feature');
   });
 });
