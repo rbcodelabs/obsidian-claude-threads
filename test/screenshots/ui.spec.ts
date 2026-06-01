@@ -193,9 +193,12 @@ test.describe('Claude Threads UI', () => {
   test('compress view menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
+    // Switch to the agentic thread (has consecutive assistant messages)
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+    await page.waitForTimeout(200);
     // Open the more menu — "Compress view" should be the first item
     await page.click('.ct-more-btn');
     await page.waitForSelector('.menu');
@@ -205,14 +208,17 @@ test.describe('Claude Threads UI', () => {
   test('compressed messages', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
+    // Switch to the agentic thread (has consecutive assistant messages for grouping)
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+    await page.waitForTimeout(200);
     // Toggle compress view via the more menu
     await page.click('.ct-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Compress view').click();
-    // Wait for the compressed layout to render
+    // Wait for the compressed layout to render (3 consecutive assistant msgs → grouped block)
     await page.waitForSelector('.ct-message-compressed');
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('compress-view-active.png', { fullPage: true });
@@ -221,16 +227,19 @@ test.describe('Claude Threads UI', () => {
   test('compressed message expand', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
-    await page.waitForSelector('.ct-tab-bar');
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
+    // Switch to the agentic thread
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+    await page.waitForTimeout(200);
     // Activate compress view
     await page.click('.ct-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Compress view').click();
     await page.waitForSelector('.ct-message-compressed');
     await page.waitForTimeout(200);
-    // Expand the first compressed message
+    // Expand the first (and only) compressed group
     await page.click('.ct-expand-btn');
     await page.waitForSelector('.ct-full-content:not(.ct-hidden)');
     await page.waitForTimeout(200);
