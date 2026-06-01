@@ -53,6 +53,13 @@ export interface DispatchInputOptions {
   sendBtnText?: string;
   /** Title tooltip for the send button (default: 'Start task') */
   sendBtnTitle?: string;
+  /**
+   * Called on every keydown/keyup to retrieve the current push-to-talk hotkey
+   * string (e.g. "Alt+Space"). When provided, hold-to-record PTT is enabled.
+   * Reading from settings on each event means hotkey changes take effect
+   * immediately without re-mounting the component.
+   */
+  getPttKey?: () => string;
 }
 
 export class DispatchInput {
@@ -166,6 +173,9 @@ export class DispatchInput {
     // Mic button for speech-to-text
     this.sttController = new SttController(this.app);
     const micBtn = this.sttController.createMicButton(this.inputEl);
+    if (this.options.getPttKey) {
+      this.sttController.attachPttToTextarea(this.inputEl, this.options.getPttKey);
+    }
 
     if (isInline) {
       // ── Inline layout: attach + mic sit LEFT of the textarea ─────────────

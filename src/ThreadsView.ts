@@ -421,6 +421,7 @@ export class ThreadsView extends ItemView {
       onSend: async ({ text, images, attachment }) => {
         await this.handleSendFromDispatch(text, images, attachment);
       },
+      getPttKey: () => this.plugin.settings.pttKey ?? '',
     });
     this.dispatchInput.mount(this.inputRowEl);
 
