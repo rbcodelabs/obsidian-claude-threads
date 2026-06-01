@@ -31,7 +31,8 @@ export type ThreadEvent =
   | { type: 'permission_request'; toolName: string; detail: string }
   | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' }
-  | { type: 'user_message_added'; message: ChatMessage };
+  | { type: 'user_message_added'; message: ChatMessage }
+  | { type: 'summary_updated' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -624,6 +625,10 @@ export class ThreadManager {
 
   notifyActiveThreadChanged(threadId: string): void {
     this.emit(threadId, { type: 'active_thread_changed' });
+  }
+
+  notifySummaryUpdated(threadId: string): void {
+    this.emit(threadId, { type: 'summary_updated' });
   }
 
   private emit(threadId: string, event: ThreadEvent): void {

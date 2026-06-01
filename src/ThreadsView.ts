@@ -296,6 +296,33 @@ export class ThreadsView extends ItemView {
       } else if (event.type === 'message' || event.type === 'done') {
         this.streamingBuffers.delete(threadId);
       }
+      // Auto-summarize runs for ALL completing threads, not just the active one.
+      // Moving this outside the activeThreadId guard fixes the case where the user
+      // switches away from a thread (or dispatches from Kanban) while it's running —
+      // the response lands on a non-active thread and was previously never summarized.
+      if (event.type === 'message' && this.plugin.settings.summarizationEnabled) {
+        const summarizeThread = this.manager.getThread(threadId);
+        if (summarizeThread) {
+          const shouldAutoTitle = isDefaultThreadTitle(summarizeThread.title);
+          const shouldFullSummarize = this.plugin.settings.autoSummarize;
+          if (shouldAutoTitle || shouldFullSummarize) {
+            this.runSummarize(summarizeThread.messages).then((result) => {
+              if (result.summary && shouldFullSummarize) summarizeThread.summary = result.summary;
+              if (result.title) this.applyAutoTitle(summarizeThread.id, result.title);
+              this.plugin.saveSettings();
+              // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
+              this.manager.notifySummaryUpdated(summarizeThread.id);
+              if (this.activeThreadId === summarizeThread.id) {
+                this.renderTitleBar();
+                this.renderThreadInfo();
+                this.refreshLeafHeader();
+              }
+            }).catch((err: unknown) => {
+              console.warn('[claude-threads] auto-summarize failed:', err);
+            });
+          }
+        }
+      }
       if (threadId === this.activeThreadId) {
         this.handleEvent(event);
       }
@@ -1575,27 +1602,8 @@ export class ThreadsView extends ItemView {
         this.appendMessage(event.message).then(() => this.scrollToBottom());
         this.scrollToBottom();
         this.plugin.saveSettings();
-        if (this.plugin.settings.summarizationEnabled && this.activeThreadId) {
-          const thread = this.manager.getThread(this.activeThreadId);
-          if (thread) {
-            const shouldAutoTitle = isDefaultThreadTitle(thread.title);
-            const shouldFullSummarize = this.plugin.settings.autoSummarize;
-            if (shouldAutoTitle || shouldFullSummarize) {
-              this.runSummarize(thread.messages).then((result) => {
-                if (result.summary && shouldFullSummarize) thread.summary = result.summary;
-                if (result.title) this.applyAutoTitle(thread.id, result.title);
-                this.plugin.saveSettings();
-                if (this.activeThreadId === thread.id) {
-                  this.renderTitleBar();
-                  this.renderThreadInfo();
-                  this.refreshLeafHeader();
-                }
-              }).catch((err: unknown) => {
-                console.warn('[claude-threads] auto-summarize failed:', err);
-              });
-            }
-          }
-        }
+        // Note: auto-summarize is handled in the outer event listener (above the
+        // activeThreadId guard) so it fires for all threads, not just the active one.
         if (this.plugin.settings.saveThreadsToVault && this.activeThreadId) {
           const thread = this.manager.getThread(this.activeThreadId);
           if (thread) {
