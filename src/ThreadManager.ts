@@ -13,8 +13,8 @@ export type ThreadEvent =
   | { type: 'error'; error: Error }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
-  | { type: 'queued'; text: string }
-  | { type: 'dequeued'; text: string }
+  | { type: 'queued'; text: string; images?: ImageAttachment[] }
+  | { type: 'dequeued'; text: string; images?: ImageAttachment[] }
   | { type: 'status'; status: 'compacting' | 'requesting' | null }
   | { type: 'compact'; message: ChatMessage }
   | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
@@ -37,7 +37,7 @@ export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
-  private queuedMessages: Map<string, string[]> = new Map();
+  private queuedMessages: Map<string, { text: string; images?: ImageAttachment[] }[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
@@ -124,6 +124,9 @@ export class ThreadManager {
     for (const t of threads) {
       // Migrate threads persisted before status was introduced.
       if (!t.status) t.status = 'waiting';
+      // Migrate threads persisted before updatedAt was introduced so that the
+      // Kanban byRecency sort never sees undefined (NaN comparisons break sort).
+      if (!t.updatedAt) t.updatedAt = t.createdAt;
       this.threads.set(t.id, t);
     }
   }
@@ -193,6 +196,85 @@ export class ThreadManager {
     }
   }
 
+  /**
+   * Scans all threads and repairs any whose `cwd` is a stale worktree path.
+   *
+   * Worktrees created by `enter_worktree` live under `<tmpdir>/claude-worktrees/`
+   * and are volatile — the Agent tool auto-removes them, and the worktree-cleanup
+   * skill prunes them on demand. When that happens outside the plugin's awareness,
+   * the persisted `thread.cwd` becomes a dangling path. Node.js throws ENOENT when
+   * spawning Claude with a non-existent cwd, which the SDK surfaces as the
+   * misleading "binary not found" error.
+   *
+   * **Scope**: only paths under `<os.tmpdir()>/claude-worktrees/` are repaired.
+   * Other missing cwds (e.g. a deleted project directory) are left alone — those
+   * should surface as an explicit error so the user knows to update the path.
+   *
+   * For each stale worktree path this method:
+   *   1. Walks up the directory tree to the nearest valid ancestor, stopping before
+   *      the worktree container dir itself.
+   *   2. Falls back to `vaultRoot` or `os.homedir()` if no valid ancestor is found.
+   *   3. Calls `setThreadCwd()` so the session ID is cleared and `cwd_changed` fires
+   *      (giving callers a chance to persist the fix via `saveSettings()`).
+   *
+   * Returns the number of threads that were repaired.
+   */
+  repairStaleCwds(): number {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodePath = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    // Worktree container: <os.tmpdir()>/claude-worktrees  (and its real-path twin on
+    // macOS where /tmp → /private/tmp).
+    const worktreeContainer = nodePath.join(os.tmpdir(), 'claude-worktrees');
+    const realWorktreeContainer = (() => {
+      try { return fs.realpathSync(nodePath.dirname(worktreeContainer)) + nodePath.sep + nodePath.basename(worktreeContainer); }
+      catch { return worktreeContainer; }
+    })();
+
+    const isWorktreePath = (p: string) =>
+      p.startsWith(worktreeContainer + nodePath.sep) ||
+      p.startsWith(realWorktreeContainer + nodePath.sep);
+
+    const isWorktreeContainer = (p: string) =>
+      p === worktreeContainer || p === realWorktreeContainer;
+
+    let repaired = 0;
+
+    for (const [id, thread] of this.threads) {
+      // Only repair volatile worktree paths — other non-existent cwds should be
+      // surfaced as an explicit error, not silently rerouted.
+      if (!thread.cwd || !isWorktreePath(thread.cwd)) continue;
+      if (fs.existsSync(thread.cwd)) continue;
+
+      // Walk up the tree to the nearest ancestor that both exists and is not
+      // the worktree container directory itself.
+      let fallback = thread.cwd;
+      while (true) {
+        const parent = nodePath.dirname(fallback);
+        if (parent === fallback) { fallback = ''; break; } // hit filesystem root
+        fallback = parent;
+        if (fs.existsSync(fallback) && !isWorktreeContainer(fallback)) break;
+      }
+
+      if (!fallback || !fs.existsSync(fallback)) {
+        fallback = this.vaultRoot || os.homedir();
+      }
+
+      console.warn(
+        `[ClaudeThreads] Repairing stale worktree cwd for thread "${thread.title}": ` +
+        `"${thread.cwd}" → "${fallback}"`,
+      );
+      this.setThreadCwd(id, fallback);
+      repaired++;
+    }
+
+    return repaired;
+  }
+
   setThreadModel(id: string, model: string | undefined): void {
     const thread = this.threads.get(id);
     if (thread) {
@@ -244,7 +326,7 @@ export class ThreadManager {
 
   getQueuedMessage(id: string): string | undefined {
     const queue = this.queuedMessages.get(id);
-    return queue && queue.length > 0 ? queue[0] : undefined;
+    return queue && queue.length > 0 ? queue[0].text : undefined;
   }
 
   getQueuedCount(id: string): number {
@@ -287,9 +369,9 @@ export class ThreadManager {
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
     if (this.sessions.has(threadId)) {
       const queue = this.queuedMessages.get(threadId) ?? [];
-      queue.push(userText);
+      queue.push({ text: userText, images });
       this.queuedMessages.set(threadId, queue);
-      this.emit(threadId, { type: 'queued', text: userText });
+      this.emit(threadId, { type: 'queued', text: userText, images });
       return;
     }
 
@@ -323,6 +405,36 @@ export class ThreadManager {
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
     let completedSuccessfully = false;
+
+    // Safety net: repairStaleCwds() runs at plugin load and catches most stale
+    // worktree cwds, but a worktree could be deleted between load and this send.
+    // Re-check here so we never spawn Claude with a non-existent worktree cwd
+    // (Node surfaces ENOENT as a spurious "binary not found" error from the SDK).
+    // Only volatile worktree paths (under <tmpdir>/claude-worktrees/) are in scope —
+    // other non-existent cwds are left for Node to surface naturally.
+    if (thread.cwd) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const nodePath = require('path') as typeof import('path');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('os') as typeof import('os');
+      const worktreeContainer = nodePath.join(os.tmpdir(), 'claude-worktrees');
+      const isWorktreePath =
+        thread.cwd.startsWith(worktreeContainer + nodePath.sep);
+      if (isWorktreePath && !fs.existsSync(thread.cwd)) {
+        const repaired = this.repairStaleCwds();
+        if (repaired === 0 || !fs.existsSync(thread.cwd!)) {
+          // No valid ancestor found; surface a clear error before ENOENT can hit.
+          const err = new Error(
+            `Worktree no longer exists: "${thread.cwd}". ` +
+            `Use set_working_directory to point this thread at a valid path.`,
+          );
+          this.emit(threadId, { type: 'error', error: err });
+          return;
+        }
+      }
+    }
 
     // Snapshot the cwd at session start. If obsidian_set_working_directory fires
     // mid-session, thread.cwd changes but this value stays fixed. We use it in
@@ -492,8 +604,8 @@ export class ThreadManager {
       if (queue && queue.length > 0) {
         const next = queue.shift()!;
         if (queue.length === 0) this.queuedMessages.delete(threadId);
-        this.emit(threadId, { type: 'dequeued', text: next });
-        await this.sendMessage(threadId, next);
+        this.emit(threadId, { type: 'dequeued', text: next.text, images: next.images });
+        await this.sendMessage(threadId, next.text, next.images);
       }
     }
   }

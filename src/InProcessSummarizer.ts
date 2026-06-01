@@ -56,6 +56,39 @@ export class InProcessSummarizer {
     return parseJsonResult(raw.trim());
   }
 
+  async summarizeMessage(
+    content: string,
+    claudeBinaryPath: string,
+    modelAlias: string,
+    extraEnv: string,
+  ): Promise<string> {
+    // Trim to 3000 chars so haiku stays cheap
+    const trimmed = content.slice(0, 3000);
+    const prompt =
+      'Summarize the following assistant response in exactly one concise sentence (max 25 words). ' +
+      'Focus on what was done or decided. Output ONLY the sentence, no preamble.\n\n' +
+      `<response>\n${trimmed}\n</response>`;
+
+    let raw = '';
+    for await (const msg of query({
+      prompt,
+      options: {
+        pathToClaudeCodeExecutable: claudeBinaryPath,
+        permissionMode: 'default',
+        model: modelAlias,
+        cwd: os.tmpdir(),
+        env: { ...process.env, ...parseExtraEnv(extraEnv) },
+      },
+    })) {
+      if (msg.type === 'assistant') {
+        for (const block of msg.message.content) {
+          if (block.type === 'text') raw = block.text;
+        }
+      }
+    }
+    return raw.trim();
+  }
+
   async generateForkPrompt(
     messages: ChatMessage[],
     focus: string,

@@ -1,17 +1,17 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
-import { MAX_ATTACHMENT_BYTES } from './attachmentUtils';
-import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment, ImageMediaType } from './types';
+import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
-import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
+import { resolveProjectName } from './pathUtils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { SttController } from './stt';
+import { DispatchInput } from './DispatchInput';
+import { shortenPath } from './dashboardUtils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -30,26 +30,18 @@ export class ThreadsView extends ItemView {
   private tabBar!: HTMLElement;
   private titleEl!: HTMLButtonElement;
   private titleTextEl!: HTMLSpanElement;
-  private threadInfoBar!: HTMLElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
-  private inputEl!: HTMLTextAreaElement;
   private inputRowEl!: HTMLElement;
-  private pasteChipsEl!: HTMLElement;
-  private sendBtn!: HTMLButtonElement;
-  private stopBtn!: HTMLButtonElement;
   private moreBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
   private editedFilesEl!: HTMLElement;
-  private cwdChipEl!: HTMLElement;
-  private cwdChipNameEl!: HTMLElement;
+
+  // Shared dispatch input component
+  private dispatchInput!: DispatchInput;
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
-
-  // Pending paste attachments
-  private pendingAttachment: string | null = null;
-  private pendingImages: ImageAttachment[] = [];
 
   // Debounce timer for persisting per-thread drafts to settings
   private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -77,6 +69,11 @@ export class ThreadsView extends ItemView {
   private statusLineRefreshTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly STATUS_LINE_INTERVAL_MS = 30_000;
 
+  // Status bar layering: context is the persistent baseline (project/model),
+  // transient overrides it temporarily (queued, retrying, compacting, etc.)
+  private statusContextText = '';
+  private statusTransientText = '';
+
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
 
@@ -100,23 +97,24 @@ export class ThreadsView extends ItemView {
   private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;  // show only after 1 min away
   private static readonly BANNER_AUTO_DISMISS_MS   = 10_000;  // auto-hide after 10 sec
 
+  // Compressed view state
+  private compressedView = false;
+  // Maps message id → summary text span, for async DOM updates after summary generation
+  private summaryTextEls: Map<string, HTMLElement> = new Map();
+  // Cache for group summaries (consecutive assistant turns between user messages).
+  // Key = ':'-joined message IDs of the group. In-memory only; regenerates on reload.
+  private groupSummaryCache: Map<string, string> = new Map();
+  // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
+  // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
+  // and discard their results if the view has been toggled/navigated away since they were enqueued.
+  private summaryQueue: Promise<void> = Promise.resolve();
+  private summaryGeneration = 0;
+
   // Per-thread streaming buffers. Accumulates tokens and tool calls for every
   // running thread (active or background) so the streaming UI can be fully
   // restored when the user switches back to a thread that is still in progress.
   // Cleared on 'message' or 'done' for the corresponding thread.
   private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[] }> = new Map();
-
-  private skills: { name: string; description: string }[] = [];
-  private skillDropdown: HTMLElement | null = null;
-  private skillDropdownItems: { name: string; description: string }[] = [];
-  private skillDropdownIndex = 0;
-
-  private fileDropdown: HTMLElement | null = null;
-  private fileDropdownItems: { path: string; basename: string; isThis?: boolean }[] = [];
-  private fileDropdownIndex = 0;
-
-  // Speech-to-text controller (one per view, shared across mic buttons)
-  private sttController: SttController | null = null;
 
   // ResizeObserver for the floating input panel (keeps --ct-panel-height current)
   private panelResizeObserver: ResizeObserver | null = null;
@@ -157,6 +155,11 @@ export class ThreadsView extends ItemView {
   /** Force Obsidian to re-read getDisplayText() and repaint the workspace tab header. */
   private refreshLeafHeader(): void {
     (this.leaf as any).updateHeader();
+    // Belt-and-suspenders: directly update the tab strip title element when available.
+    // updateHeader() refreshes the pane header but may not always repaint the tab strip
+    // depending on the Obsidian version.
+    const titleEl = (this.leaf as any).tabHeaderInnerTitleEl as HTMLElement | undefined;
+    if (titleEl) titleEl.textContent = this.getDisplayText();
   }
 
   getIcon(): string {
@@ -262,7 +265,7 @@ export class ThreadsView extends ItemView {
       this.renderProjectBar();
       this.setActiveThread(thread.id);
       if (initialPrompt) {
-        this.inputEl.value = initialPrompt;
+        this.dispatchInput?.setValue(initialPrompt);
       }
       return { threadId: thread.id, title: thread.title };
     };
@@ -322,7 +325,7 @@ export class ThreadsView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.stopStatusLineInterval();
-    this.sttController?.destroy();
+    this.dispatchInput?.destroy();
     this.panelResizeObserver?.disconnect();
     this.panelResizeObserver = null;
   }
@@ -354,7 +357,6 @@ export class ThreadsView extends ItemView {
     this.closeThreadBtn.addEventListener('click', () => {
       if (this.activeThreadId) this.closeThread(this.activeThreadId);
     });
-    this.threadInfoBar = root.createDiv('ct-thread-info-bar');
 
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
@@ -366,165 +368,34 @@ export class ThreadsView extends ItemView {
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
     this.inputRowEl = floatingPanel.createDiv('ct-input-row');
-    this.pasteChipsEl = this.inputRowEl.createDiv('ct-paste-chips ct-hidden');
 
-    const inputControls = this.inputRowEl.createDiv('ct-input-controls');
-
-    this.loadSkills();
-    this.inputEl = inputControls.createEl('textarea', {
-      cls: 'ct-input',
-      attr: { placeholder: 'Message Claude…' },
+    this.dispatchInput = new DispatchInput({
+      app: this.app,
+      placeholder: 'Message Claude…',
+      inputCls: 'ct-input',
+      sendBtnText: '↵',
+      sendBtnTitle: 'Send message',
+      showStopBtn: true,
+      onStop: () => this.stopMessage(),
+      showThisMention: true,
+      showCwdChip: true,
+      captureLongPaste: true,
+      builtinCommands: ThreadsView.BUILTIN_COMMANDS,
+      onInput: () => this.scheduleDraftSave(),
+      onChipChange: () => this.scheduleDraftSave(),
+      appendFooterActions: (container) => {
+        this.moreBtn = container.createEl('button', {
+          cls: 'ct-more-btn',
+          attr: { title: 'More actions' },
+        });
+        setIcon(this.moreBtn, 'menu');
+        this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
+      },
+      onSend: async ({ text, images, attachment }) => {
+        await this.handleSendFromDispatch(text, images, attachment);
+      },
     });
-    const inputActions = inputControls.createDiv('ct-input-actions');
-    this.sendBtn = inputActions.createEl('button', { cls: 'ct-send-btn', text: '↵', attr: { title: 'Send message' } });
-    this.stopBtn = inputActions.createEl('button', {
-      cls: 'ct-stop-btn ct-hidden',
-      text: '■',
-      attr: { title: 'Stop' },
-    });
-
-    // Secondary actions live in a footer row below the textarea
-    const inputFooter = this.inputRowEl.createDiv('ct-input-footer');
-
-    // CWD chip — always visible, left-aligned in the footer
-    this.cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
-    const cwdFooterIcon = this.cwdChipEl.createSpan('ct-edited-file-chip-icon');
-    setIcon(cwdFooterIcon, 'folder');
-    this.cwdChipNameEl = this.cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
-
-    // Right-side buttons group (menu + mic)
-    const footerActions = inputFooter.createDiv('ct-input-footer-actions');
-    this.moreBtn = footerActions.createEl('button', {
-      cls: 'ct-more-btn',
-      attr: { title: 'More actions' },
-    });
-    setIcon(this.moreBtn, 'menu');
-    this.moreBtn.addEventListener('click', (e) => this.toggleMoreMenu(e));
-
-    this.inputEl.addEventListener('keydown', (e) => {
-      if (this.fileDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.min(this.fileDropdownIndex + 1, this.fileDropdownItems.length - 1);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.fileDropdownIndex = Math.max(this.fileDropdownIndex - 1, 0);
-          this.renderFileDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          const selectedItem = this.fileDropdownItems[this.fileDropdownIndex];
-          if (selectedItem.isThis) {
-            this.insertThisMention();
-          } else {
-            this.insertFileMention(selectedItem.basename);
-          }
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideFileDropdown();
-          return;
-        }
-      }
-      if (this.skillDropdown) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.min(this.skillDropdownIndex + 1, this.skillDropdownItems.length - 1);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          this.skillDropdownIndex = Math.max(this.skillDropdownIndex - 1, 0);
-          this.renderSkillDropdown();
-          return;
-        }
-        if (e.key === 'Enter' || e.key === 'Tab') {
-          e.preventDefault();
-          this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name);
-          return;
-        }
-        if (e.key === 'Escape') {
-          this.hideSkillDropdown();
-          return;
-        }
-      }
-      if (e.key === 'Escape' && !this.stopBtn.hasClass('ct-hidden')) {
-        e.preventDefault();
-        this.stopMessage();
-        return;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        this.sendMessage();
-      }
-    });
-    this.inputEl.addEventListener('input', () => {
-      const atQuery = this.getAtQuery();
-      if (atQuery !== null) {
-        this.hideSkillDropdown();
-        this.showFileDropdown(atQuery);
-        this.scheduleDraftSave();
-        return;
-      }
-      this.hideFileDropdown();
-      const query = this.getSlashQuery();
-      if (query !== null) this.showSkillDropdown(query);
-      else this.hideSkillDropdown();
-      this.scheduleDraftSave();
-    });
-    this.inputEl.addEventListener('blur', () => {
-      setTimeout(() => {
-        this.hideSkillDropdown();
-        this.hideFileDropdown();
-      }, 150);
-    });
-    this.inputEl.addEventListener('paste', (e) => {
-      const files = Array.from(e.clipboardData?.files ?? []);
-      const imageFiles = files.filter(f => f.type.startsWith('image/'));
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        imageFiles.forEach(f => this.addImageAttachment(f));
-        return;
-      }
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      if (text.length >= 500) {
-        e.preventDefault();
-        this.addPasteAttachment(text);
-      }
-    });
-    this.inputRowEl.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      this.inputRowEl.addClass('ct-drag-over');
-    });
-    this.inputRowEl.addEventListener('dragleave', (e) => {
-      if (!this.inputRowEl.contains(e.relatedTarget as Node | null)) {
-        this.inputRowEl.removeClass('ct-drag-over');
-      }
-    });
-    this.inputRowEl.addEventListener('drop', (e) => {
-      e.preventDefault();
-      this.inputRowEl.removeClass('ct-drag-over');
-      const files = Array.from(e.dataTransfer?.files ?? []);
-      for (const file of files) {
-        if (file.type.startsWith('image/')) {
-          this.addImageAttachment(file);
-        } else {
-          this.addFileAsTextAttachment(file);
-        }
-      }
-    });
-    this.sendBtn.addEventListener('click', () => this.sendMessage());
-    this.stopBtn.addEventListener('click', () => this.stopMessage());
-
-    // Mic button for speech-to-text — lives in the footer actions group alongside more-btn
-    this.sttController = new SttController(this.app);
-    const micBtn = this.sttController.createMicButton(this.inputEl);
-    footerActions.appendChild(micBtn);
+    this.dispatchInput.mount(this.inputRowEl);
 
     this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
@@ -534,8 +405,11 @@ export class ThreadsView extends ItemView {
     this.panelResizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         const height = entry.contentRect.height;
-        // +16 = 8px bottom offset + 8px breathing room above the panel
-        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 16}px`);
+        // Breakdown: 8px bottom-offset (panel's `bottom: 8px`) + 2px border +
+        // 24px shadow-blur (box-shadow: 0 4px 24px) + 8px breathing room = 42px.
+        // This ensures the last message sits above the panel *and* its upward
+        // shadow so tool-call pills never appear visually behind the panel.
+        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 42}px`);
       }
     });
     this.panelResizeObserver.observe(floatingPanel);
@@ -628,13 +502,15 @@ export class ThreadsView extends ItemView {
 
   /** Snapshot the current input box state into the given thread object. */
   private saveDraftToThread(threadId: string | null): void {
-    if (!threadId || !this.inputEl) return;
+    if (!threadId || !this.dispatchInput) return;
     const thread = this.manager.getThread(threadId);
     if (!thread) return;
-    const text = this.inputEl.value;
-    const hasContent = text.length > 0 || this.pendingAttachment !== null || this.pendingImages.length > 0;
+    const text = this.dispatchInput.getValue();
+    const attachment = this.dispatchInput.getPendingAttachment();
+    const images = this.dispatchInput.getPendingImages();
+    const hasContent = text.length > 0 || attachment !== null || images.length > 0;
     if (hasContent) {
-      thread.draft = { text, attachment: this.pendingAttachment, images: [...this.pendingImages] };
+      thread.draft = { text, attachment, images };
     } else {
       delete thread.draft;
     }
@@ -642,13 +518,12 @@ export class ThreadsView extends ItemView {
 
   /** Restore the input box state from a thread's saved draft (or clear it). */
   private restoreDraftFromThread(threadId: string): void {
-    if (!this.inputEl) return;
+    if (!this.dispatchInput) return;
     const thread = this.manager.getThread(threadId);
     const draft = thread?.draft;
-    this.inputEl.value = draft?.text ?? '';
-    this.pendingAttachment = draft?.attachment ?? null;
-    this.pendingImages = draft ? [...draft.images] : [];
-    this.renderPasteChips();
+    this.dispatchInput.setValue(draft?.text ?? '');
+    this.dispatchInput.setPendingAttachment(draft?.attachment ?? null);
+    this.dispatchInput.setPendingImages(draft ? [...draft.images] : []);
   }
 
   /**
@@ -681,6 +556,8 @@ export class ThreadsView extends ItemView {
     // Persist the draft for the thread we're leaving before switching
     this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
+    this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
+    this.groupSummaryCache.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -1096,27 +973,35 @@ export class ThreadsView extends ItemView {
   private renderCwdChip(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    this.cwdChipNameEl.textContent = shortenPath(cwd);
-    setTooltip(this.cwdChipEl, cwd);
+
+    // Build a human-readable label for the CWD chip.
+    // When we can resolve a real git project name, prefer "project · branch"
+    // over a raw filesystem path — much more meaningful for worktrees.
+    const projectName = resolveProjectName(cwd);
+    let displayText: string;
+    if (projectName) {
+      const lastSegment = cwd.replace(/\/$/, '').split('/').pop() ?? '';
+      // Show branch/worktree suffix when it differs from the project root name
+      displayText = (lastSegment && lastSegment !== projectName)
+        ? `${projectName} · ${lastSegment}`
+        : projectName;
+    } else {
+      displayText = shortenPath(cwd);
+    }
+
+    this.dispatchInput?.setCwd(displayText, cwd);
   }
 
   private renderThreadInfo(): void {
-    this.threadInfoBar.empty();
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
     this.renderCwdChip();
 
-    // Show model badge only; cwd is now shown in the footer row
-    const hasContent = !!thread.model;
-
-    // Hide the bar entirely when there's nothing to show
-    this.threadInfoBar.classList.toggle('ct-hidden', !hasContent);
-
-    if (thread.model) {
-      this.threadInfoBar.createSpan({ cls: 'ct-model-badge', text: thread.model });
-    }
+    // Status bar: only show a non-default model override (purely operational info).
+    // Project name lives in the CWD chip now.
+    this.updateStatusContext(thread.model ?? '');
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -1124,6 +1009,13 @@ export class ThreadsView extends ItemView {
     if (!thread) return;
 
     const menu = new Menu();
+    menu.addItem(item =>
+      item
+        .setTitle(this.compressedView ? 'Expand view' : 'Compress view')
+        .setIcon(this.compressedView ? 'maximize-2' : 'minimize-2')
+        .onClick(() => this.toggleCompressView())
+    );
+    menu.addSeparator();
     menu.addItem(item =>
       item
         .setTitle('Summarize thread')
@@ -1139,6 +1031,14 @@ export class ThreadsView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
+  private toggleCompressView(): void {
+    this.compressedView = !this.compressedView;
+    this.summaryGeneration++; // cancel any queued summary jobs from the previous render
+    this.summaryTextEls.clear();
+    this.groupSummaryCache.clear();
+    void this.renderMessages();
+  }
+
   private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
     return this.plugin.inProcessSummarizer.summarize(
       messages,
@@ -1147,6 +1047,124 @@ export class ThreadsView extends ItemView {
       this.plugin.settings.extraEnv,
       onProgress,
     );
+  }
+
+  private generateMessageSummary(msg: ChatMessage): void {
+    if (msg.summary) return;
+    // Capture the current generation so we can detect stale jobs after awaiting.
+    const gen = this.summaryGeneration;
+    // Chain onto the serial queue — only ONE summarizeMessage() call runs at a time, no matter
+    // how many messages need summaries. Each job checks `gen` before starting and after the
+    // async call so that toggling compress-off (or switching threads) discards pending work.
+    this.summaryQueue = this.summaryQueue.then(async () => {
+      if (gen !== this.summaryGeneration) return; // view was toggled or thread changed — skip
+      if (msg.summary) return; // already summarised by an earlier job in the queue
+      try {
+        const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
+          msg.content,
+          this.plugin.settings.claudeBinaryPath,
+          this.plugin.settings.inprocessModel,
+          this.plugin.settings.extraEnv,
+        );
+        if (gen !== this.summaryGeneration) return; // stale after the async call — discard
+        msg.summary = summary;
+        await this.plugin.saveSettings();
+        // Update the DOM span if still visible
+        const el = this.summaryTextEls.get(msg.id);
+        if (el) el.textContent = summary;
+      } catch (err) {
+        if (gen !== this.summaryGeneration) return;
+        console.error('[Claude Threads] message summary error:', err);
+        const el = this.summaryTextEls.get(msg.id);
+        if (el) el.textContent = msg.content.slice(0, 120) + '…';
+      }
+    });
+  }
+
+  /**
+   * Render a run of consecutive assistant messages as a single collapsible block.
+   * A single-message group falls through to the normal appendMessage path so that
+   * the existing per-message summary/expand logic is reused.
+   */
+  private async appendAssistantGroup(group: ChatMessage[]): Promise<void> {
+    if (group.length === 0) return;
+    if (group.length === 1) {
+      // Single message — reuse normal compressed rendering
+      await this.appendMessage(group[0]);
+      return;
+    }
+
+    const groupKey = group.map(m => m.id).join(':');
+    const cachedSummary = this.groupSummaryCache.get(groupKey);
+
+    const el = this.messagesEl.createDiv('ct-message ct-message-assistant ct-message-compressed');
+
+    const content = el.createDiv('ct-message-content');
+    const collapsedRow = content.createDiv('ct-compressed-row');
+    const summaryTextEl = collapsedRow.createSpan({
+      cls: 'ct-compressed-summary',
+      text: cachedSummary ?? 'Summarizing…',
+    });
+
+    const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+    setIcon(expandBtn, 'chevron-down');
+
+    // Full content (hidden) — render each sub-message with its tool calls
+    const fullContent = content.createDiv('ct-full-content ct-hidden');
+    for (const msg of group) {
+      const msgEl = fullContent.createDiv('ct-message ct-message-assistant');
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        this.renderToolCalls(msgEl, msg.toolCalls);
+      }
+      const msgContent = msgEl.createDiv('ct-message-content');
+      msgContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+    }
+
+    let expanded = false;
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        collapsedRow.addClass('ct-hidden');
+        fullContent.removeClass('ct-hidden');
+      } else {
+        collapsedRow.removeClass('ct-hidden');
+        fullContent.addClass('ct-hidden');
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
+
+    // Enqueue group summary generation if not yet cached
+    if (!cachedSummary) {
+      this.generateGroupSummary(group, groupKey, summaryTextEl);
+    }
+  }
+
+  /** Generate a single summary for a group of consecutive assistant messages. */
+  private generateGroupSummary(group: ChatMessage[], groupKey: string, el: HTMLElement): void {
+    const gen = this.summaryGeneration;
+    this.summaryQueue = this.summaryQueue.then(async () => {
+      if (gen !== this.summaryGeneration) return;
+      const already = this.groupSummaryCache.get(groupKey);
+      if (already) { el.textContent = already; return; }
+      try {
+        // Concatenate all turns into one block so the summarizer sees the full run
+        const combined = group.map(m => m.content).join('\n\n');
+        const summary = await this.plugin.inProcessSummarizer.summarizeMessage(
+          combined,
+          this.plugin.settings.claudeBinaryPath,
+          this.plugin.settings.inprocessModel,
+          this.plugin.settings.extraEnv,
+        );
+        if (gen !== this.summaryGeneration) return;
+        this.groupSummaryCache.set(groupKey, summary);
+        el.textContent = summary;
+      } catch (err) {
+        if (gen !== this.summaryGeneration) return;
+        console.error('[Claude Threads] group summary error:', err);
+        // Fall back to last message's content truncated
+        el.textContent = group[group.length - 1].content.slice(0, 120) + '…';
+      }
+    });
   }
 
   async summarizeThread(threadId: string): Promise<void> {
@@ -1158,7 +1176,7 @@ export class ThreadsView extends ItemView {
     this.moreBtn.addClass('ct-summarize-spinning');
 
     const onProgress = (status: string) => {
-      this.statusBar.setText(status);
+      this.showStatusTransient(status);
     };
 
     try {
@@ -1168,7 +1186,7 @@ export class ThreadsView extends ItemView {
       // message) uses applyAutoTitle which guards against overwriting a user-set name.
       if (result.title) this.manager.renameThread(thread.id, result.title);
       await this.plugin.saveSettings();
-      this.statusBar.setText('');
+      this.clearTransientStatus();
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1179,7 +1197,7 @@ export class ThreadsView extends ItemView {
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
       console.error('[Claude Threads] summarize error:', err);
-      this.statusBar.setText('');
+      this.clearTransientStatus();
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1238,8 +1256,27 @@ export class ThreadsView extends ItemView {
       return;
     }
 
-    for (const msg of thread.messages) {
-      await this.appendMessage(msg);
+    if (this.compressedView) {
+      // In compressed view, consecutive assistant messages (between user/compact turns)
+      // are grouped into a single collapsible block so agentic runs collapse as one unit.
+      let i = 0;
+      while (i < thread.messages.length) {
+        const msg = thread.messages[i];
+        if (msg.role === 'assistant') {
+          const group: ChatMessage[] = [];
+          while (i < thread.messages.length && thread.messages[i].role === 'assistant') {
+            group.push(thread.messages[i++]);
+          }
+          await this.appendAssistantGroup(group);
+        } else {
+          await this.appendMessage(msg);
+          i++;
+        }
+      }
+    } else {
+      for (const msg of thread.messages) {
+        await this.appendMessage(msg);
+      }
     }
 
     if (this.manager.isRunning(this.activeThreadId)) {
@@ -1308,7 +1345,44 @@ export class ThreadsView extends ItemView {
 
     const content = el.createDiv('ct-message-content');
     if (msg.role === 'assistant') {
-      content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+      if (this.compressedView) {
+        el.addClass('ct-message-compressed');
+        // Collapsed row: summary text only
+        const collapsedRow = content.createDiv('ct-compressed-row');
+        const summaryTextEl = collapsedRow.createSpan({
+          cls: 'ct-compressed-summary',
+          text: msg.summary ?? 'Summarizing…',
+        });
+        this.summaryTextEls.set(msg.id, summaryTextEl);
+
+        // Expand button lives outside collapsedRow so it stays visible after expand
+        const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+        setIcon(expandBtn, 'chevron-down');
+
+        // Full content (hidden by default)
+        const fullContent = content.createDiv('ct-full-content ct-hidden');
+        fullContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+
+        let expanded = false;
+        expandBtn.addEventListener('click', () => {
+          expanded = !expanded;
+          if (expanded) {
+            collapsedRow.addClass('ct-hidden');
+            fullContent.removeClass('ct-hidden');
+          } else {
+            collapsedRow.removeClass('ct-hidden');
+            fullContent.addClass('ct-hidden');
+          }
+          setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+        });
+
+        // Enqueue lazy summary generation if not cached (serial — never concurrent)
+        if (!msg.summary) {
+          this.generateMessageSummary(msg);
+        }
+      } else {
+        content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+      }
       const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
       setIcon(copyBtn, 'copy');
       copyBtn.addEventListener('click', () => {
@@ -1446,7 +1520,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'escalated': {
-        this.statusBar.setText(`⚡ Using ${event.model} for this turn`);
+        this.showStatusTransient(`⚡ Using ${event.model} for this turn`);
         break;
       }
 
@@ -1516,7 +1590,9 @@ export class ThreadsView extends ItemView {
                   this.renderThreadInfo();
                   this.refreshLeafHeader();
                 }
-              }).catch(() => { /* silent fail for auto */ });
+              }).catch((err: unknown) => {
+                console.warn('[claude-threads] auto-summarize failed:', err);
+              });
             }
           }
         }
@@ -1542,7 +1618,16 @@ export class ThreadsView extends ItemView {
       case 'dequeued': {
         const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
         this.pendingUserEl = userEl; // prevent the subsequent 'send' event from creating a duplicate bubble
-        userEl.createDiv('ct-message-content').createEl('p', { text: event.text });
+        const dqContent = userEl.createDiv('ct-message-content');
+        if (event.text) dqContent.createEl('p', { text: event.text });
+        if (event.images && event.images.length > 0) {
+          const imgRow = dqContent.createDiv('ct-message-images');
+          for (const img of event.images) {
+            const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
+            thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+            thumb.title = img.name;
+          }
+        }
         this.scrollToBottom();
         break;
       }
@@ -1579,7 +1664,7 @@ export class ThreadsView extends ItemView {
         // Restore the sent message so the user can edit and re-send
         const lastSent = this.activeThreadId ? this.lastSentTexts.get(this.activeThreadId) : undefined;
         if (lastSent) {
-          this.inputEl.value = lastSent;
+          this.dispatchInput?.setValue(lastSent);
           this.lastSentTexts.delete(this.activeThreadId!);
         }
         this.setRunningState(false);
@@ -1593,7 +1678,7 @@ export class ThreadsView extends ItemView {
 
       case 'status': {
         if (event.status === 'compacting') {
-          this.statusBar.setText('Compacting context...');
+          this.showStatusTransient('Compacting context...');
         } else if (event.status === null) {
           this.updateStatusBar();
         }
@@ -1660,7 +1745,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'api_retry': {
-        this.statusBar.setText(`Retrying (${event.attempt}/${event.maxRetries})...`);
+        this.showStatusTransient(`Retrying (${event.attempt}/${event.maxRetries})...`);
         break;
       }
 
@@ -1670,9 +1755,9 @@ export class ThreadsView extends ItemView {
             ? ` Resets ${new Date(event.resetsAt).toLocaleTimeString()}.`
             : '';
           new Notice(`Rate limit reached.${resetMsg}`, 0);
-          this.statusBar.setText('Rate limited');
+          this.showStatusTransient('Rate limited');
         } else if (event.limitStatus === 'allowed_warning') {
-          this.statusBar.setText('Approaching rate limit');
+          this.showStatusTransient('Approaching rate limit');
         }
         break;
       }
@@ -1696,16 +1781,35 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  // ── Status bar helpers ────────────────────────────────────────────────────
+  // The status bar has two logical layers:
+  //   context  — persistent: GitHub project + model, set on every thread switch
+  //   transient — temporary: queued, retrying, compacting, etc.
+  // Transient overrides context while active; clearing it restores context.
+
+  private showStatusTransient(text: string): void {
+    this.statusTransientText = text;
+    this.statusBar.setText(text);
+  }
+
+  private clearTransientStatus(): void {
+    this.statusTransientText = '';
+    this.statusBar.setText(this.statusContextText);
+  }
+
+  private updateStatusContext(text: string): void {
+    this.statusContextText = text;
+    if (!this.statusTransientText) {
+      this.statusBar.setText(text);
+    }
+  }
+
   private setRunningState(running: boolean): void {
+    this.dispatchInput?.setStreaming(running);
     if (running) {
-      this.sendBtn.addClass('ct-hidden');
-      this.stopBtn.removeClass('ct-hidden');
       this.updateStatusBar();
     } else {
-      this.sendBtn.removeClass('ct-hidden');
-      this.stopBtn.addClass('ct-hidden');
-      this.statusBar.setText('');
-      this.inputEl.focus();
+      this.clearTransientStatus();
     }
   }
 
@@ -1716,9 +1820,9 @@ export class ThreadsView extends ItemView {
     if (queued) {
       const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
       const countSuffix = count > 1 ? ` (+${count - 1} more)` : '';
-      this.statusBar.setText(`Queued: "${preview}"${countSuffix}`);
+      this.showStatusTransient(`Queued: "${preview}"${countSuffix}`);
     } else {
-      this.statusBar.setText('');
+      this.clearTransientStatus();
     }
   }
 
@@ -1726,104 +1830,24 @@ export class ThreadsView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
-  private addPasteAttachment(content: string): void {
-    this.pendingAttachment = content;
-    this.renderPasteChips();
-    this.scheduleDraftSave();
-  }
 
-  private addFileAsTextAttachment(file: File): void {
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      new Notice(`"${file.name}" is too large to attach (max 500 KB).`);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Filename on the first line so the chip label and Claude's context both show it
-      this.addPasteAttachment(`${file.name}\n${reader.result as string}`);
-    };
-    reader.onerror = () => new Notice(`Could not read "${file.name}".`);
-    reader.readAsText(file);
-  }
-
-  private addImageAttachment(file: File): void {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1];
-      this.pendingImages.push({
-        base64,
-        mediaType: file.type as ImageMediaType,
-        name: file.name || 'image',
-      });
-      this.renderPasteChips();
-      this.scheduleDraftSave();
-    };
-    reader.readAsDataURL(file);
-  }
-
-  private renderPasteChips(): void {
-    this.pasteChipsEl.empty();
-    if (!this.pendingAttachment && this.pendingImages.length === 0) {
-      this.pasteChipsEl.addClass('ct-hidden');
-      return;
-    }
-    this.pasteChipsEl.removeClass('ct-hidden');
-
-    if (this.pendingAttachment) {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip');
-      const firstLine = this.pendingAttachment.split('\n')[0].trim().slice(0, 40);
-      chip.createSpan({ cls: 'ct-paste-chip-icon', text: '📄' });
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: firstLine || 'pasted text' });
-      chip.createSpan({ cls: 'ct-paste-chip-meta', text: `${this.pendingAttachment.length.toLocaleString()} chars` });
-      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
-      removeBtn.addEventListener('click', () => {
-        this.pendingAttachment = null;
-        this.renderPasteChips();
-        this.scheduleDraftSave();
-      });
-    }
-
-    this.pendingImages.forEach((img, idx) => {
-      const chip = this.pasteChipsEl.createDiv('ct-paste-chip ct-paste-chip-image');
-      const thumb = chip.createEl('img', { cls: 'ct-paste-chip-thumb' });
-      thumb.src = `data:${img.mediaType};base64,${img.base64}`;
-      chip.createSpan({ cls: 'ct-paste-chip-label', text: img.name });
-      const removeBtn = chip.createEl('button', { cls: 'ct-paste-chip-remove', text: '×', attr: { title: 'Remove' } });
-      removeBtn.addEventListener('click', () => {
-        this.pendingImages.splice(idx, 1);
-        this.renderPasteChips();
-        this.scheduleDraftSave();
-      });
-    });
-  }
-
-  private async sendMessage(): Promise<void> {
-    const typed = this.inputEl.value.trim();
-    const attachment = this.pendingAttachment;
-    const images = this.pendingImages.slice();
-    if (!typed && !attachment && images.length === 0) return;
+  private async handleSendFromDispatch(
+    typed: string,
+    images: ImageAttachment[],
+    attachment: string | null,
+  ): Promise<void> {
     if (!this.activeThreadId) return;
 
     this.lastSentTexts.set(this.activeThreadId, typed);
-    this.inputEl.value = '';
-    this.pendingAttachment = null;
-    this.pendingImages = [];
-    this.renderPasteChips();
+
     // Clear any saved draft for this thread so it doesn't reappear
-    if (this.activeThreadId) {
-      const thread = this.manager.getThread(this.activeThreadId);
-      if (thread) delete thread.draft;
-    }
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (thread) delete thread.draft;
 
-    // Dismiss the context banner as soon as the user sends — they're back in the thread
-    this.hideSummaryBanner(false);
-
-    // Dismiss the context banner as soon as the user sends — they're back in the thread
+    // Dismiss the context banner as soon as the user sends
     this.hideSummaryBanner(false);
 
     // /fork [optional focus] — open ForkModal without sending a message to Claude.
-    // Detected before the user bubble renders so no stray bubble is left behind.
     const forkMatch = typed.match(/^\/fork(?:\s+([\s\S]+))?$/i);
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
@@ -1848,7 +1872,7 @@ export class ThreadsView extends ItemView {
       }
     }
 
-    // Resolve @[[basename]] file mentions — append each file's content as context
+    // Resolve @[[basename]] file mentions
     const mentionRegex = /@\[\[([^\]]+)\]\]/g;
     const mentions = [...text.matchAll(mentionRegex)].map(m => m[1]);
     if (mentions.length > 0) {
@@ -1859,9 +1883,7 @@ export class ThreadsView extends ItemView {
           try {
             const content = await this.app.vault.cachedRead(file);
             fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
-          } catch {
-            // Skip unreadable files
-          }
+          } catch { /* skip */ }
         }
       }
       if (fileContextParts.length > 0) {
@@ -1894,8 +1916,8 @@ export class ThreadsView extends ItemView {
     if (modelMatch) {
       const arg = (modelMatch[1] ?? '').toLowerCase();
       if (!arg) {
-        const thread = this.manager.getThread(this.activeThreadId);
-        const current = thread?.model ?? 'default';
+        const currentThread = this.manager.getThread(this.activeThreadId);
+        const current = currentThread?.model ?? 'default';
         const infoEl = this.messagesEl.createDiv('ct-compact-divider');
         infoEl.createSpan({ cls: 'ct-compact-label', text: `Model: ${current}` });
         this.scrollToBottom();
@@ -1918,13 +1940,20 @@ export class ThreadsView extends ItemView {
       return;
     }
 
-    try {
-      await this.manager.sendMessage(this.activeThreadId, text || ' ', images.length > 0 ? images : undefined);
-    } catch (err) {
-      const errEl = this.messagesEl.createDiv('ct-message ct-error');
-      errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
-      this.setRunningState(false);
-    }
+    // Fire-and-forget: do NOT await sendMessage. Awaiting it keeps
+    // DispatchInput.dispatching = true for the entire response, which blocks
+    // the user from sending to any other thread while this one is running.
+    // UI state (stop button ↔ send button) is managed by the event system
+    // (streaming_start → setRunningState(true), done/error → setRunningState(false))
+    // so there is nothing useful the await was providing.
+    const sendThreadId = this.activeThreadId;
+    this.manager.sendMessage(sendThreadId, text || ' ', images.length > 0 ? images : undefined)
+      .catch(err => {
+        const errEl = this.messagesEl.createDiv('ct-message ct-error');
+        errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
+        // Only update running state if we're still looking at the thread that errored
+        if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+      });
   }
 
   private async stopMessage(): Promise<void> {
@@ -2116,200 +2145,6 @@ export class ThreadsView extends ItemView {
     await this.plugin.saveSettings();
     this.renderProjectBar(); // update thread count badges
     this.setActiveThread(thread.id);
-  }
-
-  private loadSkills(): void {
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-    try {
-      this.skills = fs.readdirSync(skillsDir).map(entry => {
-        const name = entry.replace(/\.md$/, '');
-        const entryPath = path.join(skillsDir, entry);
-        const isDir = fs.statSync(entryPath).isDirectory();
-        let filePath = isDir ? '' : entryPath;
-        if (isDir) {
-          const candidates = ['index.md', 'skill.md', name + '.md'];
-          const found = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
-          if (found) {
-            filePath = path.join(entryPath, found);
-          } else {
-            const first = fs.readdirSync(entryPath).find(f => f.endsWith('.md'));
-            if (first) filePath = path.join(entryPath, first);
-          }
-        }
-        return { name, description: filePath ? this.readSkillDescription(filePath) : '' };
-      });
-    } catch {
-      this.skills = [];
-    }
-  }
-
-  private readSkillDescription(filePath: string): string {
-    try {
-      const content = fs.readFileSync(filePath, 'utf8').slice(0, 2000);
-      const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (fmMatch) {
-        const fm = fmMatch[1];
-        const inline = fm.match(/^description:\s+([^>|\n][^\n]*)/m);
-        if (inline) return inline[1].trim();
-        const block = fm.match(/^description:\s*>-?\s*\n((?:[ \t]+[^\n]*\n?)+)/m);
-        if (block) return block[1].replace(/^[ \t]+/mg, '').replace(/\n/g, ' ').trim();
-      }
-      const body = content.replace(/^---[\s\S]*?---\n/, '');
-      for (const line of body.split('\n')) {
-        const clean = line.replace(/^#+\s*/, '').trim();
-        if (clean && !clean.startsWith('---')) return clean;
-      }
-      return '';
-    } catch {
-      return '';
-    }
-  }
-
-  private getSlashQuery(): string | null {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('/') ? word.slice(1) : null;
-  }
-
-  private showSkillDropdown(query: string): void {
-    const q = query.toLowerCase();
-    const builtins = ThreadsView.BUILTIN_COMMANDS.filter(c => c.name.startsWith(q));
-    const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
-    const matches = [...builtins, ...skills];
-    if (matches.length === 0) { this.hideSkillDropdown(); return; }
-    this.skillDropdownItems = matches;
-    if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
-    if (!this.skillDropdown) {
-      this.skillDropdown = this.inputRowEl.createDiv('ct-skill-dropdown');
-    }
-    this.renderSkillDropdown();
-  }
-
-  private renderSkillDropdown(): void {
-    if (!this.skillDropdown) return;
-    this.skillDropdown.empty();
-    this.skillDropdownItems.forEach((skill, i) => {
-      const item = this.skillDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.skillDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
-      nameRow.createSpan({ text: skill.name });
-      if (skill.description) {
-        item.createDiv({ cls: 'ct-skill-desc', text: skill.description });
-      }
-      item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertSkill(skill.name); });
-    });
-  }
-
-  private insertSkill(skillName: string): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = '/' + skillName + ' ';
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideSkillDropdown();
-    this.inputEl.focus();
-  }
-
-  private hideSkillDropdown(): void {
-    this.skillDropdown?.remove();
-    this.skillDropdown = null;
-    this.skillDropdownItems = [];
-    this.skillDropdownIndex = 0;
-  }
-
-  private getAtQuery(): string | null {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    const word = val.slice(start + 1, pos);
-    return word.startsWith('@') ? word.slice(1) : null;
-  }
-
-  private showFileDropdown(query: string): void {
-    const q = query.toLowerCase();
-    // Show @this at the top whenever the query is a prefix of "this" (includes empty query)
-    const showThis = 'this'.startsWith(q);
-    const files = this.app.vault.getMarkdownFiles()
-      .filter(f => q === '' || f.basename.toLowerCase().includes(q))
-      .slice(0, showThis ? 19 : 20);
-    const allItems: { path: string; basename: string; isThis?: boolean }[] = [
-      ...(showThis ? [{ path: '', basename: 'this', isThis: true as const }] : []),
-      ...files.map(f => ({ path: f.path, basename: f.basename })),
-    ];
-    if (allItems.length === 0) { this.hideFileDropdown(); return; }
-    this.fileDropdownItems = allItems;
-    if (this.fileDropdownIndex >= this.fileDropdownItems.length) this.fileDropdownIndex = 0;
-    if (!this.fileDropdown) {
-      this.fileDropdown = this.inputRowEl.createDiv('ct-file-dropdown');
-    }
-    this.renderFileDropdown();
-  }
-
-  private renderFileDropdown(): void {
-    if (!this.fileDropdown) return;
-    this.fileDropdown.empty();
-    this.fileDropdownItems.forEach((file, i) => {
-      const item = this.fileDropdown!.createDiv({
-        cls: `ct-skill-item${i === this.fileDropdownIndex ? ' ct-skill-item-active' : ''}`,
-      });
-      const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-file-at', text: '@' });
-      if (file.isThis) {
-        nameRow.createSpan({ text: 'this' });
-        item.createDiv({ cls: 'ct-skill-desc', text: 'currently open file' });
-        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertThisMention(); });
-      } else {
-        nameRow.createSpan({ text: file.basename });
-        const pathParts = file.path.split('/');
-        if (pathParts.length > 1) {
-          const folder = pathParts.slice(0, -1).join('/');
-          item.createDiv({ cls: 'ct-skill-desc', text: folder });
-        }
-        item.addEventListener('mousedown', (e) => { e.preventDefault(); this.insertFileMention(file.basename); });
-      }
-    });
-  }
-
-  private insertFileMention(basename: string): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = `@[[${basename}]] `;
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideFileDropdown();
-    this.inputEl.focus();
-  }
-
-  private insertThisMention(): void {
-    const val = this.inputEl.value;
-    const pos = this.inputEl.selectionStart ?? val.length;
-    let start = pos - 1;
-    while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
-    start++;
-    const inserted = '@this ';
-    this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
-    this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
-    this.hideFileDropdown();
-    this.inputEl.focus();
-  }
-
-  private hideFileDropdown(): void {
-    this.fileDropdown?.remove();
-    this.fileDropdown = null;
-    this.fileDropdownItems = [];
-    this.fileDropdownIndex = 0;
   }
 
   navigateTab(direction: 1 | -1): void {
@@ -2546,18 +2381,5 @@ class ForkModal extends Modal {
   }
 }
 
-/**
- * Returns a display-friendly version of an absolute path.
- * Replaces the home directory with ~ and keeps only the last two path segments
- * so the cwd badge stays compact even for deeply-nested repos.
- */
-function shortenPath(fullPath: string): string {
-  const home = os.homedir();
-  const withTilde = fullPath.startsWith(home)
-    ? '~' + fullPath.slice(home.length)
-    : fullPath;
-  const parts = withTilde.split('/').filter(Boolean);
-  if (parts.length <= 3) return withTilde;
-  return '.../' + parts.slice(-2).join('/');
-}
+
 

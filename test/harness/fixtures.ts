@@ -46,6 +46,7 @@ The empty-string fallback means \`jwt.verify\` runs with \`''\` as the secret, w
       { name: 'Read', summary: 'Read: .env.example' },
     ],
     cost: 0.0023,
+    summary: 'Found JWT_SECRET missing in staging; fixed auth.ts to fail fast and documented the Vercel env var steps.',
   },
   {
     id: 'msg-t1-3',
@@ -99,6 +100,7 @@ Run with \`npm test -- --testPathPattern=auth\` to verify. All three cases shoul
       { name: 'Edit', summary: 'Edit: src/middleware/auth.ts' },
     ],
     cost: 0.0041,
+    summary: 'Added three-case Jest test suite for auth middleware covering missing secret, valid token, and invalid token.',
   },
 ];
 
@@ -127,12 +129,61 @@ const thread2Messages: ChatMessage[] = [
 
 The co-planning feature is the most ambitious but could be a real differentiator — no one does async collaborative itinerary editing well right now.`,
     timestamp: T2 + 60000,
+    summary: 'Proposed four social features for HipTrip; recommended the "Going too?" destination-matching nudge as the best impact/effort pick.',
   },
 ];
 
 // ─── Thread 3: Empty / freshly created ───────────────────────────────────────
 
 const thread3Messages: ChatMessage[] = [];
+
+// ─── Thread 4: Agentic run — consecutive assistant messages ──────────────────
+// Used by compress-view screenshot tests: grouping consecutive assistant
+// messages into a single collapsible block requires 2+ in a row.
+
+const thread4Messages: ChatMessage[] = [
+  {
+    id: 'msg-t4-1',
+    role: 'user',
+    content: 'Refactor the database module to use connection pooling.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-t4-2',
+    role: 'assistant',
+    content: `Starting the refactor. Let me read the current implementation first.`,
+    timestamp: T3 + 10000,
+    toolCalls: [
+      { name: 'Read', summary: 'Read: src/db/index.ts' },
+      { name: 'Read', summary: 'Read: src/db/queries.ts' },
+    ],
+    summary: 'Read the database module to understand the current implementation.',
+  },
+  {
+    id: 'msg-t4-3',
+    role: 'assistant',
+    content: `The current module opens a new connection per query. I'll replace it with a \`pg.Pool\` and update all callers.`,
+    timestamp: T3 + 25000,
+    toolCalls: [
+      { name: 'Edit', summary: 'Edit: src/db/index.ts — replace Client with Pool' },
+      { name: 'Edit', summary: 'Edit: src/db/queries.ts — use pool.query()' },
+    ],
+    summary: 'Replaced per-query Client with a shared Pool; updated all query callers.',
+  },
+  {
+    id: 'msg-t4-4',
+    role: 'assistant',
+    content: `Done! Here's what changed:
+
+- **\`src/db/index.ts\`** — exports a singleton \`Pool\` instead of a factory function. Pool size defaults to 10; configurable via \`DB_POOL_SIZE\` env var.
+- **\`src/db/queries.ts\`** — all functions now call \`pool.query()\` directly instead of creating and destroying a \`Client\` per call.
+
+Idle connections are released after 30 s. Run \`npm test\` — all existing DB tests should still pass since the query API is unchanged.`,
+    timestamp: T3 + 40000,
+    cost: 0.0031,
+    summary: 'Completed connection-pool refactor; documented changes and next steps.',
+  },
+];
 
 // ─── Exported fixtures ────────────────────────────────────────────────────────
 
@@ -166,5 +217,13 @@ export const fixtureThreads: Thread[] = [
     messages: thread3Messages,
     createdAt: T3,
     updatedAt: T3,
+  },
+  {
+    id: 'thread-agentic',
+    title: 'DB connection pooling refactor',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread4Messages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 40000,
   },
 ];

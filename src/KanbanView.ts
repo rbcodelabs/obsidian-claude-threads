@@ -4,6 +4,8 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
+import { DispatchInput } from './DispatchInput';
+import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -31,6 +33,7 @@ export class KanbanView extends ItemView {
   private renderPending = false;
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private timeInterval: ReturnType<typeof setInterval> | null = null;
+  private dispatchInput!: DispatchInput;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -56,6 +59,7 @@ export class KanbanView extends ItemView {
     this.unsubscribe?.();
     if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.timeInterval) clearInterval(this.timeInterval);
+    this.dispatchInput?.destroy();
   }
 
   private buildUI(): void {
@@ -107,6 +111,51 @@ export class KanbanView extends ItemView {
     });
 
     this.boardEl = root.createDiv('ct-agents-list');
+
+    // Floating dispatch panel — centered at bottom of the board
+    const dispatchWrapper = root.createDiv('ct-kanban-dispatch');
+    this.dispatchInput = new DispatchInput({
+      app: this.app,
+      placeholder: 'Dispatch a new task…',
+      inlineLayout: true,
+      builtinCommands: [
+        { name: 'compact', description: 'Summarize conversation history to free up context' },
+        { name: 'clear', description: 'Clear conversation history and start fresh' },
+        { name: 'cost', description: 'Show token usage and cost for this session' },
+        { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
+      ],
+      onSend: async ({ text, images, attachment }) => {
+        let messageText = buildMessageWithAttachment(text, attachment);
+
+        // Resolve @[[basename]] file mentions — append each file's content as context
+        const mentionRegex = /@\[\[([^\]]+)\]\]/g;
+        const mentions = [...messageText.matchAll(mentionRegex)].map(m => m[1]);
+        if (mentions.length > 0) {
+          const fileContextParts: string[] = [];
+          for (const basename of mentions) {
+            const file = this.app.vault.getMarkdownFiles().find(f => f.basename === basename);
+            if (file) {
+              try {
+                const content = await this.app.vault.cachedRead(file);
+                fileContextParts.push(`**File: ${file.path}**\n\`\`\`\n${content}\n\`\`\``);
+              } catch { /* skip */ }
+            }
+          }
+          if (fileContextParts.length > 0) {
+            messageText = messageText + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
+          }
+        }
+
+        const titleHint = deriveDispatchTitle(text, attachment, images.length);
+        const threadId = await this.plugin.dispatchNewThread(
+          messageText,
+          images.length > 0 ? images : undefined,
+          titleHint,
+        );
+        await this.plugin.openThreadInChatView(threadId);
+      },
+    });
+    this.dispatchInput.mount(dispatchWrapper);
   }
 
   private toggleSearch(): void {
@@ -184,7 +233,7 @@ export class KanbanView extends ItemView {
         emptyEl.createDiv({ text: 'No threads match your search.' });
       } else {
         emptyEl.createDiv({ text: 'No threads yet.' });
-        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the Agent Dashboard to start a task.' });
+        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
       }
       this.updateHeader(0, 0);
       return;

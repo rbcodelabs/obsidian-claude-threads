@@ -41,6 +41,8 @@ export interface ChatMessage {
   preTokens?: number;
   /** Images attached to this message (user role only). Stored as base64 for display. */
   images?: ImageAttachment[];
+  /** AI-generated 1-sentence summary used in compressed view. */
+  summary?: string;
 }
 
 export interface ThreadDraft {
@@ -131,6 +133,15 @@ export interface PluginSettings {
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
+  /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
+  hasSeenWelcome: boolean;
+  /**
+   * Hotkey for push-to-talk recording. Serialized as e.g. "Alt+Space" or "Control+Shift+Space".
+   * Empty string disables PTT. Default: "Alt+Space" (Option+Space on Mac).
+   */
+  pttKey: string;
+  /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
+  openAIKey: string;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -152,6 +163,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   layoutDensity: 'comfortable',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   debugLogging: false,
+  hasSeenWelcome: false,
+  pttKey: 'Alt+Space',
+  openAIKey: '',
   remoteAccess: {
     enabled: false,
     roomId: '',

@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -14,6 +14,7 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
+import { serializeKey } from './stt';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
@@ -25,6 +26,46 @@ import { setDebugLogging, debugLog } from './logger';
 const VIEW_TYPE = 'claude-threads:chat';
 const AGENT_VIEW_TYPE = 'claude-threads:agents';
 const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
+
+// Welcome guide content — written to vault on first install
+const WELCOME_GUIDE = `# Getting Started with Claude Threads
+
+Welcome! Claude Threads turns Obsidian into a multi-agent workspace powered by the Claude CLI.
+
+## The three panels
+
+| Panel | Location | What it does |
+|---|---|---|
+| **Chat** | Left sidebar | Full conversation history for each thread |
+| **Agent Dashboard** | Right sidebar | Dispatch tasks, track running agents, review results |
+| **This guide** | Center | You're reading it — save it anywhere in your vault |
+
+Reopen the panels any time from the ribbon icons (left edge of the window) or via the command palette (\`Cmd+P\`).
+
+## Starting your first task
+
+1. Click the **Agent Dashboard** ribbon icon or press \`Cmd+P\` → "Open Agent Dashboard"
+2. Type a task in the **dispatch box** at the top — e.g. \`Summarize the README in my project folder\`
+3. Hit **Enter** — Claude spins up a new thread and starts working
+4. Watch progress in the dashboard; click any thread row to open the full conversation in Chat
+
+## Tips
+
+- **Projects**: Group threads by folder. Create a project in the dashboard to scope Claude's working directory.
+- **Permission mode**: Set to "Accept Edits" in Settings → Claude Threads to let Claude edit files without prompting.
+- **Multiple threads**: Run several agents in parallel — each gets its own row in the dashboard.
+- **Keyboard shortcuts**: \`Cmd+]\` / \`Cmd+[\` to cycle threads in Chat; \`Cmd+1–9\` to jump to a specific thread.
+- **Interrupt**: Use "Interrupt active thread" from the command palette to stop a running agent mid-task.
+
+## Settings
+
+Open **Settings → Claude Threads** to configure:
+- Claude binary path (auto-detected from Homebrew/PATH)
+- Default working directory
+- Vault folder for saving thread notes
+- Summarization and auto-compact options
+- Remote access (pair with Obsidian Mobile)
+`;
 
 // Electron renderer uses Chromium's AbortSignal which is missing Node.js's internal
 // Symbol.for('nodejs.event_target') marker. Node's isEventTarget() checks
@@ -177,6 +218,46 @@ export default class ClaudeThreadsPlugin extends Plugin {
             new Notice(`Fork created: "${forkedThread.title}"`);
             return { threadTitle: forkedThread.title };
           },
+          threadId,
+          getThreadDetail: (id: string) => {
+            const t = this.manager.getThread(id);
+            if (!t) return undefined;
+            const nonCompact = t.messages.filter((m: { role: string }) => m.role !== 'compact');
+            return {
+              id: t.id,
+              title: t.title,
+              status: t.status ?? 'waiting',
+              isRunning: this.manager.isRunning(id),
+              projectId: t.projectId,
+              cwd: t.cwd,
+              updatedAt: t.updatedAt,
+              messageCount: nonCompact.length,
+              messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                timestamp: m.timestamp,
+              })),
+            };
+          },
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; projectId?: string; cwd?: string; updatedAt: number; messages: Array<{ role: string }> }) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status ?? 'waiting',
+            isRunning: this.manager.isRunning(t.id),
+            projectId: t.projectId,
+            cwd: t.cwd,
+            updatedAt: t.updatedAt,
+            messageCount: t.messages.filter(m => m.role !== 'compact').length,
+          })),
+          getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            vaultFolder: p.vaultFolder,
+          })),
+          isThreadRunning: (id: string) => this.manager.isRunning(id),
+          sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,
@@ -224,10 +305,34 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubStatus);
 
+    // Persist cwd repairs to data.json. repairStaleCwds() (called below at load
+    // time) already calls saveSettings() directly, but the session-start safety-net
+    // in ThreadManager also emits cwd_changed — catch those here so the repaired
+    // path survives the next plugin reload.
+    const unsubCwdRepair = this.manager.subscribe((_threadId, event) => {
+      if (event.type === 'cwd_changed') {
+        this.saveSettings().catch(console.error);
+      }
+    });
+    this.register(unsubCwdRepair);
+
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
+
+    // Repair any threads whose cwd points to a deleted worktree. Worktrees created
+    // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
+    // exit_worktree, the worktree-cleanup skill, or the Agent tool's auto-cleanup.
+    // When that happens outside the plugin, the persisted cwd becomes a dangling path
+    // that causes a misleading "binary not found" ENOENT on the next message send.
+    {
+      const repairedCount = this.manager.repairStaleCwds();
+      if (repairedCount > 0) {
+        console.log(`[ClaudeThreads] Repaired ${repairedCount} thread(s) with stale working director${repairedCount === 1 ? 'y' : 'ies'}`);
+        await this.saveSettings();
+      }
+    }
 
     // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
     // threads may be missing from memory even though their vault notes still exist.
@@ -390,6 +495,86 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // Initialize relay client if remote access is enabled
     this.initDesktopRelayClient();
+
+    // First-run onboarding: auto-open panels + welcome guide for brand-new installs.
+    // Migration guard: if the user already has threads they're upgrading from a prior
+    // version — mark hasSeenWelcome silently rather than hijacking their layout.
+    if (!this.settings.hasSeenWelcome) {
+      if (this.settings.threads.length === 0) {
+        this.app.workspace.onLayoutReady(() => {
+          this.firstRunSetup().catch(console.error);
+        });
+      } else {
+        // Existing user upgrading — skip onboarding, just flip the flag
+        this.settings.hasSeenWelcome = true;
+        this.saveSettings().catch(console.error);
+      }
+    }
+  }
+
+  private async firstRunSetup(): Promise<void> {
+    const { workspace, vault } = this.app;
+
+    // 1. Write welcome guide to vault
+    const guidePath = `${this.settings.vaultFolder}/Getting Started with Claude Threads.md`;
+    try {
+      if (!vault.getAbstractFileByPath(guidePath)) {
+        const folderPath = this.settings.vaultFolder;
+        if (!vault.getAbstractFileByPath(folderPath)) {
+          await vault.createFolder(folderPath);
+        }
+        await vault.create(guidePath, WELCOME_GUIDE);
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to create welcome guide:', err);
+    }
+
+    // 2. Open chat view in the LEFT sidebar
+    try {
+      if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
+        const chatLeaf = workspace.getLeftLeaf(false) as WorkspaceLeaf;
+        await chatLeaf.setViewState({ type: VIEW_TYPE, active: false });
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open chat in left sidebar:', err);
+    }
+
+    // 3. Open welcome guide in the CENTER editor
+    try {
+      const guideFile = vault.getAbstractFileByPath(guidePath);
+      if (guideFile) {
+        // TFile is available on the obsidian global — cast is safe here
+        const { TFile } = await import('obsidian');
+        if (guideFile instanceof TFile) {
+          const centerLeaf = workspace.getLeaf('tab');
+          await centerLeaf.openFile(guideFile);
+          workspace.revealLeaf(centerLeaf);
+        }
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open welcome guide:', err);
+    }
+
+    // 4. Open agent dashboard in the RIGHT sidebar
+    try {
+      const existingDash = workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
+      if (!existingDash) {
+        const dashLeaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+        await dashLeaf.setViewState({ type: AGENT_VIEW_TYPE, active: true });
+        workspace.revealLeaf(dashLeaf);
+      } else {
+        workspace.revealLeaf(existingDash);
+      }
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to open agent dashboard:', err);
+    }
+
+    // 5. Welcome notice
+    new Notice('Welcome to Claude Threads! Check the guide to get started.');
+
+    // 6. Persist the flag so this never fires again
+    this.settings.hasSeenWelcome = true;
+    await this.saveSettings();
   }
 
   private async onloadMobile(): Promise<void> {
@@ -587,16 +772,19 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   getView(): ThreadsView | null {
-    // getLeavesOfType only returns leaves registered with VIEW_TYPE, which is
-    // always ThreadsView on desktop. Safe to cast without instanceof.
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-    return (leaf?.view as ThreadsView) ?? null;
+    const view = leaf?.view;
+    // Guard against half-initialised or mismatched view objects (can occur during
+    // workspace restore when the leaf exists but the view class hasn't fully loaded).
+    if (!view || typeof (view as any).getActiveThreadId !== 'function') return null;
+    return view as ThreadsView;
   }
 
   getAgentDashboard(): AgentDashboard | null {
-    // Same reasoning as getView().
     const leaf = this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
-    return (leaf?.view as AgentDashboard) ?? null;
+    const view = leaf?.view;
+    if (!view || typeof (view as any).focusDispatchInput !== 'function') return null;
+    return view as AgentDashboard;
   }
 
   async loadSettings(): Promise<void> {
@@ -610,6 +798,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.projects = this.settings.projects ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Clear any garbage written by the SecretComponent picker (stores key names, not values)
+    const storedKey = this.app.secretStorage.getSecret('openai-api-key');
+    if (storedKey && !storedKey.startsWith('sk-')) {
+      this.app.secretStorage.setSecret('openai-api-key', '');
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -636,6 +829,64 @@ function formatRoomIdAsCode(roomId: string): string {
     groups.push(roomId.slice(i, i + 8).toUpperCase());
   }
   return groups.join('-');
+}
+
+function maskOpenAiKey(key: string | null | undefined): string {
+  if (!key) return 'No key set';
+  if (key.length <= 12) return '••••••••';
+  return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/** Modal for entering a new OpenAI API key directly. */
+class OpenAiKeyModal extends Modal {
+  constructor(app: App, private settingTab: ClaudeThreadsSettingTab) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'OpenAI API Key' });
+    contentEl.createEl('p', {
+      text: 'Paste your API key from platform.openai.com/api-keys',
+      cls: 'setting-item-description',
+    });
+
+    const input = contentEl.createEl('input', {
+      type: 'password',
+      placeholder: 'sk-…',
+      cls: 'ct-openai-key-input',
+    });
+    input.style.width = '100%';
+    input.style.marginBottom = '1rem';
+
+    const buttonRow = contentEl.createDiv('ct-modal-button-row');
+
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+
+    const saveBtn = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => {
+      const trimmed = input.value.trim();
+      if (!trimmed) return;
+      this.app.secretStorage.setSecret('openai-api-key', trimmed);
+      this.close();
+      this.settingTab.display();
+    });
+
+    // Allow Enter to save
+    input.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') saveBtn.click();
+    });
+
+    // Focus the input after the modal animates in
+    setTimeout(() => input.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 class ClaudeThreadsSettingTab extends PluginSettingTab {
@@ -1116,25 +1367,88 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
     // ── Speech to Text ────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Speech to Text' });
 
-    new Setting(containerEl)
-      .setName('OpenAI API Key')
-      .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.')
-      .addText((text) => {
-        text.inputEl.type = 'password';
-        text.inputEl.placeholder = 'sk-…';
-        // Populate with a masked placeholder if a key already exists (synchronous API)
-        const storageR = (this.app as unknown as { secretStorage?: { getSecret: (id: string) => string | null } }).secretStorage;
-        if (storageR && storageR.getSecret('openai-api-key')) {
-          text.inputEl.placeholder = '••••••••';
-        }
-        text.onChange((value) => {
-          const trimmed = value.trim();
-          const storageW = (this.app as unknown as { secretStorage?: { setSecret: (id: string, val: string) => void } }).secretStorage;
-          if (storageW && trimmed) {
-            storageW.setSecret('openai-api-key', trimmed);
-          }
+    {
+      const existingKey = this.app.secretStorage.getSecret('openai-api-key');
+      const maskedKey = maskOpenAiKey(existingKey);
+      const openAiSetting = new Setting(containerEl)
+        .setName('OpenAI API Key')
+        .setDesc('Used for Whisper speech-to-text. Stored securely in your OS keychain.');
+
+      openAiSetting.descEl.createEl('br');
+      openAiSetting.descEl.createEl('span', {
+        text: maskedKey,
+        cls: 'ct-openai-key-display',
+      });
+
+      openAiSetting
+        .addButton((btn) => {
+          if (!existingKey) btn.setCta();
+          btn.setButtonText(existingKey ? 'Change' : 'Set key').onClick(() => {
+            new OpenAiKeyModal(this.app, this).open();
+          });
+        })
+        .addButton((btn) => {
+          btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
+            const tmp = document.body.createDiv();
+            tmp.style.display = 'none';
+            const picker = new SecretComponent(this.app, tmp);
+            picker.onChange((secretName: string) => {
+              tmp.remove();
+              if (!secretName) return;
+              const actualValue = this.app.secretStorage.getSecret(secretName);
+              if (actualValue) {
+                this.app.secretStorage.setSecret('openai-api-key', actualValue);
+                new Notice('Key linked');
+                this.display();
+              } else {
+                new Notice('That secret has no value stored');
+              }
+            });
+            // SecretComponent renders a button — click it immediately to open the picker
+            const inner = tmp.querySelector('button, input') as HTMLElement | null;
+            if (inner) {
+              inner.click();
+            } else {
+              tmp.remove();
+              new Notice('Secret picker not available');
+            }
+          });
         });
-        text.inputEl.style.width = '100%';
+    }
+
+    new Setting(containerEl)
+      .setName('PTT Hotkey')
+      .setDesc('Hold this key while focused in any input to record. Default: Alt+Space (Option+Space on Mac).')
+      .addButton((btn) => {
+        const updateLabel = () => {
+          btn.setButtonText(this.plugin.settings.pttKey || 'Click to set');
+        };
+        updateLabel();
+        btn.onClick(() => {
+          btn.setButtonText('Press a key…');
+          btn.buttonEl.classList.add('mod-warning');
+          const capture = (e: KeyboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const key = serializeKey(e);
+            if (!key) return; // bare modifier — wait for a real key
+            window.removeEventListener('keydown', capture, true);
+            btn.buttonEl.classList.remove('mod-warning');
+            this.plugin.settings.pttKey = key;
+            void this.plugin.saveSettings();
+            updateLabel();
+          };
+          window.addEventListener('keydown', capture, true);
+        });
+      })
+      .addExtraButton((btn) => {
+        btn.setIcon('rotate-ccw').setTooltip('Reset to Alt+Space');
+        btn.onClick(() => {
+          this.plugin.settings.pttKey = 'Alt+Space';
+          void this.plugin.saveSettings();
+          // Re-render settings tab to update button label
+          this.display();
+        });
       });
 
     // ── Remote Access ─────────────────────────────────────────────────────
