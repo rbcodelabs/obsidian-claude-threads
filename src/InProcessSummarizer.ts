@@ -11,13 +11,41 @@ export interface SummarizeResult {
 }
 
 export class InProcessSummarizer {
+  /**
+   * Summarize a thread's messages.
+   *
+   * When `priorSummary` + `lastSummarizedAt` are supplied the method runs in
+   * incremental mode: it filters to only the messages that arrived after
+   * `lastSummarizedAt` and asks Claude to integrate them into the existing
+   * summary rather than regenerating from scratch. Falls back to a full
+   * re-summarize when no prior context is available.
+   */
   async summarize(
     messages: ChatMessage[],
     claudeBinaryPath: string,
     modelAlias: string,
     extraEnv: string,
     onProgress?: ProgressCallback,
+    priorSummary?: string,
+    lastSummarizedAt?: number,
   ): Promise<SummarizeResult> {
+    // Incremental path: prior summary + known cutoff → only send the delta
+    if (priorSummary && lastSummarizedAt !== undefined) {
+      const newMessages = messages.filter((m) => m.timestamp > lastSummarizedAt);
+      if (newMessages.length > 0) {
+        return this._summarizeIncremental(
+          newMessages,
+          priorSummary,
+          claudeBinaryPath,
+          modelAlias,
+          extraEnv,
+          onProgress,
+        );
+      }
+      // No new messages since last summarization — fall through to full summarize
+    }
+
+    // Full summarize: first time, or no usable prior state
     const transcript = messages
       .slice(-20)
       .map((m) => `${m.role === 'user' ? 'User' : 'Claude'}: ${m.content.slice(0, 600)}`)
@@ -34,8 +62,50 @@ export class InProcessSummarizer {
 
     onProgress?.('Summarizing…');
 
-    let raw = '';
+    return parseJsonResult((await this._runQuery(prompt, claudeBinaryPath, modelAlias, extraEnv)).trim());
+  }
 
+  /**
+   * Incremental helper: integrates a slice of new messages into an existing
+   * summary. Sends only the delta to Claude — cheaper and faster than a full
+   * re-summarize on long threads.
+   */
+  private async _summarizeIncremental(
+    newMessages: ChatMessage[],
+    priorSummary: string,
+    claudeBinaryPath: string,
+    modelAlias: string,
+    extraEnv: string,
+    onProgress?: ProgressCallback,
+  ): Promise<SummarizeResult> {
+    const delta = newMessages
+      .slice(-10)
+      .map((m) => `${m.role === 'user' ? 'User' : 'Claude'}: ${m.content.slice(0, 600)}`)
+      .join('\n\n')
+      .slice(0, 2000);
+
+    const prompt =
+      'You are updating an existing conversation summary with new messages.\n\n' +
+      'Existing summary:\n<existing_summary>\n' + priorSummary + '\n</existing_summary>\n\n' +
+      'New messages since the last summary:\n<new_messages>\n' + delta + '\n</new_messages>\n\n' +
+      'Output a JSON object with exactly two fields:\n' +
+      '- "title": a 3-5 word tab title for the conversation (be specific, e.g. "Fix auth middleware bug")\n' +
+      '- "summary": a 2-3 sentence summary covering what is being worked on, key decisions, and current status — integrate both the prior context and the new messages\n\n' +
+      'Output ONLY the JSON object, no markdown fences, no other text.';
+
+    onProgress?.('Updating summary…');
+
+    return parseJsonResult((await this._runQuery(prompt, claudeBinaryPath, modelAlias, extraEnv)).trim());
+  }
+
+  /** Shared query runner — executes a prompt via the Claude CLI and returns the raw text response. */
+  private async _runQuery(
+    prompt: string,
+    claudeBinaryPath: string,
+    modelAlias: string,
+    extraEnv: string,
+  ): Promise<string> {
+    let raw = '';
     for await (const msg of query({
       prompt,
       options: {
@@ -52,8 +122,7 @@ export class InProcessSummarizer {
         }
       }
     }
-
-    return parseJsonResult(raw.trim());
+    return raw;
   }
 
   async summarizeMessage(
@@ -69,24 +138,7 @@ export class InProcessSummarizer {
       'Focus on what was done or decided. Output ONLY the sentence, no preamble.\n\n' +
       `<response>\n${trimmed}\n</response>`;
 
-    let raw = '';
-    for await (const msg of query({
-      prompt,
-      options: {
-        pathToClaudeCodeExecutable: claudeBinaryPath,
-        permissionMode: 'default',
-        model: modelAlias,
-        cwd: os.tmpdir(),
-        env: { ...process.env, ...parseExtraEnv(extraEnv) },
-      },
-    })) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') raw = block.text;
-        }
-      }
-    }
-    return raw.trim();
+    return (await this._runQuery(prompt, claudeBinaryPath, modelAlias, extraEnv)).trim();
   }
 
   async generateForkPrompt(
@@ -123,26 +175,7 @@ export class InProcessSummarizer {
 
     onProgress?.('Generating fork prompt…');
 
-    let result = '';
-
-    for await (const msg of query({
-      prompt,
-      options: {
-        pathToClaudeCodeExecutable: claudeBinaryPath,
-        permissionMode: 'default',
-        model: modelAlias,
-        cwd: os.tmpdir(),
-        env: { ...process.env, ...parseExtraEnv(extraEnv) },
-      },
-    })) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') result = block.text;
-        }
-      }
-    }
-
-    return result.trim();
+    return (await this._runQuery(prompt, claudeBinaryPath, modelAlias, extraEnv)).trim();
   }
 
   unload(): void {}

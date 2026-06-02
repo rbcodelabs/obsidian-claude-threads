@@ -306,8 +306,11 @@ export class ThreadsView extends ItemView {
           const shouldAutoTitle = isDefaultThreadTitle(summarizeThread.title);
           const shouldFullSummarize = this.plugin.settings.autoSummarize;
           if (shouldAutoTitle || shouldFullSummarize) {
-            this.runSummarize(summarizeThread.messages).then((result) => {
-              if (result.summary && shouldFullSummarize) summarizeThread.summary = result.summary;
+            this.runSummarize(summarizeThread.messages, summarizeThread).then((result) => {
+              if (result.summary && shouldFullSummarize) {
+                summarizeThread.summary = result.summary;
+                summarizeThread.lastSummarizedAt = Date.now();
+              }
               if (result.title) this.applyAutoTitle(summarizeThread.id, result.title);
               this.plugin.saveSettings();
               // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
@@ -1066,13 +1069,19 @@ export class ThreadsView extends ItemView {
     void this.renderMessages();
   }
 
-  private async runSummarize(messages: ChatMessage[], onProgress?: (s: string) => void): Promise<SummarizeResult> {
+  private async runSummarize(
+    messages: ChatMessage[],
+    thread?: Thread,
+    onProgress?: (s: string) => void,
+  ): Promise<SummarizeResult> {
     return this.plugin.inProcessSummarizer.summarize(
       messages,
       this.plugin.settings.claudeBinaryPath,
       this.plugin.settings.inprocessModel,
       this.plugin.settings.extraEnv,
       onProgress,
+      thread?.summary,
+      thread?.lastSummarizedAt,
     );
   }
 
@@ -1208,8 +1217,9 @@ export class ThreadsView extends ItemView {
     };
 
     try {
-      const result = await this.runSummarize(thread.messages, onProgress);
+      const result = await this.runSummarize(thread.messages, thread, onProgress);
       thread.summary = result.summary;
+      thread.lastSummarizedAt = Date.now();
       // Manual summarize always applies the new title; auto-summarize (after each
       // message) uses applyAutoTitle which guards against overwriting a user-set name.
       if (result.title) this.manager.renameThread(thread.id, result.title);

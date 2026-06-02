@@ -74,6 +74,8 @@ export interface Thread {
   status?: ThreadStatus;
   /** URL of the most recent GitHub PR opened during this thread (e.g. https://github.com/owner/repo/pull/42). */
   prUrl?: string;
+  /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
+  lastSummarizedAt?: number;
 }
 
 /**
