@@ -163,6 +163,12 @@ export interface PluginSettings {
   pttKey: string;
   /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
   openAIKey: string;
+  /**
+   * List of environment variable names whose values are stored securely in the OS
+   * keychain via app.secretStorage under the key `ct-secret-<varName>`. Only the
+   * names are persisted here — values never appear in data.json.
+   */
+  secretEnvKeys: string[];
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -187,6 +193,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   hasSeenWelcome: false,
   pttKey: 'Alt+Space',
   openAIKey: '',
+  secretEnvKeys: [],
   remoteAccess: {
     enabled: false,
     roomId: '',

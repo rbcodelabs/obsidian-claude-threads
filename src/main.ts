@@ -301,6 +301,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // Resolve secret env vars from the OS keychain at session start. Values are
+    // never stored in settings — only the key names live in data.json.
+    this.manager.secretEnvResolver = () => {
+      const result: Record<string, string> = {};
+      for (const varName of this.settings.secretEnvKeys ?? []) {
+        const val = this.app.secretStorage.getSecret(`ct-secret-${varName}`);
+        if (val) result[varName] = val;
+      }
+      return result;
+    };
     this.persistence = new VaultPersistence(this.app, this.settings.vaultFolder);
     this.inProcessSummarizer = new InProcessSummarizer();
 
@@ -933,6 +943,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     // Ensure projects array exists for older data
     this.settings.projects = this.settings.projects ?? [];
+    // Ensure secretEnvKeys array exists for installs predating this feature
+    this.settings.secretEnvKeys = this.settings.secretEnvKeys ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
     // Clear any garbage written by the SecretComponent picker (stores key names, not values)
@@ -1019,6 +1031,86 @@ class OpenAiKeyModal extends Modal {
 
     // Focus the input after the modal animates in
     setTimeout(() => input.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
+/**
+ * Modal for adding or changing a secret environment variable.
+ * When adding (varName is empty), renders both a name field and a value field.
+ * When changing (varName is pre-filled), only asks for the new value.
+ */
+class SecretEnvModal extends Modal {
+  private nameInput: HTMLInputElement | null = null;
+  private valueInput: HTMLInputElement | null = null;
+
+  constructor(
+    app: App,
+    private varName: string,
+    private onSave: (value: string, resolvedName: string) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    const isNew = !this.varName;
+    contentEl.createEl('h2', { text: isNew ? 'Add Secret Variable' : `Change: ${this.varName}` });
+
+    if (isNew) {
+      contentEl.createEl('p', {
+        text: 'Enter the environment variable name (e.g. STRIPE_SECRET_KEY) and its value. The value is stored in the OS keychain and never written to disk.',
+        cls: 'setting-item-description',
+      });
+
+      contentEl.createEl('label', { text: 'Variable name', cls: 'ct-secret-label' });
+      this.nameInput = contentEl.createEl('input', {
+        type: 'text',
+        placeholder: 'MY_API_KEY',
+        cls: 'ct-secret-input',
+      });
+      this.nameInput.style.width = '100%';
+      this.nameInput.style.marginBottom = '0.75rem';
+      this.nameInput.style.fontFamily = 'var(--font-monospace)';
+      this.nameInput.style.textTransform = 'uppercase';
+    }
+
+    contentEl.createEl('label', {
+      text: isNew ? 'Value' : 'New value',
+      cls: 'ct-secret-label',
+    });
+    this.valueInput = contentEl.createEl('input', {
+      type: 'password',
+      placeholder: isNew ? 'paste your secret here' : 'paste new value',
+      cls: 'ct-secret-input',
+    });
+    this.valueInput.style.width = '100%';
+    this.valueInput.style.marginBottom = '1rem';
+
+    const buttonRow = contentEl.createDiv('ct-modal-button-row');
+
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+
+    const saveBtn = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => {
+      const val = this.valueInput?.value.trim() ?? '';
+      const name = this.varName || (this.nameInput?.value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_') ?? '');
+      if (!val || !name) return;
+      this.onSave(val, name);
+      this.close();
+    });
+
+    const handleEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') saveBtn.click(); };
+    this.nameInput?.addEventListener('keydown', handleEnter);
+    this.valueInput.addEventListener('keydown', handleEnter);
+
+    setTimeout(() => (this.nameInput ?? this.valueInput)?.focus(), 50);
   }
 
   onClose(): void {
@@ -1258,6 +1350,66 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
             this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
           }),
+      );
+
+    containerEl.createEl('h3', { text: 'Secret Environment Variables' });
+    containerEl.createEl('p', {
+      text: 'API keys and tokens stored securely in the OS keychain (not in data.json). Each entry is injected into every Claude session as an environment variable.',
+      cls: 'ct-settings-desc',
+    });
+
+    const secretsList = containerEl.createDiv({ cls: 'ct-secrets-list' });
+    const renderSecrets = () => {
+      secretsList.empty();
+      const keys = this.plugin.settings.secretEnvKeys ?? [];
+      if (keys.length === 0) {
+        secretsList.createEl('p', { text: 'No secrets configured yet.', cls: 'ct-allowed-tools-empty' });
+      } else {
+        for (const varName of keys) {
+          const existingVal = this.plugin.app.secretStorage.getSecret(`ct-secret-${varName}`);
+          const maskedVal = existingVal
+            ? (existingVal.length <= 8 ? '••••••••' : existingVal.slice(0, 4) + '••••' + existingVal.slice(-4))
+            : '(not set)';
+          new Setting(secretsList)
+            .setName(varName)
+            .setDesc(maskedVal)
+            .addButton((btn) =>
+              btn.setButtonText('Change').onClick(() => {
+                new SecretEnvModal(this.app, varName, (newVal) => {
+                  this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, newVal);
+                  renderSecrets();
+                }).open();
+              }),
+            )
+            .addButton((btn) =>
+              btn.setButtonText('Remove').setWarning().onClick(async () => {
+                this.plugin.settings.secretEnvKeys =
+                  this.plugin.settings.secretEnvKeys.filter((k) => k !== varName);
+                this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, '');
+                await this.plugin.saveSettings();
+                renderSecrets();
+              }),
+            );
+        }
+      }
+    };
+    renderSecrets();
+
+    new Setting(containerEl)
+      .setName('Add secret variable')
+      .setDesc('Variable name (e.g. STRIPE_SECRET_KEY). Value is stored in the OS keychain.')
+      .addButton((btn) =>
+        btn.setButtonText('Add').setCta().onClick(() => {
+          new SecretEnvModal(this.app, '', async (val, varName) => {
+            if (!varName) return;
+            if (!this.plugin.settings.secretEnvKeys.includes(varName)) {
+              this.plugin.settings.secretEnvKeys.push(varName);
+              await this.plugin.saveSettings();
+            }
+            this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, val);
+            renderSecrets();
+          }).open();
+        }),
       );
 
     // macOS privacy notice

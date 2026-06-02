@@ -54,6 +54,12 @@ export class ThreadManager {
    * (e.g. onSetCwd) into the server without shared mutable state across concurrent threads.
    */
   mcpServerFactory: ((threadId: string, initialCwd: string) => Record<string, McpServerConfig>) | undefined = undefined;
+  /**
+   * When set, called before each session run to resolve secret env var values from
+   * the OS keychain. Returns a plain key-value map that is merged into the session
+   * environment. Only ever called at session start — values are not cached or stored.
+   */
+  secretEnvResolver: (() => Record<string, string>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -487,6 +493,7 @@ export class ThreadManager {
     const projectDesc = project?.description?.trim();
     const appendSystemPrompt = projectDesc ? `${envContext}\n\n${projectDesc}` : envContext;
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, cwdAtStart) : this.mcpServers;
+    const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
     // If there is no session to resume but there IS prior history, the cwd must
     // have changed mid-conversation (via obsidian_set_working_directory). Inject
@@ -661,6 +668,7 @@ export class ThreadManager {
       images,
       appendSystemPrompt,
       sessionMcpServers,
+      resolvedSecretEnv,
     );
 
     if (completedSuccessfully) {
