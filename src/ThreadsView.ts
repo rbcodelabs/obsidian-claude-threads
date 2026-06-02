@@ -1519,6 +1519,8 @@ export class ThreadsView extends ItemView {
         // calling sendMessage(), so pendingUserEl is already set — skip it here
         // to avoid a duplicate.
         if (!this.pendingUserEl) {
+          // Same empty-state cleanup as handleSendFromDispatch for external callers
+          this.messagesEl.querySelector('.ct-empty')?.remove();
           const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
           this.pendingUserEl = userEl;
           const content = userEl.createDiv('ct-message-content');
@@ -1835,7 +1837,13 @@ export class ThreadsView extends ItemView {
   }
 
   private scrollToBottom(): void {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    // Use rAF so we read scrollHeight after the browser has reflowed the DOM.
+    // Without this, prepending a tool-call pill and immediately reading
+    // scrollHeight can return a stale value that undershoots the new bottom,
+    // leaving the pill hidden behind the floating input panel.
+    requestAnimationFrame(() => {
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    });
   }
 
 
@@ -1900,6 +1908,10 @@ export class ThreadsView extends ItemView {
     }
 
     if (!this.manager.isRunning(this.activeThreadId)) {
+      // Remove the "Ask Claude anything" empty-state placeholder before appending
+      // the first real bubble. Leaving it in the DOM causes height: 100% to double
+      // the scroll area, pushing tool-call pills behind the floating input panel.
+      this.messagesEl.querySelector('.ct-empty')?.remove();
       const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
       this.pendingUserEl = userEl;
       const content = userEl.createDiv('ct-message-content');
