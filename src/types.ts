@@ -163,6 +163,13 @@ export interface PluginSettings {
   pttKey: string;
   /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
   openAIKey: string;
+  /**
+   * Set to true after the orphaned-note archive scan has run at least once with
+   * nothing left to clean up. Prevents a full vault file-read scan on every startup
+   * once the one-time migration for pre-archive-on-close thread notes is complete.
+   * Reset to false whenever crash recovery restores threads from vault notes.
+   */
+  orphanArchiveScanComplete?: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
