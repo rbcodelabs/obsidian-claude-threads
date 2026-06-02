@@ -8,6 +8,8 @@ export default defineConfig({
     environmentMatchGlobs: [
       // MobileView tests need a real DOM
       ['test/unit/MobileView.test.ts', 'jsdom'],
+      // DispatchInput tests need a real DOM (createDiv, createEl, etc.)
+      ['test/unit/DispatchInput.test.ts', 'jsdom'],
     ],
   },
   resolve: {

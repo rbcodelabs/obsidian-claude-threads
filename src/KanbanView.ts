@@ -154,6 +154,7 @@ export class KanbanView extends ItemView {
         );
         await this.plugin.openThreadInChatView(threadId);
       },
+      getPttKey: () => this.plugin.settings.pttKey ?? '',
     });
     this.dispatchInput.mount(dispatchWrapper);
   }

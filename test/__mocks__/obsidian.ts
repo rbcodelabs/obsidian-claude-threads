@@ -94,6 +94,10 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
 
 export function addIcon(_iconId: string, _svgContent: string) {}
 
+export function setIcon(_el: HTMLElement, _icon: string): void {}
+
+export function setTooltip(_el: HTMLElement, _tooltip: string): void {}
+
 export const Platform = {
   isMobile: false,
   isDesktop: true,

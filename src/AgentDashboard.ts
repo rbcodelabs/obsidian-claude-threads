@@ -165,6 +165,7 @@ export class AgentDashboard extends ItemView {
         await this.plugin.openThreadInChatView(threadId);
         this.render();
       },
+      getPttKey: () => this.plugin.settings.pttKey ?? '',
     });
     this.dispatchComponent.mount(dispatchEl);
   }
