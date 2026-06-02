@@ -1,10 +1,12 @@
 import type { Thread, ChatMessage } from '../../src/types';
 
-// Timestamps: Thread 1 most recent (active by default), Thread 3 oldest
-const now = Date.now();
-const T1 = now - 5 * 60 * 1000;      // 5 minutes ago (most recent → active tab)
-const T2 = now - 45 * 60 * 1000;     // 45 minutes ago
-const T3 = now - 2 * 60 * 60 * 1000; // 2 hours ago
+// Timestamps: Thread 1 most recent (active by default), Thread 3 oldest.
+// Pinned to a fixed wall-clock time so screenshot baselines are stable
+// across runs — never use Date.now() here.
+const EPOCH = new Date('2026-01-15T10:00:00Z').getTime();
+const T1 = EPOCH - 5 * 60 * 1000;      // 9:55 AM UTC
+const T2 = EPOCH - 45 * 60 * 1000;     // 9:15 AM UTC
+const T3 = EPOCH - 2 * 60 * 60 * 1000; // 8:00 AM UTC
 
 // ─── Thread 1: Fix auth middleware ───────────────────────────────────────────
 

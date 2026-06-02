@@ -202,6 +202,8 @@ test.describe('Claude Threads UI', () => {
     // Open the more menu — "Compress view" should be the first item
     await page.click('.ct-more-btn');
     await page.waitForSelector('.menu');
+    // Move mouse away so no menu item is in hover state
+    await page.mouse.move(0, 0);
     await expect(page).toHaveScreenshot('compress-view-menu.png', { fullPage: true });
   });
 
