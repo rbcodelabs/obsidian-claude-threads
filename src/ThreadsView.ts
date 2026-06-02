@@ -1133,7 +1133,8 @@ export class ThreadsView extends ItemView {
       text: cachedSummary ?? 'Summarizing…',
     });
 
-    const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+    // Expand button is inside collapsedRow so it sits inline with the summary text
+    const expandBtn = collapsedRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
     setIcon(expandBtn, 'chevron-down');
 
     // Full content (hidden) — render each sub-message with its tool calls
@@ -1151,10 +1152,10 @@ export class ThreadsView extends ItemView {
     expandBtn.addEventListener('click', () => {
       expanded = !expanded;
       if (expanded) {
-        collapsedRow.addClass('ct-hidden');
+        summaryTextEl.addClass('ct-hidden');
         fullContent.removeClass('ct-hidden');
       } else {
-        collapsedRow.removeClass('ct-hidden');
+        summaryTextEl.removeClass('ct-hidden');
         fullContent.addClass('ct-hidden');
       }
       setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
@@ -1374,7 +1375,7 @@ export class ThreadsView extends ItemView {
     if (msg.role === 'assistant') {
       if (this.compressedView) {
         el.addClass('ct-message-compressed');
-        // Collapsed row: summary text only
+        // Collapsed row: summary text + expand button inline
         const collapsedRow = content.createDiv('ct-compressed-row');
         const summaryTextEl = collapsedRow.createSpan({
           cls: 'ct-compressed-summary',
@@ -1382,8 +1383,8 @@ export class ThreadsView extends ItemView {
         });
         this.summaryTextEls.set(msg.id, summaryTextEl);
 
-        // Expand button lives outside collapsedRow so it stays visible after expand
-        const expandBtn = content.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+        // Expand button is inside collapsedRow so it sits inline with the summary text
+        const expandBtn = collapsedRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
         setIcon(expandBtn, 'chevron-down');
 
         // Full content (hidden by default)
@@ -1394,10 +1395,10 @@ export class ThreadsView extends ItemView {
         expandBtn.addEventListener('click', () => {
           expanded = !expanded;
           if (expanded) {
-            collapsedRow.addClass('ct-hidden');
+            summaryTextEl.addClass('ct-hidden');
             fullContent.removeClass('ct-hidden');
           } else {
-            collapsedRow.removeClass('ct-hidden');
+            summaryTextEl.removeClass('ct-hidden');
             fullContent.addClass('ct-hidden');
           }
           setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
