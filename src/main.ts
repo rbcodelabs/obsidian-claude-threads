@@ -158,7 +158,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createObsidianMcpServer } = require('./ObsidianTools') as typeof import('./ObsidianTools');
+    const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
 
     this.detectClaudeBinary();
 
@@ -223,11 +223,20 @@ export default class ClaudeThreadsPlugin extends Plugin {
             const t = this.manager.getThread(id);
             if (!t) return undefined;
             const nonCompact = t.messages.filter((m: { role: string }) => m.role !== 'compact');
+            const isRunning = this.manager.isRunning(id);
             return {
               id: t.id,
               title: t.title,
               status: t.status ?? 'waiting',
-              isRunning: this.manager.isRunning(id),
+              uiStatus: computeUiStatus({
+                isRunning,
+                lastError: t.lastError,
+                messageCount: nonCompact.length,
+                reviewed: t.reviewed,
+              }),
+              isRunning,
+              lastError: t.lastError,
+              reviewed: t.reviewed,
               projectId: t.projectId,
               cwd: t.cwd,
               updatedAt: t.updatedAt,
@@ -240,16 +249,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; projectId?: string; cwd?: string; updatedAt: number; messages: Array<{ role: string }> }) => ({
-            id: t.id,
-            title: t.title,
-            status: t.status ?? 'waiting',
-            isRunning: this.manager.isRunning(t.id),
-            projectId: t.projectId,
-            cwd: t.cwd,
-            updatedAt: t.updatedAt,
-            messageCount: t.messages.filter(m => m.role !== 'compact').length,
-          })),
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; updatedAt: number; messages: Array<{ role: string }> }) => {
+            const isRunning = this.manager.isRunning(t.id);
+            const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
+            return {
+              id: t.id,
+              title: t.title,
+              status: t.status ?? 'waiting',
+              uiStatus: computeUiStatus({
+                isRunning,
+                lastError: t.lastError,
+                messageCount,
+                reviewed: t.reviewed,
+              }),
+              isRunning,
+              lastError: t.lastError,
+              reviewed: t.reviewed,
+              projectId: t.projectId,
+              cwd: t.cwd,
+              updatedAt: t.updatedAt,
+              messageCount,
+            };
+          }),
           getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
             id: p.id,
             name: p.name,

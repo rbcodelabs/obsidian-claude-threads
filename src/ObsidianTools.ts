@@ -53,13 +53,53 @@ const executeCommandSchema = {
 // These are intentionally decoupled from ThreadManager internals so this file
 // stays self-contained and can be used in isolation (e.g. tests).
 
+export type UiStatus = 'working' | 'new' | 'reviewed' | 'failed' | 'ready';
+
+/**
+ * Returns the Agent Dashboard UI bucket label for a thread.
+ *
+ * Mirrors the exact bucketing logic in AgentDashboard.render():
+ *   - working  — thread is actively running
+ *   - failed   — idle, lastError is set
+ *   - new      — idle, has messages, not yet reviewed
+ *   - reviewed — idle, has messages, reviewed by user
+ *   - ready    — idle, no messages, no error
+ *
+ * Note: the Kanban view has an additional "Awaiting" sub-state (running +
+ * pending permission). Those threads appear here as 'working'.
+ */
+export function computeUiStatus(params: {
+  isRunning: boolean;
+  lastError?: string;
+  messageCount: number;
+  reviewed?: boolean;
+}): UiStatus {
+  if (params.isRunning) return 'working';
+  if (params.lastError) return 'failed';
+  if (params.messageCount > 0) return params.reviewed ? 'reviewed' : 'new';
+  return 'ready';
+}
+
 export interface ThreadSnapshot {
   id: string;
   title: string;
-  /** ThreadStatus value or 'waiting' if unset */
+  /**
+   * Internal lifecycle status (waiting | active | error | archived).
+   * @deprecated Prefer `uiStatus` for display logic — it matches the Agent Dashboard UI labels.
+   * Use `isRunning` to check whether Claude is actively processing.
+   */
   status: string;
+  /**
+   * The Agent Dashboard UI bucket this thread belongs to.
+   * One of: 'working' | 'new' | 'reviewed' | 'failed' | 'ready'
+   */
+  uiStatus: UiStatus;
   /** True while Claude is actively processing a request on this thread */
   isRunning: boolean;
+  /** Error message if the thread is in the Failed state, undefined otherwise */
+  lastError?: string;
+  /** True if the user has opened and reviewed this thread's completed output */
+  reviewed?: boolean;
   projectId?: string;
   cwd?: string;
   updatedAt: number;
@@ -830,7 +870,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, isRunning, project, cwd, and message count. Useful for understanding your own context before coordinating with other threads.',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready).',
     {},
     async (_args, _extra) => {
       try {
@@ -854,7 +894,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, isRunning flag, project, cwd, updatedAt, and message count. Use this to discover other running threads before coordinating with them.',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready).',
     {},
     async (_args, _extra) => {
       try {
