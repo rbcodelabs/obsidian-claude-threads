@@ -1757,6 +1757,8 @@ export class ThreadsView extends ItemView {
           if (label) label.textContent = event.summary;
           this.taskPills.delete(event.taskId);
         }
+        // When the thread is idle (no active streaming container / no pill), the
+        // main.ts subscriber shows a Notice. Nothing more needed here.
         break;
       }
 
