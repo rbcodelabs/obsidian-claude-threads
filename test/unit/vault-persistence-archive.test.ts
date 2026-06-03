@@ -11,6 +11,22 @@ import { VaultPersistence } from '../../src/VaultPersistence';
  */
 function makeApp(files: Record<string, string>) {
   const fileContents: Record<string, string> = { ...files };
+
+  /** Parse simple key: value YAML frontmatter from a file content string. */
+  function parseFrontmatter(content: string): Record<string, string> | null {
+    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!match) return null;
+    const fm: Record<string, string> = {};
+    for (const line of match[1].split('\n')) {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx === -1) continue;
+      const key = line.slice(0, colonIdx).trim();
+      const val = line.slice(colonIdx + 1).trim().replace(/^"(.*)"$/, '$1');
+      if (key) fm[key] = val;
+    }
+    return fm;
+  }
+
   return {
     vault: {
       getMarkdownFiles: () =>
@@ -21,6 +37,14 @@ function makeApp(files: Record<string, string>) {
       },
       // Return the live fileContents so tests can inspect it after the call
       _contents: fileContents,
+    },
+    metadataCache: {
+      getFileCache: (file: { path: string }) => {
+        const content = fileContents[file.path];
+        if (!content) return null;
+        const frontmatter = parseFrontmatter(content);
+        return frontmatter ? { frontmatter } : null;
+      },
     },
   };
 }
