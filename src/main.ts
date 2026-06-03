@@ -405,35 +405,58 @@ export default class ClaudeThreadsPlugin extends Plugin {
     //     deliberately closed by the user and must not be resurrected on reload.
     //   - Reset `active` status to `waiting` — the SDK session is gone after any
     //     reload so there's nothing to resume; showing them as running would be wrong.
+    //
+    // Performance: use the metadata cache (already built by Obsidian during vault
+    // init, zero disk reads) to check whether any vault thread notes are missing
+    // from data.json before doing the expensive full file-read scan.
     if (this.settings.saveThreadsToVault) {
-      try {
-        const vaultThreads = await this.persistence.loadAllThreads();
-        const knownIds = new Set(this.manager.getThreads().map((t) => t.id));
-        const recovered = vaultThreads.filter(
-          (t) => !knownIds.has(t.id) && t.status !== 'archived',
-        );
-        for (const t of recovered) {
-          if (t.status === 'active') t.status = 'waiting';
+      const knownIds = new Set(this.manager.getThreads().map((t) => t.id));
+      const vaultFolder = this.settings.vaultFolder;
+      const hasUnknownThreads = this.app.vault.getMarkdownFiles()
+        .filter((f) => f.path.startsWith(vaultFolder + '/'))
+        .some((f) => {
+          const tid = this.app.metadataCache.getFileCache(f)?.frontmatter?.['thread_id'];
+          return tid && !knownIds.has(String(tid));
+        });
+
+      if (hasUnknownThreads) {
+        try {
+          const vaultThreads = await this.persistence.loadAllThreads();
+          const recovered = vaultThreads.filter(
+            (t) => !knownIds.has(t.id) && t.status !== 'archived',
+          );
+          for (const t of recovered) {
+            if (t.status === 'active') t.status = 'waiting';
+          }
+          if (recovered.length > 0) {
+            this.manager.loadThreads(recovered);
+            console.log(`[ClaudeThreads] Recovered ${recovered.length} thread(s) from vault notes`);
+            // Write recovered threads back into data.json immediately so they survive
+            // the next restart even if saveSettings() on unload is skipped.
+            // Reset the orphan-archive flag so the next startup re-scans for any
+            // notes that may have been left in waiting state during the crash.
+            this.settings.orphanArchiveScanComplete = false;
+            await this.saveSettings();
+          }
+        } catch (err) {
+          console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
         }
-        if (recovered.length > 0) {
-          this.manager.loadThreads(recovered);
-          console.log(`[ClaudeThreads] Recovered ${recovered.length} thread(s) from vault notes`);
-          // Write recovered threads back into data.json immediately so they survive
-          // the next restart even if saveSettings() on unload is skipped.
-          await this.saveSettings();
-        }
-      } catch (err) {
-        console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
       }
     }
 
     // Archive orphaned vault notes: thread notes written before the archive-on-close
     // feature existed still carry status=waiting even though their tabs are long gone.
     // Flip them to archived so they land in the right Bases Kanban column.
-    if (this.settings.saveThreadsToVault) {
+    //
+    // This was a one-time migration. Once the scan has completed with nothing left
+    // to clean up, skip it on every subsequent startup. The flag is reset if crash
+    // recovery restores threads so we re-check in that case.
+    if (this.settings.saveThreadsToVault && !this.settings.orphanArchiveScanComplete) {
       const activeIds = new Set(this.manager.getThreads().map((t) => t.id));
       this.persistence.archiveOrphanedNotes(activeIds).then((n) => {
         if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
+        this.settings.orphanArchiveScanComplete = true;
+        this.saveSettings().catch(console.error);
       }).catch(console.error);
     }
 

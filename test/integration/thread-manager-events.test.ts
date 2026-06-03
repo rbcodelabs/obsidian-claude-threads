@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
@@ -70,7 +71,7 @@ beforeEach(() => {
 describe('send message → event flow', () => {
   it('emits user_message_added, streaming_start, token, message, done in order', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -83,7 +84,7 @@ describe('send message → event flow', () => {
 
   it('appends user and assistant messages to the thread', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'Ping');
     await driveResponse('Pong');
@@ -96,7 +97,7 @@ describe('send message → event flow', () => {
 
   it('stores sessionId and cost on done', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onToken('Hey');
@@ -111,7 +112,7 @@ describe('send message → event flow', () => {
 
   it('isRunning is true during session, false after done', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'Hi');
     expect(manager.isRunning(thread.id)).toBe(true);
@@ -122,7 +123,7 @@ describe('send message → event flow', () => {
 
   it('second sendMessage while running queues and auto-fires after done', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -161,7 +162,7 @@ describe('send message → event flow', () => {
 
   it('preserves images when a message is queued and later dequeued', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -205,7 +206,7 @@ describe('send message → event flow', () => {
 
   it('emits error event and cleans up session on failure', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -227,7 +228,7 @@ describe('send message → event flow', () => {
 describe('opus escalation', () => {
   it('emits escalated event and uses opus model when keyword present', async () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -243,7 +244,7 @@ describe('opus escalation', () => {
 
   it('strips keyword from prompt sent to Claude', async () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
     await driveResponse('Roses are red');
@@ -254,7 +255,7 @@ describe('opus escalation', () => {
 
   it('preserves original text in the stored user message', async () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
     await driveResponse('Roses are red');
@@ -265,7 +266,7 @@ describe('opus escalation', () => {
 
   it('does not escalate when feature is disabled', async () => {
     const manager = makeManager({ opusEscalationEnabled: false, opusEscalationKeyword: '/opus' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -279,7 +280,7 @@ describe('opus escalation', () => {
 
   it('does not escalate when keyword not in message', async () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -293,7 +294,7 @@ describe('opus escalation', () => {
 
   it('respects custom escalation keyword', async () => {
     const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '!expert' });
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -309,7 +310,7 @@ describe('opus escalation', () => {
 describe('permission handler', () => {
   it('calls permissionHandler and allows when it resolves true', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     manager.permissionHandler = async () => true;
 
     const sendPromise = manager.sendMessage(thread.id, 'Hi');
@@ -322,7 +323,7 @@ describe('permission handler', () => {
 
   it('calls permissionHandler and denies when it resolves false', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     manager.permissionHandler = async () => false;
 
     const sendPromise = manager.sendMessage(thread.id, 'Hi');
@@ -337,7 +338,7 @@ describe('permission handler', () => {
 describe('tool use events', () => {
   it('emits tool_use event and stores tool calls on message', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -359,7 +360,7 @@ describe('tool use events', () => {
 describe('recap events', () => {
   it('stores recap on thread and emits recap event', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -376,7 +377,7 @@ describe('recap events', () => {
 describe('image attachments', () => {
   it('passes images to session.run', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const images: import('../../src/types').ImageAttachment[] = [
       { base64: 'abc123', mediaType: 'image/png', name: 'screenshot.png' },
     ];
@@ -391,7 +392,7 @@ describe('image attachments', () => {
 
   it('passes undefined images when none provided', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'No images here');
     await driveResponse('OK');
@@ -402,7 +403,7 @@ describe('image attachments', () => {
 
   it('stores user message content as the text prompt regardless of images', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const images: import('../../src/types').ImageAttachment[] = [
       { base64: 'xyz', mediaType: 'image/jpeg', name: 'photo.jpg' },
     ];
@@ -418,7 +419,7 @@ describe('image attachments', () => {
 describe('system events', () => {
   it('emits status event when onStatus is called', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -433,7 +434,7 @@ describe('system events', () => {
 
   it('emits status null to clear compacting', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -448,7 +449,7 @@ describe('system events', () => {
 
   it('emits task_started event', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -466,7 +467,7 @@ describe('system events', () => {
 
   it('emits task_progress event', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -483,7 +484,7 @@ describe('system events', () => {
 
   it('emits task_notification on completion', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -500,7 +501,7 @@ describe('system events', () => {
 
   it('emits task_notification on failure', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -516,7 +517,7 @@ describe('system events', () => {
 
   it('emits notification event', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -533,7 +534,7 @@ describe('system events', () => {
 
   it('emits api_retry event', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -551,7 +552,7 @@ describe('system events', () => {
 
   it('emits rate_limit event for rejected status', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -568,7 +569,7 @@ describe('system events', () => {
 
   it('emits rate_limit event for warning status without resetsAt', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -587,7 +588,7 @@ describe('system events', () => {
 describe('interrupt / stop behavior', () => {
   it('emits interrupted event (not done) when stop is hit', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
@@ -602,7 +603,7 @@ describe('interrupt / stop behavior', () => {
 
   it('rolls back the orphaned user message from thread.messages', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'Hello');
     // Message is in the array while running
@@ -616,7 +617,7 @@ describe('interrupt / stop behavior', () => {
 
   it('preserves the prior session ID — does not corrupt it', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     thread.sessionId = 'prior-session-id';
 
     const sendPromise = manager.sendMessage(thread.id, 'Hello');
@@ -628,7 +629,7 @@ describe('interrupt / stop behavior', () => {
 
   it('isRunning is false after interrupt', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, 'Hello');
     expect(manager.isRunning(thread.id)).toBe(true);
@@ -639,7 +640,7 @@ describe('interrupt / stop behavior', () => {
 
   it('preserves all prior messages from successful turns — only interrupted turn is rolled back', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     // First turn completes successfully
     const p1 = manager.sendMessage(thread.id, 'First');
@@ -662,7 +663,7 @@ describe('interrupt / stop behavior', () => {
 
   it('resumes from the correct session ID on the next send after interrupt', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
 
     // First turn establishes a session
     const p1 = manager.sendMessage(thread.id, 'First');
@@ -685,7 +686,7 @@ describe('interrupt / stop behavior', () => {
 
   it('discards any queued message when interrupted', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 

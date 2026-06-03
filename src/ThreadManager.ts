@@ -447,28 +447,53 @@ export class ThreadManager {
     // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
     const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
 
-    // Safety net: repairStaleCwds() runs at plugin load and catches most stale
-    // worktree cwds, but a worktree could be deleted between load and this send.
-    // Re-check here so we never spawn Claude with a non-existent worktree cwd
-    // (Node surfaces ENOENT as a spurious "binary not found" error from the SDK).
-    // Only volatile worktree paths (under <tmpdir>/claude-worktrees/) are in scope —
-    // other non-existent cwds are left for Node to surface naturally.
+    // Safety net against the misleading "binary not found" ENOENT the SDK emits
+    // when Claude is spawned with a non-existent cwd.  repairStaleCwds() handles
+    // volatile tmpdir worktrees at load time, but project-directory worktrees
+    // (e.g. created by the release-manager under <repo>/worktrees/<branch>) are
+    // outside that scope.  We catch all missing cwds here so every case gets a
+    // clear error or an auto-repair instead of a cryptic spawn failure.
     if (thread.cwd) {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('fs') as typeof import('fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const nodePath = require('path') as typeof import('path');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const os = require('os') as typeof import('os');
-      const worktreeContainer = nodePath.join(os.tmpdir(), 'claude-worktrees');
-      const isWorktreePath =
-        thread.cwd.startsWith(worktreeContainer + nodePath.sep);
-      if (isWorktreePath && !fs.existsSync(thread.cwd)) {
-        const repaired = this.repairStaleCwds();
-        if (repaired === 0 || !fs.existsSync(thread.cwd!)) {
-          // No valid ancestor found; surface a clear error before ENOENT can hit.
+      if (!fs.existsSync(thread.cwd)) {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const nodePath = require('path') as typeof import('path');
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const os = require('os') as typeof import('os');
+        const worktreeContainer = nodePath.join(os.tmpdir(), 'claude-worktrees');
+        const isVolatileWorktree =
+          thread.cwd.startsWith(worktreeContainer + nodePath.sep);
+
+        if (isVolatileWorktree) {
+          // Use the dedicated repair path for tmpdir worktrees.
+          this.repairStaleCwds();
+        } else {
+          // Non-volatile path (e.g. a project-directory worktree or a deleted
+          // folder).  Walk up to the nearest valid ancestor — same strategy as
+          // repairStaleCwds() — and silently reroute the thread there.
+          let fallback: string = thread.cwd;
+          while (true) {
+            const parent = nodePath.dirname(fallback);
+            if (parent === fallback) { fallback = ''; break; }
+            fallback = parent;
+            if (fs.existsSync(fallback)) break;
+          }
+          if (!fallback || !fs.existsSync(fallback)) {
+            fallback = this.vaultRoot || os.homedir();
+          }
+          console.warn(
+            `[ClaudeThreads] Auto-repairing stale cwd for thread "${thread.title}": ` +
+            `"${thread.cwd}" → "${fallback}"`,
+          );
+          this.setThreadCwd(threadId, fallback);
+        }
+
+        // If the cwd is still missing after attempted repair, surface a clear
+        // error rather than letting Node emit the confusing ENOENT.
+        if (!fs.existsSync(thread.cwd!)) {
           const err = new Error(
-            `Worktree no longer exists: "${thread.cwd}". ` +
+            `Working directory no longer exists: "${thread.cwd}". ` +
             `Use set_working_directory to point this thread at a valid path.`,
           );
           this.emit(threadId, { type: 'error', error: err });
