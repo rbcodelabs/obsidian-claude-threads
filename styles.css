@@ -1641,9 +1641,7 @@
 .ct-agents-search-bar {
   padding: 6px 10px;
   flex-shrink: 0;
-  border-top: 1px solid var(--background-modifier-border);
   border-bottom: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
 }
 
 .ct-agents-search-field {
@@ -1699,6 +1697,11 @@
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
+}
+
+/* AgentDashboard root — extra bottom clearance so the floating panel doesn't hide content */
+.ct-dashboard-root .ct-agents-list {
+  padding-bottom: 180px;
 }
 
 .ct-agents-empty {
@@ -3682,13 +3685,55 @@
   padding-left: 2px;
 }
 
-/* Extra bottom padding on the board so cards don't hide under the panel */
+/* Extra bottom padding on the board so cards don't hide under the panel (meta strip + dispatch) */
 .ct-kanban-board {
-  padding-bottom: 80px;
+  padding-bottom: 130px;
 }
 
 /* Drag-over highlight for the kanban dispatch panel */
 .ct-kanban-dispatch .ct-drag-over {
   border-color: var(--interactive-accent);
   background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary));
+}
+
+/* ── Shared panel meta strip (AgentDashboard + KanbanView) ─────────────── */
+
+/* Horizontal strip: count text (left) + icon buttons (right) */
+.ct-agents-panel-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ct-agents-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ── AgentDashboard floating panel (ct-floating-panel + ct-agents-floating-panel) ── */
+
+/* Button chrome reset — floating panel provides the visual container */
+.ct-agents-floating-panel button {
+  box-shadow: none;
+  background: transparent;
+  border: none;
+}
+
+/* Re-apply accent for send button */
+.ct-agents-floating-panel .ct-send-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-agents-floating-panel .ct-send-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+/* Padding for the dispatch input section within the floating panel */
+.ct-agents-floating-panel .ct-dispatch-root {
+  padding: 6px 8px 8px;
 }

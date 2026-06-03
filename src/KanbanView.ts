@@ -67,23 +67,25 @@ export class KanbanView extends ItemView {
     root.empty();
     root.addClass('ct-agents-root');
 
-    const header = root.createDiv('ct-agents-header');
-    const titleEl = header.createDiv('ct-agents-title');
-    const iconSpan = titleEl.createSpan('ct-agents-title-icon');
-    setIcon(iconSpan, 'layout-grid');
-    titleEl.createSpan({ text: 'Kanban Board' });
+    this.boardEl = root.createDiv('ct-agents-list');
 
-    const headerRight = header.createDiv('ct-agents-header-right');
-    this.headerCountEl = headerRight.createDiv('ct-agents-count');
+    // Floating dispatch panel — centered at bottom of the board
+    const dispatchWrapper = root.createDiv('ct-kanban-dispatch');
 
-    this.searchBtn = headerRight.createEl('button', {
+    // Meta strip: thread count (left) + search button (right)
+    const metaRow = dispatchWrapper.createDiv('ct-agents-panel-meta');
+    this.headerCountEl = metaRow.createDiv('ct-agents-count');
+    const metaActions = metaRow.createDiv('ct-agents-panel-actions');
+
+    this.searchBtn = metaActions.createEl('button', {
       cls: 'ct-agents-search-btn clickable-icon',
       attr: { title: 'Search threads', 'aria-label': 'Search threads' },
     });
     setIcon(this.searchBtn, 'search');
     this.searchBtn.addEventListener('click', () => this.toggleSearch());
 
-    this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
+    // Search bar — hidden by default, expands inside the panel when toggled
+    this.searchBarEl = dispatchWrapper.createDiv('ct-agents-search-bar ct-hidden');
     const searchFieldEl = this.searchBarEl.createDiv('ct-agents-search-field');
     this.searchInputEl = searchFieldEl.createEl('input', {
       cls: 'ct-agents-search-input',
@@ -110,10 +112,6 @@ export class KanbanView extends ItemView {
       if (e.key === 'Escape') this.closeSearch();
     });
 
-    this.boardEl = root.createDiv('ct-agents-list');
-
-    // Floating dispatch panel — centered at bottom of the board
-    const dispatchWrapper = root.createDiv('ct-kanban-dispatch');
     this.dispatchInput = new DispatchInput({
       app: this.app,
       placeholder: 'Dispatch a new task…',
