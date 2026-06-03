@@ -49,6 +49,7 @@ export class ClaudeSession {
     images?: ImageAttachment[],
     appendSystemPrompt?: string,
     mcpServers?: Record<string, McpServerConfig>,
+    secretEnv?: Record<string, string>,
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -84,7 +85,7 @@ export class ClaudeSession {
       cwd,
       includePartialMessages: true,
       canUseTool,
-      env: { ...process.env, ...parseExtraEnv(extraEnvRaw) },
+      env: { ...process.env, ...parseExtraEnv(extraEnvRaw), ...(secretEnv ?? {}) },
     };
     if (resumeSessionId) options.resume = resumeSessionId;
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
