@@ -8,10 +8,9 @@ import os from 'os';
 import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
-import { resolveProjectName } from './pathUtils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { DispatchInput } from './DispatchInput';
-import { shortenPath } from './dashboardUtils';
+import { buildCwdLabel } from './dashboardUtils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -1004,23 +1003,7 @@ export class ThreadsView extends ItemView {
   private renderCwdChip(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-
-    // Build a human-readable label for the CWD chip.
-    // When we can resolve a real git project name, prefer "project · branch"
-    // over a raw filesystem path — much more meaningful for worktrees.
-    const projectName = resolveProjectName(cwd);
-    let displayText: string;
-    if (projectName) {
-      const lastSegment = cwd.replace(/\/$/, '').split('/').pop() ?? '';
-      // Show branch/worktree suffix when it differs from the project root name
-      displayText = (lastSegment && lastSegment !== projectName)
-        ? `${projectName} · ${lastSegment}`
-        : projectName;
-    } else {
-      displayText = shortenPath(cwd);
-    }
-
-    this.dispatchInput?.setCwd(displayText, cwd);
+    this.dispatchInput?.setCwd(buildCwdLabel(cwd), cwd);
   }
 
   private renderThreadInfo(): void {

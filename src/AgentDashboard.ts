@@ -4,7 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
-import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
+import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
@@ -403,7 +403,7 @@ export class AgentDashboard extends ItemView {
     }
 
     if (thread.cwd) {
-      body.createDiv({ cls: 'ct-agents-row-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
+      body.createDiv({ cls: 'ct-agents-row-cwd', text: buildCwdLabel(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
     const meta = row.createDiv('ct-agents-row-meta');

@@ -2,6 +2,8 @@
  * Shared utility functions for the Agent Dashboard and Kanban Board views.
  */
 
+import { resolveProjectName } from './pathUtils';
+
 export function relativeTime(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 60_000) return 'just now';
@@ -19,6 +21,26 @@ export function shortenPath(p: string, vaultRoot?: string): string {
   if (home && p.startsWith(home)) p = '~' + p.slice(home.length);
   const parts = p.split('/');
   return parts.length > 4 ? '…/' + parts.slice(-2).join('/') : p;
+}
+
+/**
+ * Builds a human-readable label for a working-directory path, shared across the
+ * conversation view, Agent Dashboard, and Kanban board.
+ *
+ * When the path is inside a git repo the label is "project · branch" (or just
+ * "project" when the branch name matches the repo name). Otherwise it falls back
+ * to the shortened filesystem path from `shortenPath`.
+ */
+export function buildCwdLabel(cwd: string, vaultRoot?: string): string {
+  if (!cwd) return '';
+  const projectName = resolveProjectName(cwd);
+  if (projectName) {
+    const lastSegment = cwd.replace(/\/$/, '').split('/').pop() ?? '';
+    return (lastSegment && lastSegment !== projectName)
+      ? `${projectName} · ${lastSegment}`
+      : projectName;
+  }
+  return shortenPath(cwd, vaultRoot);
 }
 
 /**
