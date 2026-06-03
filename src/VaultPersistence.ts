@@ -34,6 +34,9 @@ export class VaultPersistence {
    * whose thread_id is NOT in `activeThreadIds` and currently has `status: waiting`.
    * Call this at startup to clean up stale notes from before the archive-on-close
    * feature was introduced.
+   *
+   * Uses the Obsidian metadata cache for a fast frontmatter pre-check so only
+   * the files that are actually orphaned require a full disk read.
    */
   async archiveOrphanedNotes(activeThreadIds: Set<string>): Promise<number> {
     let count = 0;
@@ -42,22 +45,17 @@ export class VaultPersistence {
     );
 
     for (const file of files) {
+      // Use the already-built metadata cache to check frontmatter without
+      // touching the disk. Only proceed to a full read for files that are
+      // genuinely orphaned.
+      const cached = this.app.metadataCache.getFileCache(file);
+      const fm = cached?.frontmatter;
+      if (!fm?.['thread_id']) continue;
+      if (fm['status'] !== 'waiting') continue;
+      if (activeThreadIds.has(String(fm['thread_id']))) continue;
+
       try {
         const content = await this.app.vault.read(file);
-        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!fmMatch) continue;
-
-        const fm = fmMatch[1];
-        const idMatch = fm.match(/^thread_id:\s*(.+)$/m);
-        const statusMatch = fm.match(/^status:\s*(.+)$/m);
-        if (!idMatch || !statusMatch) continue;
-
-        const threadId = idMatch[1].trim();
-        const status = statusMatch[1].trim();
-        if (status !== 'waiting') continue;
-        if (activeThreadIds.has(threadId)) continue;
-
-        // Replace status in the frontmatter only
         const updated = content.replace(/^(status:\s*)waiting$/m, '$1archived');
         await this.app.vault.modify(file, updated);
         count++;
@@ -75,6 +73,11 @@ export class VaultPersistence {
     );
 
     for (const file of files) {
+      // Use the metadata cache to skip files that aren't thread notes
+      // (no thread_id frontmatter) without reading them from disk.
+      const cached = this.app.metadataCache.getFileCache(file);
+      if (!cached?.frontmatter?.['thread_id']) continue;
+
       try {
         const content = await this.app.vault.read(file);
         const thread = this.markdownToThread(content, file.path);
