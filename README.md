@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.11.0-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.12.1-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -332,6 +332,7 @@ Both tools return a clear error if the vault-bridges plugin is not installed or 
 | Save threads to vault | Auto-save conversations as Markdown notes |
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
+| Secret environment variables | Keychain-backed env vars (values stored in the OS keychain, never in `data.json`) — for API keys and tokens |
 | Permission mode | `Accept edits automatically`, `Bypass all permissions`, or `Prompt for permissions` |
 | Layout density | `Comfortable`, `Compact`, or `Spacious` — controls message spacing and padding |
 | Enable summarization | Show the summarize button and auto-summarize |
