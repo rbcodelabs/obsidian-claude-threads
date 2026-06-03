@@ -70,23 +70,27 @@ export class AgentDashboard extends ItemView {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('ct-agents-root');
+    root.addClass('ct-dashboard-root');
 
-    const header = root.createDiv('ct-agents-header');
-    const titleEl = header.createDiv('ct-agents-title');
-    const iconSpan = titleEl.createSpan('ct-agents-title-icon');
-    setIcon(iconSpan, 'layout-dashboard');
-    titleEl.createSpan({ text: 'Agent Dashboard' });
+    // Scrollable thread list — padding-bottom leaves clearance for the floating panel
+    this.listEl = root.createDiv('ct-agents-list');
 
-    const headerRight = header.createDiv('ct-agents-header-right');
-    this.headerCountEl = headerRight.createDiv('ct-agents-count');
-    this.searchBtn = headerRight.createEl('button', {
+    // Floating panel anchored at the bottom (matches ThreadsView pattern)
+    const panel = root.createDiv('ct-floating-panel ct-agents-floating-panel');
+
+    // Meta strip: thread count (left) + action buttons (right)
+    const metaRow = panel.createDiv('ct-agents-panel-meta');
+    this.headerCountEl = metaRow.createDiv('ct-agents-count');
+    const metaActions = metaRow.createDiv('ct-agents-panel-actions');
+
+    this.searchBtn = metaActions.createEl('button', {
       cls: 'ct-agents-search-btn clickable-icon',
       attr: { title: 'Search threads', 'aria-label': 'Search threads' },
     });
     setIcon(this.searchBtn, 'search');
     this.searchBtn.addEventListener('click', () => this.toggleSearch());
 
-    const kanbanBtn = headerRight.createEl('button', {
+    const kanbanBtn = metaActions.createEl('button', {
       cls: 'ct-kanban-toggle clickable-icon',
       attr: { title: 'Open Kanban Board', 'aria-label': 'Open Kanban Board' },
     });
@@ -95,7 +99,8 @@ export class AgentDashboard extends ItemView {
       this.plugin.activateKanbanView();
     });
 
-    this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
+    // Search bar — hidden by default, expands inside the panel when toggled
+    this.searchBarEl = panel.createDiv('ct-agents-search-bar ct-hidden');
     const searchFieldEl = this.searchBarEl.createDiv('ct-agents-search-field');
     this.searchInputEl = searchFieldEl.createEl('input', {
       cls: 'ct-agents-search-input',
@@ -122,9 +127,8 @@ export class AgentDashboard extends ItemView {
       if (e.key === 'Escape') this.closeSearch();
     });
 
-    this.listEl = root.createDiv('ct-agents-list');
-
-    const dispatchEl = root.createDiv('ct-agents-dispatch');
+    // Dispatch input — mounted inside the floating panel
+    const dispatchEl = panel.createDiv();
     this.dispatchComponent = new DispatchInput({
       app: this.app,
       placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
