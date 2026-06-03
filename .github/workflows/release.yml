@@ -25,6 +25,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify version matches tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          MANIFEST=$(jq -r '.version' manifest.json)
+          if [ "v${MANIFEST}" != "${TAG}" ]; then
+            echo "❌ manifest.json version (${MANIFEST}) does not match tag (${TAG})"
+            echo "Run: npm version ${TAG#v} then push the bump commit before tagging."
+            exit 1
+          fi
+          echo "✅ manifest.json version (${MANIFEST}) matches tag (${TAG})"
+
       - name: Build
         run: npm run build
 
