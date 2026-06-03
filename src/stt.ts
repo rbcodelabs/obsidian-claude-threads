@@ -84,9 +84,16 @@ export class SttController {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      const key = getKey();
-      if (!key || !matchesKey(e, key)) return;
       if (!this.pttActive) return;
+      const key = getKey();
+      if (!key) return;
+      // Only match the terminal key on keyup — not modifiers. If the user
+      // releases Alt before Space (for Alt+Space), e.altKey is already false
+      // and a full matchesKey check would fail, leaving the recording stuck on.
+      const parts = key.split('+');
+      const rawKey = parts[parts.length - 1];
+      const expectedKey = rawKey === 'Space' ? ' ' : rawKey;
+      if (e.key !== expectedKey) return;
       this.pttActive = false;
       if (this.recorder && this.recorder.state === 'recording') {
         this.recorder.stop();
