@@ -117,6 +117,7 @@ export class ThreadsView extends ItemView {
 
   // ResizeObserver for the floating input panel (keeps --ct-panel-height current)
   private panelResizeObserver: ResizeObserver | null = null;
+  private floatingPanelEl!: HTMLElement;
 
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
     { name: 'compact', description: 'Summarize conversation history to free up context' },
@@ -397,6 +398,7 @@ export class ThreadsView extends ItemView {
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
     const floatingPanel = this.mainEl.createDiv('ct-floating-panel');
+    this.floatingPanelEl = floatingPanel;
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
     this.statusBar = panelContext.createDiv('ct-status-bar');
@@ -437,15 +439,14 @@ export class ThreadsView extends ItemView {
 
     this.contextFooterEl = panelContext.createDiv('ct-context-footer ct-hidden');
 
-    // Keep messages scroll clearance in sync with the floating panel height
-    this.panelResizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const height = entry.contentRect.height;
-        // Breakdown: 8px bottom-offset (panel's `bottom: 8px`) + 2px border +
-        // 24px shadow-blur (box-shadow: 0 4px 24px) + 8px breathing room = 42px.
-        // This ensures the last message sits above the panel *and* its upward
-        // shadow so tool-call pills never appear visually behind the panel.
-        this.messagesEl.style.setProperty('--ct-panel-height', `${height + 42}px`);
+    // Keep messages scroll clearance in sync with the floating panel height.
+    // scrollToBottom() also re-syncs this inline inside its rAF so the value
+    // is always fresh even if ResizeObserver hasn't fired yet.
+    this.panelResizeObserver = new ResizeObserver(() => {
+      if (!this.floatingPanelEl) return;
+      const h = this.floatingPanelEl.offsetHeight;
+      if (h > 0) {
+        this.messagesEl.style.setProperty('--ct-panel-height', `${h + 43}px`);
       }
     });
     this.panelResizeObserver.observe(floatingPanel);
@@ -1845,6 +1846,17 @@ export class ThreadsView extends ItemView {
     // scrollHeight can return a stale value that undershoots the new bottom,
     // leaving the pill hidden behind the floating input panel.
     requestAnimationFrame(() => {
+      // Re-sync panel clearance synchronously inside the rAF so it's always
+      // current when we read scrollHeight. offsetHeight = full border-box height
+      // (no need to add border separately). Breakdown: 8px bottom-offset +
+      // 3px focus-glow (box-shadow: 0 0 0 3px) + 24px shadow-blur + 8px
+      // breathing = 43px total clearance above the panel.
+      if (this.floatingPanelEl) {
+        const h = this.floatingPanelEl.offsetHeight;
+        if (h > 0) {
+          this.messagesEl.style.setProperty('--ct-panel-height', `${h + 43}px`);
+        }
+      }
       this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
     });
   }
