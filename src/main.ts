@@ -247,6 +247,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               reviewed: t.reviewed,
               projectId: t.projectId,
               cwd: t.cwd,
+              prUrl: t.prUrl,
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
@@ -257,7 +258,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; updatedAt: number; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -275,6 +276,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               reviewed: t.reviewed,
               projectId: t.projectId,
               cwd: t.cwd,
+              prUrl: t.prUrl,
               updatedAt: t.updatedAt,
               messageCount,
             };
