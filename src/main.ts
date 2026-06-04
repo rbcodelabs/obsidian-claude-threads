@@ -287,6 +287,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
           })),
           isThreadRunning: (id: string) => this.manager.isRunning(id),
           sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
+          archiveThread: async (id: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            if (this.settings.saveThreadsToVault && this.persistence) {
+              thread.status = 'archived';
+              await this.persistence.saveThread(thread);
+            }
+            this.manager.deleteThread(id);
+            await this.saveSettings();
+          },
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,
