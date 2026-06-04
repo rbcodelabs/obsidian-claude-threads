@@ -102,6 +102,8 @@ export interface ThreadSnapshot {
   reviewed?: boolean;
   projectId?: string;
   cwd?: string;
+  /** URL of the most recent GitHub PR opened during this thread, if any (e.g. https://github.com/owner/repo/pull/42) */
+  prUrl?: string;
   updatedAt: number;
   /** Number of non-compact messages */
   messageCount: number;
@@ -875,7 +877,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready).',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any.',
     {},
     async (_args, _extra) => {
       try {
@@ -899,7 +901,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready).',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history.',
     {},
     async (_args, _extra) => {
       try {
