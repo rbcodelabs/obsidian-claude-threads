@@ -157,7 +157,7 @@ export class MobileView extends ItemView {
     this.fileInputEl.addEventListener('change', () => this.handleImageSelect());
     this.inputEl = inputControls.createEl('textarea', {
       cls: 'ct-mobile-input',
-      attr: { placeholder: 'Message Claude…', rows: '1' },
+      attr: { placeholder: 'Message Claude', rows: '1' },
     });
     this.sendBtn = inputControls.createEl('button', { cls: 'ct-mobile-send-btn', text: '↵', attr: { title: 'Send message' } });
     this.sendBtn.addEventListener('click', () => this.handleSend());

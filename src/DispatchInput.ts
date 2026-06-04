@@ -120,7 +120,7 @@ export class DispatchInput {
     this.inputEl = this.inputRow.createEl('textarea', {
       cls: this.options.inputCls ?? 'ct-agents-dispatch-input',
       attr: {
-        placeholder: this.options.placeholder ?? 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
+        placeholder: this.options.placeholder ?? 'Dispatch a task',
         rows: '1',
       },
     });

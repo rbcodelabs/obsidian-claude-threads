@@ -114,7 +114,7 @@ export class KanbanView extends ItemView {
 
     this.dispatchInput = new DispatchInput({
       app: this.app,
-      placeholder: 'Dispatch a new task…',
+      placeholder: 'Dispatch a new task',
       inlineLayout: true,
       builtinCommands: [
         { name: 'compact', description: 'Summarize conversation history to free up context' },

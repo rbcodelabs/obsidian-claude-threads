@@ -408,7 +408,7 @@ export class ThreadsView extends ItemView {
 
     this.dispatchInput = new DispatchInput({
       app: this.app,
-      placeholder: 'Message Claude…',
+      placeholder: 'Message Claude',
       inputCls: 'ct-input',
       sendBtnText: '↵',
       sendBtnTitle: 'Send message',
