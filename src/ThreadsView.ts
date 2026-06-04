@@ -303,7 +303,7 @@ export class ThreadsView extends ItemView {
       if (event.type === 'message' && this.plugin.settings.summarizationEnabled) {
         const summarizeThread = this.manager.getThread(threadId);
         if (summarizeThread) {
-          const shouldAutoTitle = isDefaultThreadTitle(summarizeThread.title);
+          const shouldAutoTitle = !summarizeThread.titleUserSet;
           const shouldFullSummarize = this.plugin.settings.autoSummarize;
           if (shouldAutoTitle || shouldFullSummarize) {
             this.runSummarize(summarizeThread.messages, summarizeThread).then((result) => {
@@ -313,6 +313,12 @@ export class ThreadsView extends ItemView {
               }
               if (result.title) this.applyAutoTitle(summarizeThread.id, result.title);
               this.plugin.saveSettings();
+              // Re-save the vault note so the title update lands immediately and any
+              // stale note from the old title (e.g. "2025-06-03-thread-1.md") is
+              // cleaned up right away rather than waiting for the next session.
+              if (this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
+                this.plugin.persistence.saveThread(summarizeThread).catch(console.error);
+              }
               // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
               this.manager.notifySummaryUpdated(summarizeThread.id);
               if (this.activeThreadId === summarizeThread.id) {
@@ -2197,7 +2203,11 @@ export class ThreadsView extends ItemView {
   private applyAutoTitle(threadId: string, title: string): void {
     const thread = this.manager.getThread(threadId);
     if (!thread || !title) return;
-    if (isDefaultThreadTitle(thread.title)) {
+    // Only apply the auto-title if the user has not explicitly renamed this thread.
+    // This covers both "Thread N" style titles AND dispatch-created threads whose
+    // title is the first 50 chars of the user's first message — both are system
+    // placeholders that should be replaced by the summarizer.
+    if (!thread.titleUserSet) {
       this.manager.renameThread(threadId, title);
     }
   }
@@ -2244,6 +2254,12 @@ export class ThreadsView extends ItemView {
     const commit = () => {
       const val = input.value.trim() || current;
       this.manager.renameThread(id, val);
+      // Only lock the title as user-set when the user actually changed it.
+      // Blur/Escape with no change should not prevent future auto-titling.
+      if (val !== current) {
+        const t = this.manager.getThread(id);
+        if (t) t.titleUserSet = true;
+      }
       this.plugin.saveSettings();
       if (id === this.activeThreadId) this.refreshLeafHeader();
       const newLabel = document.createElement('span');
