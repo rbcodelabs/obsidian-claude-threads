@@ -3,7 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { formatToolName } from './ClaudeSession';
-import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
+import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 
@@ -405,7 +405,7 @@ export class KanbanView extends ItemView {
     }
 
     if (thread.cwd) {
-      footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-cwd', text: shortenPath(thread.cwd, this.plugin.manager.vaultRoot) });
+      footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-cwd', text: buildCwdLabel(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
     if (thread.messages.length > 0) {
