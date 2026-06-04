@@ -247,4 +247,56 @@ test.describe('Claude Threads UI', () => {
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('compress-view-expanded.png', { fullPage: true });
   });
+
+  test('streaming tool pills above panel', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+
+    // Simulate a running thread: create the streaming element and inject tool pills
+    // directly so we can test the visual state without needing a live Claude process.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+
+      // Create the streaming bubble (private method accessible via bracket notation)
+      view['createStreamingEl']();
+
+      // Inject 4 tool pills — same DOM structure the real code produces
+      const tools = [
+        { name: 'Read',   summary: 'src/middleware/auth.ts' },
+        { name: 'Read',   summary: '.env.example' },
+        { name: 'Bash',   summary: 'npm test -- --testPathPattern=auth' },
+        { name: 'Write',  summary: 'src/middleware/__tests__/auth.test.ts' },
+      ];
+
+      for (const tool of [...tools].reverse()) {
+        const pill = document.createElement('div');
+        pill.className = 'ct-tool-pill ct-tool-active';
+
+        const icon = document.createElement('span');
+        icon.className = 'ct-tool-pill-icon';
+        icon.textContent = '📄';
+
+        const badge = document.createElement('span');
+        badge.className = 'ct-tool-pill-name';
+        badge.textContent = tool.name;
+
+        const label = document.createElement('span');
+        label.className = 'ct-tool-pill-text';
+        label.textContent = tool.summary;
+
+        pill.append(icon, badge, label);
+        view['streamingEl'].prepend(pill);
+      }
+
+      // Scroll to bottom (triggers the rAF + clearance update)
+      view['scrollToBottom']();
+    });
+
+    // Wait for rAF + any ResizeObserver callbacks to settle
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('streaming-tool-pills.png', { fullPage: true });
+  });
 });
