@@ -170,6 +170,10 @@ export class AgentDashboard extends ItemView {
         this.render();
       },
       getPttKey: () => this.plugin.settings.pttKey ?? '',
+      captureLongPaste: true,
+      // Empty callback forces needsFooter=true so attach+mic land in the footer
+      // row (matching the conversation panel layout). No "more" button needed here.
+      appendFooterActions: () => {},
     });
     this.dispatchComponent.mount(dispatchEl);
   }
