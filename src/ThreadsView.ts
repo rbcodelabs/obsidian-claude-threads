@@ -914,17 +914,20 @@ export class ThreadsView extends ItemView {
     const files = [...vaultFiles, ...nonVaultFiles];
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
+      const isVaultFile = vaultBase ? filePath.startsWith(vaultBase + path.sep) : false;
+      // Tooltip shows vault-relative path for vault files, full path for external files.
+      const tooltipPath = isVaultFile ? filePath.slice(vaultBase.length + 1) : filePath;
       const showFull = !iconOnly || i < 3;
       const chip = list.createDiv({
         cls: showFull ? 'ct-edited-file-chip' : 'ct-edited-file-chip ct-edited-file-chip--icon-only',
       });
       const fileIcon = chip.createSpan('ct-edited-file-chip-icon');
-      setIcon(fileIcon, 'file-edit');
+      // Vault files get file-edit; external files get link to signal they're outside the vault.
+      setIcon(fileIcon, isVaultFile ? 'file-edit' : 'link');
       if (showFull) {
         chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
-      } else {
-        setTooltip(chip, path.basename(filePath));
       }
+      setTooltip(chip, tooltipPath);
       chip.addEventListener('click', () => this.openEditedFile(filePath));
     }
 
