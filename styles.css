@@ -3737,3 +3737,19 @@
 .ct-agents-floating-panel .ct-dispatch-root {
   padding: 6px 8px 8px;
 }
+
+/* Borderless + transparent textarea — the floating panel is the visual container */
+.ct-agents-floating-panel .ct-agents-dispatch-input {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 6px 4px;
+  min-height: 34px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.ct-agents-floating-panel .ct-agents-dispatch-input:focus {
+  outline: none;
+  box-shadow: none;
+}
