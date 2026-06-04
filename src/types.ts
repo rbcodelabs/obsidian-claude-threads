@@ -90,6 +90,13 @@ export interface Thread {
   /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
   lastSummarizedAt?: number;
   /**
+   * Set to true when the user has explicitly renamed this thread via the rename UI.
+   * Prevents the auto-summarizer from overwriting a user-chosen title.
+   * Threads that were never manually renamed (including those auto-titled from the
+   * dispatch input's first message) leave this undefined/false so auto-title applies.
+   */
+  titleUserSet?: boolean;
+  /**
    * Background tasks (Bash run_in_background: true) that started during a session
    * but didn't emit a task_notification before the stream ended. The plugin polls
    * these automatically and clears them when completions arrive.
