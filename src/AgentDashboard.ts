@@ -131,7 +131,7 @@ export class AgentDashboard extends ItemView {
     const dispatchEl = panel.createDiv();
     this.dispatchComponent = new DispatchInput({
       app: this.app,
-      placeholder: 'Dispatch a task... (Enter to start, Shift+Enter for newline)',
+      placeholder: 'Dispatch a task...',
       builtinCommands: [
         { name: 'compact', description: 'Summarize conversation history to free up context' },
         { name: 'clear', description: 'Clear conversation history and start fresh' },
