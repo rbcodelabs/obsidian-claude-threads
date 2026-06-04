@@ -179,6 +179,11 @@ export interface ObsidianMcpServerOptions {
   isThreadRunning?: (id: string) => boolean;
   /** Sends a message to a thread, triggering Claude to process it. */
   sendMessageToThread?: (id: string, message: string) => Promise<void>;
+  /**
+   * Archives a thread: saves it to the vault (if vault persistence is enabled)
+   * then removes it from memory. Cannot be called on the current thread.
+   */
+  archiveThread?: (id: string) => Promise<void>;
 }
 
 /**
@@ -1017,6 +1022,33 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  const boundArchiveThread = tool(
+    'obsidian_archive_thread',
+    [
+      'Archives a thread by ID — saves it to the vault (if vault persistence is enabled) then removes it from memory.',
+      'Use this to close out completed threads, e.g. after merging PRs or finishing release management.',
+      'Cannot archive the current thread.',
+    ].join(' '),
+    {
+      threadId: z.string().describe('ID of the thread to archive'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.archiveThread) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread archiving not available in this context.' }) }], isError: true };
+        }
+        if (args.threadId === options.threadId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot archive the current thread.' }) }], isError: true };
+        }
+        await options.archiveThread(args.threadId);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, archivedThreadId: args.threadId }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }], isError: true };
+      }
+    },
+  );
+
   // ── Vault Bridges tools ───────────────────────────────────────────────────
   // These reach into the vault-bridges plugin API (if installed) so agents can
   // inspect and configure bridges without editing data.json or restarting Obsidian.
@@ -1146,6 +1178,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundGetThreadMessages,
       boundWaitForThread,
       boundSendMessageToThread,
+      boundArchiveThread,
       boundListVaultBridges,
       boundAddVaultBridge,
     ],
