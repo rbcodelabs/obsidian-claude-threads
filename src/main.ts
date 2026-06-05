@@ -90,6 +90,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   persistence!: VaultPersistence;
   inProcessSummarizer!: InProcessSummarizer;
   wakeLock!: WakeLockService;
+  scheduler!: import('./Scheduler').Scheduler;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -166,6 +167,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { InProcessSummarizer } = require('./InProcessSummarizer') as typeof import('./InProcessSummarizer');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Scheduler } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
 
@@ -300,6 +303,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.manager.deleteThread(id);
             await this.saveSettings();
           },
+          onCronCreate: (params) => this.scheduler.createItem(params),
+          onCronList: () => this.scheduler.listItems(),
+          onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
+          onCronDelete: (id) => this.scheduler.deleteItem(id),
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,
@@ -395,6 +402,26 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.loadProjects(this.settings.projects ?? []);
     const savedThreads = this.settings.threads ?? [];
     this.manager.loadThreads(savedThreads);
+
+    // Initialize the built-in scheduler
+    this.scheduler = new Scheduler({
+      getItems: () => this.settings.scheduledItems ?? [],
+      saveItem: async (item) => {
+        if (!this.settings.scheduledItems) this.settings.scheduledItems = [];
+        const idx = this.settings.scheduledItems.findIndex((i) => i.id === item.id);
+        if (idx >= 0) this.settings.scheduledItems[idx] = item;
+        else this.settings.scheduledItems.push(item);
+        await this.saveSettings();
+      },
+      removeItem: async (id) => {
+        this.settings.scheduledItems = (this.settings.scheduledItems ?? []).filter((i) => i.id !== id);
+        await this.saveSettings();
+      },
+      createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
+      sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
+      getDefaultCwd: () => this.getEffectiveCwd(),
+    });
+    this.scheduler.start(this.settings.scheduledItems ?? []);
 
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
     // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
@@ -807,6 +834,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     this.pendingBgTaskTimers.clear();
 
+    // Stop scheduler timers
+    this.scheduler?.destroy();
+
     // Persist thread state
     await this.saveSettings();
   }
@@ -981,6 +1011,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.projects = this.settings.projects ?? [];
     // Ensure secretEnvKeys array exists for installs predating this feature
     this.settings.secretEnvKeys = this.settings.secretEnvKeys ?? [];
+    // Ensure scheduledItems array exists for installs predating this feature
+    this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
     // Clear any garbage written by the SecretComponent picker (stores key names, not values)
@@ -1152,6 +1184,23 @@ class SecretEnvModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
+}
+
+function formatScheduleDescription(schedule: import('./types').ScheduledItemSchedule): string {
+  if (schedule.type === 'interval') {
+    const secs = schedule.intervalSeconds ?? 0;
+    if (secs >= 86400) return `Every ${Math.round(secs / 86400)} day(s)`;
+    if (secs >= 3600) return `Every ${Math.round(secs / 3600)} hour(s)`;
+    if (secs >= 60) return `Every ${Math.round(secs / 60)} minute(s)`;
+    return `Every ${secs}s`;
+  }
+  if (schedule.type === 'daily') return `Daily at ${schedule.timeOfDay ?? '?'}`;
+  if (schedule.type === 'weekly') {
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const days = (schedule.daysOfWeek ?? []).map((d) => dayNames[d] ?? d).join(', ');
+    return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}`;
+  }
+  return 'Unknown schedule';
 }
 
 class ClaudeThreadsSettingTab extends PluginSettingTab {
@@ -1775,6 +1824,44 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           this.display();
         });
       });
+
+    // ── Scheduled Tasks ───────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'Scheduled Tasks' });
+    containerEl.createEl('p', {
+      text: 'Recurring tasks that create a new thread and send a prompt on a schedule. Create and manage schedules by asking Claude: "set up a daily task at 9am to..."',
+      cls: 'ct-settings-desc',
+    });
+
+    const scheduledList = containerEl.createDiv({ cls: 'ct-scheduled-list' });
+    const renderScheduledItems = () => {
+      scheduledList.empty();
+      const items = this.plugin.settings.scheduledItems ?? [];
+      if (items.length === 0) {
+        scheduledList.createEl('p', { text: 'No scheduled tasks yet. Ask Claude to create one.', cls: 'ct-allowed-tools-empty' });
+        return;
+      }
+      for (const item of items) {
+        const desc = formatScheduleDescription(item.schedule);
+        const lastRunStr = item.lastRun ? `Last run: ${new Date(item.lastRun).toLocaleString()}` : 'Never run';
+        const nextRunStr = item.enabled && item.nextRun ? `Next: ${new Date(item.nextRun).toLocaleString()}` : '';
+        new Setting(scheduledList)
+          .setName(item.name)
+          .setDesc(`${desc} - ${lastRunStr}${nextRunStr ? ' - ' + nextRunStr : ''}`)
+          .addToggle((toggle) =>
+            toggle.setValue(item.enabled).onChange(async (val) => {
+              this.plugin.scheduler.updateItem(item.id, { enabled: val });
+              renderScheduledItems();
+            }),
+          )
+          .addButton((btn) =>
+            btn.setIcon('trash').setWarning().setTooltip('Delete').onClick(async () => {
+              this.plugin.scheduler.deleteItem(item.id);
+              renderScheduledItems();
+            }),
+          );
+      }
+    };
+    renderScheduledItems();
 
     // ── Remote Access ─────────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Remote Access' });

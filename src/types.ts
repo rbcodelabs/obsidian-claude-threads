@@ -124,6 +124,36 @@ export interface Project {
   createdAt: number;
 }
 
+export type ScheduleType = 'interval' | 'daily' | 'weekly';
+
+export interface ScheduledItemSchedule {
+  type: ScheduleType;
+  /** For 'interval': seconds between runs (e.g. 3600 = hourly) */
+  intervalSeconds?: number;
+  /** For 'daily' and 'weekly': 24h time string e.g. "09:00" */
+  timeOfDay?: string;
+  /** For 'weekly': array of day numbers 0=Sun...6=Sat */
+  daysOfWeek?: number[];
+}
+
+export interface ScheduledItem {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: ScheduledItemSchedule;
+  enabled: boolean;
+  /** Optional cwd override. Falls back to plugin default. */
+  cwd?: string;
+  /** Optional project ID for new threads */
+  projectId?: string;
+  /** Epoch ms of the last successful run */
+  lastRun?: number;
+  /** Epoch ms of the next scheduled run */
+  nextRun?: number;
+  /** Thread ID of the most recent run */
+  lastThreadId?: string;
+}
+
 export interface RemoteAccessSettings {
   enabled: boolean;
   /** 32-char hex string generated on first enable. Empty string when not yet generated. */
@@ -183,6 +213,8 @@ export interface PluginSettings {
    * Reset to false whenever crash recovery restores threads from vault notes.
    */
   orphanArchiveScanComplete?: boolean;
+  /** Recurring scheduled tasks that fire prompts into new threads. */
+  scheduledItems: ScheduledItem[];
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -215,6 +247,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     pairingCode: null,
     pairingExpiresAt: null,
   },
+  scheduledItems: [],
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {

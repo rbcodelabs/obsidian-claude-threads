@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk/browser';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { App, TFile } from 'obsidian';
+import type { ScheduledItem } from './types';
+import type { SchedulerItemPatch } from './Scheduler';
 import fs from 'fs';
 import os from 'os';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
@@ -186,7 +188,22 @@ export interface ObsidianMcpServerOptions {
    * then removes it from memory. Cannot be called on the current thread.
    */
   archiveThread?: (id: string) => Promise<void>;
+  onCronCreate?: (params: CronCreateParams) => ScheduledItem;
+  onCronList?: () => ScheduledItem[];
+  onCronUpdate?: (id: string, patch: CronUpdatePatch) => ScheduledItem;
+  onCronDelete?: (id: string) => void;
 }
+
+export interface CronCreateParams {
+  name: string;
+  prompt: string;
+  schedule: import('./types').ScheduledItemSchedule;
+  enabled: boolean;
+  cwd?: string;
+  projectId?: string;
+}
+
+export type CronUpdatePatch = SchedulerItemPatch;
 
 /**
  * Creates an MCP server config with Obsidian-specific tools bound to the given App instance.
@@ -1342,6 +1359,130 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Cron / Scheduler tools ────────────────────────────────────────────────
+
+  const boundCronCreate = tool(
+    'CronCreate',
+    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week.",
+    {
+      name: z.string().describe('Human-readable name for this scheduled task'),
+      prompt: z.string().describe('The prompt to send when this item fires'),
+      scheduleType: z.enum(['interval', 'daily', 'weekly']).describe("Schedule type: 'interval', 'daily', or 'weekly'"),
+      intervalSeconds: z.number().optional().describe("Required for 'interval': seconds between runs (e.g. 3600 = hourly)"),
+      timeOfDay: z.string().optional().describe("HH:MM time string, required for 'daily' and 'weekly'"),
+      daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("For 'weekly': day numbers 0=Sun through 6=Sat"),
+      cwd: z.string().optional().describe('Working directory override for spawned threads'),
+      projectId: z.string().optional().describe('Project ID to assign to new threads'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onCronCreate) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronCreate is not available in this context.' }) }], isError: true };
+        }
+        const item = options.onCronCreate({
+          name: args.name,
+          prompt: args.prompt,
+          schedule: {
+            type: args.scheduleType,
+            intervalSeconds: args.intervalSeconds,
+            timeOfDay: args.timeOfDay,
+            daysOfWeek: args.daysOfWeek,
+          },
+          enabled: true,
+          cwd: args.cwd,
+          projectId: args.projectId,
+        });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundCronList = tool(
+    'CronList',
+    'Returns all scheduled items with their id, name, prompt, schedule, enabled state, and last/next run times.',
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.onCronList) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronList is not available in this context.' }) }], isError: true };
+        }
+        const items = options.onCronList();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(items, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundCronUpdate = tool(
+    'CronUpdate',
+    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true.',
+    {
+      id: z.string().describe('ID of the scheduled item to update'),
+      name: z.string().optional().describe('New human-readable name'),
+      prompt: z.string().optional().describe('New prompt text'),
+      enabled: z.boolean().optional().describe('Set to false to pause, true to resume'),
+      intervalSeconds: z.number().optional().describe("New interval in seconds (for 'interval' type)"),
+      timeOfDay: z.string().optional().describe("New HH:MM time (for 'daily' and 'weekly')"),
+      daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("New days of week (for 'weekly')"),
+      cwd: z.string().optional().describe('New working directory override'),
+      projectId: z.string().optional().describe('New project ID'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onCronUpdate) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronUpdate is not available in this context.' }) }], isError: true };
+        }
+        const { id, name, prompt, enabled, intervalSeconds, timeOfDay, daysOfWeek, cwd, projectId } = args;
+        const patch: CronUpdatePatch = {};
+        if (name !== undefined) patch.name = name;
+        if (prompt !== undefined) patch.prompt = prompt;
+        if (enabled !== undefined) patch.enabled = enabled;
+        if (intervalSeconds !== undefined || timeOfDay !== undefined || daysOfWeek !== undefined) {
+          patch.schedule = {};
+          if (intervalSeconds !== undefined) patch.schedule.intervalSeconds = intervalSeconds;
+          if (timeOfDay !== undefined) patch.schedule.timeOfDay = timeOfDay;
+          if (daysOfWeek !== undefined) patch.schedule.daysOfWeek = daysOfWeek;
+        }
+        if (cwd !== undefined) patch.cwd = cwd;
+        if (projectId !== undefined) patch.projectId = projectId;
+        const item = options.onCronUpdate(id, patch);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundCronDelete = tool(
+    'CronDelete',
+    'Permanently deletes a scheduled item by ID.',
+    {
+      id: z.string().describe('ID of the scheduled item to delete'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onCronDelete) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronDelete is not available in this context.' }) }], isError: true };
+        }
+        options.onCronDelete(args.id);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, deletedId: args.id }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -1372,6 +1513,10 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundAddVaultBridge,
       boundGetFileHistory,
       boundRestoreFileVersion,
+      boundCronCreate,
+      boundCronList,
+      boundCronUpdate,
+      boundCronDelete,
     ],
     alwaysLoad: true,
   });
