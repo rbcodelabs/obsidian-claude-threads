@@ -1679,6 +1679,64 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
         }),
       );
 
+    // ── AI Provider ──────────────────────────────────────────────────────
+    containerEl.createEl('h3', { text: 'AI Provider' });
+
+    new Setting(containerEl)
+      .setName('Provider')
+      .setDesc('Which AI backend powers your threads. Anthropic uses the Claude Code CLI; OpenAI routes directly to the GPT-4o / o-series API.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('anthropic', 'Anthropic (Claude Code)')
+          .addOption('openai', 'OpenAI (GPT-4o / o-series)')
+          .setValue(this.plugin.settings.aiProvider)
+          .onChange(async (value) => {
+            this.plugin.settings.aiProvider = value as 'anthropic' | 'openai';
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
+    if (this.plugin.settings.aiProvider === 'openai') {
+      new Setting(containerEl)
+        .setName('OpenAI API key')
+        .setDesc('Your OpenAI secret key (sk-…). Stored in plugin data.')
+        .addText((text) => {
+          text
+            .setPlaceholder('sk-…')
+            .setValue(this.plugin.settings.openAIKey)
+            .onChange(async (value) => {
+              this.plugin.settings.openAIKey = value.trim();
+              await this.plugin.saveSettings();
+            });
+          text.inputEl.type = 'password';
+          return text;
+        });
+
+      new Setting(containerEl)
+        .setName('Model')
+        .setDesc('OpenAI model name. Use "gpt-4o" for Chat Completions, or a Codex / o-series model name for the Responses API.')
+        .addText((text) =>
+          text
+            .setPlaceholder('gpt-4o')
+            .setValue(this.plugin.settings.openAIModel)
+            .onChange(async (value) => {
+              this.plugin.settings.openAIModel = value.trim() || 'gpt-4o';
+              await this.plugin.saveSettings();
+            }),
+        );
+
+      new Setting(containerEl)
+        .setName('Code execution')
+        .setDesc('Attach the built-in code interpreter tool. Only available on Codex / o-series models via the Responses API.')
+        .addToggle((toggle) =>
+          toggle.setValue(this.plugin.settings.openAICodeExecution).onChange(async (value) => {
+            this.plugin.settings.openAICodeExecution = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+    }
+
     // ── Claude Behavior ───────────────────────────────────────────────────
     containerEl.createEl('h3', { text: 'Claude Behavior' });
 
