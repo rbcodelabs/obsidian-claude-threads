@@ -201,8 +201,25 @@ export interface PluginSettings {
    * Empty string disables PTT. Default: "Alt+Space" (Option+Space on Mac).
    */
   pttKey: string;
-  /** OpenAI API key used for Whisper speech-to-text. Stored in data.json (device-local). */
+  /** OpenAI API key used for Whisper speech-to-text and the OpenAI provider. Stored in data.json (device-local). */
   openAIKey: string;
+  /**
+   * Active AI provider. Defaults to 'anthropic' (Claude Agent SDK subprocess).
+   * Set to 'openai' to route sessions through the OpenAI Responses / Chat
+   * Completions API instead.
+   */
+  aiProvider: 'anthropic' | 'openai';
+  /**
+   * OpenAI model name used when aiProvider === 'openai'.
+   * Examples: 'gpt-4o', 'gpt-4o-mini', 'codex-mini-latest'.
+   * Codex models automatically use the Responses API; others use Chat Completions.
+   */
+  openAIModel: string;
+  /**
+   * When true and aiProvider === 'openai' with a Codex model, attaches the
+   * code_interpreter container tool so the model can execute code in a sandbox.
+   */
+  openAICodeExecution: boolean;
   /**
    * List of environment variable names whose values are stored securely in the OS
    * keychain via app.secretStorage under the key `ct-secret-<varName>`. Only the
@@ -249,6 +266,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   hasSeenWelcome: false,
   pttKey: 'Alt+Space',
   openAIKey: '',
+  aiProvider: 'anthropic',
+  openAIModel: 'gpt-4o',
+  openAICodeExecution: false,
   secretEnvKeys: [],
   remoteAccess: {
     enabled: false,

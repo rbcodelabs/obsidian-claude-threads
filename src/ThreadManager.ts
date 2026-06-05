@@ -1,4 +1,5 @@
-import { ClaudeSession } from './ClaudeSession';
+import type { AIProvider } from './providers/AIProvider';
+import { createProvider } from './providers/ProviderFactory';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
@@ -39,7 +40,7 @@ export type ThreadEvent =
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
-  private sessions: Map<string, ClaudeSession> = new Map();
+  private sessions: Map<string, AIProvider> = new Map();
   private queuedMessages: Map<string, { text: string; images?: ImageAttachment[] }[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
@@ -434,7 +435,7 @@ export class ThreadManager {
     thread.updatedAt = Date.now();
     this.emit(threadId, { type: 'user_message_added', message: userMsg });
 
-    const session = new ClaudeSession(this.settings.claudeBinaryPath);
+    const session = createProvider(this.settings);
     this.sessions.set(threadId, session);
     this.emit(threadId, { type: 'streaming_start' });
 
@@ -531,13 +532,22 @@ export class ThreadManager {
         ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
         : promptText;
 
-    await session.run(
-      effectivePrompt,
-      thread.sessionId,
-      cwdAtStart,
-      this.settings.permissionMode,
-      this.settings.extraEnv,
-      {
+    await session.run({
+      prompt: effectivePrompt,
+      resumeSessionId: session.capabilities.sessionResumption ? thread.sessionId : undefined,
+      cwd: cwdAtStart,
+      permissionMode: this.settings.permissionMode,
+      extraEnvRaw: this.settings.extraEnv,
+      additionalDirectories: additionalDirs,
+      model,
+      images,
+      appendSystemPrompt,
+      mcpServers: session.capabilities.mcpServers ? sessionMcpServers : undefined,
+      secretEnv: resolvedSecretEnv,
+      // Provide full history for providers that cannot resume by sessionId (e.g. OpenAI).
+      // AnthropicProvider ignores this when resumeSessionId is set.
+      conversationHistory: priorMessages,
+      callbacks: {
         onToken: (text) => {
           streamingContent += text;
           this.emit(threadId, { type: 'token', text });
@@ -696,14 +706,7 @@ export class ThreadManager {
           this.emit(threadId, { type: 'tool_result_images', images });
         },
       },
-      additionalDirs,
-      model,
-      images,
-      appendSystemPrompt,
-      sessionMcpServers,
-      resolvedSecretEnv,
-      this.settings.disallowedTools,
-    );
+    });
 
     if (completedSuccessfully) {
       const queue = this.queuedMessages.get(threadId);
