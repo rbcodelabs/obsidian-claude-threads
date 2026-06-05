@@ -13,6 +13,29 @@
 | `src/VaultPersistence.ts` | Vault note save/load/archive |
 | `src/types.ts` | Shared TypeScript types (`Thread`, `ThreadStatus`, etc.) |
 | `src/DispatchInput.ts` | Reusable dispatch textarea component used across all panels |
+| `src/providers/AIProvider.ts` | `AIProvider` interface, `SessionCallbacks`, `RunOptions` — the shared provider contract |
+| `src/providers/AnthropicProvider.ts` | Anthropic adapter (Claude Code CLI via Agent SDK) |
+| `src/providers/OpenAIProvider.ts` | OpenAI adapter (Responses API for Codex/o-series; Chat Completions for GPT-4o) |
+| `src/providers/ProviderFactory.ts` | `createProvider(settings)` — routes to the right adapter based on `settings.aiProvider` |
+
+---
+
+## AI Provider Layer (`src/providers/`)
+
+`ThreadManager.sendMessage()` calls `createProvider(settings)` at the start of each turn, so provider changes take effect on the next message without a plugin reload.
+
+```
+PluginSettings.aiProvider === 'anthropic'  →  AnthropicProvider
+PluginSettings.aiProvider === 'openai'     →  OpenAIProvider
+```
+
+Adding a new provider:
+1. Implement `AIProvider` from `src/providers/AIProvider.ts`
+2. Export a `*_CAPABILITIES: ProviderCapabilities` const from your file
+3. Add a branch in `ProviderFactory.createProvider()` and `getProviderCapabilities()`
+4. Add the new `aiProvider` option to the dropdown in `main.ts` settings tab
+
+`ClaudeSession.ts` is now a backward-compat shim — it re-exports `AnthropicProvider as ClaudeSession`. Do not add new logic there.
 
 ---
 
