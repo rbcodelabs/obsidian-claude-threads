@@ -1147,7 +1147,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     // Return type is unknown — Obsidian Sync's internal API may return a raw array
     // OR a wrapped object (e.g. { versions: [...] }). Use parseSyncHistory() to normalise.
     getHistory(file: TFile): Promise<unknown>;
-    downloadVersion(file: TFile, version: SyncVersion): Promise<string | null>;
+    // downloadVersion / restoreVersion / similar — name is undocumented.
+    // Use findDownloadMethod() to locate it at runtime.
+    [key: string]: unknown;
   };
 
   function getSyncPlugin(): ObsidianSyncPlugin | null {
@@ -1174,6 +1176,28 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       }
     }
     return { versions: [], raw };
+  }
+
+  /**
+   * Find the restore/download method on the Sync plugin instance by trying known
+   * candidate names. Returns { name, fn } if found, or { availableMethods } for
+   * debugging when none match.
+   */
+  function findDownloadMethod(sync: ObsidianSyncPlugin): (
+    | { name: string; fn: (file: TFile, version: SyncVersion) => Promise<string | null> }
+    | { availableMethods: string[] }
+  ) {
+    const candidates = ['downloadVersion', 'restoreVersion', 'downloadFile', 'restore', 'getVersion'];
+    for (const name of candidates) {
+      if (typeof sync[name] === 'function') {
+        return { name, fn: (sync[name] as (file: TFile, v: SyncVersion) => Promise<string | null>).bind(sync) };
+      }
+    }
+    // None matched — surface all function-valued keys for diagnosis
+    const availableMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(sync))
+      .concat(Object.keys(sync))
+      .filter((k) => typeof sync[k] === 'function');
+    return { availableMethods };
   }
 
   const boundGetFileHistory = tool(
@@ -1272,7 +1296,17 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
-        const content = await sync.downloadVersion(file, version);
+        const downloadResult = findDownloadMethod(sync);
+        if ('availableMethods' in downloadResult) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({
+              error: 'Could not find a restore method on the Obsidian Sync plugin. Please report the available methods.',
+              availableMethods: downloadResult.availableMethods,
+            }) }],
+            isError: true,
+          };
+        }
+        const content = await downloadResult.fn(file, version);
         if (content === null) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not download version content from Obsidian Sync. The version may no longer be available.' }) }],
