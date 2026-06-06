@@ -1183,17 +1183,16 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
    * candidate names. Returns { name, fn } if found, or { availableMethods } for
    * debugging when none match.
    */
-  function findDownloadMethod(sync: ObsidianSyncPlugin): (
-    | { name: string; fn: (file: TFile, version: SyncVersion) => Promise<string | null> }
+  function findRestoreMethod(sync: ObsidianSyncPlugin): (
+    | { name: string; fn: (...args: unknown[]) => Promise<unknown> }
     | { availableMethods: string[] }
   ) {
-    const candidates = ['downloadVersion', 'restoreVersion', 'downloadFile', 'restore', 'getVersion'];
+    const candidates = ['restoreVersion', 'downloadVersion', 'downloadFile', 'restore', 'getVersion'];
     for (const name of candidates) {
       if (typeof sync[name] === 'function') {
-        return { name, fn: (sync[name] as (file: TFile, v: SyncVersion) => Promise<string | null>).bind(sync) };
+        return { name, fn: (sync[name] as (...args: unknown[]) => Promise<unknown>).bind(sync) };
       }
     }
-    // None matched — surface all function-valued keys for diagnosis
     const availableMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(sync))
       .concat(Object.keys(sync))
       .filter((k) => typeof sync[k] === 'function');
@@ -1282,10 +1281,14 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         }
         const { versions: history, raw: rawShape } = parseSyncHistory(await sync.getHistory(file));
         if (history.length === 0 && rawShape !== null) {
+          // rawShape may be circular — only surface its keys, never the value itself
+          const shapeKeys = rawShape && typeof rawShape === 'object'
+            ? Object.keys(rawShape as object)
+            : [typeof rawShape];
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({
               error: 'Obsidian Sync returned an unrecognised history shape. Please report this.',
-              raw: rawShape,
+              shapeKeys,
             }) }],
             isError: true,
           };
@@ -1306,7 +1309,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
           device: String(version.device ?? ''),
         };
 
-        const downloadResult = findDownloadMethod(sync);
+        const downloadResult = findRestoreMethod(sync);
         if ('availableMethods' in downloadResult) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({
@@ -1316,50 +1319,65 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
-        const downloaded = await downloadResult.fn(file, version);
-        // The API may return null/undefined on failure.
-        if (downloaded == null) {
+        // restoreVersion() calls JSON.stringify on the version object internally.
+        // The version objects from Obsidian Sync contain RxJS observable state
+        // (t._closed[0].e circular chain) that JSON.stringify cannot handle.
+        // Workaround: temporarily replace JSON.stringify with a circular-safe
+        // version for the duration of the restoreVersion call, then restore it.
+        const _origStringify = JSON.stringify;
+        JSON.stringify = function(value: unknown, replacer?: unknown, space?: unknown): string {
+          const seen = new WeakSet<object>();
+          function safeReplacer(key: string, val: unknown): unknown {
+            if (val !== null && typeof val === 'object') {
+              if (seen.has(val as object)) return '[Circular]';
+              seen.add(val as object);
+            }
+            return typeof replacer === 'function'
+              ? (replacer as (k: string, v: unknown) => unknown)(key, val)
+              : val;
+          }
+          return _origStringify.call(JSON, value, safeReplacer as never, space as never);
+        };
+
+        // Try argument shapes in order — the correct signature is undocumented.
+        // restoreVersion(uid) is the winner: it restores the file as a side effect
+        // and returns undefined. We must NOT call vault.modify afterwards.
+        const argShapes: Array<{ label: string; args: unknown[] }> = [
+          { label: '(uid)',           args: [version.uid] },
+          { label: '(file, uid)',     args: [file, version.uid] },
+          { label: '(file, version)', args: [file, version] },
+        ];
+
+        let succeeded = false;
+        let downloaded: unknown;
+        let lastErr = '';
+        try {
+          for (const shape of argShapes) {
+            try {
+              downloaded = await downloadResult.fn(...shape.args);
+              succeeded = true;
+              break;
+            } catch (dlErr: unknown) {
+              lastErr = dlErr instanceof Error ? dlErr.message : String(dlErr);
+            }
+          }
+        } finally {
+          JSON.stringify = _origStringify;
+        }
+
+        if (!succeeded) {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not download version content from Obsidian Sync. The version may no longer be available.' }) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `All restore attempts failed. Last error: ${lastErr}` }) }],
             isError: true,
           };
         }
 
-        // Extract the actual file content string from whatever the API returned.
-        // The Obsidian Sync internals may return a plain string, or a wrapped object
-        // like { content: '...' } / { data: '...' } / { text: '...' }.
-        // Never call JSON.stringify or String() on the raw value — it may be a circular
-        // Obsidian internal object.
-        let fileContent: string | null = null;
-        if (typeof downloaded === 'string') {
-          fileContent = downloaded;
-        } else if (downloaded && typeof downloaded === 'object') {
-          const obj = downloaded as Record<string, unknown>;
-          for (const key of ['content', 'data', 'text', 'body', 'result']) {
-            if (typeof obj[key] === 'string') { fileContent = obj[key] as string; break; }
-          }
-          if (fileContent === null) {
-            // Surface keys only (not values) to avoid serializing the circular object.
-            const keys = [
-              ...Object.keys(obj),
-              ...Object.getOwnPropertyNames(Object.getPrototypeOf(obj) ?? {}),
-            ].filter((k, i, a) => a.indexOf(k) === i);
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify({
-                error: `${downloadResult.name}() returned an object with an unrecognised shape. Report the keys so the correct property can be identified.`,
-                keys,
-              }) }],
-              isError: true,
-            };
-          }
+        // If the method returned a string, it's the file content and we write it ourselves.
+        // If it returned undefined/null, restoreVersion handled the write as a side effect.
+        if (typeof downloaded === 'string' && downloaded.length > 0) {
+          await app.vault.modify(file, downloaded);
         }
-        if (fileContent === null) {
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not extract file content from the Sync API response.' }) }],
-            isError: true,
-          };
-        }
-        await app.vault.modify(file, fileContent);
+
         return {
           content: [{
             type: 'text' as const,
