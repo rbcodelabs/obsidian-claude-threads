@@ -1674,6 +1674,23 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Hidden built-in tools')
+      .setDesc('Comma-separated list of Claude Code built-in tools to hide from agent sessions. The Cron* tools are hidden by default since the plugin provides its own scheduler.')
+      .addText((text) =>
+        text
+          .setPlaceholder('CronCreate, CronDelete, CronList, CronUpdate')
+          .setValue(this.plugin.settings.disallowedTools.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.disallowedTools = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Opus escalation')
       .setDesc('When the escalation keyword appears in a message, route that turn to claude-opus instead of the default model. The keyword is stripped before sending.')
       .addToggle((toggle) =>

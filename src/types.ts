@@ -178,6 +178,7 @@ export interface PluginSettings {
   opusEscalationEnabled: boolean;
   opusEscalationKeyword: string;
   alwaysAllowedTools: string[];
+  disallowedTools: string[];
   threads: Thread[];
   projects: Project[];
   wakeLockEnabled: boolean;
@@ -230,6 +231,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   opusEscalationEnabled: true,
   opusEscalationKeyword: '/opus',
   alwaysAllowedTools: [],
+  disallowedTools: ['CronCreate', 'CronDelete', 'CronList', 'CronUpdate'],
   threads: [],
   projects: [],
   wakeLockEnabled: true,

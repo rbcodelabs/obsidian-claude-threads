@@ -50,6 +50,7 @@ export class ClaudeSession {
     appendSystemPrompt?: string,
     mcpServers?: Record<string, McpServerConfig>,
     secretEnv?: Record<string, string>,
+    disallowedTools?: string[],
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -102,6 +103,7 @@ export class ClaudeSession {
     } else {
       console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
     }
+    if (disallowedTools?.length) options.disallowedTools = disallowedTools;
 
     debugLog('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
