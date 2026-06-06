@@ -1051,6 +1051,136 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Obsidian Sync version history tools ──────────────────────────────────
+  // These reach into the internal sync plugin to expose file version history
+  // and restore capability as MCP tools so Claude can help recover files.
+
+  type SyncVersion = {
+    uid: number;
+    ts: number;    // Unix timestamp in milliseconds
+    size: number;
+    device: string;
+    folder: string;
+    extension: string;
+  };
+
+  type ObsidianSyncPlugin = {
+    getHistory(file: TFile): Promise<SyncVersion[]>;
+    downloadVersion(file: TFile, version: SyncVersion): Promise<string | null>;
+  };
+
+  function getSyncPlugin(): ObsidianSyncPlugin | null {
+    const internal = (app as unknown as {
+      internalPlugins?: { plugins?: Record<string, { instance?: unknown; enabled?: boolean }> };
+    }).internalPlugins;
+    const plugin = internal?.plugins?.['sync'];
+    if (!plugin?.enabled) return null;
+    return plugin.instance as ObsidianSyncPlugin ?? null;
+  }
+
+  const boundGetFileHistory = tool(
+    'obsidian_get_file_history',
+    [
+      'Returns the Obsidian Sync version history for a file.',
+      'Each entry includes a uid (version ID for use with obsidian_restore_file_version), ISO timestamp, file size in bytes, and the device that saved it.',
+      'Requires Obsidian Sync to be active and the file to be synced.',
+    ].join(' '),
+    { path: z.string().describe('Vault-relative path of the file') },
+    async (args, _extra) => {
+      try {
+        const file = app.vault.getAbstractFileByPath(args.path);
+        if (!(file instanceof TFile)) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `File not found: ${args.path}` }) }],
+            isError: true,
+          };
+        }
+        const sync = getSyncPlugin();
+        if (!sync) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Obsidian Sync is not available or not enabled.' }) }],
+            isError: true,
+          };
+        }
+        const history = await sync.getHistory(file);
+        const versions = history.map((v) => ({
+          uid: v.uid,
+          date: new Date(v.ts).toISOString(),
+          ts: v.ts,
+          size: v.size,
+          device: v.device,
+        }));
+        return { content: [{ type: 'text' as const, text: JSON.stringify(versions, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundRestoreFileVersion = tool(
+    'obsidian_restore_file_version',
+    [
+      'Restores a specific version of a file from Obsidian Sync history, overwriting the current content.',
+      'Use obsidian_get_file_history first to find the uid of the version to restore.',
+      'The current file content is preserved in sync history before the restore.',
+      'Requires Obsidian Sync to be active.',
+    ].join(' '),
+    {
+      path: z.string().describe('Vault-relative path of the file to restore'),
+      uid: z.number().int().describe('Version UID from obsidian_get_file_history to restore'),
+    },
+    async (args, _extra) => {
+      try {
+        const file = app.vault.getAbstractFileByPath(args.path);
+        if (!(file instanceof TFile)) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `File not found: ${args.path}` }) }],
+            isError: true,
+          };
+        }
+        const sync = getSyncPlugin();
+        if (!sync) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Obsidian Sync is not available or not enabled.' }) }],
+            isError: true,
+          };
+        }
+        const history = await sync.getHistory(file);
+        const version = history.find((v) => v.uid === args.uid);
+        if (!version) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Version uid ${args.uid} not found in history for ${args.path}. Use obsidian_get_file_history to list available versions.` }) }],
+            isError: true,
+          };
+        }
+        const content = await sync.downloadVersion(file, version);
+        if (content === null) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not download version content from Obsidian Sync. The version may no longer be available.' }) }],
+            isError: true,
+          };
+        }
+        await app.vault.modify(file, content);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              path: args.path,
+              restoredUid: args.uid,
+              restoredDate: new Date(version.ts).toISOString(),
+              device: version.device,
+            }, null, 2),
+          }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
   // ── Vault Bridges tools ───────────────────────────────────────────────────
   // These reach into the vault-bridges plugin API (if installed) so agents can
   // inspect and configure bridges without editing data.json or restarting Obsidian.
@@ -1183,6 +1313,8 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundArchiveThread,
       boundListVaultBridges,
       boundAddVaultBridge,
+      boundGetFileHistory,
+      boundRestoreFileVersion,
     ],
     alwaysLoad: true,
   });
