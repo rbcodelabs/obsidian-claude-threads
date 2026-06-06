@@ -186,6 +186,12 @@ export interface ObsidianMcpServerOptions {
    * then removes it from memory. Cannot be called on the current thread.
    */
   archiveThread?: (id: string) => Promise<void>;
+  /**
+   * When false, the obsidian_open_url tool is excluded from the MCP server.
+   * Should be false when the Web Viewer core plugin is disabled or the user
+   * has opted out in settings. Defaults to true.
+   */
+  enableOpenUrl?: boolean;
 }
 
 /**
@@ -1229,7 +1235,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundExitWorktree,
       boundListCommands,
       boundExecuteCommand,
-      boundOpenUrl,
+      ...(options.enableOpenUrl !== false ? [boundOpenUrl] : []),
       boundForkConversation,
       boundGetCurrentThread,
       boundListThreads,

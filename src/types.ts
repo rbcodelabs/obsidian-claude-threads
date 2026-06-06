@@ -183,6 +183,12 @@ export interface PluginSettings {
    * Reset to false whenever crash recovery restores threads from vault notes.
    */
   orphanArchiveScanComplete?: boolean;
+  /**
+   * When true, the obsidian_open_url MCP tool is registered and available to Claude.
+   * Only takes effect if the Obsidian Web Viewer core plugin is also enabled.
+   * Defaults to true so the tool is available out of the box.
+   */
+  enableWebViewerTool?: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -215,6 +221,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     pairingCode: null,
     pairingExpiresAt: null,
   },
+  enableWebViewerTool: true,
 };
 
 export function parseExtraEnv(raw: string): Record<string, string> {
