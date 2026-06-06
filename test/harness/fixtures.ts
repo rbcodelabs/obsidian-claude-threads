@@ -187,6 +187,33 @@ Idle connections are released after 30 s. Run \`npm test\` — all existing DB t
   },
 ];
 
+// ─── Thread 5: Wikilink rendering ────────────────────────────────────────────
+// Used by the wikilink-rendering screenshot test to verify that [[wikilinks]]
+// in assistant messages render as clickable internal links, not raw text.
+
+const thread5Messages: ChatMessage[] = [
+  {
+    id: 'msg-t5-1',
+    role: 'user',
+    content: 'Where did we put the golden wealth research?',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-t5-2',
+    role: 'assistant',
+    content: `The research is saved in your vault. Here are the relevant notes:
+
+- [[Claude/golden-wealth-amplify-teardown-2026-06-06]] — full teardown with recommendations
+- [[Projects/HipTrip/Market Research]] — supporting competitive context
+- See also [[Daily/2026-06-06|today's daily note]] for the session link
+
+You can open any of them directly from here.`,
+    timestamp: T3 + 15000,
+    cost: 0.0008,
+    summary: 'Pointed to three relevant vault notes using Obsidian wikilinks.',
+  },
+];
+
 // ─── Exported fixtures ────────────────────────────────────────────────────────
 
 export const fixtureThreads: Thread[] = [
@@ -227,5 +254,13 @@ export const fixtureThreads: Thread[] = [
     messages: thread4Messages,
     createdAt: T3 - 60000,
     updatedAt: T3 + 40000,
+  },
+  {
+    id: 'thread-wikilinks',
+    title: 'Wikilink rendering test',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread5Messages,
+    createdAt: T3 - 120000,
+    updatedAt: T3 + 15000,
   },
 ];
