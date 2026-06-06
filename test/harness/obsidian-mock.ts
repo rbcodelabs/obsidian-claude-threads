@@ -312,3 +312,25 @@ export class Notice {
 }
 
 export class FileSystemAdapter {}
+
+/**
+ * Mock for Obsidian's MarkdownRenderer — used by ThreadsView and MobileView.
+ * In the real plugin this calls into Obsidian's internal Markdown pipeline
+ * (which handles [[wikilinks]] etc.). For the test harness we render via
+ * `marked` so that code blocks, bold, etc. look correct in screenshots.
+ */
+export class MarkdownRenderer {
+  static async render(
+    _app: unknown,
+    markdown: string,
+    el: HTMLElement,
+    _sourcePath: string,
+    _component: unknown,
+  ): Promise<void> {
+    // Dynamic import keeps this optional at type-check time and avoids
+    // a circular-import issue in the esbuild harness bundle.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { marked } = require('marked') as typeof import('marked');
+    el.innerHTML = await marked(markdown, { async: true });
+  }
+}
