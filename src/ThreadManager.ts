@@ -694,6 +694,7 @@ export class ThreadManager {
       appendSystemPrompt,
       sessionMcpServers,
       resolvedSecretEnv,
+      this.settings.disallowedTools,
     );
 
     if (completedSuccessfully) {

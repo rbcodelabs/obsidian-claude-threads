@@ -33,7 +33,7 @@ if (!fs.existsSync(outdir)) fs.mkdirSync(outdir, { recursive: true });
 
 function copyToObsidian() {
   const dirs = [];
-  if (pluginDir) dirs.push(pluginDir);
+  if (pluginDir && fs.existsSync(pluginDir)) dirs.push(pluginDir);
   for (const v of extraVaults) if (fs.existsSync(v)) dirs.push(v);
   for (const dir of dirs) {
     for (const file of ['main.js', 'styles.css', 'manifest.json']) {
