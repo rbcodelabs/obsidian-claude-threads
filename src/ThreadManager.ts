@@ -819,6 +819,7 @@ function buildEnvironmentSystemPrompt(
     '- ScheduleWakeup injects the given prompt as a new message into this thread after the delay.',
     '- obsidian_list_commands returns all registered Obsidian commands (id + name); pass a query to filter. Call this before obsidian_execute_command to look up the correct command ID.',
     '- obsidian_execute_command triggers any Obsidian command by ID — useful for vault-bridge sync, git push, toggling editor modes, etc.',
+    '- obsidian_open_url opens a URL directly in the Obsidian Web Viewer panel (reuses an existing tab by default). Use this to open local dev servers, HTML files, or any web page without the user having to type the URL.',
   );
 
   return lines.join('\n');

@@ -826,6 +826,62 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Web Viewer tool ───────────────────────────────────────────────────────────
+  // Opens a URL directly in Obsidian's built-in Web Viewer panel.
+  // Falls back to the system browser if the webviewer view type is unavailable
+  // (e.g. on mobile or if the core plugin is disabled).
+
+  const boundOpenUrl = tool(
+    'obsidian_open_url',
+    [
+      'Opens a URL in the Obsidian Web Viewer panel.',
+      'Reuses an existing webviewer tab if one is open; otherwise opens the URL in a new tab.',
+      'Use this to open local dev servers (e.g. http://localhost:8765/), web pages, or HTML files served over HTTP.',
+      'Falls back to the system browser if the Web Viewer core plugin is not available.',
+    ].join(' '),
+    {
+      url: z.string().describe('The URL to open (e.g. "http://localhost:8765/index.html")'),
+      newTab: z.boolean().optional().describe('Force opening in a new tab even if a webviewer tab is already open (default: false)'),
+    },
+    async (args, _extra) => {
+      try {
+        const { url, newTab = false } = args;
+
+        // Try to find an existing webviewer leaf to reuse
+        const existing = app.workspace.getLeavesOfType('webviewer');
+        let leaf = (!newTab && existing.length > 0) ? existing[0] : null;
+
+        if (!leaf) {
+          // Open a new split/tab — use 'tab' to keep it non-destructive
+          leaf = app.workspace.getLeaf('tab');
+        }
+
+        // Reveal the leaf so it's visible
+        app.workspace.revealLeaf(leaf);
+
+        // Set the webviewer view state with the URL
+        await leaf.setViewState({
+          type: 'webviewer',
+          active: true,
+          state: { url },
+        });
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ success: true, url, reusedTab: !newTab && existing.length > 0 }, null, 2),
+          }],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }, null, 2) }],
+          isError: true,
+        };
+      }
+    },
+  );
+
   const boundForkConversation = tool(
     'fork_conversation',
     [
@@ -1303,6 +1359,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundExitWorktree,
       boundListCommands,
       boundExecuteCommand,
+      boundOpenUrl,
       boundForkConversation,
       boundGetCurrentThread,
       boundListThreads,
