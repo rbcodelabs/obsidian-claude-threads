@@ -78,7 +78,17 @@ const pluginDir = path.join(vaultPath, '.obsidian', 'plugins', 'claude-threads')
 // ---------------------------------------------------------------------------
 
 console.log('Building plugin...');
-execSync('npm run build', { cwd: repoRoot, stdio: 'inherit' });
+try {
+  execSync('npm run build', { cwd: repoRoot, stdio: 'inherit' });
+} catch (err) {
+  // The build step may fail if OBSIDIAN_PLUGIN_DIR or extraVaults paths don't exist on
+  // this machine (the obsidian-sync esbuild plugin throws on missing destinations).
+  // That's fine as long as dist/main.js was produced — the test vault copy below handles it.
+  if (!fs.existsSync(path.join(repoRoot, 'dist', 'main.js'))) {
+    throw err; // real build failure — re-throw
+  }
+  console.log('Warning: build sync step failed but dist/ was produced — continuing.');
+}
 
 // Re-read version from dist/manifest.json now that the build is done
 try {
