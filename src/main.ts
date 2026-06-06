@@ -180,6 +180,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
       try {
         const mcpServer = createObsidianMcpServer(this.app, {
+          enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
           initialCwd,
           onSetCwd: (newCwd: string) => {
             this.manager.setThreadCwd(threadId, newCwd);
@@ -1033,6 +1034,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 }
 
+/**
+ * Returns true when the Obsidian Web Viewer core plugin is installed and enabled.
+ * The Web Viewer's internal plugin ID in Obsidian's core plugin registry is "webviewer".
+ */
+function isWebViewerEnabled(app: App): boolean {
+  type InternalPlugins = { plugins: Record<string, { enabled: boolean }> };
+  return (app as unknown as { internalPlugins: InternalPlugins })
+    .internalPlugins?.plugins?.['webviewer']?.enabled === true;
+}
+
 function generateRoomId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -1395,6 +1406,27 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    // ── Web Viewer tool ──────────────────────────────────────────────────────
+    {
+      const wvAvailable = isWebViewerEnabled(this.plugin.app);
+      new Setting(containerEl)
+        .setName('Web Viewer tool (obsidian_open_url)')
+        .setDesc(
+          wvAvailable
+            ? 'Allow Claude to open URLs directly in the Obsidian Web Viewer panel without you having to type them.'
+            : 'Requires the Web Viewer core plugin — enable it in Obsidian → Settings → Core Plugins → Web Viewer, then reopen this settings tab.',
+        )
+        .addToggle((toggle) => {
+          toggle
+            .setValue(wvAvailable && (this.plugin.settings.enableWebViewerTool ?? true))
+            .setDisabled(!wvAvailable)
+            .onChange(async (value) => {
+              this.plugin.settings.enableWebViewerTool = value;
+              await this.plugin.saveSettings();
+            });
+        });
+    }
 
     new Setting(containerEl)
       .setName('Claude binary path')
