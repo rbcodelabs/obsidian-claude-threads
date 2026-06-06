@@ -1317,15 +1317,48 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
           };
         }
         const downloaded = await downloadResult.fn(file, version);
-        // The API may return a string (file content) or null/undefined on failure.
+        // The API may return null/undefined on failure.
         if (downloaded == null) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not download version content from Obsidian Sync. The version may no longer be available.' }) }],
             isError: true,
           };
         }
-        // Coerce to string defensively in case the API returns a Buffer or similar.
-        const fileContent = typeof downloaded === 'string' ? downloaded : String(downloaded);
+
+        // Extract the actual file content string from whatever the API returned.
+        // The Obsidian Sync internals may return a plain string, or a wrapped object
+        // like { content: '...' } / { data: '...' } / { text: '...' }.
+        // Never call JSON.stringify or String() on the raw value — it may be a circular
+        // Obsidian internal object.
+        let fileContent: string | null = null;
+        if (typeof downloaded === 'string') {
+          fileContent = downloaded;
+        } else if (downloaded && typeof downloaded === 'object') {
+          const obj = downloaded as Record<string, unknown>;
+          for (const key of ['content', 'data', 'text', 'body', 'result']) {
+            if (typeof obj[key] === 'string') { fileContent = obj[key] as string; break; }
+          }
+          if (fileContent === null) {
+            // Surface keys only (not values) to avoid serializing the circular object.
+            const keys = [
+              ...Object.keys(obj),
+              ...Object.getOwnPropertyNames(Object.getPrototypeOf(obj) ?? {}),
+            ].filter((k, i, a) => a.indexOf(k) === i);
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({
+                error: `${downloadResult.name}() returned an object with an unrecognised shape. Report the keys so the correct property can be identified.`,
+                keys,
+              }) }],
+              isError: true,
+            };
+          }
+        }
+        if (fileContent === null) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not extract file content from the Sync API response.' }) }],
+            isError: true,
+          };
+        }
         await app.vault.modify(file, fileContent);
         return {
           content: [{
