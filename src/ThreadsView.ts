@@ -1112,6 +1112,17 @@ export class ThreadsView extends ItemView {
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
     await MarkdownRenderer.render(this.app, markdown, el, '', this);
+    // Wire up internal-link click handlers. MarkdownRenderer renders [[wikilinks]]
+    // as <a class="internal-link" data-href="..."> but does not attach navigation
+    // handlers in non-document contexts — we do it manually.
+    el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
+        void this.app.workspace.openLinkText(href, '', false);
+      });
+    });
   }
 
   /**
