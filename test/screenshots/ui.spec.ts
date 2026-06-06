@@ -16,6 +16,23 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });
 
+  test('wikilink rendering in assistant message', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Switch to the thread whose assistant message contains [[wikilinks]]
+    await page.evaluate(() => (window as any).__view.focusThread('thread-wikilinks'));
+    await page.waitForTimeout(200);
+    // Wikilinks should render as <a> tags, not as raw [[...]] text
+    const rawBrackets = await page.locator('.ct-messages').innerText();
+    if (rawBrackets.includes('[[')) {
+      throw new Error('[[wikilinks]] were not rendered — raw bracket text found in message');
+    }
+    await expect(page).toHaveScreenshot('wikilink-rendering.png', { fullPage: true });
+  });
+
   test('slash command autocomplete', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
