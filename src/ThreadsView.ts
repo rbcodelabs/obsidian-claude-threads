@@ -114,8 +114,6 @@ export class ThreadsView extends ItemView {
   // Cleared on 'message' or 'done' for the corresponding thread.
   private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[] }> = new Map();
 
-  // ResizeObserver for the floating input panel (keeps --ct-panel-height current)
-  private panelResizeObserver: ResizeObserver | null = null;
   private floatingPanelEl!: HTMLElement;
 
   private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
@@ -361,8 +359,6 @@ export class ThreadsView extends ItemView {
     this.unsubscribe?.();
     this.stopStatusLineInterval();
     this.dispatchInput?.destroy();
-    this.panelResizeObserver?.disconnect();
-    this.panelResizeObserver = null;
   }
 
   private buildUI(): void {
@@ -396,7 +392,8 @@ export class ThreadsView extends ItemView {
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
-    const floatingPanel = this.mainEl.createDiv('ct-floating-panel');
+    const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
+    const floatingPanel = panelWrapper.createDiv('ct-floating-panel');
     this.floatingPanelEl = floatingPanel;
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
@@ -438,17 +435,8 @@ export class ThreadsView extends ItemView {
 
     this.contextFooterEl = panelContext.createDiv('ct-context-footer ct-hidden');
 
-    // Keep messages scroll clearance in sync with the floating panel height.
-    // scrollToBottom() also re-syncs this inline inside its rAF so the value
-    // is always fresh even if ResizeObserver hasn't fired yet.
-    this.panelResizeObserver = new ResizeObserver(() => {
-      if (!this.floatingPanelEl) return;
-      const h = this.floatingPanelEl.offsetHeight;
-      if (h > 0) {
-        this.messagesEl.style.setProperty('--ct-panel-height', `${h + 43}px`);
-      }
-    });
-    this.panelResizeObserver.observe(floatingPanel);
+    // No ResizeObserver needed — the panel is an in-flow flex child (ct-panel-wrapper),
+    // so the browser automatically shrinks ct-messages to make room. No CSS variable sync required.
   }
 
   private renderProjectBar(): void {
@@ -1112,6 +1100,17 @@ export class ThreadsView extends ItemView {
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
     await MarkdownRenderer.render(this.app, markdown, el, '', this);
+    // Wire up internal-link click handlers. MarkdownRenderer renders [[wikilinks]]
+    // as <a class="internal-link" data-href="..."> but does not attach navigation
+    // handlers in non-document contexts — we do it manually.
+    el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
+        void this.app.workspace.openLinkText(href, '', false);
+      });
+    });
   }
 
   /**
@@ -1849,20 +1848,10 @@ export class ThreadsView extends ItemView {
   private scrollToBottom(): void {
     // Use rAF so we read scrollHeight after the browser has reflowed the DOM.
     // Without this, prepending a tool-call pill and immediately reading
-    // scrollHeight can return a stale value that undershoots the new bottom,
-    // leaving the pill hidden behind the floating input panel.
+    // scrollHeight can return a stale value that undershoots the new bottom.
+    // No panel-height sync needed — ct-panel-wrapper is an in-flow flex child
+    // so the browser keeps ct-messages sized correctly automatically.
     requestAnimationFrame(() => {
-      // Re-sync panel clearance synchronously inside the rAF so it's always
-      // current when we read scrollHeight. offsetHeight = full border-box height
-      // (no need to add border separately). Breakdown: 8px bottom-offset +
-      // 3px focus-glow (box-shadow: 0 0 0 3px) + 24px shadow-blur + 8px
-      // breathing = 43px total clearance above the panel.
-      if (this.floatingPanelEl) {
-        const h = this.floatingPanelEl.offsetHeight;
-        if (h > 0) {
-          this.messagesEl.style.setProperty('--ct-panel-height', `${h + 43}px`);
-        }
-      }
       this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
     });
   }

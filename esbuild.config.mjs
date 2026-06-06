@@ -23,11 +23,9 @@ if (fs.existsSync(envLocalPath)) {
 
 const pluginDir = process.env.OBSIDIAN_PLUGIN_DIR;
 
-// Additional vaults to sync to (real copies, not symlinks)
-const extraVaults = [
-  path.join(process.env.HOME, 'Documents/Personal/.obsidian/plugins/claude-threads'),
-  path.join(process.env.HOME, 'projects/PluginTesting/.obsidian/plugins/claude-threads'),
-];
+// Additional vaults to sync to — add paths in .env.local as EXTRA_VAULT_1, EXTRA_VAULT_2, etc.
+// Do not hardcode personal vault paths here; use per-branch test vaults via `npm run vault`.
+const extraVaults = [];
 
 if (!fs.existsSync(outdir)) fs.mkdirSync(outdir, { recursive: true });
 

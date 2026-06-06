@@ -390,6 +390,15 @@ export class MobileView extends ItemView {
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
     await MarkdownRenderer.render(this.app, markdown, el, '', this);
+    // Wire up internal-link click handlers — same fix as ThreadsView.
+    el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
+        void this.app.workspace.openLinkText(href, '', false);
+      });
+    });
   }
 
   /**
