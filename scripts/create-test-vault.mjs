@@ -93,7 +93,7 @@ try {
 
 const vaultExists = fs.existsSync(vaultPath);
 
-if (!update || !vaultExists) {
+if (!vaultExists) {
   console.log(`\nCreating test vault at ${vaultPath} ...`);
 
   // Directory structure
