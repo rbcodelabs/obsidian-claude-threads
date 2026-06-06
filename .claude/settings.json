@@ -1,5 +1,19 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "cat >/dev/null; npx tsc --noEmit && npm test && npm run test:screenshots",
+            "timeout": 300,
+            "statusMessage": "Quality gate: tsc + unit tests + screenshots..."
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Bash",
