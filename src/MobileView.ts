@@ -8,8 +8,7 @@
  * VaultPersistence — all state comes through the relay.
  */
 
-import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom } from 'obsidian';
-import { marked } from 'marked';
+import { ItemView, WorkspaceLeaf, MarkdownRenderer } from 'obsidian';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
@@ -389,11 +388,15 @@ export class MobileView extends ItemView {
     this.scrollToBottom();
   }
 
+  private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
+    await MarkdownRenderer.render(this.app, markdown, el, '', this);
+  }
+
   /**
    * Swap out only the streaming element without touching settled messages.
    * Called on every token event so the stable message list is never cleared.
    */
-  private updateStreamingEl(activeId: string | null): void {
+  private async updateStreamingEl(activeId: string | null): Promise<void> {
     // Remove previous streaming element.
     this.streamingEl?.remove();
     this.streamingEl = null;
@@ -414,8 +417,7 @@ export class MobileView extends ItemView {
 
     if (content) {
       try {
-        const html = marked.parse(content) as string;
-        contentEl.appendChild(sanitizeHTMLToDom(html));
+        await this.renderMarkdown(content, contentEl);
         this.wrapTablesForMobileScroll(contentEl);
       } catch {
         contentEl.createEl('p', { text: content });
@@ -429,7 +431,7 @@ export class MobileView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
-  private renderMessage(msg: SerializedMessage): void {
+  private async renderMessage(msg: SerializedMessage): Promise<void> {
     if (msg.role === 'compact') {
       this.messagesEl.createDiv({ cls: 'ct-mobile-compact-divider', text: 'Context compacted' });
       return;
@@ -445,13 +447,8 @@ export class MobileView extends ItemView {
     const content = el.createDiv('ct-mobile-message-content');
 
     if (msg.role === 'assistant') {
-      // marked v18 returns a string synchronously (not a Promise) when no async
-      // extensions are configured. Calling .then() on a plain string throws
-      // TypeError which propagates out of the for loop and stops all subsequent
-      // messages from rendering. Call synchronously and wrap in try/catch.
       try {
-        const html = marked.parse(msg.content) as string;
-        content.appendChild(sanitizeHTMLToDom(html));
+        await this.renderMarkdown(msg.content, content);
         this.wrapTablesForMobileScroll(content);
       } catch {
         content.createEl('p', { text: msg.content });
@@ -832,7 +829,7 @@ export class MobileView extends ItemView {
     requestAnimationFrame(() => {
       doScroll();
 
-      // Second pass: watch for async DOM mutations (marked.parse() populating
+      // Second pass: watch for async DOM mutations (MarkdownRenderer populating
       // assistant message content) and re-scroll each time something changes.
       // Disconnect automatically after 2 s so we don't observe forever.
       const observer = new MutationObserver(() => {

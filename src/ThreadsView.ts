@@ -1,5 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
-import { marked } from 'marked';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, MarkdownRenderer, App } from 'obsidian';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -1111,6 +1110,10 @@ export class ThreadsView extends ItemView {
     });
   }
 
+  private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
+    await MarkdownRenderer.render(this.app, markdown, el, '', this);
+  }
+
   /**
    * Render a run of consecutive assistant messages as a single collapsible block.
    * A single-message group falls through to the normal appendMessage path so that
@@ -1148,7 +1151,7 @@ export class ThreadsView extends ItemView {
         this.renderToolCalls(msgEl, msg.toolCalls);
       }
       const msgContent = msgEl.createDiv('ct-message-content');
-      msgContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+      await this.renderMarkdown(msg.content, msgContent);
     }
 
     let expanded = false;
@@ -1393,7 +1396,7 @@ export class ThreadsView extends ItemView {
 
         // Full content (hidden by default)
         const fullContent = content.createDiv('ct-full-content ct-hidden');
-        fullContent.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+        await this.renderMarkdown(msg.content, fullContent);
 
         let expanded = false;
         expandBtn.addEventListener('click', () => {
@@ -1413,7 +1416,7 @@ export class ThreadsView extends ItemView {
           this.generateMessageSummary(msg);
         }
       } else {
-        content.appendChild(sanitizeHTMLToDom(await marked.parse(msg.content)));
+        await this.renderMarkdown(msg.content, content);
       }
       const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
       setIcon(copyBtn, 'copy');
@@ -1509,7 +1512,7 @@ export class ThreadsView extends ItemView {
     if (!this.streamingEl || !this.streamingContentEl) return;
     const content = this.streamingContent;
     this.streamingContentEl.empty();
-    this.streamingContentEl.appendChild(sanitizeHTMLToDom(await marked.parse(content)));
+    await this.renderMarkdown(content, this.streamingContentEl);
     // Keep cursor inside the bubble after each re-render
     this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
     this.scrollToBottom();
