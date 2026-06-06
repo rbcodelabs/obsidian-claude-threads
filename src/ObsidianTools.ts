@@ -1236,12 +1236,13 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
+        // Extract only known primitives — raw version objects may have circular refs.
         const entries = versions.map((v) => ({
           uid: v.uid,
           date: new Date(v.ts).toISOString(),
           ts: v.ts,
           size: v.size,
-          device: v.device,
+          device: String(v.device ?? ''),
         }));
         return { content: [{ type: 'text' as const, text: JSON.stringify(entries, null, 2) }] };
       } catch (err: unknown) {
@@ -1296,6 +1297,15 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
+        // Extract only known primitive fields before any JSON.stringify — the raw
+        // version objects from the Sync API may carry extra properties with circular refs.
+        const safeVersion = {
+          uid: version.uid,
+          ts: version.ts,
+          size: version.size,
+          device: String(version.device ?? ''),
+        };
+
         const downloadResult = findDownloadMethod(sync);
         if ('availableMethods' in downloadResult) {
           return {
@@ -1306,23 +1316,26 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
-        const content = await downloadResult.fn(file, version);
-        if (content === null) {
+        const downloaded = await downloadResult.fn(file, version);
+        // The API may return a string (file content) or null/undefined on failure.
+        if (downloaded == null) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Could not download version content from Obsidian Sync. The version may no longer be available.' }) }],
             isError: true,
           };
         }
-        await app.vault.modify(file, content);
+        // Coerce to string defensively in case the API returns a Buffer or similar.
+        const fileContent = typeof downloaded === 'string' ? downloaded : String(downloaded);
+        await app.vault.modify(file, fileContent);
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
               success: true,
               path: args.path,
-              restoredUid: args.uid,
-              restoredDate: new Date(version.ts).toISOString(),
-              device: version.device,
+              restoredUid: safeVersion.uid,
+              restoredDate: new Date(safeVersion.ts).toISOString(),
+              device: safeVersion.device,
             }, null, 2),
           }],
         };
