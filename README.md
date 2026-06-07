@@ -357,14 +357,6 @@ npm run build
 # Output is in dist/
 ```
 
-To auto-sync builds to your local Obsidian vault during development, create a `.env.local` file in the project root:
-
-```
-OBSIDIAN_PLUGIN_DIR=/path/to/your/vault/.obsidian/plugins/claude-threads
-```
-
-Then run `npm run dev` — every rebuild will copy `main.js`, `styles.css`, and `manifest.json` to your vault automatically.
-
 ## Releasing
 
 The project uses a worktree-based workflow — edits directly to the main checkout are blocked by a git hook. Follow these steps:
