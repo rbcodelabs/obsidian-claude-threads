@@ -104,6 +104,27 @@ Run with \`npm test -- --testPathPattern=auth\` to verify. All three cases shoul
     cost: 0.0041,
     summary: 'Added three-case Jest test suite for auth middleware covering missing secret, valid token, and invalid token.',
   },
+  {
+    id: 'msg-t1-5',
+    role: 'user',
+    content: 'Can you show me what the logo looks like?',
+    timestamp: T1 + 6 * 60 * 1000,
+  },
+  {
+    id: 'msg-t1-6',
+    role: 'assistant',
+    content: 'Here is the logo file:',
+    timestamp: T1 + 7 * 60 * 1000,
+    toolCalls: [
+      { name: 'Read', summary: 'Read: assets/logo.png' },
+    ],
+    toolResultImages: [
+      // 4×4 teal PNG — minimal valid image for screenshot fixture
+      { mediaType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAD0lEQVR4nGNgaGhAIOI4AJhDEAHnXAP7AAAAAElFTkSuQmCC' },
+    ],
+    cost: 0.0008,
+    summary: 'Displayed the logo PNG inline.',
+  },
 ];
 
 // ─── Thread 2: HipTrip feature brainstorm ────────────────────────────────────

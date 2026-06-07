@@ -316,4 +316,19 @@ test.describe('Claude Threads UI', () => {
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('streaming-tool-pills.png', { fullPage: true });
   });
+
+  test('tool result images rendered inline in assistant message', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Thread 1 is the default; scroll to bottom to see the image message
+    await page.evaluate(() => (window as any).__view['scrollToBottom']());
+    await page.waitForTimeout(200);
+    // The fixture has a message with toolResultImages — verify the img is in the DOM
+    const imgCount = await page.locator('.ct-tool-result-images img').count();
+    if (imgCount === 0) throw new Error('No .ct-tool-result-images img found — toolResultImages not rendered');
+    await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
+  });
 });
