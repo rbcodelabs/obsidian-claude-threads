@@ -3751,3 +3751,471 @@
   outline: none;
   box-shadow: none;
 }
+
+/* ── Skills Manager ────────────────────────────────────────────────────────── */
+
+.view-content.ct-skills-root {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Reset Obsidian's global button styles within skills root */
+.ct-skills-root button {
+  box-shadow: none;
+  background: transparent;
+}
+
+/* Tab bar */
+.ct-skills-tabs {
+  display: flex;
+  gap: 0;
+  background: var(--tab-container-background, var(--background-secondary));
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ct-skills-tab {
+  padding: 8px 16px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ct-skills-tab:hover {
+  color: var(--text-normal);
+}
+
+.ct-skills-tab--active {
+  color: var(--text-accent);
+  border-bottom-color: var(--text-accent);
+}
+
+/* Body: list + detail side-by-side */
+.ct-skills-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Left: skill list */
+.ct-skills-list {
+  width: 200px;
+  min-width: 140px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--background-modifier-border);
+  overflow: hidden;
+}
+
+/* Search row */
+.ct-skills-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ct-skills-search-icon {
+  color: var(--text-faint);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.ct-skills-search-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ct-skills-search {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  outline: none;
+  min-width: 0;
+}
+
+.ct-skills-search::placeholder {
+  color: var(--text-faint);
+}
+
+/* Skill count label */
+.ct-skills-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding: 3px 8px;
+  flex-shrink: 0;
+}
+
+/* Scrollable inner list */
+.ct-skills-list-inner {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* Skill card */
+.ct-skills-card {
+  padding: 7px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin: 1px 4px;
+  transition: background 0.1s;
+}
+
+.ct-skills-card:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-skills-card--active {
+  background: var(--interactive-accent);
+}
+
+.ct-skills-card--active .ct-skills-card-name,
+.ct-skills-card--active .ct-skills-card-desc,
+.ct-skills-card--active .ct-skills-installs {
+  color: var(--text-on-accent);
+}
+
+.ct-skills-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ct-skills-card-name {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-skills-card-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ct-skills-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  flex-wrap: wrap;
+}
+
+.ct-skills-installs {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* Badges */
+.ct-skills-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ct-skills-badge--installed {
+  background: var(--color-green);
+  color: #fff;
+}
+
+/* Empty states */
+.ct-skills-empty {
+  padding: 20px 12px;
+  font-size: var(--font-ui-small);
+  color: var(--text-faint);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Spinner */
+.ct-skills-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--background-modifier-border);
+  border-top-color: var(--text-accent);
+  border-radius: 50%;
+  animation: ct-skills-spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes ct-skills-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Right: detail panel */
+.ct-skills-detail {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.ct-skills-detail-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  padding: 20px;
+  text-align: center;
+}
+
+.ct-skills-detail-empty-icon {
+  opacity: 0.3;
+}
+
+.ct-skills-detail-empty-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+/* Detail header */
+.ct-skills-detail-header {
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.ct-skills-detail-name {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 4px;
+}
+
+.ct-skills-detail-path {
+  font-size: 10px;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.ct-skills-detail-path-text {
+  font-family: var(--font-monospace);
+}
+
+.ct-skills-meta-line {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* Installed source link */
+.ct-skills-source-link {
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  color: var(--text-accent);
+  text-decoration: none;
+}
+
+.ct-skills-source-link:hover {
+  text-decoration: underline;
+}
+
+/* Editor wrap */
+.ct-skills-editor-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  padding: 8px 14px 4px;
+}
+
+.ct-skills-editor-label {
+  font-size: 10px;
+  color: var(--text-faint);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.ct-skills-dirty-dot {
+  color: var(--color-orange);
+  line-height: 1;
+}
+
+.ct-skills-textarea {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  font-family: var(--font-monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  background: var(--background-primary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  outline: none;
+  box-sizing: border-box;
+  min-height: 0;
+}
+
+.ct-skills-textarea:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb, 99, 102, 241), 0.15);
+}
+
+/* Action buttons */
+.ct-skills-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.ct-skills-btn {
+  padding: 5px 12px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.ct-skills-btn:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+  border-color: var(--background-modifier-border-hover);
+}
+
+.ct-skills-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ct-skills-btn--primary {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-skills-btn--primary:hover:not(:disabled) {
+  background: var(--interactive-accent-hover);
+  border-color: var(--interactive-accent-hover);
+}
+
+.ct-skills-btn--danger {
+  background: transparent;
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+.ct-skills-btn--danger:hover:not(:disabled) {
+  background: var(--color-red);
+  color: #fff;
+}
+
+/* Danger zone (uninstall) */
+.ct-skills-danger-zone {
+  padding: 4px 14px 12px;
+  flex-shrink: 0;
+}
+
+/* Browse tab: install area */
+.ct-skills-install-area {
+  padding: 12px 14px;
+  flex-shrink: 0;
+}
+
+.ct-skills-installed-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-small);
+  color: var(--color-green);
+  font-weight: 500;
+}
+
+.ct-skills-installed-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ct-skills-install-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.ct-skills-install-output {
+  margin-top: 8px;
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--background-primary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Browse footer */
+.ct-skills-browse-footer {
+  padding: 8px 14px 14px;
+  flex-shrink: 0;
+}
+
+.ct-skills-link {
+  font-size: var(--font-ui-small);
+  color: var(--text-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.ct-skills-link:hover {
+  text-decoration: underline;
+}
+
+/* Confirmation modal buttons */
+.ct-skills-modal-btns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}

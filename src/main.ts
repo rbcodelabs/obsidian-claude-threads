@@ -11,6 +11,7 @@ import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
 import type { WakeLockService } from './WakeLockService';
 import type { createObsidianMcpServer } from './ObsidianTools';
+import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
@@ -26,6 +27,7 @@ import { setDebugLogging, debugLog } from './logger';
 const VIEW_TYPE = 'claude-threads:chat';
 const AGENT_VIEW_TYPE = 'claude-threads:agents';
 const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
+const SKILLS_VIEW_TYPE = 'claude-threads:skills';
 
 // Welcome guide content — written to vault on first install
 const WELCOME_GUIDE = `# Getting Started with Claude Threads
@@ -171,6 +173,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { Scheduler } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
 
     this.detectClaudeBinary();
 
@@ -515,6 +519,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new ThreadsView(leaf, this));
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
     this.registerView(KANBAN_VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
+    this.registerView(SKILLS_VIEW_TYPE, (leaf) => new SkillsManagerView(leaf, this));
 
     // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
@@ -522,6 +527,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.addRibbonIcon('layout-dashboard', 'Agent Dashboard', () => {
       this.activateAgentView();
+    });
+    this.addRibbonIcon('puzzle', 'Skills Manager', () => {
+      this.activateSkillsView();
     });
 
     // Commands
@@ -541,6 +549,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
       id: 'open-kanban-board',
       name: 'Open Kanban Board',
       callback: () => this.activateKanbanView(),
+    });
+
+    this.addCommand({
+      id: 'open-skills-manager',
+      name: 'Open Skills Manager',
+      callback: () => this.activateSkillsView(),
     });
 
     this.addCommand({
@@ -959,6 +973,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
       // Open kanban as a new tab in the main area (it's a wide board)
       leaf = workspace.getLeaf('tab') as WorkspaceLeaf;
       await leaf.setViewState({ type: KANBAN_VIEW_TYPE, active: true });
+    }
+    workspace.revealLeaf(leaf);
+  }
+
+  async activateSkillsView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(SKILLS_VIEW_TYPE)[0];
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+      await leaf.setViewState({ type: SKILLS_VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
   }
