@@ -363,6 +363,8 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
       return `${input.url}`;
     case 'WebSearch':
       return `${input.query}`;
+    case 'Agent':
+      return String(input.description ?? input.prompt ?? '').substring(0, 80);
     case 'OpenNewTab':
       return `${(input.title as string) ?? 'New Thread'}`;
     case 'navigate_to_file': return `${input.path}`;
