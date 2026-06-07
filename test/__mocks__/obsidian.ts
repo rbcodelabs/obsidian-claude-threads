@@ -92,6 +92,8 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
   return frag;
 }
 
+export function normalizePath(path: string): string { return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/|\/$/g, ''); }
+
 export function addIcon(_iconId: string, _svgContent: string) {}
 
 export function setIcon(_el: HTMLElement, _icon: string): void {}

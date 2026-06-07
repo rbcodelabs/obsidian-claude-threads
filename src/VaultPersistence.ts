@@ -1,11 +1,15 @@
-import { App, TFile } from 'obsidian';
+import { App, TFile, normalizePath } from 'obsidian';
 import type { Thread, ChatMessage, ThreadStatus } from './types';
 
 export class VaultPersistence {
+  private folder: string;
+
   constructor(
     private app: App,
-    private folder: string,
-  ) {}
+    folder: string,
+  ) {
+    this.folder = normalizePath(folder);
+  }
 
   async saveThread(thread: Thread): Promise<string> {
     await this.ensureFolder();
@@ -15,7 +19,7 @@ export class VaultPersistence {
       .replace(/^-|-$/g, '')
       .substring(0, 40);
     const date = new Date(thread.createdAt).toISOString().split('T')[0];
-    const fileName = `${this.folder}/${date}-${slug}.md`;
+    const fileName = normalizePath(`${this.folder}/${date}-${slug}.md`);
     const content = this.threadToMarkdown(thread);
 
     const existing = this.app.vault.getAbstractFileByPath(fileName);

@@ -3,7 +3,7 @@ import { z } from 'zod';
 // that crash in Electron's renderer context.
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk/browser';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
-import { App, TFile } from 'obsidian';
+import { App, TFile, normalizePath } from 'obsidian';
 import type { ScheduledItem } from './types';
 import type { SchedulerItemPatch } from './Scheduler';
 import fs from 'fs';
@@ -289,7 +289,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     navigateToFileSchema,
     async (args, _extra) => {
       try {
-        const abstract = app.vault.getAbstractFileByPath(args.path);
+        const abstract = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(abstract instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: `Error: File not found: ${args.path}` }],
@@ -399,7 +399,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     pathSchema,
     async (args, _extra) => {
       try {
-        const abstract = app.vault.getAbstractFileByPath(args.path);
+        const abstract = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(abstract instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: `Error: File not found: ${args.path}` }],
@@ -437,7 +437,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     pathSchema,
     async (args, _extra) => {
       try {
-        const abstract = app.vault.getAbstractFileByPath(args.path);
+        const abstract = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(abstract instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: `Error: File not found: ${args.path}` }],
@@ -504,7 +504,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     pathSchema,
     async (args, _extra) => {
       try {
-        const abstract = app.vault.getAbstractFileByPath(args.path);
+        const abstract = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(abstract instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: `Error: File not found: ${args.path}` }],
@@ -1209,7 +1209,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     { path: z.string().describe('Vault-relative path of the file') },
     async (args, _extra) => {
       try {
-        const file = app.vault.getAbstractFileByPath(args.path);
+        const file = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(file instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: `File not found: ${args.path}` }) }],
@@ -1265,7 +1265,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
     async (args, _extra) => {
       try {
-        const file = app.vault.getAbstractFileByPath(args.path);
+        const file = app.vault.getAbstractFileByPath(normalizePath(args.path));
         if (!(file instanceof TFile)) {
           return {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: `File not found: ${args.path}` }) }],
