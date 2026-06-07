@@ -23,13 +23,22 @@ export class VaultPersistence {
       await this.app.vault.modify(existing, content);
     } else {
       // If the thread was previously saved under a different filename (e.g. the title
-      // changed after auto-summarization), delete the stale vault note so it doesn't
-      // accumulate as a permanent orphan. The active thread_id keeps the old note from
-      // being auto-archived, so it would otherwise sit around forever.
+      // changed after auto-summarization), rename the stale note atomically so it
+      // doesn't accumulate as a permanent orphan. Using rename() rather than
+      // delete() + create() is safe: it's atomic (no window where the file is gone),
+      // and it avoids permanently destroying a file if the subsequent create() would
+      // have failed (e.g. due to a name collision with another thread's new note).
       if (thread.noteFile && thread.noteFile !== fileName) {
         const stale = this.app.vault.getAbstractFileByPath(thread.noteFile);
         if (stale instanceof TFile) {
-          await this.app.vault.delete(stale);
+          await this.app.vault.rename(stale, fileName);
+          // rename() moves the file; now update its content in place.
+          const renamed = this.app.vault.getAbstractFileByPath(fileName);
+          if (renamed instanceof TFile) {
+            await this.app.vault.modify(renamed, content);
+          }
+          thread.noteFile = fileName;
+          return fileName;
         }
       }
       await this.app.vault.create(fileName, content);
