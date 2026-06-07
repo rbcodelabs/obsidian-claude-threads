@@ -162,7 +162,7 @@ describe('send message → event flow', () => {
 
   it('preserves images when a message is queued and later dequeued', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', os.tmpdir());
+    const thread = manager.createThread('T', '/cwd');
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
