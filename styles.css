@@ -3714,6 +3714,11 @@
 
 /* ── AgentDashboard floating panel (ct-floating-panel + ct-agents-floating-panel) ── */
 
+/* Give the panel breathing room from the sidebar walls (mirrors ct-panel-wrapper padding) */
+.ct-agents-floating-panel {
+  margin: 0 8px 8px;
+}
+
 /* Button chrome reset — floating panel provides the visual container */
 .ct-agents-floating-panel button {
   box-shadow: none;
