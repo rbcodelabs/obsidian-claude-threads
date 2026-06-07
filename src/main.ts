@@ -835,8 +835,17 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Stop scheduler timers
     this.scheduler?.destroy();
 
-    // Persist thread state
+    // Persist thread state to data.json
     await this.saveSettings();
+
+    // Also flush all non-archived threads to vault notes so crash recovery
+    // always sees fresh content.  The per-event saves (on 'done') are
+    // fire-and-forget and may not complete before the plugin unloads; this
+    // catch-all guarantees vault notes are consistent with data.json.
+    if (this.persistence && this.settings.saveThreadsToVault && this.manager) {
+      const threads = this.manager.getThreads().filter((t) => t.status !== 'archived');
+      await Promise.all(threads.map((t) => this.persistence!.saveThread(t).catch(console.error)));
+    }
   }
 
   // ── Background task monitoring ───────────────────────────────────────────────
