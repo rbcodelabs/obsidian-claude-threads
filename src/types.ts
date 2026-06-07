@@ -43,6 +43,8 @@ export interface ChatMessage {
   images?: ImageAttachment[];
   /** AI-generated 1-sentence summary used in compressed view. */
   summary?: string;
+  /** Images returned by tool results during this turn (e.g. Read on a PNG). */
+  toolResultImages?: Array<{ mediaType: string; data: string }>;
 }
 
 export interface ThreadDraft {

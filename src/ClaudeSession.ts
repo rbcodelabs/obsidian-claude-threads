@@ -27,6 +27,8 @@ export interface SessionCallbacks {
   onNotification?: (text: string, priority: 'low' | 'medium' | 'high' | 'immediate') => void;
   onApiRetry?: (attempt: number, maxRetries: number, error: string) => void;
   onRateLimit?: (status: 'allowed' | 'allowed_warning' | 'rejected', resetsAt?: number) => void;
+  /** Fired when a tool result contains inline images (e.g. the Read tool reading a PNG). */
+  onToolResultImages?: (images: Array<{ mediaType: string; data: string }>) => void;
 }
 
 export class ClaudeSession {
@@ -269,6 +271,33 @@ export class ClaudeSession {
               info.status as 'allowed' | 'allowed_warning' | 'rejected',
               info.resetsAt as number | undefined,
             );
+            break;
+          }
+
+          case 'user': {
+            // Tool results come back as 'user' messages. parent_tool_use_id is null
+            // even for tool results, so scan content unconditionally for image blocks.
+            const userMsg = msg as Record<string, unknown>;
+            const msgContent = (userMsg.message as Record<string, unknown>)?.content;
+            if (callbacks.onToolResultImages) {
+              if (Array.isArray(msgContent)) {
+                for (const block of msgContent) {
+                  const b = block as Record<string, unknown>;
+                  if (b.type === 'tool_result' && Array.isArray(b.content)) {
+                    const images: Array<{ mediaType: string; data: string }> = [];
+                    for (const inner of b.content as Array<Record<string, unknown>>) {
+                      if (inner.type === 'image') {
+                        const src = inner.source as Record<string, unknown>;
+                        if (src?.type === 'base64' && src.data && src.media_type) {
+                          images.push({ mediaType: src.media_type as string, data: src.data as string });
+                        }
+                      }
+                    }
+                    if (images.length > 0) callbacks.onToolResultImages(images);
+                  }
+                }
+              }
+            }
             break;
           }
         }

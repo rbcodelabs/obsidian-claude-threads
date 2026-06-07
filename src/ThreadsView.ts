@@ -1377,6 +1377,18 @@ export class ThreadsView extends ItemView {
       this.renderToolCalls(el, msg.toolCalls);
     }
 
+    if (msg.toolResultImages && msg.toolResultImages.length > 0) {
+      const imgWrap = el.createDiv('ct-tool-result-images');
+      for (const img of msg.toolResultImages) {
+        imgWrap.createEl('img', {
+          attr: {
+            src: `data:${img.mediaType};base64,${img.data}`,
+            style: 'max-width:100%;border-radius:4px;margin-bottom:6px;display:block;',
+          },
+        });
+      }
+    }
+
     const content = el.createDiv('ct-message-content');
     if (msg.role === 'assistant') {
       if (this.compressedView) {
@@ -1778,6 +1790,22 @@ export class ThreadsView extends ItemView {
         } else if (event.limitStatus === 'allowed_warning') {
           this.showStatusTransient('Approaching rate limit');
         }
+        break;
+      }
+
+      case 'tool_result_images': {
+        // Render inline images returned by tool results (e.g. Read tool on a PNG).
+        const container = this.streamingEl ?? this.messagesEl;
+        const imgWrap = container.createDiv('ct-tool-result-images');
+        for (const img of event.images) {
+          imgWrap.createEl('img', {
+            attr: {
+              src: `data:${img.mediaType};base64,${img.data}`,
+              style: 'max-width:100%;border-radius:4px;margin-top:6px;display:block;',
+            },
+          });
+        }
+        this.scrollToBottom();
         break;
       }
 

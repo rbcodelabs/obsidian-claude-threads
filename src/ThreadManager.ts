@@ -33,7 +33,8 @@ export type ThreadEvent =
   | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' }
   | { type: 'user_message_added'; message: ChatMessage }
-  | { type: 'summary_updated' };
+  | { type: 'summary_updated' }
+  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -443,6 +444,7 @@ export class ThreadManager {
 
     let streamingContent = '';
     const pendingToolCalls: ToolCallRecord[] = [];
+    const pendingToolImages: Array<{ mediaType: string; data: string }> = [];
     let completedSuccessfully = false;
     // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
     const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
@@ -565,7 +567,9 @@ export class ThreadManager {
             content,
             timestamp: Date.now(),
             toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            toolResultImages: pendingToolImages.length > 0 ? [...pendingToolImages] : undefined,
           };
+          pendingToolImages.length = 0;
           thread.messages.push(assistantMsg);
           thread.updatedAt = Date.now();
           pendingToolCalls.length = 0;
@@ -687,6 +691,10 @@ export class ThreadManager {
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
         onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
+        onToolResultImages: (images) => {
+          pendingToolImages.push(...images);
+          this.emit(threadId, { type: 'tool_result_images', images });
+        },
       },
       additionalDirs,
       model,
