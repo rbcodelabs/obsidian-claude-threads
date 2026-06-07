@@ -1002,6 +1002,19 @@ export class ThreadsView extends ItemView {
         const rel = filePath.slice(vaultBase.length + 1);
         const file = this.app.vault.getAbstractFileByPath(rel);
         if (file) {
+          // For HTML files, prefer the Web Viewer if it is enabled
+          const ext = rel.split('.').pop()?.toLowerCase();
+          if (ext === 'html' || ext === 'htm') {
+            const webviewerPlugin = (this.app as any).internalPlugins?.getPluginById('webviewer');
+            if (webviewerPlugin?.enabled) {
+              const fileUrl = 'file://' + filePath.split(path.sep).join('/');
+              const existing = this.app.workspace.getLeavesOfType('webviewer');
+              const leaf = existing.length > 0 ? existing[0] : this.app.workspace.getLeaf('tab');
+              this.app.workspace.revealLeaf(leaf);
+              await leaf.setViewState({ type: 'webviewer', active: true, state: { url: fileUrl } });
+              return;
+            }
+          }
           const leaf = this.app.workspace.getLeaf(false);
           await (leaf as any).openFile(file);
           return;
