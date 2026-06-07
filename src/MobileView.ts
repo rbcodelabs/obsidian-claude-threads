@@ -8,7 +8,8 @@
  * VaultPersistence — all state comes through the relay.
  */
 
-import { ItemView, WorkspaceLeaf, MarkdownRenderer } from 'obsidian';
+import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom } from 'obsidian';
+import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
@@ -389,8 +390,19 @@ export class MobileView extends ItemView {
   }
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
-    await MarkdownRenderer.render(this.app, markdown, el, '', this);
-    // Wire up internal-link click handlers — same fix as ThreadsView.
+    // Pre-process [[wikilinks]] and [[target|alias]] into inline HTML anchors
+    // before handing off to marked. Mirrors the ThreadsView approach — see that
+    // method for the full rationale (short version: MarkdownRenderer.render()
+    // does not parse GFM pipe tables in this non-document context).
+    const processed = markdown.replace(
+      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+      (_match, target: string, alias?: string) => {
+        const label = (alias ?? target.split('/').pop() ?? target).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c] ?? c));
+        const escapedTarget = target.replace(/"/g, '&quot;');
+        return `<a class="internal-link" data-href="${escapedTarget}" href="#">${label}</a>`;
+      },
+    );
+    el.appendChild(sanitizeHTMLToDom(await marked.parse(processed)));
     el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
       a.addEventListener('click', (e) => {
         e.preventDefault();

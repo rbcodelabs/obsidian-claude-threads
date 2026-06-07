@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, MarkdownRenderer, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
+import { marked } from 'marked';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -1129,10 +1130,21 @@ export class ThreadsView extends ItemView {
   }
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
-    await MarkdownRenderer.render(this.app, markdown, el, '', this);
-    // Wire up internal-link click handlers. MarkdownRenderer renders [[wikilinks]]
-    // as <a class="internal-link" data-href="..."> but does not attach navigation
-    // handlers in non-document contexts — we do it manually.
+    // Pre-process [[wikilinks]] and [[target|alias]] into inline HTML anchors
+    // before handing off to marked. marked passes inline HTML through unchanged,
+    // so GFM table parsing (and all other markdown features) work correctly.
+    // This replaces the previous MarkdownRenderer.render() approach which did not
+    // render GFM pipe tables in this non-document context.
+    const processed = markdown.replace(
+      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+      (_match, target: string, alias?: string) => {
+        const label = (alias ?? target.split('/').pop() ?? target).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c] ?? c));
+        const escapedTarget = target.replace(/"/g, '&quot;');
+        return `<a class="internal-link" data-href="${escapedTarget}" href="#">${label}</a>`;
+      },
+    );
+    el.appendChild(sanitizeHTMLToDom(await marked.parse(processed)));
+    // Wire up click handlers for [[wikilink]] anchors.
     el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
       a.addEventListener('click', (e) => {
         e.preventDefault();
