@@ -1144,6 +1144,13 @@ export class ThreadsView extends ItemView {
       },
     );
     el.appendChild(sanitizeHTMLToDom(await marked.parse(processed)));
+    // Wrap tables in a scrollable container so wide tables don't overflow.
+    el.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'ct-table-scroll';
+      table.parentNode?.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+    });
     // Wire up click handlers for [[wikilink]] anchors.
     el.querySelectorAll<HTMLAnchorElement>('a.internal-link').forEach((a) => {
       a.addEventListener('click', (e) => {

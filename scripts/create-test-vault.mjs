@@ -241,8 +241,8 @@ Vault path: ${vaultPath}
 `);
 
 if (open) {
-  const url = `obsidian://open?vault=${encodeURIComponent(vaultName)}`;
-  console.log(`Opening: ${url}`);
-  console.log('(Obsidian must already be running, or this will launch it.)');
-  execSync(`open "${url}"`);
+  // Open by filesystem path — more reliable than ?vault=<name> which requires
+  // a matching "name" field in obsidian.json (not present in auto-registered vaults).
+  console.log(`Opening: ${vaultPath}`);
+  execSync(`open -a Obsidian "${vaultPath}"`);
 }
