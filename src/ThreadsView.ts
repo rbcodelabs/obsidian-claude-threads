@@ -1354,12 +1354,11 @@ export class ThreadsView extends ItemView {
         // Replay tool pills in the order they originally arrived. prepend()
         // inserts above existing children, so iterate in reverse so the first
         // tool ends up on top (matching the live order).
-        // Skip Agent calls and any tools recorded while a sub-agent was active —
-        // those are the same bubbled-up calls we suppress in the live path.
-        const hasSubagentLabel = !!buf.subagentLabel;
+        // Skip only the Agent tool itself (redundant with the sub-agent pill);
+        // all other tool calls, including ones from the sub-agent, are shown.
         for (let i = buf.tools.length - 1; i >= 0; i--) {
           const tool = buf.tools[i];
-          if (tool.name === 'Agent' || hasSubagentLabel) continue;
+          if (tool.name === 'Agent') continue;
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
           const iconEl = document.createElement('span');
@@ -1618,14 +1617,12 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_use': {
-        // Suppress streaming pills for:
-        //   • The Agent tool itself — task_started will render the sub-agent pill instead.
-        //   • Any tool calls that bubble up from a sub-agent while a task is active —
-        //     task_progress already surfaces the last tool name in the task pill label,
-        //     so individual bubbled pills are just noise.
+        // Skip a streaming pill for the Agent tool itself — the task_started
+        // event will render a "sub-agent" pill that carries the same info.
+        // All other tool calls (including ones bubbled up from sub-agents)
+        // are shown so the user can see what the agent is actually doing.
         const isAgentCall = event.record.name === 'Agent';
-        const subagentActive = this.taskPills.size > 0 || this.subagentWaiting;
-        if (this.streamingEl && !isAgentCall && !subagentActive) {
+        if (this.streamingEl && !isAgentCall) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
           const iconEl = document.createElement('span');
