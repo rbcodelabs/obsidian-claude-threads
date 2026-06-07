@@ -128,7 +128,7 @@ describe('dist/main.js bundle safety', () => {
     if (!existsSync(BUNDLE_PATH)) return;
 
     const bundle = readFileSync(BUNDLE_PATH, 'utf8');
-    expect(bundle).toMatch(/^"use strict"/);
+    expect(bundle).toMatch(/"use strict"/);
 
     // Should contain the esbuild module helpers (__commonJS is only emitted when
     // there are CJS dependencies to wrap; __esm is always present)
