@@ -781,10 +781,25 @@
   font-family: var(--font-monospace);
 }
 
+.ct-message-assistant .ct-message-content .ct-table-scroll {
+  overflow-x: auto;
+  margin: 6px 0;
+  /* Thin scrollbar so it doesn't eat vertical space */
+  scrollbar-width: thin;
+}
+
+.ct-message-assistant .ct-message-content .ct-table-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.ct-message-assistant .ct-message-content .ct-table-scroll::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+}
+
 .ct-message-assistant .ct-message-content table {
   border-collapse: collapse;
-  width: 100%;
-  margin: 6px 0;
+  margin: 0;
   font-size: var(--font-ui-smaller);
 }
 
