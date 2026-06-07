@@ -331,4 +331,52 @@ test.describe('Claude Threads UI', () => {
     if (imgCount === 0) throw new Error('No .ct-tool-result-images img found — toolResultImages not rendered');
     await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
   });
+
+  test('sub-agent task pill while working', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Thread 1 is the default; scroll to bottom to see the image message
+    await page.evaluate(() => (window as any).__view['scrollToBottom']());
+    await page.waitForTimeout(200);
+    // The fixture has a message with toolResultImages — verify the img is in the DOM
+    const imgCount = await page.locator('.ct-tool-result-images img').count();
+    if (imgCount === 0) throw new Error('No .ct-tool-result-images img found — toolResultImages not rendered');
+    await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
+
+    // Simulate the state after an Agent tool call commits: the "Sub-agent working"
+    // placeholder is created, then task_started prepends a task pill to it.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+
+      // Create the streaming element with the sub-agent label
+      view['createStreamingEl']('Sub-agent working');
+
+      // Simulate a task pill (same structure as task_started handler produces)
+      const pill = document.createElement('div');
+      pill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
+
+      const iconEl = document.createElement('span');
+      iconEl.className = 'ct-tool-pill-icon';
+      // Use text icon as a stand-in (Obsidian setIcon unavailable in harness)
+      iconEl.textContent = '🤖';
+
+      const badge = document.createElement('span');
+      badge.className = 'ct-tool-pill-name';
+      badge.textContent = 'sub-agent';
+
+      const label = document.createElement('span');
+      label.className = 'ct-tool-pill-text';
+      label.textContent = 'Implementing the auth middleware · Read (1m12s)';
+
+      pill.append(iconEl, badge, label);
+      view['streamingEl'].prepend(pill);
+      view['scrollToBottom']();
+    });
+
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('subagent-task-pill.png', { fullPage: true });
+  });
 });

@@ -47,6 +47,14 @@ export class ThreadsView extends ItemView {
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
+  // Task start times for elapsed-time display: taskId → epoch ms
+  private taskStartTimes: Map<string, number> = new Map();
+
+  // Whether the current streaming element was created as a "sub-agent waiting"
+  // placeholder (no real token content yet). Used to decide whether to keep it
+  // alive when a message commits with an Agent tool call.
+  private subagentWaiting = false;
+
   // The user-message bubble we just inserted, so we can remove it on interrupt
   private pendingUserEl: HTMLElement | null = null;
 
@@ -112,7 +120,7 @@ export class ThreadsView extends ItemView {
   // running thread (active or background) so the streaming UI can be fully
   // restored when the user switches back to a thread that is still in progress.
   // Cleared on 'message' or 'done' for the corresponding thread.
-  private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[] }> = new Map();
+  private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[]; subagentLabel?: string }> = new Map();
 
   private floatingPanelEl!: HTMLElement;
 
@@ -286,11 +294,33 @@ export class ThreadsView extends ItemView {
         let buf = this.streamingBuffers.get(threadId);
         if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
         buf.content += event.text;
+        // Once real tokens arrive, clear the sub-agent placeholder label —
+        // the token content will replace it when the thread is restored.
+        if (buf.subagentLabel) buf.subagentLabel = undefined;
       } else if (event.type === 'tool_use') {
         let buf = this.streamingBuffers.get(threadId);
         if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
         buf.tools.push(event.record);
-      } else if (event.type === 'message' || event.type === 'done') {
+      } else if (event.type === 'message') {
+        // If the message invoked the Agent tool, keep the buffer alive for the
+        // sub-agent phase (don't delete it). Reset content/tools and mark it as
+        // a sub-agent waiting state so restoring the view shows the right label.
+        const hasAgentCall = event.message.toolCalls?.some(t => t.name === 'Agent');
+        if (hasAgentCall) {
+          const buf: { content: string; tools: ToolCallRecord[]; subagentLabel?: string } =
+            { content: '', tools: [], subagentLabel: 'Sub-agent working' };
+          this.streamingBuffers.set(threadId, buf);
+        } else {
+          this.streamingBuffers.delete(threadId);
+        }
+      } else if (event.type === 'task_started') {
+        // Update the sub-agent label in the buffer so thread restoration shows
+        // the specific task description rather than the generic placeholder.
+        let buf = this.streamingBuffers.get(threadId);
+        if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
+        const kind = event.skipTranscript ? 'Background' : 'Sub-agent';
+        buf.subagentLabel = `${kind}: ${event.description}`;
+      } else if (event.type === 'done') {
         this.streamingBuffers.delete(threadId);
       }
       // Auto-summarize runs for ALL completing threads, not just the active one.
@@ -1261,10 +1291,10 @@ export class ThreadsView extends ItemView {
     }, initialFocus).open();
   }
 
-  private createStreamingEl(): void {
+  private createStreamingEl(label = 'Claude is thinking'): void {
     this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
     this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
-    this.streamingContentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
+    this.streamingContentEl.createSpan({ cls: 'ct-thinking-label', text: label + ' ' });
     this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
   }
 
@@ -1314,16 +1344,21 @@ export class ThreadsView extends ItemView {
     }
 
     if (this.manager.isRunning(this.activeThreadId)) {
-      this.createStreamingEl();
+      const buf = this.streamingBuffers.get(this.activeThreadId!);
+      // Use the sub-agent label if the thread is waiting on a sub-agent, otherwise
+      // the default "Claude is thinking" placeholder.
+      this.createStreamingEl(buf?.subagentLabel ?? 'Claude is thinking');
       // Restore streaming content and tool pills accumulated while this thread
       // was running in the background (user was viewing a different thread).
-      const buf = this.streamingBuffers.get(this.activeThreadId!);
       if (buf) {
         // Replay tool pills in the order they originally arrived. prepend()
         // inserts above existing children, so iterate in reverse so the first
         // tool ends up on top (matching the live order).
+        // Skip only the Agent tool itself (redundant with the sub-agent pill);
+        // all other tool calls, including ones from the sub-agent, are shown.
         for (let i = buf.tools.length - 1; i >= 0; i--) {
           const tool = buf.tools[i];
+          if (tool.name === 'Agent') continue;
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
           const iconEl = document.createElement('span');
@@ -1582,7 +1617,12 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_use': {
-        if (this.streamingEl) {
+        // Skip a streaming pill for the Agent tool itself — the task_started
+        // event will render a "sub-agent" pill that carries the same info.
+        // All other tool calls (including ones bubbled up from sub-agents)
+        // are shown so the user can see what the agent is actually doing.
+        const isAgentCall = event.record.name === 'Agent';
+        if (this.streamingEl && !isAgentCall) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
           const iconEl = document.createElement('span');
@@ -1619,9 +1659,22 @@ export class ThreadsView extends ItemView {
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
+          this.streamingContentEl = null;
         }
         this.appendMessage(event.message).then(() => this.scrollToBottom());
         this.scrollToBottom();
+        // If this message invoked the Agent tool, create a "Sub-agent working…"
+        // placeholder immediately so there's a visible indicator while the
+        // sub-agent runs. task_started will prepend its pill to this element
+        // if/when it fires; if it never fires the placeholder stays until done.
+        const hasAgentCall = event.message.toolCalls?.some(t => t.name === 'Agent');
+        if (hasAgentCall) {
+          this.subagentWaiting = true;
+          this.createStreamingEl('Sub-agent working');
+          this.scrollToBottom();
+        } else {
+          this.subagentWaiting = false;
+        }
         this.plugin.saveSettings();
         // Note: auto-summarize is handled in the outer event listener (above the
         // activeThreadId guard) so it fires for all threads, not just the active one.
@@ -1670,6 +1723,8 @@ export class ThreadsView extends ItemView {
           this.clearStreamingState();
         }
         this.taskPills.clear();
+        this.taskStartTimes.clear();
+        this.subagentWaiting = false;
         // Message completed normally — discard the saved sent text so it can't
         // bleed into another thread if the user later stops a different thread.
         if (this.activeThreadId) this.lastSentTexts.delete(this.activeThreadId);
@@ -1690,6 +1745,8 @@ export class ThreadsView extends ItemView {
           this.clearStreamingState();
         }
         this.taskPills.clear();
+        this.taskStartTimes.clear();
+        this.subagentWaiting = false;
         // Restore the sent message so the user can edit and re-send
         const lastSent = this.activeThreadId ? this.lastSentTexts.get(this.activeThreadId) : undefined;
         if (lastSent) {
@@ -1721,18 +1778,27 @@ export class ThreadsView extends ItemView {
       }
 
       case 'task_started': {
-        if (!this.streamingEl) this.createStreamingEl();
+        // task_started fires when a sub-agent begins. We may already have a
+        // "Sub-agent working…" placeholder from the message handler; reuse it
+        // rather than creating another element.
+        if (!this.streamingEl) this.createStreamingEl('Sub-agent working');
+        this.subagentWaiting = false; // real task data is now driving the pill
+        this.taskStartTimes.set(event.taskId, Date.now());
         const taskPill = document.createElement('div');
         taskPill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
+        const taskIconEl = document.createElement('span');
+        taskIconEl.className = 'ct-tool-pill-icon';
+        setIcon(taskIconEl, event.skipTranscript ? 'layers' : 'bot');
         const taskBadge = document.createElement('span');
         taskBadge.className = 'ct-tool-pill-name';
-        taskBadge.textContent = 'task';
+        taskBadge.textContent = event.skipTranscript ? 'background' : 'sub-agent';
         const taskLabel = document.createElement('span');
         taskLabel.className = 'ct-tool-pill-text';
         taskLabel.textContent = event.description;
-        taskPill.append(taskBadge, taskLabel);
+        taskPill.append(taskIconEl, taskBadge, taskLabel);
         this.streamingEl!.prepend(taskPill);
         this.taskPills.set(event.taskId, taskPill);
+        this.scrollToBottom();
         break;
       }
 
@@ -1741,8 +1807,14 @@ export class ThreadsView extends ItemView {
         if (progressPill) {
           const label = progressPill.querySelector('.ct-tool-pill-text');
           if (label) {
+            const startedAt = this.taskStartTimes.get(event.taskId);
+            const elapsedSec = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+            const elapsedStr = elapsedSec >= 60
+              ? `${Math.floor(elapsedSec / 60)}m${elapsedSec % 60}s`
+              : elapsedSec > 0 ? `${elapsedSec}s` : '';
             const toolSuffix = event.lastToolName ? ` · ${event.lastToolName}` : '';
-            label.textContent = event.description + toolSuffix;
+            const timeSuffix = elapsedStr ? ` (${elapsedStr})` : '';
+            label.textContent = event.description + toolSuffix + timeSuffix;
           }
         }
         break;
@@ -1752,18 +1824,20 @@ export class ThreadsView extends ItemView {
         const notifPill = this.taskPills.get(event.taskId);
         if (notifPill) {
           notifPill.classList.remove('ct-tool-active');
-          const icon = notifPill.querySelector('span:first-child');
+          const iconEl = notifPill.querySelector('.ct-tool-pill-icon');
           const label = notifPill.querySelector('.ct-tool-pill-text');
           if (event.status === 'completed') {
             notifPill.classList.add('ct-task-done');
-            if (icon) (icon as HTMLElement).textContent = '✓ ';
+            if (iconEl) setIcon(iconEl as HTMLElement, 'check-circle');
           } else {
             notifPill.classList.add('ct-task-failed');
-            if (icon) (icon as HTMLElement).textContent = '✗ ';
+            if (iconEl) setIcon(iconEl as HTMLElement, 'x-circle');
           }
           if (label) label.textContent = event.summary;
           this.taskPills.delete(event.taskId);
+          this.taskStartTimes.delete(event.taskId);
         }
+        this.subagentWaiting = false;
         // When the thread is idle (no active streaming container / no pill), the
         // main.ts subscriber shows a Notice. Nothing more needed here.
         break;
@@ -1812,9 +1886,12 @@ export class ThreadsView extends ItemView {
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
+        this.taskStartTimes.clear();
+        this.subagentWaiting = false;
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
+          this.streamingContentEl = null;
         }
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
         errEl.createEl('pre', {
