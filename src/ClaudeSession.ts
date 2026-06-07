@@ -275,10 +275,11 @@ export class ClaudeSession {
           }
 
           case 'user': {
-            // Tool results: when parent_tool_use_id is set this is the SDK echoing
-            // back a tool result. Extract any inline image blocks (e.g. Read on a PNG).
-            if (msg.parent_tool_use_id !== null && callbacks.onToolResultImages) {
-              const msgContent = msg.message.content;
+            // Tool results come back as 'user' messages. parent_tool_use_id is null
+            // even for tool results, so scan content unconditionally for image blocks.
+            const userMsg = msg as Record<string, unknown>;
+            const msgContent = (userMsg.message as Record<string, unknown>)?.content;
+            if (callbacks.onToolResultImages) {
               if (Array.isArray(msgContent)) {
                 for (const block of msgContent) {
                   const b = block as Record<string, unknown>;
