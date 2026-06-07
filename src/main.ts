@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent } from 'obsidian';
+import { Plugin, WorkspaceLeaf, PluginSettingTab, App, Setting, FileSystemAdapter, addIcon, Modal, Notice, Platform, SecretComponent, normalizePath } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -555,14 +555,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.addCommand({
       id: 'next-claude-thread',
       name: 'Next Claude Thread',
-      hotkeys: [{ modifiers: ['Mod'], key: ']' }],
       callback: () => this.getView()?.navigateTab(1),
     });
 
     this.addCommand({
       id: 'prev-claude-thread',
       name: 'Previous Claude Thread',
-      hotkeys: [{ modifiers: ['Mod'], key: '[' }],
       callback: () => this.getView()?.navigateTab(-1),
     });
 
@@ -571,7 +569,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.addCommand({
         id: `claude-thread-${n}`,
         name: `Switch to Claude Thread ${n}`,
-        hotkeys: [{ modifiers: ['Mod'], key: String(n) }],
         callback: () => this.getView()?.switchToTabIndex(n - 1),
       });
     }
@@ -652,10 +649,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { workspace, vault } = this.app;
 
     // 1. Write welcome guide to vault
-    const guidePath = `${this.settings.vaultFolder}/Getting Started with Claude Threads.md`;
+    const guidePath = normalizePath(`${this.settings.vaultFolder}/Getting Started with Claude Threads.md`);
     try {
       if (!vault.getAbstractFileByPath(guidePath)) {
-        const folderPath = this.settings.vaultFolder;
+        const folderPath = normalizePath(this.settings.vaultFolder);
         if (!vault.getAbstractFileByPath(folderPath)) {
           await vault.createFolder(folderPath);
         }
