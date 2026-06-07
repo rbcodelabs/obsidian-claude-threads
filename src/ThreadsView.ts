@@ -1492,6 +1492,18 @@ export class ThreadsView extends ItemView {
       });
     } else {
       content.createEl('p', { text: msg.content });
+      // Render image thumbnails attached to user messages (e.g. sent from
+      // the dispatch box or conversation input). The live-streaming path
+      // renders these via the 'sending' event; this covers the renderMessages()
+      // path (thread switch, initial load, view rebuild).
+      if (msg.images && msg.images.length > 0) {
+        const imgRow = content.createDiv('ct-message-images');
+        for (const img of msg.images) {
+          const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
+          thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+          thumb.title = img.name;
+        }
+      }
     }
 
     // Show the footer row only for:
