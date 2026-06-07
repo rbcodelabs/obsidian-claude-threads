@@ -417,7 +417,7 @@ export class ThreadsView extends ItemView {
     this.closeThreadBtn = titleRow.createEl('button', { cls: 'ct-title-close', attr: { title: 'Close thread' } });
     setIcon(this.closeThreadBtn, 'x');
     this.closeThreadBtn.addEventListener('click', () => {
-      if (this.activeThreadId) this.closeThread(this.activeThreadId);
+      if (this.activeThreadId) this.closeThread(this.activeThreadId).catch(console.error);
     });
 
     this.mainEl = root.createDiv('ct-main');
@@ -2338,7 +2338,7 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  private closeThread(id: string): void {
+  private async closeThread(id: string): Promise<void> {
     const threads = this.manager.getThreads();
     if (threads.length <= 1) return;
 
@@ -2347,12 +2347,15 @@ export class ThreadsView extends ItemView {
 
     if (hasMessages && this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
       // Archive to vault before removing from memory so the Bases Kanban retains it.
+      // Awaited so the vault note is guaranteed to carry status:archived before we
+      // delete the thread — otherwise a quick Obsidian restart could leave the note
+      // with status:waiting and trigger crash recovery to resurrect it.
       thread.status = 'archived';
-      this.plugin.persistence.saveThread(thread).catch(console.error);
+      await this.plugin.persistence.saveThread(thread);
     }
 
     this.manager.deleteThread(id);
-    this.plugin.saveSettings();
+    await this.plugin.saveSettings();
 
     if (this.activeThreadId === id) {
       const remaining = this.manager.getThreads();
