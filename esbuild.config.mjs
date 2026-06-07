@@ -84,6 +84,15 @@ const ctx = await esbuild.context({
   sourcemap: 'inline',
   treeShaking: true,
   outfile: 'dist/main.js',
+  // The claude-agent-sdk calls createRequire(import.meta.url) at the top level of sdk.mjs.
+  // When bundled to CJS, esbuild sets import_meta={} so import_meta.url===undefined,
+  // crashing the plugin on load. Define import.meta.url at runtime via __filename.
+  banner: {
+    js: 'var __importMetaUrl = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "file:///plugin/main.js";',
+  },
+  define: {
+    'import.meta.url': '__importMetaUrl',
+  },
 });
 
 // Copy static assets
