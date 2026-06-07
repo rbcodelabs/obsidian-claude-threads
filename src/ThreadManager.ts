@@ -33,7 +33,8 @@ export type ThreadEvent =
   | { type: 'permission_resolved' }
   | { type: 'active_thread_changed' }
   | { type: 'user_message_added'; message: ChatMessage }
-  | { type: 'summary_updated' };
+  | { type: 'summary_updated' }
+  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -687,6 +688,7 @@ export class ThreadManager {
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
         onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
+        onToolResultImages: (images) => this.emit(threadId, { type: 'tool_result_images', images }),
       },
       additionalDirs,
       model,

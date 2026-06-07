@@ -1781,6 +1781,22 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'tool_result_images': {
+        // Render inline images returned by tool results (e.g. Read tool on a PNG).
+        const container = this.streamingEl ?? this.messagesEl;
+        const imgWrap = container.createDiv('ct-tool-result-images');
+        for (const img of event.images) {
+          imgWrap.createEl('img', {
+            attr: {
+              src: `data:${img.mediaType};base64,${img.data}`,
+              style: 'max-width:100%;border-radius:4px;margin-top:6px;display:block;',
+            },
+          });
+        }
+        this.scrollToBottom();
+        break;
+      }
+
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
