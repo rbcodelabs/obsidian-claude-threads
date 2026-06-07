@@ -437,6 +437,33 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     }
 
+    // Archive orphaned vault notes FIRST — before crash recovery runs.
+    //
+    // Notes with status:waiting that are not in data.json would be incorrectly
+    // treated as "crashed" threads and resurrected if crash recovery ran first.
+    // Common cause: closeThread's async vault save didn't finish before a quick
+    // Obsidian restart, leaving the note with status:waiting even though the thread
+    // was deliberately closed.
+    //
+    // By running the orphan scan synchronously first we ensure every stale
+    // status:waiting note is flipped to archived before crash recovery even looks.
+    // The scan uses the metadata cache for a fast pre-check (zero extra disk reads
+    // for already-archived notes or notes belonging to known active threads).
+    //
+    // Skip once the scan has completed — the flag is reset any time crash recovery
+    // loads threads so we always re-scan after a genuine data.json loss.
+    if (this.settings.saveThreadsToVault && !this.settings.orphanArchiveScanComplete) {
+      const activeIds = new Set(this.manager.getThreads().map((t) => t.id));
+      try {
+        const n = await this.persistence.archiveOrphanedNotes(activeIds);
+        if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
+      } catch (err) {
+        console.error('[ClaudeThreads] Failed to archive orphaned notes:', err);
+      }
+      this.settings.orphanArchiveScanComplete = true;
+      await this.saveSettings();
+    }
+
     // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
     // threads may be missing from memory even though their vault notes still exist.
     // Scan the vault folder and reload any threads not already in memory.
@@ -444,6 +471,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Important guards:
     //   - Skip threads whose vault note is already marked `archived` — those were
     //     deliberately closed by the user and must not be resurrected on reload.
+    //     The orphan scan above ensures stale status:waiting notes are archived
+    //     before we reach this point.
     //   - Reset `active` status to `waiting` — the SDK session is gone after any
     //     reload so there's nothing to resume; showing them as running would be wrong.
     //
@@ -483,22 +512,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
           console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
         }
       }
-    }
-
-    // Archive orphaned vault notes: thread notes written before the archive-on-close
-    // feature existed still carry status=waiting even though their tabs are long gone.
-    // Flip them to archived so they land in the right Bases Kanban column.
-    //
-    // This was a one-time migration. Once the scan has completed with nothing left
-    // to clean up, skip it on every subsequent startup. The flag is reset if crash
-    // recovery restores threads so we re-check in that case.
-    if (this.settings.saveThreadsToVault && !this.settings.orphanArchiveScanComplete) {
-      const activeIds = new Set(this.manager.getThreads().map((t) => t.id));
-      this.persistence.archiveOrphanedNotes(activeIds).then((n) => {
-        if (n > 0) console.log(`[ClaudeThreads] Archived ${n} orphaned thread note(s)`);
-        this.settings.orphanArchiveScanComplete = true;
-        this.saveSettings().catch(console.error);
-      }).catch(console.error);
     }
 
     // Resume background task monitoring for any threads that still had pending
