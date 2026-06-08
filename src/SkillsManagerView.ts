@@ -101,9 +101,11 @@ export class SkillsManagerView extends ItemView {
 
   // Browse tab
   private browseResults: BrowseSkill[] = [];
+  private browsePopularResults: BrowseSkill[] = [];
   private selectedBrowse: BrowseSkill | null = null;
   private browseQuery = '';
   private isBrowseLoading = false;
+  private isPopularLoading = false;
   private browseSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Install progress
@@ -175,6 +177,9 @@ export class SkillsManagerView extends ItemView {
         this.buildTabs();
         this.renderList();
         this.renderDetail();
+        if (tab.id === 'browse' && this.browsePopularResults.length === 0 && !this.isPopularLoading) {
+          void this.fetchPopularSkills();
+        }
       });
     }
   }
@@ -294,26 +299,44 @@ export class SkillsManagerView extends ItemView {
 
     const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
 
-    if (this.isBrowseLoading) {
+    // ── Search active ────────────────────────────────────────────────────────
+    if (this.browseQuery.length >= 2) {
+      if (this.isBrowseLoading) {
+        const loading = inner.createEl('div', { cls: 'ct-skills-empty' });
+        loading.createEl('span', { cls: 'ct-skills-spinner' });
+        loading.createEl('span', { text: ' Searching…' });
+        return;
+      }
+      if (this.browseResults.length === 0) {
+        inner.createEl('div', { cls: 'ct-skills-empty', text: `No results for "${this.browseQuery}"` });
+        return;
+      }
+      this.renderSkillCards(inner, this.browseResults);
+      return;
+    }
+
+    // ── No query — show popular list ─────────────────────────────────────────
+    if (this.isPopularLoading) {
       const loading = inner.createEl('div', { cls: 'ct-skills-empty' });
       loading.createEl('span', { cls: 'ct-skills-spinner' });
-      loading.createEl('span', { text: ' Searching…' });
+      loading.createEl('span', { text: ' Loading popular skills…' });
       return;
     }
 
-    if (!this.browseQuery || this.browseQuery.length < 2) {
-      inner.createEl('div', { cls: 'ct-skills-empty', text: 'Type at least 2 characters to search' });
+    if (this.browsePopularResults.length > 0) {
+      inner.createEl('div', { cls: 'ct-skills-section-label', text: 'Popular' });
+      this.renderSkillCards(inner, this.browsePopularResults);
       return;
     }
 
-    if (this.browseResults.length === 0) {
-      inner.createEl('div', { cls: 'ct-skills-empty', text: `No results for "${this.browseQuery}"` });
-      return;
-    }
+    inner.createEl('div', { cls: 'ct-skills-empty', text: 'Type to search skills.sh' });
+  }
 
-    for (const skill of this.browseResults) {
+  /** Render a list of browse skill cards into the given container. */
+  private renderSkillCards(container: HTMLElement, skills: BrowseSkill[]): void {
+    for (const skill of skills) {
       const isActive = this.selectedBrowse?.slug === skill.slug;
-      const card = inner.createEl('div', {
+      const card = container.createEl('div', {
         cls: 'ct-skills-card' + (isActive ? ' ct-skills-card--active' : ''),
       });
 
@@ -623,18 +646,59 @@ export class SkillsManagerView extends ItemView {
         this.installedSkills.map((s) => s.skillPath.split('/').pop() ?? ''),
       );
 
-      this.browseResults = (data.skills ?? []).map((s) => ({
-        name: s.name,
-        slug: s.id,
-        source: s.source ?? '',
-        installs: s.installs ?? 0,
-        isInstalled: installedNames.has(s.name) || installedSlugs.has(s.id),
-      }));
+      this.browseResults = (data.skills ?? [])
+        .map((s) => ({
+          name: s.name,
+          slug: s.id,
+          source: s.source ?? '',
+          installs: s.installs ?? 0,
+          isInstalled: installedNames.has(s.name) || installedSlugs.has(s.id),
+        }))
+        .sort((a, b) => b.installs - a.installs);
     } catch (err) {
       console.error('[ClaudeThreads] Skills search error:', err);
       this.browseResults = [];
     } finally {
       this.isBrowseLoading = false;
+      this.renderList();
+    }
+  }
+
+  /** Fetch a popular-skills list shown when the Browse tab opens with no query. */
+  private async fetchPopularSkills(): Promise<void> {
+    this.isPopularLoading = true;
+    this.renderList();
+
+    try {
+      const res = await requestUrl({
+        url: 'https://skills.sh/api/search?q=er&limit=30',
+        method: 'GET',
+      });
+      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+
+      const data = res.json as {
+        skills: Array<{ id: string; name: string; installs: number; source: string }>;
+      };
+
+      const installedNames = new Set(this.installedSkills.map((s) => s.name));
+      const installedSlugs = new Set(
+        this.installedSkills.map((s) => s.skillPath.split('/').pop() ?? ''),
+      );
+
+      this.browsePopularResults = (data.skills ?? [])
+        .map((s) => ({
+          name: s.name,
+          slug: s.id,
+          source: s.source ?? '',
+          installs: s.installs ?? 0,
+          isInstalled: installedNames.has(s.name) || installedSlugs.has(s.id),
+        }))
+        .sort((a, b) => b.installs - a.installs);
+    } catch (err) {
+      console.error('[ClaudeThreads] Skills popular fetch error:', err);
+      this.browsePopularResults = [];
+    } finally {
+      this.isPopularLoading = false;
       this.renderList();
     }
   }
@@ -761,6 +825,8 @@ export class SkillsManagerView extends ItemView {
       // Update browse state
       const inResults = this.browseResults.find((s) => s.slug === skill.slug);
       if (inResults) inResults.isInstalled = true;
+      const inPopular = this.browsePopularResults.find((s) => s.slug === skill.slug);
+      if (inPopular) inPopular.isInstalled = true;
       this.selectedBrowse = { ...skill, isInstalled: true };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
