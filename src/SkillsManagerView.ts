@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice, Modal, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, Notice, Modal, App, requestUrl } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 
 export const SKILLS_VIEW_TYPE = 'claude-threads:skills';
@@ -608,12 +608,13 @@ export class SkillsManagerView extends ItemView {
     }
 
     try {
-      const res = await fetch(
-        `https://skills.sh/api/search?q=${encodeURIComponent(this.browseQuery)}&limit=15`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await requestUrl({
+        url: `https://skills.sh/api/search?q=${encodeURIComponent(this.browseQuery)}&limit=15`,
+        method: 'GET',
+      });
+      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
 
-      const data = (await res.json()) as {
+      const data = res.json as {
         skills: Array<{ id: string; name: string; installs: number; source: string }>;
       };
 
