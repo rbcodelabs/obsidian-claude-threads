@@ -107,6 +107,10 @@ export class SkillsManagerView extends ItemView {
   private isBrowseLoading = false;
   private isPopularLoading = false;
   private browseSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Cache of fetched SKILL.md descriptions keyed by slug */
+  private browseDescriptions: Map<string, string | null> = new Map();
+  /** Slugs currently being fetched */
+  private browseDescLoading: Set<string> = new Set();
 
   // Install progress
   private installingSlug: string | null = null;
@@ -358,6 +362,7 @@ export class SkillsManagerView extends ItemView {
         this.selectedBrowse = skill;
         this.renderList();
         this.renderDetail();
+        void this.fetchSkillDescription(skill);
       });
     }
   }
@@ -491,6 +496,19 @@ export class SkillsManagerView extends ItemView {
       });
     }
 
+    // Description / SKILL.md preview
+    const descSection = this.detailEl.createEl('div', { cls: 'ct-skills-desc-section' });
+    if (this.browseDescLoading.has(skill.slug)) {
+      const loading = descSection.createEl('div', { cls: 'ct-skills-desc-loading' });
+      loading.createEl('span', { cls: 'ct-skills-spinner' });
+      loading.createEl('span', { text: ' Loading description…' });
+    } else if (this.browseDescriptions.has(skill.slug)) {
+      const descText = this.browseDescriptions.get(skill.slug);
+      if (descText) {
+        descSection.createEl('p', { cls: 'ct-skills-desc-text', text: descText });
+      }
+    }
+
     // Install area
     const installArea = this.detailEl.createEl('div', { cls: 'ct-skills-install-area' });
 
@@ -518,7 +536,7 @@ export class SkillsManagerView extends ItemView {
     const footer = this.detailEl.createEl('div', { cls: 'ct-skills-browse-footer' });
     const viewLink = footer.createEl('a', {
       cls: 'ct-skills-link',
-      text: `View ${skill.name} on skills.sh`,
+      text: `View on skills.sh ↗`,
       href: `https://skills.sh/${skill.slug}`,
     });
     viewLink.addEventListener('click', (e) => {
@@ -527,6 +545,63 @@ export class SkillsManagerView extends ItemView {
       const electron = require('electron') as { shell?: { openExternal: (url: string) => void } };
       electron.shell?.openExternal(`https://skills.sh/${skill.slug}`);
     });
+  }
+
+  // ── Skill Description Fetch ───────────────────────────────────────────────
+
+  /** Fetch the description from SKILL.md for a browse skill, caching the result. */
+  private async fetchSkillDescription(skill: BrowseSkill): Promise<void> {
+    if (this.browseDescriptions.has(skill.slug) || this.browseDescLoading.has(skill.slug)) {
+      return;
+    }
+    if (!skill.source) {
+      this.browseDescriptions.set(skill.slug, null);
+      return;
+    }
+
+    this.browseDescLoading.add(skill.slug);
+    if (this.selectedBrowse?.slug === skill.slug) this.renderDetail();
+
+    // Derive the skill's own ID (last path segment after removing the source prefix)
+    const skillId = skill.slug.startsWith(skill.source + '/')
+      ? skill.slug.slice(skill.source.length + 1)
+      : skill.slug;
+
+    // Try common SKILL.md locations in the repo, in order
+    const candidates = [
+      `https://raw.githubusercontent.com/${skill.source}/main/skills/${skillId}/SKILL.md`,
+      `https://raw.githubusercontent.com/${skill.source}/main/${skillId}/SKILL.md`,
+      `https://raw.githubusercontent.com/${skill.source}/main/SKILL.md`,
+    ];
+
+    let description: string | null = null;
+    for (const url of candidates) {
+      try {
+        const res = await requestUrl({ url, method: 'GET', throw: false });
+        if (res.status === 200 && res.text) {
+          const { description: fm } = parseFrontmatter(res.text);
+          if (fm) {
+            description = fm.replace(/^["']|["']$/g, '');
+            break;
+          }
+          // No frontmatter description — try first non-heading, non-empty paragraph
+          const lines = res.text.split('\n');
+          const start = lines.findIndex((l) => l.startsWith('---')) >= 0
+            ? lines.findIndex((l, i) => i > 0 && l.startsWith('---')) + 1
+            : 0;
+          const body = lines.slice(start).join('\n');
+          const para = body.match(/(?:^|\n)(?!#|\s*```)[^\n]{20,}/m);
+          if (para) {
+            description = para[0].trim();
+            break;
+          }
+        }
+      } catch { /* try next */ }
+    }
+
+    this.browseDescLoading.delete(skill.slug);
+    this.browseDescriptions.set(skill.slug, description);
+    if (this.selectedBrowse?.slug === skill.slug) this.renderDetail();
   }
 
   // ── Data Loading ──────────────────────────────────────────────────────────
