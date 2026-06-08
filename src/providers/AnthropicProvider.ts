@@ -265,6 +265,33 @@ export class AnthropicProvider implements AIProvider {
             );
             break;
           }
+
+          case 'user': {
+            // Tool results come back as 'user' messages. Scan content for inline
+            // image blocks (e.g. Read tool returning a PNG) and fire the callback.
+            if (callbacks.onToolResultImages) {
+              const userMsg = msg as Record<string, unknown>;
+              const msgContent = (userMsg.message as Record<string, unknown>)?.content;
+              if (Array.isArray(msgContent)) {
+                for (const block of msgContent) {
+                  const b = block as Record<string, unknown>;
+                  if (b.type === 'tool_result' && Array.isArray(b.content)) {
+                    const images: Array<{ mediaType: string; data: string }> = [];
+                    for (const inner of b.content as Array<Record<string, unknown>>) {
+                      if (inner.type === 'image') {
+                        const src = inner.source as Record<string, unknown>;
+                        if (src?.type === 'base64' && src.data && src.media_type) {
+                          images.push({ mediaType: src.media_type as string, data: src.data as string });
+                        }
+                      }
+                    }
+                    if (images.length > 0) callbacks.onToolResultImages(images);
+                  }
+                }
+              }
+            }
+            break;
+          }
         }
       }
     } catch (err) {
