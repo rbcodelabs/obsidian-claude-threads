@@ -59,3 +59,55 @@ export function extractAwsProfile(extraEnv: string): string | null {
   const match = extraEnv.match(/(?:^|\n)AWS_PROFILE=([^\s]+)/);
   return match ? match[1] : null;
 }
+
+/**
+ * Resolves the absolute path to the `aws` CLI binary.
+ *
+ * Obsidian launches with a minimal PATH (no `/opt/homebrew/bin`), so spawning
+ * `aws` via `child_process.exec` fails with "command not found" on Macs where
+ * the AWS CLI was installed via Homebrew. Walk the common install locations
+ * and fall back to the bare name so users with `aws` on PATH still work.
+ *
+ * Accepts an optional `fileExists` predicate for testing — defaults to the
+ * real `fs.existsSync`.
+ */
+export function resolveAwsBinary(fileExists?: (p: string) => boolean): string {
+  const exists = fileExists ?? defaultFileExists;
+  const home = process.env.HOME ?? '';
+  const candidates = [
+    '/opt/homebrew/bin/aws',
+    '/usr/local/bin/aws',
+    home ? `${home}/.local/bin/aws` : '',
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      if (exists(p)) return p;
+    } catch {
+      // ignore — fall through to the next candidate
+    }
+  }
+  return 'aws';
+}
+
+function defaultFileExists(p: string): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require('fs') as typeof import('fs');
+  return fs.existsSync(p);
+}
+
+/**
+ * Returns an env object suitable for `child_process.exec` that prepends the
+ * common Homebrew / user-local bin directories to PATH. Needed so that any
+ * subprocesses the AWS CLI itself spawns (e.g. `aws sso login` opening a
+ * browser helper) can also find their dependencies.
+ */
+export function awsExecEnv(): NodeJS.ProcessEnv {
+  const extraPath = ['/opt/homebrew/bin', '/usr/local/bin'];
+  const home = process.env.HOME;
+  if (home) extraPath.push(`${home}/.local/bin`);
+  const currentPath = process.env.PATH ?? '';
+  return {
+    ...process.env,
+    PATH: `${extraPath.join(':')}:${currentPath}`,
+  };
+}

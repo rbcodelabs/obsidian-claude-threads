@@ -4,7 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
-import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile } from './dashboardUtils';
+import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
@@ -388,9 +388,10 @@ export class AgentDashboard extends ItemView {
           try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const { exec } = require('child_process') as typeof import('child_process');
-            const cmd = profile ? `aws sso login --profile ${profile}` : 'aws sso login';
+            const awsBin = resolveAwsBinary();
+            const cmd = profile ? `${awsBin} sso login --profile ${profile}` : `${awsBin} sso login`;
             await new Promise<void>((resolve, reject) => {
-              exec(cmd, (err, _stdout, stderr) => {
+              exec(cmd, { env: awsExecEnv() }, (err, _stdout, stderr) => {
                 if (err) reject(new Error(stderr?.trim() || err.message));
                 else resolve();
               });
