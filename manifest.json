@@ -1,10 +1,10 @@
 {
-	"id": "claude-threads",
-	"name": "Claude Threads",
-	"version": "0.13.5",
-	"minAppVersion": "1.0.0",
-	"description": "Multi-threaded Claude Code sessions in Obsidian.",
-	"author": "Rick Bowman",
-	"authorUrl": "https://github.com/richardbowman",
-	"isDesktopOnly": false
+  "id": "claude-threads",
+  "name": "Claude Threads",
+  "version": "0.14.0",
+  "minAppVersion": "1.0.0",
+  "description": "Multi-threaded Claude Code sessions in Obsidian.",
+  "author": "Rick Bowman",
+  "authorUrl": "https://github.com/richardbowman",
+  "isDesktopOnly": false
 }
