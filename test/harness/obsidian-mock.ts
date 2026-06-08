@@ -347,3 +347,18 @@ export class MarkdownRenderer {
     el.innerHTML = await marked(withLinks, { async: true });
   }
 }
+
+/**
+ * Mock for Obsidian's requestUrl — used by SkillsManagerView to bypass CORS.
+ * In the test harness we delegate to the global fetch so network calls still
+ * work; the real plugin uses Electron's main-process fetch path instead.
+ */
+export async function requestUrl(options: { url: string; method?: string; headers?: Record<string, string>; body?: string }): Promise<{ json: unknown; status: number }> {
+  const res = await fetch(options.url, {
+    method: options.method ?? 'GET',
+    headers: options.headers,
+    body: options.body,
+  });
+  const json = await res.json();
+  return { json, status: res.status };
+}
