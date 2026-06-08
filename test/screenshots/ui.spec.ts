@@ -332,6 +332,29 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
   });
 
+  // ─── Skills Manager ──────────────────────────────────────────────────────
+
+  test('skills manager — installed tab', async ({ page }) => {
+    const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
+    await page.setViewportSize({ width: 640, height: 700 });
+    await page.goto(skillsUrl);
+    await page.waitForSelector('.ct-skills-card');
+    await page.click('.ct-skills-card');
+    await page.waitForSelector('.ct-skills-detail-header');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('skills-manager-installed.png', { fullPage: true });
+  });
+
+  test('skills manager — browse tab', async ({ page }) => {
+    const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
+    await page.setViewportSize({ width: 640, height: 700 });
+    await page.goto(skillsUrl);
+    await page.waitForSelector('.ct-skills-card');
+    await page.getByText('Browse').click();
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('skills-manager-browse.png', { fullPage: true });
+  });
+
   test('sub-agent task pill while working', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

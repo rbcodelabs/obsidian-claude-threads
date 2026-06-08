@@ -112,6 +112,18 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 **Skills** — any `.md` file (or directory) in `~/.claude/skills/` appears below the built-in commands. Selecting one inserts the skill name into your message, which Claude handles via your `CLAUDE.md` configuration.
 
+### Skills Manager
+
+Open the **Skills Manager** panel from the ribbon (puzzle icon) or command palette to browse, install, and edit Claude Code skills.
+
+<p align="center">
+  <img src="docs/screenshot-skills-manager.png" width="800" alt="Skills Manager: installed skills list on the left with skill detail and editor on the right" />
+</p>
+
+**Installed tab** — lists every skill in `~/.claude/skills/`. Click a skill to view and edit its `SKILL.md` directly in the panel. The editor shows an unsaved-changes indicator (`●`) and a **Save** button when there are pending edits. **Reload** re-reads the file from disk. **Reveal in Finder** opens the skill's directory. **Uninstall** removes the skill (with a confirmation prompt).
+
+**Browse tab** — search the [skills.sh](https://skills.sh) registry. Results show the skill name, GitHub source, and install count. Click a result to see details and an **Install** button that clones the skill from GitHub into `~/.claude/skills/`.
+
 ### @ file mentions
 
 Type `@` anywhere in the input box to search vault files by name. A dropdown appears showing up to 20 matching files — navigate with arrow keys and press Tab or Enter to insert.
@@ -356,14 +368,6 @@ npm install
 npm run build
 # Output is in dist/
 ```
-
-To auto-sync builds to your local Obsidian vault during development, create a `.env.local` file in the project root:
-
-```
-OBSIDIAN_PLUGIN_DIR=/path/to/your/vault/.obsidian/plugins/claude-threads
-```
-
-Then run `npm run dev` — every rebuild will copy `main.js`, `styles.css`, and `manifest.json` to your vault automatically.
 
 ## Releasing
 
