@@ -4183,6 +4183,27 @@
   flex-shrink: 0;
 }
 
+/* Browse tab: description section */
+.ct-skills-desc-section {
+  padding: 0 14px 10px;
+  flex-shrink: 0;
+}
+
+.ct-skills-desc-text {
+  margin: 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.ct-skills-desc-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-small);
+  color: var(--text-faint);
+}
+
 /* Browse tab: install area */
 .ct-skills-install-area {
   padding: 12px 14px;
