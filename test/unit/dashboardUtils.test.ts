@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile } from '../../src/dashboardUtils';
+import { describe, it, expect } from 'vitest';
+import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from '../../src/dashboardUtils';
 
 // ── relativeTime ──────────────────────────────────────────────────────────────
 
@@ -202,5 +202,113 @@ describe('extractAwsProfile', () => {
 
   it('handles profile name with hyphens and underscores', () => {
     expect(extractAwsProfile('AWS_PROFILE=my-team_prod')).toBe('my-team_prod');
+  });
+});
+
+// ── resolveAwsBinary ──────────────────────────────────────────────────────────
+
+describe('resolveAwsBinary', () => {
+  it('returns /opt/homebrew/bin/aws when present (Apple Silicon Homebrew)', () => {
+    const exists = (p: string) => p === '/opt/homebrew/bin/aws';
+    expect(resolveAwsBinary(exists)).toBe('/opt/homebrew/bin/aws');
+  });
+
+  it('returns /usr/local/bin/aws when present (Intel Homebrew)', () => {
+    const exists = (p: string) => p === '/usr/local/bin/aws';
+    expect(resolveAwsBinary(exists)).toBe('/usr/local/bin/aws');
+  });
+
+  it('returns ~/.local/bin/aws when present (user install)', () => {
+    const home = process.env.HOME ?? '';
+    const exists = (p: string) => p === `${home}/.local/bin/aws`;
+    expect(resolveAwsBinary(exists)).toBe(`${home}/.local/bin/aws`);
+  });
+
+  it('prefers Apple Silicon Homebrew over Intel when both exist', () => {
+    const exists = (p: string) =>
+      p === '/opt/homebrew/bin/aws' || p === '/usr/local/bin/aws';
+    expect(resolveAwsBinary(exists)).toBe('/opt/homebrew/bin/aws');
+  });
+
+  it('falls back to bare "aws" when no candidate exists', () => {
+    expect(resolveAwsBinary(() => false)).toBe('aws');
+  });
+
+  it('returns "aws" if fileExists throws on every candidate', () => {
+    expect(
+      resolveAwsBinary(() => {
+        throw new Error('permission denied');
+      }),
+    ).toBe('aws');
+  });
+
+  it('skips the ~/.local candidate when HOME is unset', () => {
+    const origHome = process.env.HOME;
+    delete process.env.HOME;
+    try {
+      const checked: string[] = [];
+      resolveAwsBinary((p) => {
+        checked.push(p);
+        return false;
+      });
+      expect(checked).toEqual(['/opt/homebrew/bin/aws', '/usr/local/bin/aws']);
+    } finally {
+      process.env.HOME = origHome;
+    }
+  });
+});
+
+// ── awsExecEnv ────────────────────────────────────────────────────────────────
+
+describe('awsExecEnv', () => {
+  it('prepends /opt/homebrew/bin and /usr/local/bin to PATH', () => {
+    const env = awsExecEnv();
+    expect(env.PATH).toMatch(/^\/opt\/homebrew\/bin:\/usr\/local\/bin:/);
+  });
+
+  it('preserves the existing PATH at the end', () => {
+    const origPath = process.env.PATH;
+    process.env.PATH = '/sentinel/path';
+    try {
+      const env = awsExecEnv();
+      expect(env.PATH?.endsWith('/sentinel/path')).toBe(true);
+    } finally {
+      process.env.PATH = origPath;
+    }
+  });
+
+  it('inherits the rest of process.env (copies, not strips)', () => {
+    const origVar = process.env.CT_TEST_VAR;
+    process.env.CT_TEST_VAR = 'hello';
+    try {
+      const env = awsExecEnv();
+      expect(env.CT_TEST_VAR).toBe('hello');
+    } finally {
+      if (origVar === undefined) delete process.env.CT_TEST_VAR;
+      else process.env.CT_TEST_VAR = origVar;
+    }
+  });
+
+  it('includes ~/.local/bin in PATH when HOME is set', () => {
+    const origHome = process.env.HOME;
+    process.env.HOME = '/Users/probe';
+    try {
+      const env = awsExecEnv();
+      expect(env.PATH).toContain('/Users/probe/.local/bin');
+    } finally {
+      process.env.HOME = origHome;
+    }
+  });
+
+  it('handles undefined PATH gracefully', () => {
+    const origPath = process.env.PATH;
+    delete process.env.PATH;
+    try {
+      const env = awsExecEnv();
+      // Should still have homebrew + usr/local at minimum, ending with empty suffix
+      expect(env.PATH).toMatch(/^\/opt\/homebrew\/bin:\/usr\/local\/bin:/);
+    } finally {
+      process.env.PATH = origPath;
+    }
   });
 });
