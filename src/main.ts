@@ -259,6 +259,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               prUrl: t.prUrl,
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
+              rawLogPath: t.rawLogPath,
               messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
                 id: m.id,
                 role: m.role,
@@ -267,7 +268,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -288,6 +289,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               prUrl: t.prUrl,
               updatedAt: t.updatedAt,
               messageCount,
+              rawLogPath: t.rawLogPath,
             };
           }),
           getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
@@ -296,6 +298,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             description: p.description,
             vaultFolder: p.vaultFolder,
           })),
+          readThreadLog: (id: string, opts: { limit?: number; type?: string }) => this.manager.readRawLog(id, opts),
           isThreadRunning: (id: string) => this.manager.isRunning(id),
           sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
           archiveThread: async (id: string) => {

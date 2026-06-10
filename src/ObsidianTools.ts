@@ -109,6 +109,8 @@ export interface ThreadSnapshot {
   updatedAt: number;
   /** Number of non-compact messages */
   messageCount: number;
+  /** Vault-relative path to the thread's raw JSONL conversation log, if raw logging is enabled. Read it with obsidian_get_thread_log. */
+  rawLogPath?: string;
 }
 
 export interface ThreadMessageSnapshot {
@@ -177,6 +179,15 @@ export interface ObsidianMcpServerOptions {
   getThreadDetail?: (id: string) => ThreadDetail | undefined;
   /** Returns metadata snapshots for all threads. */
   getAllThreads?: () => ThreadSnapshot[];
+  /**
+   * Reads parsed entries from a thread's raw JSONL conversation log, filtered
+   * by `type` and tailed to the most recent `limit` entries. Resolves null if
+   * no log exists for the thread (raw logging disabled or no events yet).
+   */
+  readThreadLog?: (
+    id: string,
+    opts: { limit?: number; type?: string },
+  ) => Promise<{ path: string; total: number; returned: number; entries: unknown[] } | null>;
   /** Returns all projects. */
   getAllProjects?: () => ProjectSnapshot[];
   /** Returns true if the given thread is currently processing a request. */
@@ -956,7 +967,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any.',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with obsidian_get_thread_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -980,7 +991,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history.',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with obsidian_get_thread_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1035,6 +1046,35 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         const limit = args.limit ?? 20;
         const messages = detail.messages.slice(-limit);
         return { content: [{ type: 'text' as const, text: JSON.stringify(messages, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundGetThreadLog = tool(
+    'obsidian_get_thread_log',
+    'Returns parsed entries from a thread\'s raw JSONL conversation log — the verbatim SDK event stream captured per turn: tool calls with full inputs, tool results/outputs, assistant messages, result events (cost/usage/turns), system events, and a synthetic session_start marker (prompt, cwd, model, resume target) at the head of each turn. Each entry is an envelope { ts, threadId, sessionId, type, event } where event is the raw SDK payload, untouched. Use this to audit exactly what another thread (or a sub-agent) did and with what arguments — far more detail than obsidian_get_thread_messages, which only returns rendered message text. Logs can be large, so results are filtered by type (if given) and then tailed to the most recent N entries (default 100). The returned `path` is the absolute log file path — Read it directly for the complete, unfiltered stream. Defaults to the current thread when threadId is omitted. Note: per-token streaming deltas are intentionally not logged (they are reconstructed in the final assistant message).',
+    {
+      threadId: z.string().optional().describe('ID of the thread whose log to read. Defaults to the current thread.'),
+      limit: z.number().int().nonnegative().optional().describe('Return only the most recent N entries (default 100). Pass 0 for all entries. Type filtering is applied before tailing.'),
+      type: z.string().optional().describe('Only return entries with this envelope type, e.g. "assistant", "user", "result", "system", "session_start", "tool_use_summary".'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.readThreadLog) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Raw log access not available in this context.' }) }], isError: true };
+        }
+        const threadId = args.threadId ?? options.threadId;
+        if (!threadId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No threadId provided and no current thread in context.' }) }], isError: true };
+        }
+        const result = await options.readThreadLog(threadId, { limit: args.limit, type: args.type });
+        if (!result) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `No raw log found for thread: ${threadId}. Raw logging may be disabled, or the thread has not produced any events yet.` }) }], isError: true };
+        }
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
@@ -1649,6 +1689,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundListThreads,
       boundListProjects,
       boundGetThreadMessages,
+      boundGetThreadLog,
       boundWaitForThread,
       boundSendMessageToThread,
       boundArchiveThread,

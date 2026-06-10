@@ -719,6 +719,16 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Save raw JSONL logs')
+      .setDesc('Append each thread\'s raw event stream (tool calls, results, usage) to <vault folder>/logs/<thread id>.jsonl, linked from the note\'s raw_log frontmatter. Lets agents retrieve and analyze the full transcript.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.saveRawLogs).onChange(async (value) => {
+          this.plugin.settings.saveRawLogs = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
       .setName('Vault folder')
       .setDesc('Where thread notes are saved, relative to the vault root.')
       .addText((text) =>

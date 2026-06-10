@@ -1,4 +1,5 @@
 import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
+import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
@@ -67,13 +68,30 @@ export class ThreadManager {
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
+  /** Appends each thread's raw SDK event stream to a per-thread JSONL log. */
+  private rawLogWriter: RawLogWriter;
 
   constructor(settings: PluginSettings) {
     this.settings = settings;
+    this.rawLogWriter = new RawLogWriter(
+      () => this.vaultRoot,
+      () => this.settings.vaultFolder,
+    );
   }
 
   updateSettings(settings: PluginSettings): void {
     this.settings = settings;
+  }
+
+  /**
+   * Reads parsed entries from a thread's raw JSONL log. Filters by `type` then
+   * tails to the most recent `limit` entries. Returns null if no log exists.
+   */
+  readRawLog(
+    threadId: string,
+    opts?: { limit?: number; type?: string },
+  ): Promise<{ path: string; total: number; returned: number; entries: unknown[] } | null> {
+    return this.rawLogWriter.read(threadId, opts);
   }
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -558,6 +576,20 @@ export class ThreadManager {
       this.settings.permissionMode,
       effectiveExtraEnv(this.settings),
       {
+        onRawEvent: (event) => {
+          if (!this.settings.saveRawLogs || !this.vaultRoot) return;
+          // Record the log path on the thread the first time we write, so the
+          // markdown note's `raw_log` frontmatter can link to it.
+          if (!thread.rawLogPath) {
+            thread.rawLogPath = this.rawLogWriter.vaultRelativePath(thread.id);
+          }
+          this.rawLogWriter.append(
+            thread.id,
+            thread.sessionId,
+            typeof event.type === 'string' ? event.type : 'unknown',
+            event,
+          );
+        },
         onToken: (text) => {
           streamingContent += text;
           this.emit(threadId, { type: 'token', text });
