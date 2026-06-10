@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sani
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS } from './slashCommands';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -127,14 +128,7 @@ export class ThreadsView extends ItemView {
 
   private floatingPanelEl!: HTMLElement;
 
-  private static readonly BUILTIN_COMMANDS: { name: string; description: string }[] = [
-    { name: 'compact', description: 'Summarize conversation history to free up context' },
-    { name: 'clear', description: 'Clear conversation history and start fresh' },
-    { name: 'cost', description: 'Show token usage and cost for this session' },
-    { name: 'model', description: 'Set persistent model: /model fable|opus|sonnet|haiku|default' },
-    { name: 'goal', description: 'Set a persistent goal for this thread: /goal <text> · /goal clear' },
-    { name: 'loop', description: 'Re-run a prompt on an interval: /loop 5m <prompt> · /loop stop' },
-  ];
+  private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
   private static readonly MODEL_ALIASES: Record<string, string | undefined> = {
     fable: 'fable',
@@ -450,6 +444,7 @@ export class ThreadsView extends ItemView {
       showCwdChip: true,
       captureLongPaste: true,
       builtinCommands: ThreadsView.BUILTIN_COMMANDS,
+      argCompletions: THREAD_ARG_COMPLETIONS,
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterActions: (container) => {

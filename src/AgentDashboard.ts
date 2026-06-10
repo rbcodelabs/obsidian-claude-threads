@@ -6,6 +6,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
+import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS } from './slashCommands';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -132,12 +133,8 @@ export class AgentDashboard extends ItemView {
     this.dispatchComponent = new DispatchInput({
       app: this.app,
       placeholder: 'Dispatch a task...',
-      builtinCommands: [
-        { name: 'compact', description: 'Summarize conversation history to free up context' },
-        { name: 'clear', description: 'Clear conversation history and start fresh' },
-        { name: 'cost', description: 'Show token usage and cost for this session' },
-        { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
-      ],
+      builtinCommands: DISPATCH_BUILTIN_COMMANDS,
+      argCompletions: DISPATCH_ARG_COMPLETIONS,
       onSend: async ({ text, images, attachment }) => {
         let messageText = buildMessageWithAttachment(text, attachment);
 
