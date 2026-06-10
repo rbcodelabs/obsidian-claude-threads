@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { SessionCallbacks, RunOptions } from '../../src/providers/AIProvider';
+import { ANTHROPIC_CAPABILITIES } from '../../src/providers/AnthropicProvider';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
 
@@ -13,32 +14,23 @@ const mock = vi.hoisted(() => ({
   resumeSessionId: undefined as string | undefined,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      prompt: string,
-      resumeSessionId: string | undefined,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-      _dirs?: unknown,
-      model?: string,
-      images?: import('../../src/types').ImageAttachment[],
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      mock.prompt = prompt;
-      mock.model = model;
-      mock.images = images;
-      mock.resumeSessionId = resumeSessionId;
+vi.mock('../../src/providers/ProviderFactory', () => ({
+  createProvider: () => ({
+    capabilities: ANTHROPIC_CAPABILITIES,
+    async run(opts: RunOptions): Promise<void> {
+      mock.callbacks = opts.callbacks;
+      mock.prompt = opts.prompt;
+      mock.model = opts.model;
+      mock.images = opts.images;
+      mock.resumeSessionId = opts.resumeSessionId;
       return new Promise<void>((res) => { mock.resolve = res; });
-    }
-    close() {}
+    },
+    close() {},
     async interrupt() {
       mock.callbacks?.onInterrupted(mock.resumeSessionId ?? '');
       mock.resolve?.();
-    }
-  },
+    },
+  }),
 }));
 
 // Import AFTER vi.mock so the mock is in place

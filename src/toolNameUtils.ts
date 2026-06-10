@@ -36,6 +36,46 @@ export function formatToolName(raw: string): string {
   return deduplicated.replace(/_/g, ' ');
 }
 
+/**
+ * Produce a short human-readable summary string for a tool call.
+ * Used by AnthropicProvider to populate ToolCallRecord.summary for display.
+ * Kept in toolNameUtils so it stays mobile-safe (no SDK imports).
+ */
+export function formatToolSummary(name: string, input: Record<string, unknown>): string {
+  const mcpMatch = name.match(/^mcp__[^_]+__(.+)$/);
+  const bare = mcpMatch ? mcpMatch[1] : name;
+  const server = mcpMatch ? name.match(/^mcp__([^_]+)__/)![1] : null;
+  const key = (server && bare.startsWith(server + '_'))
+    ? bare.slice(server.length + 1)
+    : bare;
+
+  switch (key) {
+    case 'Read':
+    case 'Edit':
+    case 'Write':
+    case 'Glob':
+    case 'Grep':
+      return `${String(input.file_path ?? input.path ?? input.pattern ?? '')}`;
+    case 'Bash':
+      return `${String(input.command ?? '').substring(0, 60)}`;
+    case 'WebFetch':
+      return `${input.url}`;
+    case 'WebSearch':
+      return `${input.query}`;
+    case 'OpenNewTab':
+      return `${(input.title as string) ?? 'New Thread'}`;
+    case 'navigate_to_file': return `${input.path}`;
+    case 'search_vault': return `${input.query}`;
+    case 'get_backlinks': return `${input.path}`;
+    case 'get_outgoing_links': return `${input.path}`;
+    case 'insert_at_cursor': return '';
+    case 'get_note_metadata': return `${input.path}`;
+    case 'set_working_directory': return `${input.path}`;
+    default:
+      return '';
+  }
+}
+
 /** Return a Lucide icon name for a tool. Falls back to 'wrench'. */
 export function getToolIcon(raw: string): string {
   // Normalize first so we can match on bare names
