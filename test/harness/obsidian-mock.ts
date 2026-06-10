@@ -58,6 +58,7 @@ declare global {
     hasClass(cls: string): boolean;
     toggleClass(cls: string, force?: boolean): void;
     setText(text: string): void;
+    appendText(text: string): void;
   }
 }
 
@@ -115,6 +116,10 @@ HTMLElement.prototype.setText = function (text: string): void {
   this.textContent = text;
 };
 
+HTMLElement.prototype.appendText = function (text: string): void {
+  this.appendChild(document.createTextNode(text));
+};
+
 // ─── Lucide SVG strings ───────────────────────────────────────────────────────
 
 const ICONS: Record<string, string> = {
@@ -128,6 +133,11 @@ const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height=
 
 // ─── Mock exports ─────────────────────────────────────────────────────────────
 
+const mockSecrets: Record<string, string> = {
+  'openai-api-key': 'sk-mock0000000000000000abcd',
+  'ct-secret-STRIPE_SECRET_KEY': 'sk_live_mock00000000efgh',
+};
+
 export const mockApp = {
   vault: {
     adapter: {
@@ -136,6 +146,13 @@ export const mockApp = {
     },
   },
   workspace: {},
+  secretStorage: {
+    getSecret: (name: string) => mockSecrets[name] ?? null,
+    setSecret: (name: string, value: string) => { mockSecrets[name] = value; },
+  },
+  internalPlugins: {
+    plugins: { webviewer: { enabled: true } },
+  },
 };
 
 export const mockLeaf = { app: mockApp, view: null, updateHeader: () => {} };
@@ -231,6 +248,292 @@ export function setTooltip(el: HTMLElement, tooltip: string, _options?: { placem
 }
 
 export class App {}
+
+// ─── Settings API mocks (PluginSettingTab, Setting, components) ──────────────
+
+export const Platform = {
+  isMobile: false,
+  isMobileApp: false,
+  isDesktop: true,
+  isDesktopApp: true,
+  isMacOS: true,
+};
+
+export class PluginSettingTab {
+  app: unknown;
+  plugin: unknown;
+  containerEl: HTMLElement;
+
+  constructor(app: unknown, plugin: unknown) {
+    this.app = app;
+    this.plugin = plugin;
+    this.containerEl = document.createElement('div');
+    this.containerEl.className = 'vertical-tab-content';
+  }
+
+  display(): void {}
+  hide(): void {}
+}
+
+export class TextComponent {
+  inputEl: HTMLInputElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.inputEl = containerEl.createEl('input', { type: 'text' });
+  }
+
+  setPlaceholder(placeholder: string): this {
+    this.inputEl.placeholder = placeholder;
+    return this;
+  }
+
+  setValue(value: string): this {
+    this.inputEl.value = value;
+    return this;
+  }
+
+  onChange(cb: (value: string) => unknown): this {
+    this.inputEl.addEventListener('input', () => cb(this.inputEl.value));
+    return this;
+  }
+
+  then(cb: (component: this) => unknown): this {
+    cb(this);
+    return this;
+  }
+}
+
+export class TextAreaComponent {
+  inputEl: HTMLTextAreaElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.inputEl = containerEl.createEl('textarea');
+  }
+
+  setPlaceholder(placeholder: string): this {
+    this.inputEl.placeholder = placeholder;
+    return this;
+  }
+
+  setValue(value: string): this {
+    this.inputEl.value = value;
+    return this;
+  }
+
+  onChange(cb: (value: string) => unknown): this {
+    this.inputEl.addEventListener('input', () => cb(this.inputEl.value));
+    return this;
+  }
+}
+
+export class ToggleComponent {
+  toggleEl: HTMLElement;
+  private value = false;
+  private changeCb: ((value: boolean) => unknown) | null = null;
+  private disabled = false;
+
+  constructor(containerEl: HTMLElement) {
+    this.toggleEl = containerEl.createDiv({ cls: 'checkbox-container' });
+    this.toggleEl.createEl('input', { type: 'checkbox' });
+    this.toggleEl.addEventListener('click', () => {
+      if (this.disabled) return;
+      this.setValue(!this.value);
+      this.changeCb?.(this.value);
+    });
+  }
+
+  setValue(value: boolean): this {
+    this.value = value;
+    this.toggleEl.toggleClass('is-enabled', value);
+    return this;
+  }
+
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    this.toggleEl.toggleClass('is-disabled', disabled);
+    return this;
+  }
+
+  onChange(cb: (value: boolean) => unknown): this {
+    this.changeCb = cb;
+    return this;
+  }
+}
+
+export class DropdownComponent {
+  selectEl: HTMLSelectElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.selectEl = containerEl.createEl('select', { cls: 'dropdown' });
+  }
+
+  addOption(value: string, display: string): this {
+    const opt = this.selectEl.createEl('option', { text: display });
+    opt.value = value;
+    return this;
+  }
+
+  setValue(value: string): this {
+    this.selectEl.value = value;
+    return this;
+  }
+
+  onChange(cb: (value: string) => unknown): this {
+    this.selectEl.addEventListener('change', () => cb(this.selectEl.value));
+    return this;
+  }
+}
+
+export class ButtonComponent {
+  buttonEl: HTMLButtonElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.buttonEl = containerEl.createEl('button');
+  }
+
+  setButtonText(text: string): this {
+    this.buttonEl.setText(text);
+    return this;
+  }
+
+  setIcon(name: string): this {
+    setIcon(this.buttonEl, name);
+    return this;
+  }
+
+  setCta(): this {
+    this.buttonEl.addClass('mod-cta');
+    return this;
+  }
+
+  setWarning(): this {
+    this.buttonEl.addClass('mod-warning');
+    return this;
+  }
+
+  setTooltip(tooltip: string): this {
+    setTooltip(this.buttonEl, tooltip);
+    return this;
+  }
+
+  setDisabled(disabled: boolean): this {
+    this.buttonEl.disabled = disabled;
+    return this;
+  }
+
+  onClick(cb: (evt: MouseEvent) => unknown): this {
+    this.buttonEl.addEventListener('click', cb);
+    return this;
+  }
+}
+
+export class ExtraButtonComponent {
+  extraSettingsEl: HTMLElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.extraSettingsEl = containerEl.createDiv({ cls: 'clickable-icon extra-setting-button' });
+  }
+
+  setIcon(name: string): this {
+    setIcon(this.extraSettingsEl, name);
+    return this;
+  }
+
+  setTooltip(tooltip: string): this {
+    setTooltip(this.extraSettingsEl, tooltip);
+    return this;
+  }
+
+  onClick(cb: () => unknown): this {
+    this.extraSettingsEl.addEventListener('click', () => cb());
+    return this;
+  }
+}
+
+export class Setting {
+  settingEl: HTMLElement;
+  infoEl: HTMLElement;
+  nameEl: HTMLElement;
+  descEl: HTMLElement;
+  controlEl: HTMLElement;
+
+  constructor(containerEl: HTMLElement) {
+    this.settingEl = containerEl.createDiv({ cls: 'setting-item' });
+    this.infoEl = this.settingEl.createDiv({ cls: 'setting-item-info' });
+    this.nameEl = this.infoEl.createDiv({ cls: 'setting-item-name' });
+    this.descEl = this.infoEl.createDiv({ cls: 'setting-item-description' });
+    this.controlEl = this.settingEl.createDiv({ cls: 'setting-item-control' });
+  }
+
+  setName(name: string): this {
+    this.nameEl.setText(name);
+    return this;
+  }
+
+  setDesc(desc: string): this {
+    this.descEl.setText(desc);
+    return this;
+  }
+
+  setHeading(): this {
+    this.settingEl.addClass('setting-item-heading');
+    return this;
+  }
+
+  setClass(cls: string): this {
+    this.settingEl.addClass(cls);
+    return this;
+  }
+
+  setTooltip(tooltip: string): this {
+    setTooltip(this.settingEl, tooltip);
+    return this;
+  }
+
+  addText(cb: (component: TextComponent) => unknown): this {
+    cb(new TextComponent(this.controlEl));
+    return this;
+  }
+
+  addTextArea(cb: (component: TextAreaComponent) => unknown): this {
+    cb(new TextAreaComponent(this.controlEl));
+    return this;
+  }
+
+  addToggle(cb: (component: ToggleComponent) => unknown): this {
+    cb(new ToggleComponent(this.controlEl));
+    return this;
+  }
+
+  addDropdown(cb: (component: DropdownComponent) => unknown): this {
+    cb(new DropdownComponent(this.controlEl));
+    return this;
+  }
+
+  addButton(cb: (component: ButtonComponent) => unknown): this {
+    cb(new ButtonComponent(this.controlEl));
+    return this;
+  }
+
+  addExtraButton(cb: (component: ExtraButtonComponent) => unknown): this {
+    cb(new ExtraButtonComponent(this.controlEl));
+    return this;
+  }
+}
+
+/** Mock of Obsidian's secret picker component — renders a button that does nothing. */
+export class SecretComponent {
+  private changeCb: ((secretName: string) => unknown) | null = null;
+
+  constructor(_app: unknown, containerEl: HTMLElement) {
+    containerEl.createEl('button', { text: 'Select secret' });
+  }
+
+  onChange(cb: (secretName: string) => unknown): this {
+    this.changeCb = cb;
+    return this;
+  }
+}
 
 export function sanitizeHTMLToDom(html: string): DocumentFragment {
   const tpl = document.createElement('template');

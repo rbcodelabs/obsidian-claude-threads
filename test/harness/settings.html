@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Threads — Settings Harness</title>
+
+  <style>
+    :root {
+      /* ── Dark theme Obsidian CSS variables ─────────────────────────── */
+      --background-primary: #1e1e1e;
+      --background-secondary: #161616;
+      --background-secondary-alt: #252525;
+      --background-modifier-border: #404040;
+      --background-modifier-hover: rgba(255, 255, 255, 0.075);
+      --background-modifier-form-field: rgba(0, 0, 0, 0.3);
+      --background-modifier-error: rgba(200, 0, 0, 0.15);
+      --background-modifier-error-rgb: rgba(200, 0, 0, 0.1);
+      --text-normal: #dcddde;
+      --text-muted: #888;
+      --text-faint: #555;
+      --text-on-accent: #fff;
+      --interactive-accent: #7c3aed;
+      --interactive-accent-hover: #6d28d9;
+      --interactive-normal: #2a2a2a;
+      --interactive-hover: #353535;
+      --text-accent: #7c3aed;
+      --font-ui-small: 13px;
+      --font-ui-smaller: 11px;
+      --font-smaller: 11px;
+      --font-monospace: 'SFMono-Regular', Consolas, monospace;
+      --radius-s: 4px;
+      --color-red: #e06c75;
+      --color-yellow: #e5c07b;
+      --color-green: #4caf50;
+      --code-background: #282c34;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0d0d0d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    #app {
+      width: 760px;
+      height: 760px;
+      background: var(--background-primary);
+      border-radius: 10px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      color: var(--text-normal);
+    }
+
+    /* The setting tab's containerEl fills the #app div and scrolls */
+    #app > .vertical-tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 28px;
+    }
+
+    /* ── Minimal approximation of Obsidian core setting styles ───────── */
+    .setting-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 0;
+      border-top: 1px solid var(--background-modifier-border);
+    }
+
+    .setting-item:first-child,
+    .setting-item-heading + .setting-item {
+      border-top: none;
+    }
+
+    .setting-item-heading {
+      border-top: none;
+      margin-top: 24px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--background-modifier-border);
+    }
+
+    .setting-item-heading .setting-item-name {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .setting-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .setting-item-name {
+      font-size: 14px;
+      color: var(--text-normal);
+    }
+
+    .setting-item-description {
+      font-size: var(--font-ui-small);
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .setting-item-description:empty {
+      display: none;
+    }
+
+    .setting-item-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .setting-item-control input[type="text"],
+    .setting-item-control input[type="password"],
+    .setting-item-control textarea,
+    .setting-item-control select {
+      background: var(--background-modifier-form-field);
+      border: 1px solid var(--background-modifier-border);
+      border-radius: var(--radius-s);
+      color: var(--text-normal);
+      font-size: var(--font-ui-small);
+      padding: 6px 8px;
+      min-width: 160px;
+    }
+
+    .setting-item-control button {
+      background: var(--interactive-normal);
+      border: 1px solid var(--background-modifier-border);
+      border-radius: var(--radius-s);
+      color: var(--text-normal);
+      font-size: var(--font-ui-small);
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+
+    .setting-item-control button.mod-cta {
+      background: var(--interactive-accent);
+      border-color: transparent;
+      color: var(--text-on-accent);
+    }
+
+    .setting-item-control button.mod-warning {
+      color: var(--color-red);
+    }
+
+    .setting-item-control .extra-setting-button svg,
+    .setting-item-control button svg {
+      width: 16px;
+      height: 16px;
+      vertical-align: middle;
+    }
+
+    /* Toggle */
+    .checkbox-container {
+      width: 38px;
+      height: 22px;
+      border-radius: 11px;
+      background: var(--background-modifier-border);
+      position: relative;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.1s ease;
+    }
+
+    .checkbox-container input {
+      display: none;
+    }
+
+    .checkbox-container::after {
+      content: '';
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      transition: left 0.1s ease;
+    }
+
+    .checkbox-container.is-enabled {
+      background: var(--interactive-accent);
+    }
+
+    .checkbox-container.is-enabled::after {
+      left: 19px;
+    }
+
+    .checkbox-container.is-disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  </style>
+
+  <link rel="stylesheet" href="../../styles.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <script src="./dist/settings-bundle.js"></script>
+</body>
+</html>

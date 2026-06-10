@@ -3606,6 +3606,89 @@
   margin-top: 1rem;
 }
 
+/* ── Settings tab ────────────────────────────────────────────────────────── */
+
+/* Tab navigation bar */
+.ct-settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ct-settings-tab-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: var(--radius-s);
+  padding: 6px 14px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ct-settings-tab-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-settings-tab-btn.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-settings-tab-btn.is-active:hover {
+  background: var(--interactive-accent-hover);
+  color: var(--text-on-accent);
+}
+
+/* Empty-state text inside settings lists */
+.ct-settings-empty {
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+  font-style: italic;
+  margin: 4px 0 12px;
+}
+
+/* Full-width text inputs / textareas in settings rows */
+input.ct-settings-wide-input,
+textarea.ct-settings-wide-input {
+  width: 100%;
+}
+
+/* Project context rows: stack the textarea under the label */
+.ct-project-context-setting {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.ct-project-context-setting .setting-item-control {
+  margin-top: 8px;
+}
+
+/* Modal form fields (API key, secret env vars) */
+.ct-modal-label {
+  display: block;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.ct-modal-input {
+  width: 100%;
+  margin-bottom: 0.75rem;
+}
+
+.ct-modal-input-mono {
+  font-family: var(--font-monospace);
+  text-transform: uppercase;
+}
+
 /* ── Kanban floating dispatch panel ──────────────────────────────────── */
 
 /* Positioning context for the absolute floating panel */
