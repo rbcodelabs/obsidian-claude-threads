@@ -47,3 +47,46 @@ export const THREAD_ARG_COMPLETIONS: Record<string, SlashCommand[]> = {
 export const DISPATCH_ARG_COMPLETIONS: Record<string, SlashCommand[]> = {
   model: MODEL_ARG_COMPLETIONS,
 };
+
+/**
+ * Maps /model argument aliases to the model id passed to the CLI.
+ * `undefined` means "reset to the default model". Shared by ThreadsView
+ * (thread-scoped /model) and the dispatch boxes (leading /model prefix).
+ */
+export const MODEL_ALIASES: Record<string, string | undefined> = {
+  fable: 'fable',
+  opus: 'opus',
+  sonnet: 'sonnet',
+  haiku: 'haiku',
+  default: undefined,
+  reset: undefined,
+};
+
+export interface DispatchModelPrefix {
+  /** Resolved model id, or undefined for default/reset. Unset when error is present. */
+  model?: string;
+  /** Prompt text remaining after the /model command. */
+  rest: string;
+  /** Set when the command is malformed (missing or unknown model name). */
+  error?: string;
+}
+
+export const MODEL_USAGE_HINT = 'Usage: /model fable|opus|sonnet|haiku|default <prompt>';
+
+/**
+ * Parses a leading "/model <name>" prefix on text typed into a dispatch box.
+ * Returns null when the text is not a /model command (dispatch it as-is).
+ * Returns { error } when the model name is missing or unknown.
+ * Otherwise returns the resolved model and the remaining prompt text —
+ * callers decide how to handle an empty prompt (e.g. images may be attached).
+ */
+export function parseDispatchModelPrefix(text: string): DispatchModelPrefix | null {
+  if (!/^\/model(\s|$)/i.test(text.trim())) return null;
+  const m = text.trim().match(/^\/model\s+(\S+)\s*([\s\S]*)$/i);
+  if (!m) return { rest: '', error: MODEL_USAGE_HINT };
+  const arg = m[1].toLowerCase();
+  if (!(arg in MODEL_ALIASES)) {
+    return { rest: m[2].trim(), error: `Unknown model "${m[1]}". Use: fable, opus, sonnet, haiku, default` };
+  }
+  return { model: MODEL_ALIASES[arg], rest: m[2].trim() };
+}

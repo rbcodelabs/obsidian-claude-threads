@@ -5,7 +5,7 @@ import type { Thread } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
-import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS } from './slashCommands';
+import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchModelPrefix } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
@@ -120,6 +120,25 @@ export class KanbanView extends ItemView {
       builtinCommands: DISPATCH_BUILTIN_COMMANDS,
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       onSend: async ({ text, images, attachment }) => {
+        // Intercept a leading "/model <name>" — set the new thread's model
+        // instead of sending the command text to Claude verbatim.
+        let dispatchModel: string | undefined;
+        const modelPrefix = parseDispatchModelPrefix(text);
+        if (modelPrefix) {
+          if (modelPrefix.error) {
+            new Notice(modelPrefix.error);
+            this.dispatchInput.setValue(text);
+            return;
+          }
+          if (!modelPrefix.rest && images.length === 0 && !attachment) {
+            new Notice('Include a prompt after /model — e.g. "/model opus fix the login bug"');
+            this.dispatchInput.setValue(text);
+            return;
+          }
+          dispatchModel = modelPrefix.model;
+          text = modelPrefix.rest;
+        }
+
         let messageText = buildMessageWithAttachment(text, attachment);
 
         // Resolve @[[basename]] file mentions — append each file's content as context
@@ -146,6 +165,7 @@ export class KanbanView extends ItemView {
           messageText,
           images.length > 0 ? images : undefined,
           titleHint,
+          dispatchModel,
         );
         await this.plugin.openThreadInChatView(threadId);
       },
