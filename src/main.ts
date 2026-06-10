@@ -1016,13 +1016,39 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
-  async dispatchNewThread(text: string, images?: ImageAttachment[], titleHint?: string, model?: string): Promise<string> {
+  async dispatchNewThread(
+    text: string,
+    images?: ImageAttachment[],
+    titleHint?: string,
+    opts?: {
+      /** Model override applied before the first message (/model prefix). */
+      model?: string;
+      /** Persistent goal set on the new thread (/goal prefix). */
+      goal?: string;
+      /** Recurring loop registered on the new thread (/loop prefix). The
+       * loop re-sends `text` every intervalSeconds; the first iteration is
+       * the dispatch itself. */
+      loop?: { intervalSeconds: number };
+    },
+  ): Promise<string> {
     const rawTitle = titleHint ?? text;
     const title = rawTitle.trim()
       ? rawTitle.slice(0, 50).split('\n')[0].trim()
       : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
     const thread = this.manager.createThread(title, this.getEffectiveCwd());
-    if (model) this.manager.setThreadModel(thread.id, model);
+    if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
+    if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
+    if (opts?.loop) {
+      this.scheduler.createItem({
+        name: `Loop: ${text.slice(0, 40)}`,
+        prompt: text,
+        schedule: { type: 'interval', intervalSeconds: opts.loop.intervalSeconds },
+        enabled: true,
+        cwd: thread.cwd,
+        projectId: thread.projectId,
+        targetThreadId: thread.id,
+      });
+    }
     await this.saveSettings();
     // Fire and forget — dashboard will show the running row via subscription
     this.manager.sendMessage(thread.id, text, images).catch(console.error);

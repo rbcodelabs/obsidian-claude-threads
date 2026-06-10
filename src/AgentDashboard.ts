@@ -6,7 +6,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
-import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchModelPrefix } from './slashCommands';
+import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -136,23 +136,33 @@ export class AgentDashboard extends ItemView {
       builtinCommands: DISPATCH_BUILTIN_COMMANDS,
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       onSend: async ({ text, images, attachment }) => {
-        // Intercept a leading "/model <name>" — set the new thread's model
-        // instead of sending the command text to Claude verbatim.
-        let dispatchModel: string | undefined;
-        const modelPrefix = parseDispatchModelPrefix(text);
-        if (modelPrefix) {
-          if (modelPrefix.error) {
-            new Notice(modelPrefix.error);
+        // Intercept leading built-in commands (/model, /goal, /loop) — apply
+        // them to the new thread instead of sending the text to Claude verbatim.
+        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number } } | undefined;
+        let titleText = text;
+        const directive = parseDispatchDirective(text);
+        if (directive) {
+          if (directive.error) {
+            new Notice(directive.error);
             this.dispatchComponent.setValue(text);
             return;
           }
-          if (!modelPrefix.rest && images.length === 0 && !attachment) {
-            new Notice('Include a prompt after /model — e.g. "/model opus fix the login bug"');
-            this.dispatchComponent.setValue(text);
-            return;
+          if (directive.kind === 'model') {
+            if (!directive.rest && images.length === 0 && !attachment) {
+              new Notice('Include a prompt after /model — e.g. "/model opus fix the login bug"');
+              this.dispatchComponent.setValue(text);
+              return;
+            }
+            dispatchOpts = { model: directive.model };
+            text = titleText = directive.rest;
+          } else if (directive.kind === 'goal') {
+            dispatchOpts = { goal: directive.goal };
+            text = goalKickoffMessage(directive.goal);
+            titleText = directive.goal;
+          } else {
+            dispatchOpts = { loop: { intervalSeconds: directive.intervalSeconds } };
+            text = titleText = directive.prompt;
           }
-          dispatchModel = modelPrefix.model;
-          text = modelPrefix.rest;
         }
 
         let messageText = buildMessageWithAttachment(text, attachment);
@@ -176,12 +186,12 @@ export class AgentDashboard extends ItemView {
           }
         }
 
-        const titleHint = deriveDispatchTitle(text, attachment, images.length);
+        const titleHint = deriveDispatchTitle(titleText, attachment, images.length);
         const threadId = await this.plugin.dispatchNewThread(
           messageText,
           images.length > 0 ? images : undefined,
           titleHint,
-          dispatchModel,
+          dispatchOpts,
         );
         await this.plugin.openThreadInChatView(threadId);
         this.render();

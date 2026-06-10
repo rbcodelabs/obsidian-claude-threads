@@ -4,6 +4,8 @@
  * and KanbanView all import from here so the lists can't drift apart.
  */
 
+import { parseLoopArgs } from './loopUtils';
+
 export interface SlashCommand {
   name: string;
   description: string;
@@ -21,13 +23,16 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
 
 /**
  * Commands advertised in the dashboard/kanban dispatch boxes, which create a
- * new thread from the typed text. Allowlist: only /model makes sense when
- * dispatching a brand-new thread — the rest (/compact, /clear, /cost, /goal,
- * /loop) are thread-scoped and meaningless before a session exists.
+ * new thread from the typed text. Allowlist with dispatch-specific wording —
+ * /compact, /clear, and /cost are thread-scoped and meaningless before a
+ * session exists; the variants of /goal and /loop that manage existing state
+ * (clear/stop) only work inside a thread.
  */
-export const DISPATCH_BUILTIN_COMMANDS: SlashCommand[] = THREAD_BUILTIN_COMMANDS.filter(
-  (c) => c.name === 'model',
-);
+export const DISPATCH_BUILTIN_COMMANDS: SlashCommand[] = [
+  { name: 'model', description: 'Dispatch on a specific model: /model fable|opus|sonnet|haiku <prompt>' },
+  { name: 'goal', description: 'Dispatch a thread with a persistent goal: /goal <text>' },
+  { name: 'loop', description: 'Dispatch a thread that re-runs a prompt: /loop 10m <prompt>' },
+];
 
 /** Argument completions for /model — shown after typing "/model ". */
 export const MODEL_ARG_COMPLETIONS: SlashCommand[] = [
@@ -90,4 +95,60 @@ export function parseDispatchModelPrefix(text: string): DispatchModelPrefix | nu
     return { rest: m[2].trim(), error: `Unknown model "${m[1]}". Use: fable, opus, sonnet, haiku, default` };
   }
   return { model: MODEL_ALIASES[arg], rest: m[2].trim() };
+}
+
+/**
+ * The kickoff message sent when a goal is set — used by ThreadsView (/goal in
+ * a thread) and by the dispatch boxes (/goal creating a new thread), so the
+ * behavior is identical in both places.
+ */
+export function goalKickoffMessage(goal: string): string {
+  return (
+    `Work toward the goal that was just set for this thread: "${goal}". ` +
+    'Start now and keep going until it is met or you are blocked on input only I can provide.'
+  );
+}
+
+/** A dispatch-box command directive parsed from typed text. */
+export type DispatchDirective =
+  | { kind: 'model'; model: string | undefined; rest: string; error?: string }
+  | { kind: 'goal'; goal: string; error?: string }
+  | { kind: 'loop'; intervalSeconds: number; prompt: string; error?: string };
+
+/**
+ * Parses a leading built-in command on text typed into a dispatch box.
+ * Returns null for plain prompts (dispatch as-is). When `error` is set the
+ * input is a recognized command with bad/missing arguments — show the error
+ * and do not create a thread.
+ */
+export function parseDispatchDirective(text: string): DispatchDirective | null {
+  const model = parseDispatchModelPrefix(text);
+  if (model) return { kind: 'model', model: model.model, rest: model.rest, error: model.error };
+
+  const goalMatch = text.trim().match(/^\/goal(?:\s+([\s\S]+))?$/i);
+  if (goalMatch) {
+    const goal = (goalMatch[1] ?? '').trim();
+    if (!goal) {
+      return { kind: 'goal', goal: '', error: 'Include a goal — e.g. "/goal ship the v1 login flow"' };
+    }
+    if (/^(clear|off|done)$/i.test(goal)) {
+      return { kind: 'goal', goal: '', error: `/goal ${goal} works inside a thread — include goal text to dispatch a new goal thread.` };
+    }
+    return { kind: 'goal', goal };
+  }
+
+  const loopMatch = text.trim().match(/^\/loop(?:\s+([\s\S]+))?$/i);
+  if (loopMatch) {
+    const arg = (loopMatch[1] ?? '').trim();
+    if (/^(stop|off|cancel|clear)$/i.test(arg)) {
+      return { kind: 'loop', intervalSeconds: 0, prompt: '', error: `/loop ${arg} works inside a thread — there is no loop here yet.` };
+    }
+    const parsed = parseLoopArgs(arg);
+    if (!parsed) {
+      return { kind: 'loop', intervalSeconds: 0, prompt: '', error: 'Usage: /loop <interval> <prompt> — interval like 30s, 5m, 1h. Example: /loop 10m check CI status' };
+    }
+    return { kind: 'loop', intervalSeconds: parsed.intervalSeconds, prompt: parsed.prompt };
+  }
+
+  return null;
 }

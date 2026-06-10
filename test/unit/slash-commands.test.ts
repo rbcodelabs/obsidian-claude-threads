@@ -6,8 +6,15 @@ import {
 } from '../../src/slashCommands';
 
 describe('DISPATCH_BUILTIN_COMMANDS', () => {
-  it('only advertises /model — the rest are thread-scoped and meaningless at dispatch', () => {
-    expect(DISPATCH_BUILTIN_COMMANDS.map((c) => c.name)).toEqual(['model']);
+  it('advertises exactly the commands the dispatch flow intercepts', () => {
+    expect(DISPATCH_BUILTIN_COMMANDS.map((c) => c.name)).toEqual(['model', 'goal', 'loop']);
+  });
+
+  it('never advertises session-scoped commands (/compact, /clear, /cost)', () => {
+    const names = new Set(DISPATCH_BUILTIN_COMMANDS.map((c) => c.name));
+    for (const sessionOnly of ['compact', 'clear', 'cost']) {
+      expect(names.has(sessionOnly)).toBe(false);
+    }
   });
 
   it('stays a subset of the thread command list (single source of truth)', () => {
@@ -17,9 +24,10 @@ describe('DISPATCH_BUILTIN_COMMANDS', () => {
     }
   });
 
-  it('has arg completions for every advertised dispatch command', () => {
-    for (const c of DISPATCH_BUILTIN_COMMANDS) {
-      expect(DISPATCH_ARG_COMPLETIONS[c.name]?.length).toBeGreaterThan(0);
-    }
+  it('only offers arg completions for commands with fixed argument sets', () => {
+    // /model has a fixed alias list; /goal and /loop take free text at
+    // dispatch (clear/stop are thread-only and must not be suggested).
+    expect(Object.keys(DISPATCH_ARG_COMPLETIONS)).toEqual(['model']);
+    expect(DISPATCH_ARG_COMPLETIONS.model.length).toBeGreaterThan(0);
   });
 });
