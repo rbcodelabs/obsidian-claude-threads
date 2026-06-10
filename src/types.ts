@@ -104,6 +104,11 @@ export interface Thread {
    * these automatically and clears them when completions arrive.
    */
   pendingBackgroundTasks?: PendingBackgroundTask[];
+  /**
+   * Persistent goal set via the /goal command. Injected into the session's
+   * appended system prompt on every turn until cleared with /goal clear.
+   */
+  goal?: string;
 }
 
 /**
@@ -154,6 +159,12 @@ export interface ScheduledItem {
   nextRun?: number;
   /** Thread ID of the most recent run */
   lastThreadId?: string;
+  /**
+   * When set, fire the prompt into this existing thread instead of creating a
+   * new one (used by the /loop command). Falls back to creating a new thread
+   * if the target thread no longer exists.
+   */
+  targetThreadId?: string;
 }
 
 export interface RemoteAccessSettings {
@@ -167,6 +178,14 @@ export interface RemoteAccessSettings {
   pairingExpiresAt: number | null;
 }
 
+/**
+ * Which account/backend the Claude Code CLI authenticates against.
+ * - 'claude': the CLI's own login (Claude.ai/Console subscription or ANTHROPIC_API_KEY)
+ * - 'bedrock': Amazon Bedrock — sets CLAUDE_CODE_USE_BEDROCK=1 on every session;
+ *   AWS credentials come from extra env vars (e.g. AWS_PROFILE + AWS_REGION)
+ */
+export type ProviderMode = 'claude' | 'bedrock';
+
 export interface PluginSettings {
   claudeBinaryPath: string;
   defaultCwd: string;
@@ -174,6 +193,14 @@ export interface PluginSettings {
   vaultFolder: string;
   permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
   extraEnv: string;
+  /** Account/backend the Claude CLI authenticates against. Defaults to 'claude'. */
+  provider: ProviderMode;
+  /**
+   * Model alias applied to threads that have no per-thread override
+   * (set via /model). Empty string = let the CLI use its own default.
+   * Accepts the same aliases as /model: fable, opus, sonnet, haiku.
+   */
+  defaultModel: string;
   summarizationEnabled: boolean;
   inprocessModel: string;
   autoSummarize: boolean;
@@ -233,6 +260,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   vaultFolder: 'Claude',
   permissionMode: 'acceptEdits',
   extraEnv: '',
+  provider: 'claude',
+  defaultModel: '',
   summarizationEnabled: true,
   inprocessModel: 'haiku',
   autoSummarize: false,
@@ -260,6 +289,20 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   scheduledItems: [],
   enableWebViewerTool: true,
 };
+
+/**
+ * Returns the extraEnv string with provider-specific variables prepended.
+ * Prepending (not appending) means a user-supplied CLAUDE_CODE_USE_BEDROCK
+ * line in extraEnv still wins, since parseExtraEnv lets later lines override.
+ */
+export function effectiveExtraEnv(
+  settings: Pick<PluginSettings, 'extraEnv' | 'provider'>,
+): string {
+  if (settings.provider === 'bedrock') {
+    return `CLAUDE_CODE_USE_BEDROCK=1\n${settings.extraEnv ?? ''}`;
+  }
+  return settings.extraEnv ?? '';
+}
 
 export function parseExtraEnv(raw: string): Record<string, string> {
   const result: Record<string, string> = {};

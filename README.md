@@ -36,7 +36,9 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
-- **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
+- **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
+- **Claude or Bedrock** — authenticate with your Claude account or route every session through Amazon Bedrock (one dropdown in settings)
+- **Goals and loops** — pin a persistent goal on a thread with `/goal`, or re-run a prompt on an interval with `/loop 10m <prompt>`
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching
@@ -103,9 +105,13 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 | Command | What it does |
 |---|---|
-| `/model opus\|sonnet\|haiku` | Set a persistent model for this thread |
+| `/model fable\|opus\|sonnet\|haiku` | Set a persistent model for this thread |
 | `/model default` | Reset thread model back to the global default |
 | `/model` | Show the current model for this thread |
+| `/goal <text>` | Set a persistent goal for this thread — injected into every turn until cleared |
+| `/goal clear` | Clear the thread's goal (`/goal` alone shows the current goal) |
+| `/loop <interval> <prompt>` | Re-run a prompt in this thread on an interval (e.g. `/loop 10m check CI`) |
+| `/loop stop` | Stop the thread's loops (`/loop` alone lists them) |
 | `/compact` | Summarize conversation history to free up context window |
 | `/clear` | Clear conversation history and start a fresh session |
 | `/cost` | Show token usage and cost for the current session |
@@ -141,11 +147,14 @@ Type `@this` (no search needed) to instantly reference the currently active file
 `/model` sets the model for all subsequent turns in a thread:
 
 ```
+/model fable    → uses Claude Fable 5 for every turn in this thread
 /model opus     → uses Claude Opus for every turn in this thread
 /model sonnet   → switches to Sonnet
 /model haiku    → switches to Haiku
-/model default  → resets to whatever Claude Code's default is
+/model default  → resets to the plugin's Default model setting (or the CLI default)
 ```
+
+A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
 
 The active model is shown as a badge in the thread info bar. You can also use `/opus` as a one-turn override (controlled by the Opus Escalation Keyword setting) — it applies only to that message, then the thread model resumes.
 

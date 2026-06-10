@@ -1,4 +1,5 @@
 import { ClaudeSession } from './ClaudeSession';
+import { effectiveExtraEnv } from './types';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
@@ -292,6 +293,16 @@ export class ThreadManager {
     }
   }
 
+  /** Set or clear (pass undefined) the persistent goal for a thread. */
+  setThreadGoal(id: string, goal: string | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (goal) thread.goal = goal;
+      else delete thread.goal;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   isRunning(id: string): boolean {
     return this.sessions.has(id);
   }
@@ -420,7 +431,8 @@ export class ThreadManager {
     this.threadActivity.delete(threadId);
 
     const keywordModel = this.resolveModel(userText);
-    const model = keywordModel ?? thread.model;
+    // Precedence: escalation keyword > per-thread /model override > settings default
+    const model = keywordModel ?? thread.model ?? (this.settings.defaultModel || undefined);
     const promptText = keywordModel ? this.stripKeyword(userText) : userText;
 
     const userMsg: ChatMessage = {
@@ -518,7 +530,14 @@ export class ThreadManager {
       this.settings.saveThreadsToVault,
     );
     const projectDesc = project?.description?.trim();
-    const appendSystemPrompt = projectDesc ? `${envContext}\n\n${projectDesc}` : envContext;
+    const goalContext = thread.goal
+      ? `## Active Goal\nThe user has set a persistent goal for this thread: "${thread.goal}"\n` +
+        'Keep working toward this goal across turns. If a reply would leave the goal unmet, ' +
+        'state what remains and continue working on it. The goal stays active until the user clears it with /goal clear.'
+      : '';
+    const appendSystemPrompt = [envContext, projectDesc, goalContext]
+      .filter(Boolean)
+      .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, cwdAtStart) : this.mcpServers;
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
@@ -536,7 +555,7 @@ export class ThreadManager {
       thread.sessionId,
       cwdAtStart,
       this.settings.permissionMode,
-      this.settings.extraEnv,
+      effectiveExtraEnv(this.settings),
       {
         onToken: (text) => {
           streamingContent += text;

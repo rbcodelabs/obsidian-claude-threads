@@ -1,5 +1,7 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
 import { marked } from 'marked';
+import { effectiveExtraEnv } from './types';
+import { parseLoopArgs, formatLoopInterval } from './loopUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -129,10 +131,13 @@ export class ThreadsView extends ItemView {
     { name: 'compact', description: 'Summarize conversation history to free up context' },
     { name: 'clear', description: 'Clear conversation history and start fresh' },
     { name: 'cost', description: 'Show token usage and cost for this session' },
-    { name: 'model', description: 'Set persistent model: /model opus|sonnet|haiku|default' },
+    { name: 'model', description: 'Set persistent model: /model fable|opus|sonnet|haiku|default' },
+    { name: 'goal', description: 'Set a persistent goal for this thread: /goal <text> · /goal clear' },
+    { name: 'loop', description: 'Re-run a prompt on an interval: /loop 5m <prompt> · /loop stop' },
   ];
 
   private static readonly MODEL_ALIASES: Record<string, string | undefined> = {
+    fable: 'fable',
     opus: 'opus',
     sonnet: 'sonnet',
     haiku: 'haiku',
@@ -1103,7 +1108,7 @@ export class ThreadsView extends ItemView {
       messages,
       this.plugin.settings.claudeBinaryPath,
       this.plugin.settings.inprocessModel,
-      this.plugin.settings.extraEnv,
+      effectiveExtraEnv(this.plugin.settings),
       onProgress,
       thread?.summary,
       thread?.lastSummarizedAt,
@@ -1125,7 +1130,7 @@ export class ThreadsView extends ItemView {
           msg.content,
           this.plugin.settings.claudeBinaryPath,
           this.plugin.settings.inprocessModel,
-          this.plugin.settings.extraEnv,
+          effectiveExtraEnv(this.plugin.settings),
         );
         if (gen !== this.summaryGeneration) return; // stale after the async call — discard
         msg.summary = summary;
@@ -1248,7 +1253,7 @@ export class ThreadsView extends ItemView {
           combined,
           this.plugin.settings.claudeBinaryPath,
           this.plugin.settings.inprocessModel,
-          this.plugin.settings.extraEnv,
+          effectiveExtraEnv(this.plugin.settings),
         );
         if (gen !== this.summaryGeneration) return;
         this.groupSummaryCache.set(groupKey, summary);
@@ -2006,6 +2011,115 @@ export class ThreadsView extends ItemView {
   }
 
 
+  /** Render a one-line centered status divider in the message list. */
+  private showCommandDivider(text: string, isError = false): void {
+    if (isError) {
+      const errEl = this.messagesEl.createDiv('ct-message ct-error');
+      errEl.createEl('p', { text });
+    } else {
+      const divider = this.messagesEl.createDiv('ct-compact-divider');
+      divider.createSpan({ cls: 'ct-compact-label', text });
+    }
+    this.scrollToBottom();
+  }
+
+  private async handleGoalCommand(arg: string): Promise<void> {
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+
+    if (!arg) {
+      this.showCommandDivider(
+        thread?.goal ? `Goal: ${thread.goal}` : 'No goal set. Use /goal <text> to set one.',
+      );
+      return;
+    }
+
+    if (/^(clear|off|done)$/i.test(arg)) {
+      const hadGoal = !!thread?.goal;
+      this.manager.setThreadGoal(this.activeThreadId, undefined);
+      await this.plugin.saveSettings();
+      this.showCommandDivider(hadGoal ? 'Goal cleared' : 'No goal was set.');
+      this.renderThreadInfo();
+      return;
+    }
+
+    this.manager.setThreadGoal(this.activeThreadId, arg);
+    await this.plugin.saveSettings();
+    this.showCommandDivider(`Goal set: ${arg}`);
+    this.renderThreadInfo();
+
+    // Kick off work toward the goal immediately. The goal itself is injected
+    // into the appended system prompt on this and every subsequent turn.
+    const sendThreadId = this.activeThreadId;
+    this.manager
+      .sendMessage(
+        sendThreadId,
+        `Work toward the goal that was just set for this thread: "${arg}". ` +
+          'Start now and keep going until it is met or you are blocked on input only I can provide.',
+      )
+      .catch((err) => {
+        this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
+        if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+      });
+  }
+
+  private async handleLoopCommand(arg: string): Promise<void> {
+    if (!this.activeThreadId) return;
+    const threadId = this.activeThreadId;
+    const loopsForThread = () =>
+      this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
+
+    if (!arg) {
+      const loops = loopsForThread();
+      if (loops.length === 0) {
+        this.showCommandDivider('No loop running. Use /loop <interval> <prompt>, e.g. /loop 5m check the build');
+        return;
+      }
+      for (const loop of loops) {
+        const secs = loop.schedule.intervalSeconds ?? 0;
+        const next = loop.nextRun ? new Date(loop.nextRun).toLocaleTimeString() : 'soon';
+        this.showCommandDivider(
+          `Loop every ${formatLoopInterval(secs)} — "${loop.prompt.slice(0, 60)}" (next: ${next})`,
+        );
+      }
+      return;
+    }
+
+    if (/^(stop|off|cancel|clear)$/i.test(arg)) {
+      const loops = loopsForThread();
+      if (loops.length === 0) {
+        this.showCommandDivider('No loop to stop.');
+        return;
+      }
+      for (const loop of loops) this.plugin.scheduler.deleteItem(loop.id);
+      this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
+      return;
+    }
+
+    const parsed = parseLoopArgs(arg);
+    if (!parsed) {
+      this.showCommandDivider(
+        'Usage: /loop <interval> <prompt> — interval like 30s, 5m, 1h. Example: /loop 10m check CI status',
+        true,
+      );
+      return;
+    }
+
+    const thread = this.manager.getThread(threadId);
+    this.plugin.scheduler.createItem({
+      name: `Loop: ${parsed.prompt.slice(0, 40)}`,
+      prompt: parsed.prompt,
+      schedule: { type: 'interval', intervalSeconds: parsed.intervalSeconds },
+      enabled: true,
+      cwd: thread?.cwd,
+      projectId: thread?.projectId,
+      targetThreadId: threadId,
+    });
+    this.showCommandDivider(
+      `Loop started: "${parsed.prompt.slice(0, 60)}" every ${formatLoopInterval(parsed.intervalSeconds)}. Stop with /loop stop.`,
+    );
+  }
+
   private async handleSendFromDispatch(
     typed: string,
     images: ImageAttachment[],
@@ -2027,6 +2141,20 @@ export class ThreadsView extends ItemView {
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
       await this.forkThread(this.activeThreadId!, focusArea || undefined);
+      return;
+    }
+
+    // /goal [text | clear] — set/show/clear the persistent goal for this thread.
+    const goalMatch = typed.match(/^\/goal(?:\s+([\s\S]+))?$/i);
+    if (goalMatch) {
+      await this.handleGoalCommand((goalMatch[1] ?? '').trim());
+      return;
+    }
+
+    // /loop [interval prompt | stop] — recurring prompt into this thread.
+    const loopMatch = typed.match(/^\/loop(?:\s+([\s\S]+))?$/i);
+    if (loopMatch) {
+      await this.handleLoopCommand((loopMatch[1] ?? '').trim());
       return;
     }
 
@@ -2104,7 +2232,7 @@ export class ThreadsView extends ItemView {
       }
       if (!(arg in ThreadsView.MODEL_ALIASES)) {
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
-        errEl.createEl('p', { text: `Unknown model "${arg}". Use: opus, sonnet, haiku, default` });
+        errEl.createEl('p', { text: `Unknown model "${arg}". Use: fable, opus, sonnet, haiku, default` });
         this.scrollToBottom();
         return;
       }
@@ -2534,7 +2662,7 @@ class ForkModal extends Modal {
         focus,
         this.plugin.settings.claudeBinaryPath,
         this.plugin.settings.inprocessModel,
-        this.plugin.settings.extraEnv,
+        effectiveExtraEnv(this.plugin.settings),
         (status: string) => { this.statusEl.textContent = status; },
       );
 

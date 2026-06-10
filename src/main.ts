@@ -14,7 +14,7 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
-import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
+import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type LayoutDensity, type ImageAttachment, type ProviderMode } from './types';
 import { serializeKey } from './stt';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
@@ -221,7 +221,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               focusArea,
               this.settings.claudeBinaryPath,
               this.settings.inprocessModel,
-              this.settings.extraEnv,
+              effectiveExtraEnv(this.settings),
             );
             const forkedThread = this.manager.createThread(
               `Fork: ${sourceThread.title.slice(0, 40)}`,
@@ -425,6 +425,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
+      threadExists: (threadId) => !!this.manager.getThread(threadId),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
@@ -1494,6 +1495,42 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.defaultCwd)
           .onChange(async (value) => {
             this.plugin.settings.defaultCwd = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Account / provider')
+      .setDesc(
+        'Claude account uses the CLI\'s own login (claude.ai subscription or ANTHROPIC_API_KEY). ' +
+        'Amazon Bedrock sets CLAUDE_CODE_USE_BEDROCK=1 on every session — also set AWS_PROFILE and AWS_REGION in Extra environment variables below.',
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('claude', 'Claude account (default)')
+          .addOption('bedrock', 'Amazon Bedrock')
+          .setValue(this.plugin.settings.provider ?? 'claude')
+          .onChange(async (value) => {
+            this.plugin.settings.provider = value as ProviderMode;
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Default model')
+      .setDesc('Model for new turns unless a thread overrides it with /model. "CLI default" defers to the model configured in the Claude Code CLI.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('', 'CLI default')
+          .addOption('fable', 'Fable 5')
+          .addOption('opus', 'Opus')
+          .addOption('sonnet', 'Sonnet')
+          .addOption('haiku', 'Haiku')
+          .setValue(this.plugin.settings.defaultModel ?? '')
+          .onChange(async (value) => {
+            this.plugin.settings.defaultModel = value;
+            this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
           }),
       );
