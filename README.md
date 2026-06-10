@@ -39,6 +39,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
 - **Claude or Bedrock** — authenticate with your Claude account or route every session through Amazon Bedrock (one dropdown in settings)
 - **Goals and loops** — pin a persistent goal on a thread with `/goal`, or re-run a prompt on an interval with `/loop 10m <prompt>`
+- **Task list card** — Claude Code's task checklist (TodoWrite / TaskCreate) renders live above the input box: completed tasks struck through, the in-progress one highlighted, with done/in-progress/open counts
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching

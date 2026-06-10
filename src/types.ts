@@ -66,6 +66,18 @@ export interface PendingBackgroundTask {
   pollCount: number;
 }
 
+export type TaskItemStatus = 'pending' | 'in_progress' | 'completed';
+
+/**
+ * One entry in Claude Code's task list. Populated from TodoWrite (older CLIs,
+ * full-list replace) or TaskCreate/TaskUpdate (newer CLIs, incremental).
+ */
+export interface TaskItem {
+  id: string;
+  content: string;
+  status: TaskItemStatus;
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -109,6 +121,8 @@ export interface Thread {
    * appended system prompt on every turn until cleared with /goal clear.
    */
   goal?: string;
+  /** Claude Code task list (TodoWrite / TaskCreate+TaskUpdate), rendered as a checklist card. */
+  tasks?: TaskItem[];
 }
 
 /**

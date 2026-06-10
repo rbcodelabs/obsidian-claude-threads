@@ -1,6 +1,6 @@
-import { ClaudeSession } from './ClaudeSession';
+import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
 import { effectiveExtraEnv } from './types';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
@@ -35,7 +35,8 @@ export type ThreadEvent =
   | { type: 'active_thread_changed' }
   | { type: 'user_message_added'; message: ChatMessage }
   | { type: 'summary_updated' }
-  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> };
+  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
+  | { type: 'tasks_updated'; tasks: TaskItem[] };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -714,6 +715,10 @@ export class ThreadManager {
           pendingToolImages.push(...images);
           this.emit(threadId, { type: 'tool_result_images', images });
         },
+        onTaskEvent: (event) => {
+          this.applyTaskEvent(thread, event);
+          this.emit(threadId, { type: 'tasks_updated', tasks: thread.tasks ?? [] });
+        },
       },
       additionalDirs,
       model,
@@ -733,6 +738,40 @@ export class ThreadManager {
         await this.sendMessage(threadId, next.text, next.images);
       }
     }
+  }
+
+  /** Merge a task-tracker event from the session into the thread's task list. */
+  private applyTaskEvent(thread: Thread, event: TaskTrackerEvent): void {
+    if (event.kind === 'replace') {
+      thread.tasks = event.tasks.map((t, i) => ({
+        id: String(i + 1),
+        content: t.content,
+        status: t.status,
+      }));
+    } else if (event.kind === 'create') {
+      const tasks = (thread.tasks ??= []);
+      const existing = tasks.find(t => t.id === event.id);
+      if (existing) existing.content = event.content;
+      else tasks.push({ id: event.id, content: event.content, status: 'pending' });
+    } else {
+      const tasks = (thread.tasks ??= []);
+      const existing = tasks.find(t => t.id === event.id);
+      if (event.status === 'deleted') {
+        if (existing) thread.tasks = tasks.filter(t => t.id !== event.id);
+        return;
+      }
+      const status =
+        event.status === 'pending' || event.status === 'in_progress' || event.status === 'completed'
+          ? (event.status as TaskItemStatus)
+          : undefined;
+      if (existing) {
+        if (status) existing.status = status;
+        if (event.content) existing.content = event.content;
+      } else if (event.content) {
+        tasks.push({ id: event.id, content: event.content, status: status ?? 'pending' });
+      }
+    }
+    thread.updatedAt = Date.now();
   }
 
   async interrupt(threadId: string): Promise<void> {

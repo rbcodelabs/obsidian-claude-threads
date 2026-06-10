@@ -402,4 +402,24 @@ test.describe('Claude Threads UI', () => {
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('subagent-task-pill.png', { fullPage: true });
   });
+
+  test('task list card', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-tasks'));
+    await page.waitForSelector('.ct-task-card:not(.ct-hidden)');
+    const header = await page.locator('.ct-task-card-header').innerText();
+    if (!header.includes('5 tasks') || !header.includes('4 done, 1 in progress, 0 open')) {
+      throw new Error(`Unexpected task card header: ${header}`);
+    }
+    await expect(page.locator('.ct-task-row-completed')).toHaveCount(4);
+    await expect(page.locator('.ct-task-row-in_progress')).toHaveCount(1);
+    await expect(page).toHaveScreenshot('task-list-card.png', { fullPage: true });
+
+    // Collapse on header click
+    await page.click('.ct-task-card-header');
+    await expect(page.locator('.ct-task-row')).toHaveCount(0);
+  });
+
 });

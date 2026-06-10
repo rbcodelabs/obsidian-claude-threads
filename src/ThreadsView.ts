@@ -128,6 +128,10 @@ export class ThreadsView extends ItemView {
 
   private floatingPanelEl!: HTMLElement;
 
+  // Task list card (Claude Code's TodoWrite/TaskCreate checklist)
+  private taskCardEl: HTMLElement | null = null;
+  private taskCardCollapsed = false;
+
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
   private static readonly MODEL_ALIASES: Record<string, string | undefined> = {
@@ -428,6 +432,7 @@ export class ThreadsView extends ItemView {
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
     this.statusBar = panelContext.createDiv('ct-status-bar');
+    this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
     this.inputRowEl = floatingPanel.createDiv('ct-input-row');
@@ -1053,10 +1058,58 @@ export class ThreadsView extends ItemView {
     if (!thread) return;
 
     this.renderCwdChip();
+    this.renderTaskCard();
 
     // Status bar: only show a non-default model override (purely operational info).
     // Project name lives in the CWD chip now.
     this.updateStatusContext(thread.model ?? '');
+  }
+
+  /**
+   * Renders the Claude Code task list as a checklist card pinned above the
+   * input panel: completed tasks struck through, the in-progress task bolded
+   * with an accent marker, matching the CLI's task view.
+   */
+  private renderTaskCard(): void {
+    if (!this.taskCardEl) return;
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : undefined;
+    const tasks = thread?.tasks ?? [];
+    this.taskCardEl.empty();
+    if (tasks.length === 0) {
+      this.taskCardEl.addClass('ct-hidden');
+      return;
+    }
+    this.taskCardEl.removeClass('ct-hidden');
+
+    const done = tasks.filter(t => t.status === 'completed').length;
+    const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+    const open = tasks.length - done - inProgress;
+
+    const header = this.taskCardEl.createDiv('ct-task-card-header');
+    header.createSpan({ cls: 'ct-task-card-chevron', text: this.taskCardCollapsed ? '▸' : '▾' });
+    header.createSpan({
+      cls: 'ct-task-card-title',
+      text: `${tasks.length} task${tasks.length === 1 ? '' : 's'}`,
+    });
+    header.createSpan({
+      cls: 'ct-task-card-counts',
+      text: `(${done} done, ${inProgress} in progress, ${open} open)`,
+    });
+    header.addEventListener('click', () => {
+      this.taskCardCollapsed = !this.taskCardCollapsed;
+      this.renderTaskCard();
+    });
+
+    if (this.taskCardCollapsed) return;
+    const list = this.taskCardEl.createDiv('ct-task-card-list');
+    for (const task of tasks) {
+      const row = list.createDiv(`ct-task-row ct-task-row-${task.status}`);
+      row.createSpan({
+        cls: 'ct-task-row-icon',
+        text: task.status === 'completed' ? '✔' : task.status === 'in_progress' ? '■' : '○',
+      });
+      row.createSpan({ cls: 'ct-task-row-text', text: task.content });
+    }
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -1908,6 +1961,11 @@ export class ThreadsView extends ItemView {
         } else if (event.limitStatus === 'allowed_warning') {
           this.showStatusTransient('Approaching rate limit');
         }
+        break;
+      }
+
+      case 'tasks_updated': {
+        this.renderTaskCard();
         break;
       }
 
