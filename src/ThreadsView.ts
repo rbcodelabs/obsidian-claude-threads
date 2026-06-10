@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sani
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
-import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES } from './slashCommands';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage } from './slashCommands';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -2096,11 +2096,7 @@ export class ThreadsView extends ItemView {
     // into the appended system prompt on this and every subsequent turn.
     const sendThreadId = this.activeThreadId;
     this.manager
-      .sendMessage(
-        sendThreadId,
-        `Work toward the goal that was just set for this thread: "${arg}". ` +
-          'Start now and keep going until it is met or you are blocked on input only I can provide.',
-      )
+      .sendMessage(sendThreadId, goalKickoffMessage(arg))
       .catch((err) => {
         this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
         if (this.activeThreadId === sendThreadId) this.setRunningState(false);

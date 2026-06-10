@@ -159,7 +159,13 @@ Type `@this` (no search needed) to instantly reference the currently active file
 
 A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
 
-`/model` also works as a prefix in the dashboard and kanban dispatch boxes: `/model opus fix the login bug` creates the new thread with Opus set as its model and dispatches just the prompt. A bare `/model opus` with nothing to dispatch shows a notice instead of creating an empty thread.
+`/model`, `/goal`, and `/loop` also work as prefixes in the dashboard and kanban dispatch boxes:
+
+- `/model opus fix the login bug` — creates the new thread with Opus set as its model and dispatches just the prompt
+- `/goal ship the v1 login flow` — creates the thread with that persistent goal and immediately starts working toward it (same kickoff as `/goal` inside a thread)
+- `/loop 10m check CI status` — creates the thread, sends the prompt now, and re-runs it every 10 minutes (stop it later with `/loop stop` inside the thread)
+
+A command with bad or missing arguments shows a notice and keeps your draft instead of creating a thread. The thread-management variants (`/goal clear`, `/loop stop`) only work inside an existing thread.
 
 The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable.
 
