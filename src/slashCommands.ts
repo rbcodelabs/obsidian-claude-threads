@@ -21,11 +21,12 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
 
 /**
  * Commands advertised in the dashboard/kanban dispatch boxes, which create a
- * new thread from the typed text. /goal and /loop are thread-scoped commands
- * handled by ThreadsView, so they're excluded here.
+ * new thread from the typed text. Allowlist: only /model makes sense when
+ * dispatching a brand-new thread — the rest (/compact, /clear, /cost, /goal,
+ * /loop) are thread-scoped and meaningless before a session exists.
  */
 export const DISPATCH_BUILTIN_COMMANDS: SlashCommand[] = THREAD_BUILTIN_COMMANDS.filter(
-  (c) => c.name !== 'goal' && c.name !== 'loop',
+  (c) => c.name === 'model',
 );
 
 /** Argument completions for /model — shown after typing "/model ". */
