@@ -686,6 +686,18 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         effectiveCwd = worktreePath;
         options.onSetCwd?.(worktreePath);
 
+        // Notify other plugins (e.g. Vault Bridges auto-flip) that this
+        // session moved into a worktree. Fire-and-forget: listeners must
+        // never break the tool result.
+        try {
+          (app.workspace as unknown as { trigger: (name: string, payload: unknown) => void }).trigger(
+            'claude-threads:worktree-changed',
+            { repoPath: gitRoot, worktreePath, branch: branchName },
+          );
+        } catch (e) {
+          console.error('claude-threads: worktree-changed listener threw:', e);
+        }
+
         return {
           content: [{
             type: 'text' as const,
@@ -757,6 +769,17 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         activeWorktrees.delete(targetPath);
         effectiveCwd = originalRepo;
         options.onSetCwd?.(originalRepo);
+
+        // Notify other plugins (e.g. Vault Bridges auto-flip) that this
+        // session left its worktree and the directory was removed.
+        try {
+          (app.workspace as unknown as { trigger: (name: string, payload: unknown) => void }).trigger(
+            'claude-threads:worktree-changed',
+            { repoPath: originalRepo, worktreePath: null, removedWorktreePath: targetPath },
+          );
+        } catch (e) {
+          console.error('claude-threads: worktree-changed listener threw:', e);
+        }
 
         return {
           content: [{
