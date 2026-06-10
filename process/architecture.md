@@ -5,6 +5,7 @@
 | File | Purpose |
 |---|---|
 | `src/main.ts` | Plugin entry point, MCP server wiring, thread serialization for MCP tools |
+| `src/SettingsTab.ts` | Settings panel (tabbed: General / Claude / Tools / Vault / Features / Remote) + key/secret modals |
 | `src/ThreadManager.ts` | Thread lifecycle, events, persistence coordination |
 | `src/ThreadsView.ts` | Main conversation panel UI |
 | `src/AgentDashboard.ts` | Agent dashboard sidebar panel |

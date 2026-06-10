@@ -355,6 +355,37 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('skills-manager-browse.png', { fullPage: true });
   });
 
+  // ─── Settings tab ────────────────────────────────────────────────────────
+
+  test('settings — general tab', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('settings-general.png', { fullPage: true });
+  });
+
+  test('settings — claude tab', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("Claude")');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('settings-claude.png', { fullPage: true });
+  });
+
+  test('settings — tools tab', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("Tools")');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('settings-tools.png', { fullPage: true });
+  });
+
   test('sub-agent task pill while working', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

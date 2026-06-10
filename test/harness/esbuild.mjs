@@ -50,4 +50,10 @@ await build({
   outfile: resolve('./dist/skills-bundle.js'),
 });
 
-console.log('[harness] bundles built → test/harness/dist/ (bundle.js, mobile-bundle.js, skills-bundle.js)');
+await build({
+  ...sharedConfig,
+  entryPoints: [resolve('./settings-index.ts')],
+  outfile: resolve('./dist/settings-bundle.js'),
+});
+
+console.log('[harness] bundles built → test/harness/dist/ (bundle.js, mobile-bundle.js, skills-bundle.js, settings-bundle.js)');
