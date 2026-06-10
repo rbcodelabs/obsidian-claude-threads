@@ -21,7 +21,10 @@ interface InstalledSkill {
 
 interface BrowseSkill {
   name: string;
+  /** Full skills.sh id, e.g. "owner/repo/skill-name". Used as the canonical key. */
   slug: string;
+  /** Bare skill folder name (last path segment of slug). Used as the install dir basename. */
+  skillId: string;
   source: string;
   installs: number;
   isInstalled: boolean;
@@ -713,7 +716,7 @@ export class SkillsManagerView extends ItemView {
       if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
 
       const data = res.json as {
-        skills: Array<{ id: string; name: string; installs: number; source: string }>;
+        skills: Array<{ id: string; skillId?: string; name: string; installs: number; source: string }>;
       };
 
       const installedNames = new Set(this.installedSkills.map((s) => s.name));
@@ -722,13 +725,17 @@ export class SkillsManagerView extends ItemView {
       );
 
       this.browseResults = (data.skills ?? [])
-        .map((s) => ({
-          name: s.name,
-          slug: s.id,
-          source: s.source ?? '',
-          installs: s.installs ?? 0,
-          isInstalled: installedNames.has(s.name) || installedSlugs.has(s.id),
-        }))
+        .map((s) => {
+          const skillId = s.skillId || s.id.split('/').pop() || s.id;
+          return {
+            name: s.name,
+            slug: s.id,
+            skillId,
+            source: s.source ?? '',
+            installs: s.installs ?? 0,
+            isInstalled: installedNames.has(s.name) || installedSlugs.has(skillId),
+          };
+        })
         .sort((a, b) => b.installs - a.installs);
     } catch (err) {
       console.error('[ClaudeThreads] Skills search error:', err);
@@ -752,7 +759,7 @@ export class SkillsManagerView extends ItemView {
       if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
 
       const data = res.json as {
-        skills: Array<{ id: string; name: string; installs: number; source: string }>;
+        skills: Array<{ id: string; skillId?: string; name: string; installs: number; source: string }>;
       };
 
       const installedNames = new Set(this.installedSkills.map((s) => s.name));
@@ -761,13 +768,17 @@ export class SkillsManagerView extends ItemView {
       );
 
       this.browsePopularResults = (data.skills ?? [])
-        .map((s) => ({
-          name: s.name,
-          slug: s.id,
-          source: s.source ?? '',
-          installs: s.installs ?? 0,
-          isInstalled: installedNames.has(s.name) || installedSlugs.has(s.id),
-        }))
+        .map((s) => {
+          const skillId = s.skillId || s.id.split('/').pop() || s.id;
+          return {
+            name: s.name,
+            slug: s.id,
+            skillId,
+            source: s.source ?? '',
+            installs: s.installs ?? 0,
+            isInstalled: installedNames.has(s.name) || installedSlugs.has(skillId),
+          };
+        })
         .sort((a, b) => b.installs - a.installs);
     } catch (err) {
       console.error('[ClaudeThreads] Skills popular fetch error:', err);
@@ -859,13 +870,13 @@ export class SkillsManagerView extends ItemView {
 
     const tmpDir = path.join(os.tmpdir(), `ct-skill-${Date.now()}`);
     const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-    const targetDir = path.join(skillsDir, skill.slug);
+    const targetDir = path.join(skillsDir, skill.skillId);
 
     try {
       await fs.promises.mkdir(skillsDir, { recursive: true });
 
       if (fs.existsSync(targetDir)) {
-        throw new Error(`A skill named "${skill.slug}" is already installed`);
+        throw new Error(`A skill named "${skill.skillId}" is already installed`);
       }
 
       this.installOutput = `Cloning ${skill.source}…`;
@@ -879,9 +890,9 @@ export class SkillsManagerView extends ItemView {
       this.installOutput = 'Locating skill files…';
       this.renderDetail();
 
-      const skillSrcDir = await this.findSkillDir(tmpDir, skill.slug, skill.name, fs, path);
+      const skillSrcDir = await findSkillDir(tmpDir, skill.skillId, skill.name, fs, path);
       if (!skillSrcDir) {
-        throw new Error(`Skill "${skill.slug}" not found in ${skill.source}`);
+        throw new Error(`Skill "${skill.skillId}" not found in ${skill.source}`);
       }
 
       this.installOutput = 'Copying files…';
@@ -926,63 +937,70 @@ export class SkillsManagerView extends ItemView {
     }
   }
 
-  // ── Skill Discovery ────────────────────────────────────────────────────────
+}
 
-  /** Find the directory inside a cloned repo that contains the target skill's SKILL.md. */
-  private async findSkillDir(
-    repoDir: string,
-    slug: string,
-    name: string,
-    fs: typeof import('fs'),
-    path: typeof import('path'),
-  ): Promise<string | null> {
-    // 1. Repo root is the skill itself
-    if (fs.existsSync(path.join(repoDir, 'SKILL.md'))) {
-      return repoDir;
-    }
+// ── Skill Discovery ──────────────────────────────────────────────────────────
 
-    // 2. Scan for SKILL.md files up to 3 levels deep
-    const candidates: string[] = [];
-    const scan = (dir: string, depth: number): void => {
-      if (depth > 3) return;
-      let entries: import('fs').Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const ent of entries) {
-        if (ent.name.startsWith('.') || ent.name === 'node_modules') continue;
-        if (!ent.isDirectory()) continue;
-        const sub = path.join(dir, ent.name);
-        if (fs.existsSync(path.join(sub, 'SKILL.md'))) {
-          candidates.push(sub);
-        } else {
-          scan(sub, depth + 1);
-        }
-      }
-    };
-    scan(repoDir, 0);
-
-    if (candidates.length === 0) return null;
-    if (candidates.length === 1) return candidates[0];
-
-    // 3. Multiple candidates: match by directory basename
-    const byDir = candidates.find(
-      (d) => path.basename(d) === slug || path.basename(d) === name,
-    );
-    if (byDir) return byDir;
-
-    // 4. Match by SKILL.md name frontmatter
-    for (const dir of candidates) {
-      try {
-        const raw = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf-8');
-        const { name: skillName } = parseFrontmatter(raw);
-        if (skillName === slug || skillName === name) return dir;
-      } catch { /* skip */ }
-    }
-
-    // 5. Fallback: first found
-    return candidates[0] ?? null;
+/**
+ * Find the directory inside a cloned repo that contains the target skill's SKILL.md.
+ * Exported so it can be unit-tested without instantiating the full ItemView.
+ */
+export async function findSkillDir(
+  repoDir: string,
+  skillId: string,
+  name: string,
+  fs: typeof import('fs'),
+  path: typeof import('path'),
+): Promise<string | null> {
+  // 1. Repo root is the skill itself
+  if (fs.existsSync(path.join(repoDir, 'SKILL.md'))) {
+    return repoDir;
   }
+
+  // 2. Scan for SKILL.md files up to 4 levels deep.
+  //    Skip git/CI/dependency junk only — not all dotfile dirs, since some repos
+  //    nest skills under `.claude/skills/<skill-id>/` (e.g. the Claude plugin layout).
+  const SKIP = new Set(['.git', '.github', '.gitlab', '.vscode', '.idea', 'node_modules']);
+  const candidates: string[] = [];
+  const scan = (dir: string, depth: number): void => {
+    if (depth > 4) return;
+    let entries: import('fs').Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (SKIP.has(ent.name)) continue;
+      if (!ent.isDirectory()) continue;
+      const sub = path.join(dir, ent.name);
+      if (fs.existsSync(path.join(sub, 'SKILL.md'))) {
+        candidates.push(sub);
+      } else {
+        scan(sub, depth + 1);
+      }
+    }
+  };
+  scan(repoDir, 0);
+
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  // 3. Multiple candidates: match by directory basename
+  const byDir = candidates.find(
+    (d) => path.basename(d) === skillId || path.basename(d) === name,
+  );
+  if (byDir) return byDir;
+
+  // 4. Match by SKILL.md name frontmatter
+  for (const dir of candidates) {
+    try {
+      const raw = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf-8');
+      const { name: skillName } = parseFrontmatter(raw);
+      if (skillName === skillId || skillName === name) return dir;
+    } catch { /* skip */ }
+  }
+
+  // 5. Fallback: first found
+  return candidates[0] ?? null;
 }
