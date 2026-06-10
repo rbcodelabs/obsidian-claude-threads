@@ -4269,3 +4269,33 @@
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/* ── Command pill (built-in slash command chip in the input row) ─────────── */
+
+.ct-command-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  margin-top: 6px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 6px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.ct-command-pill-x {
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.ct-command-pill-x:hover {
+  opacity: 1;
+}
