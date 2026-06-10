@@ -36,7 +36,10 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
-- **Model switching** — set a persistent model per thread with `/model opus|sonnet|haiku`
+- **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
+- **Claude or Bedrock** — authenticate with your Claude account or route every session through Amazon Bedrock (one dropdown in settings)
+- **Goals and loops** — pin a persistent goal on a thread with `/goal`, or re-run a prompt on an interval with `/loop 10m <prompt>`
+- **Task list card** — Claude Code's task checklist (TodoWrite / TaskCreate) renders live above the input box: completed tasks struck through, the in-progress one highlighted, with done/in-progress/open counts
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching
@@ -103,12 +106,18 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 | Command | What it does |
 |---|---|
-| `/model opus\|sonnet\|haiku` | Set a persistent model for this thread |
+| `/model fable\|opus\|sonnet\|haiku` | Set a persistent model for this thread |
 | `/model default` | Reset thread model back to the global default |
 | `/model` | Show the current model for this thread |
+| `/goal <text>` | Set a persistent goal for this thread — injected into every turn until cleared |
+| `/goal clear` | Clear the thread's goal (`/goal` alone shows the current goal) |
+| `/loop <interval> <prompt>` | Re-run a prompt in this thread on an interval (e.g. `/loop 10m check CI`) |
+| `/loop stop` | Stop the thread's loops (`/loop` alone lists them) |
 | `/compact` | Summarize conversation history to free up context window |
 | `/clear` | Clear conversation history and start a fresh session |
 | `/cost` | Show token usage and cost for the current session |
+
+**Command pills** — when you complete a built-in command (type `/goal ` or pick one from the dropdown), it turns into a pill chip at the left of the input box. Type the arguments after it; a single Backspace at the start of the input (or clicking the pill's ×) deletes the whole command. After a command, argument autocomplete kicks in — `/model ` offers `fable|opus|sonnet|haiku|default`.
 
 **Skills** — any `.md` file (or directory) in `~/.claude/skills/` appears below the built-in commands. Selecting one inserts the skill name into your message, which Claude handles via your `CLAUDE.md` configuration.
 
@@ -141,13 +150,16 @@ Type `@this` (no search needed) to instantly reference the currently active file
 `/model` sets the model for all subsequent turns in a thread:
 
 ```
+/model fable    → uses Claude Fable 5 for every turn in this thread
 /model opus     → uses Claude Opus for every turn in this thread
 /model sonnet   → switches to Sonnet
 /model haiku    → switches to Haiku
-/model default  → resets to whatever Claude Code's default is
+/model default  → resets to the plugin's Default model setting (or the CLI default)
 ```
 
-The active model is shown as a badge in the thread info bar. You can also use `/opus` as a one-turn override (controlled by the Opus Escalation Keyword setting) — it applies only to that message, then the thread model resumes.
+A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
+
+The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable.
 
 ### Context compaction
 
@@ -352,7 +364,8 @@ Both tools return a clear error if the vault-bridges plugin is not installed or 
 | Enable summarization | Show the summarize button and auto-summarize |
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
-| Opus escalation keyword | Keyword that triggers Opus for a single turn (default: `/opus`) |
+| Escalation keyword | Keyword that routes a single turn to the escalation model (default: `/escalate`) |
+| Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |

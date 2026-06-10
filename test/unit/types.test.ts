@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseExtraEnv } from '../../src/types';
+import { parseExtraEnv, effectiveExtraEnv } from '../../src/types';
 
 describe('parseExtraEnv', () => {
   it('returns empty object for empty string', () => {
@@ -32,5 +32,26 @@ describe('parseExtraEnv', () => {
 
   it('handles empty value', () => {
     expect(parseExtraEnv('FOO=')).toEqual({ FOO: '' });
+  });
+});
+
+describe('effectiveExtraEnv', () => {
+  it('returns extraEnv unchanged for the claude provider', () => {
+    expect(effectiveExtraEnv({ provider: 'claude', extraEnv: 'FOO=bar' })).toBe('FOO=bar');
+  });
+
+  it('prepends CLAUDE_CODE_USE_BEDROCK=1 for the bedrock provider', () => {
+    const raw = effectiveExtraEnv({ provider: 'bedrock', extraEnv: 'AWS_PROFILE=dev' });
+    expect(parseExtraEnv(raw)).toEqual({ CLAUDE_CODE_USE_BEDROCK: '1', AWS_PROFILE: 'dev' });
+  });
+
+  it('lets a user-supplied CLAUDE_CODE_USE_BEDROCK line override the provider default', () => {
+    const raw = effectiveExtraEnv({ provider: 'bedrock', extraEnv: 'CLAUDE_CODE_USE_BEDROCK=0' });
+    expect(parseExtraEnv(raw)).toEqual({ CLAUDE_CODE_USE_BEDROCK: '0' });
+  });
+
+  it('handles empty extraEnv on bedrock', () => {
+    expect(parseExtraEnv(effectiveExtraEnv({ provider: 'bedrock', extraEnv: '' })))
+      .toEqual({ CLAUDE_CODE_USE_BEDROCK: '1' });
   });
 });

@@ -135,23 +135,40 @@ describe('ThreadManager — mcpServerFactory', () => {
   });
 });
 
-describe('ThreadManager — opus escalation (resolveModel / stripKeyword)', () => {
-  it('strips /opus keyword from middle of message', () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
-    // Use a real thread and mock sendMessage indirectly via the private method
-    // We test through the observable effect: the 'escalated' event fires and
-    // the stored user message retains the original text (tested in integration).
-    // Here we just confirm the keyword detection logic is symmetric:
-    const thread = manager.createThread('T');
-    expect(thread).toBeTruthy(); // manager is healthy
+describe('ThreadManager — model escalation (resolveModel / stripKeyword)', () => {
+  // resolveModel/stripKeyword are private; reach through for direct unit coverage.
+  const resolve = (manager: ThreadManager, text: string): string | undefined =>
+    (manager as unknown as { resolveModel(t: string): string | undefined }).resolveModel(text);
+  const strip = (manager: ThreadManager, text: string): string =>
+    (manager as unknown as { stripKeyword(t: string): string }).stripKeyword(text);
+
+  it('escalates to the configured escalation model', () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'fable' });
+    expect(resolve(manager, 'please /escalate fix this')).toBe('fable');
+  });
+
+  it('falls back to opus when escalationModel is empty', () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: '' });
+    expect(resolve(manager, '/escalate do it')).toBe('opus');
+  });
+
+  it('returns undefined when the keyword is absent', () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'fable' });
+    expect(resolve(manager, 'just a normal message')).toBeUndefined();
   });
 
   it('does not escalate when disabled', () => {
-    const manager = makeManager({ opusEscalationEnabled: false, opusEscalationKeyword: '/opus' });
-    const events: string[] = [];
-    manager.subscribe((_, e) => events.push(e.type));
-    // Cannot call sendMessage without a real session; escalation logic is
-    // fully exercised in integration tests below.
-    expect(events).toHaveLength(0);
+    const manager = makeManager({ escalationEnabled: false, escalationKeyword: '/escalate', escalationModel: 'fable' });
+    expect(resolve(manager, '/escalate do it')).toBeUndefined();
+  });
+
+  it('supports a custom keyword', () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
+    expect(resolve(manager, 'fix this /opus please')).toBe('opus');
+  });
+
+  it('strips the keyword from the middle of a message', () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'fable' });
+    expect(strip(manager, 'please /escalate fix this')).toBe('please fix this');
   });
 });

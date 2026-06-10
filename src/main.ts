@@ -14,7 +14,7 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
-import { type PluginSettings, DEFAULT_SETTINGS, type Project, type LayoutDensity, type ImageAttachment } from './types';
+import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type LayoutDensity, type ImageAttachment, type ProviderMode } from './types';
 import { serializeKey } from './stt';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
@@ -221,7 +221,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               focusArea,
               this.settings.claudeBinaryPath,
               this.settings.inprocessModel,
-              this.settings.extraEnv,
+              effectiveExtraEnv(this.settings),
             );
             const forkedThread = this.manager.createThread(
               `Fork: ${sourceThread.title.slice(0, 40)}`,
@@ -425,6 +425,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
+      threadExists: (threadId) => !!this.manager.getThread(threadId),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
@@ -1059,6 +1060,23 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Migrate pre-v0.15 "Opus escalation" settings to the generic escalation
+    // settings (escalationEnabled/escalationKeyword/escalationModel). The old
+    // '/opus' default keyword becomes '/escalate'; custom keywords are kept.
+    {
+      const legacy = (data ?? {}) as Record<string, unknown>;
+      if (legacy.escalationEnabled === undefined && typeof legacy.opusEscalationEnabled === 'boolean') {
+        this.settings.escalationEnabled = legacy.opusEscalationEnabled;
+      }
+      if (legacy.escalationKeyword === undefined && typeof legacy.opusEscalationKeyword === 'string') {
+        this.settings.escalationKeyword =
+          legacy.opusEscalationKeyword === '/opus' ? '/escalate' : legacy.opusEscalationKeyword;
+      }
+      // Drop the legacy keys (carried onto settings by Object.assign) so they
+      // disappear from data.json on the next save.
+      delete (this.settings as unknown as Record<string, unknown>).opusEscalationEnabled;
+      delete (this.settings as unknown as Record<string, unknown>).opusEscalationKeyword;
+    }
     // Clear any garbage written by the SecretComponent picker (stores key names, not values)
     const storedKey = this.app.secretStorage.getSecret('openai-api-key');
     if (storedKey && !storedKey.startsWith('sk-')) {
@@ -1499,6 +1517,42 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Account / provider')
+      .setDesc(
+        'Claude account uses the CLI\'s own login (claude.ai subscription or ANTHROPIC_API_KEY). ' +
+        'Amazon Bedrock sets CLAUDE_CODE_USE_BEDROCK=1 on every session — also set AWS_PROFILE and AWS_REGION in Extra environment variables below.',
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('claude', 'Claude account (default)')
+          .addOption('bedrock', 'Amazon Bedrock')
+          .setValue(this.plugin.settings.provider ?? 'claude')
+          .onChange(async (value) => {
+            this.plugin.settings.provider = value as ProviderMode;
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Default model')
+      .setDesc('Model for new turns unless a thread overrides it with /model. "CLI default" defers to the model configured in the Claude Code CLI.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('', 'CLI default')
+          .addOption('fable', 'Fable 5')
+          .addOption('opus', 'Opus')
+          .addOption('sonnet', 'Sonnet')
+          .addOption('haiku', 'Haiku')
+          .setValue(this.plugin.settings.defaultModel ?? '')
+          .onChange(async (value) => {
+            this.plugin.settings.defaultModel = value;
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Extra environment variables')
       .setDesc('KEY=VALUE pairs (one per line) merged into the Claude process environment. Useful for AWS SSO — set AWS_PROFILE and AWS_REGION here.')
       .addTextArea((text) =>
@@ -1766,11 +1820,11 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Opus escalation')
-      .setDesc('When the escalation keyword appears in a message, route that turn to claude-opus instead of the default model. The keyword is stripped before sending.')
+      .setName('Model escalation')
+      .setDesc('When the escalation keyword appears in a message, route that single turn to the escalation model instead of the thread\'s model. The keyword is stripped before sending.')
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.opusEscalationEnabled).onChange(async (value) => {
-          this.plugin.settings.opusEscalationEnabled = value;
+        toggle.setValue(this.plugin.settings.escalationEnabled).onChange(async (value) => {
+          this.plugin.settings.escalationEnabled = value;
           this.plugin.manager.updateSettings(this.plugin.settings);
           await this.plugin.saveSettings();
         }),
@@ -1778,13 +1832,30 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Escalation keyword')
-      .setDesc('Word or phrase that triggers Opus (e.g. "/opus").')
+      .setDesc('Word or phrase that triggers escalation (e.g. "/escalate").')
       .addText((text) =>
         text
-          .setPlaceholder('/opus')
-          .setValue(this.plugin.settings.opusEscalationKeyword)
+          .setPlaceholder('/escalate')
+          .setValue(this.plugin.settings.escalationKeyword)
           .onChange(async (value) => {
-            this.plugin.settings.opusEscalationKeyword = value || '/opus';
+            this.plugin.settings.escalationKeyword = value || '/escalate';
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Escalation model')
+      .setDesc('Model the escalation keyword routes that turn to.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('fable', 'Fable 5')
+          .addOption('opus', 'Opus')
+          .addOption('sonnet', 'Sonnet')
+          .addOption('haiku', 'Haiku')
+          .setValue(this.plugin.settings.escalationModel || 'opus')
+          .onChange(async (value) => {
+            this.plugin.settings.escalationModel = value;
             this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
           }),

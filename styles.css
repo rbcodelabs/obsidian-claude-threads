@@ -4269,3 +4269,104 @@
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/* ── Command pill (built-in slash command chip in the input row) ─────────── */
+
+.ct-command-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 8px;
+  margin-top: 6px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 6px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.ct-command-pill-x {
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.ct-command-pill-x:hover {
+  opacity: 1;
+}
+
+/* ── Task list card (Claude Code TodoWrite/TaskCreate checklist) ─────────── */
+
+.ct-task-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-task-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-muted);
+}
+
+.ct-task-card-chevron {
+  font-size: 10px;
+  width: 12px;
+}
+
+.ct-task-card-title {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-task-card-counts {
+  color: var(--text-muted);
+}
+
+.ct-task-card-list {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ct-task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.ct-task-row-icon {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.ct-task-row-completed .ct-task-row-icon { color: var(--color-green); }
+.ct-task-row-completed .ct-task-row-text {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
+.ct-task-row-in_progress .ct-task-row-icon { color: #d99367; }
+.ct-task-row-in_progress .ct-task-row-text {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-task-row-pending .ct-task-row-icon { color: var(--text-faint); }
+.ct-task-row-pending .ct-task-row-text { color: var(--text-muted); }

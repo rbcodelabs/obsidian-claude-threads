@@ -1,5 +1,5 @@
 import { query, type Options, type Query, type CanUseTool, type SDKUserMessage, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
-import type { ToolCallRecord, AskQuestion, ImageAttachment } from './types';
+import type { ToolCallRecord, AskQuestion, ImageAttachment, TaskItemStatus } from './types';
 import { parseExtraEnv } from './types';
 import { debugLog } from './logger';
 // Import from the mobile-safe utility module, then re-export so that desktop
@@ -7,6 +7,18 @@ import { debugLog } from './logger';
 // continue to work without changes.
 import { formatToolName, getToolIcon } from './toolNameUtils';
 export { formatToolName, getToolIcon };
+
+/**
+ * Incremental change to Claude Code's task list, derived from the agent's
+ * task-tracking tool calls:
+ * - 'replace' — TodoWrite (older CLIs) sends the whole list each time
+ * - 'create'  — TaskCreate confirmed by its tool result ("Task #N created…")
+ * - 'update'  — TaskUpdate sets status (and possibly a new subject)
+ */
+export type TaskTrackerEvent =
+  | { kind: 'replace'; tasks: { content: string; status: TaskItemStatus }[] }
+  | { kind: 'create'; id: string; content: string }
+  | { kind: 'update'; id: string; status?: string; content?: string };
 
 export interface SessionCallbacks {
   onToken: (text: string) => void;
@@ -29,6 +41,8 @@ export interface SessionCallbacks {
   onRateLimit?: (status: 'allowed' | 'allowed_warning' | 'rejected', resetsAt?: number) => void;
   /** Fired when a tool result contains inline images (e.g. the Read tool reading a PNG). */
   onToolResultImages?: (images: Array<{ mediaType: string; data: string }>) => void;
+  /** Fired when the agent's task list changes (TodoWrite / TaskCreate / TaskUpdate). */
+  onTaskEvent?: (event: TaskTrackerEvent) => void;
 }
 
 export class ClaudeSession {
@@ -147,6 +161,9 @@ export class ClaudeSession {
     let streamingText = '';
 
     const allToolCalls: ToolCallRecord[] = [];
+    // TaskCreate tool_use ids → subject, awaiting the "Task #N created" result
+    // so the create event carries the CLI-assigned task id.
+    const pendingTaskCreates = new Map<string, string>();
 
     try {
       for await (const msg of q) {
@@ -178,6 +195,29 @@ export class ClaudeSession {
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
                 callbacks.onToolUse(record);
+
+                // Task-tracking tools — surface as task list updates
+                if (callbacks.onTaskEvent) {
+                  const input = block.input as Record<string, unknown>;
+                  if (block.name === 'TodoWrite' && Array.isArray(input.todos)) {
+                    const tasks = (input.todos as Array<Record<string, unknown>>)
+                      .filter(t => typeof t.content === 'string')
+                      .map(t => ({
+                        content: t.content as string,
+                        status: (t.status as TaskItemStatus) ?? 'pending',
+                      }));
+                    callbacks.onTaskEvent({ kind: 'replace', tasks });
+                  } else if (block.name === 'TaskCreate' && typeof input.subject === 'string') {
+                    pendingTaskCreates.set(block.id, input.subject);
+                  } else if (block.name === 'TaskUpdate' && input.taskId != null) {
+                    callbacks.onTaskEvent({
+                      kind: 'update',
+                      id: String(input.taskId),
+                      status: typeof input.status === 'string' ? input.status : undefined,
+                      content: typeof input.subject === 'string' ? input.subject : undefined,
+                    });
+                  }
+                }
               }
             }
             if (parts.length > 0) {
@@ -276,24 +316,43 @@ export class ClaudeSession {
 
           case 'user': {
             // Tool results come back as 'user' messages. parent_tool_use_id is null
-            // even for tool results, so scan content unconditionally for image blocks.
+            // even for tool results, so scan content unconditionally.
             const userMsg = msg as Record<string, unknown>;
             const msgContent = (userMsg.message as Record<string, unknown>)?.content;
-            if (callbacks.onToolResultImages) {
-              if (Array.isArray(msgContent)) {
-                for (const block of msgContent) {
-                  const b = block as Record<string, unknown>;
-                  if (b.type === 'tool_result' && Array.isArray(b.content)) {
-                    const images: Array<{ mediaType: string; data: string }> = [];
-                    for (const inner of b.content as Array<Record<string, unknown>>) {
-                      if (inner.type === 'image') {
-                        const src = inner.source as Record<string, unknown>;
-                        if (src?.type === 'base64' && src.data && src.media_type) {
-                          images.push({ mediaType: src.media_type as string, data: src.data as string });
-                        }
+            if (Array.isArray(msgContent)) {
+              for (const block of msgContent) {
+                const b = block as Record<string, unknown>;
+                if (b.type !== 'tool_result') continue;
+
+                // Inline images returned by tools (e.g. Read on a PNG)
+                if (callbacks.onToolResultImages && Array.isArray(b.content)) {
+                  const images: Array<{ mediaType: string; data: string }> = [];
+                  for (const inner of b.content as Array<Record<string, unknown>>) {
+                    if (inner.type === 'image') {
+                      const src = inner.source as Record<string, unknown>;
+                      if (src?.type === 'base64' && src.data && src.media_type) {
+                        images.push({ mediaType: src.media_type as string, data: src.data as string });
                       }
                     }
-                    if (images.length > 0) callbacks.onToolResultImages(images);
+                  }
+                  if (images.length > 0) callbacks.onToolResultImages(images);
+                }
+
+                // TaskCreate confirmation — "Task #N created successfully: <subject>"
+                const toolUseId = b.tool_use_id as string | undefined;
+                if (toolUseId && pendingTaskCreates.has(toolUseId)) {
+                  const subject = pendingTaskCreates.get(toolUseId)!;
+                  pendingTaskCreates.delete(toolUseId);
+                  const text = typeof b.content === 'string'
+                    ? b.content
+                    : Array.isArray(b.content)
+                      ? (b.content as Array<Record<string, unknown>>)
+                          .map(c => (typeof c.text === 'string' ? c.text : ''))
+                          .join(' ')
+                      : '';
+                  const idMatch = text.match(/Task #(\d+)/i);
+                  if (idMatch) {
+                    callbacks.onTaskEvent?.({ kind: 'create', id: idMatch[1], content: subject });
                   }
                 }
               }

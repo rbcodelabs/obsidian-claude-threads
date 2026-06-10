@@ -24,6 +24,12 @@ export interface SchedulerOptions {
   createThread: (title: string, cwd: string, projectId?: string) => { id: string };
   sendMessage: (threadId: string, prompt: string) => Promise<void>;
   getDefaultCwd: () => string;
+  /**
+   * Returns true when a thread with the given ID still exists. Used by items
+   * with a targetThreadId (loops) to decide whether to reuse the thread or
+   * fall back to creating a new one. Optional for backwards compatibility.
+   */
+  threadExists?: (threadId: string) => boolean;
 }
 
 export class Scheduler {
@@ -166,10 +172,21 @@ export class Scheduler {
     if (!current || !current.enabled) return;
 
     try {
-      const cwd = current.cwd || this.options.getDefaultCwd();
-      const thread = this.options.createThread(current.name, cwd, current.projectId);
-      await this.options.sendMessage(thread.id, current.prompt);
-      current.lastThreadId = thread.id;
+      // Loop items target an existing thread; fall back to a new thread if it's gone.
+      const reuseTarget =
+        current.targetThreadId &&
+        (this.options.threadExists?.(current.targetThreadId) ?? false)
+          ? current.targetThreadId
+          : undefined;
+      if (reuseTarget) {
+        await this.options.sendMessage(reuseTarget, current.prompt);
+        current.lastThreadId = reuseTarget;
+      } else {
+        const cwd = current.cwd || this.options.getDefaultCwd();
+        const thread = this.options.createThread(current.name, cwd, current.projectId);
+        await this.options.sendMessage(thread.id, current.prompt);
+        current.lastThreadId = thread.id;
+      }
     } catch (err) {
       console.error(`[Scheduler] Failed to fire scheduled item "${current.name}" (${current.id}):`, err);
     }

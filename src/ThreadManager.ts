@@ -1,5 +1,6 @@
-import { ClaudeSession } from './ClaudeSession';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask } from './types';
+import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
+import { effectiveExtraEnv } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
@@ -34,7 +35,8 @@ export type ThreadEvent =
   | { type: 'active_thread_changed' }
   | { type: 'user_message_added'; message: ChatMessage }
   | { type: 'summary_updated' }
-  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> };
+  | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
+  | { type: 'tasks_updated'; tasks: TaskItem[] };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -292,6 +294,16 @@ export class ThreadManager {
     }
   }
 
+  /** Set or clear (pass undefined) the persistent goal for a thread. */
+  setThreadGoal(id: string, goal: string | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (goal) thread.goal = goal;
+      else delete thread.goal;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   isRunning(id: string): boolean {
     return this.sessions.has(id);
   }
@@ -378,26 +390,26 @@ export class ThreadManager {
   }
 
   /**
-   * Detect whether the message triggers Opus escalation. Returns the model
+   * Detect whether the message triggers model escalation. Returns the model
    * string to pass to ClaudeSession if escalation should occur, or undefined
    * if the default model should be used.
    */
   private resolveModel(userText: string): string | undefined {
-    if (!this.settings.opusEscalationEnabled) return undefined;
-    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!this.settings.escalationEnabled) return undefined;
+    const keyword = (this.settings.escalationKeyword ?? '/escalate').trim();
     if (!keyword) return undefined;
     // Match keyword anywhere in the message (case-insensitive)
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, 'i');
-    return re.test(userText) ? 'opus' : undefined;
+    return re.test(userText) ? (this.settings.escalationModel || 'opus') : undefined;
   }
 
   /**
    * Strip the escalation keyword from the message so it isn't passed to Claude verbatim.
    */
   private stripKeyword(userText: string): string {
-    if (!this.settings.opusEscalationEnabled) return userText;
-    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!this.settings.escalationEnabled) return userText;
+    const keyword = (this.settings.escalationKeyword ?? '/escalate').trim();
     if (!keyword) return userText;
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'gi');
@@ -420,7 +432,8 @@ export class ThreadManager {
     this.threadActivity.delete(threadId);
 
     const keywordModel = this.resolveModel(userText);
-    const model = keywordModel ?? thread.model;
+    // Precedence: escalation keyword > per-thread /model override > settings default
+    const model = keywordModel ?? thread.model ?? (this.settings.defaultModel || undefined);
     const promptText = keywordModel ? this.stripKeyword(userText) : userText;
 
     const userMsg: ChatMessage = {
@@ -518,7 +531,14 @@ export class ThreadManager {
       this.settings.saveThreadsToVault,
     );
     const projectDesc = project?.description?.trim();
-    const appendSystemPrompt = projectDesc ? `${envContext}\n\n${projectDesc}` : envContext;
+    const goalContext = thread.goal
+      ? `## Active Goal\nThe user has set a persistent goal for this thread: "${thread.goal}"\n` +
+        'Keep working toward this goal across turns. If a reply would leave the goal unmet, ' +
+        'state what remains and continue working on it. The goal stays active until the user clears it with /goal clear.'
+      : '';
+    const appendSystemPrompt = [envContext, projectDesc, goalContext]
+      .filter(Boolean)
+      .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, cwdAtStart) : this.mcpServers;
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
@@ -536,7 +556,7 @@ export class ThreadManager {
       thread.sessionId,
       cwdAtStart,
       this.settings.permissionMode,
-      this.settings.extraEnv,
+      effectiveExtraEnv(this.settings),
       {
         onToken: (text) => {
           streamingContent += text;
@@ -695,6 +715,10 @@ export class ThreadManager {
           pendingToolImages.push(...images);
           this.emit(threadId, { type: 'tool_result_images', images });
         },
+        onTaskEvent: (event) => {
+          this.applyTaskEvent(thread, event);
+          this.emit(threadId, { type: 'tasks_updated', tasks: thread.tasks ?? [] });
+        },
       },
       additionalDirs,
       model,
@@ -714,6 +738,40 @@ export class ThreadManager {
         await this.sendMessage(threadId, next.text, next.images);
       }
     }
+  }
+
+  /** Merge a task-tracker event from the session into the thread's task list. */
+  private applyTaskEvent(thread: Thread, event: TaskTrackerEvent): void {
+    if (event.kind === 'replace') {
+      thread.tasks = event.tasks.map((t, i) => ({
+        id: String(i + 1),
+        content: t.content,
+        status: t.status,
+      }));
+    } else if (event.kind === 'create') {
+      const tasks = (thread.tasks ??= []);
+      const existing = tasks.find(t => t.id === event.id);
+      if (existing) existing.content = event.content;
+      else tasks.push({ id: event.id, content: event.content, status: 'pending' });
+    } else {
+      const tasks = (thread.tasks ??= []);
+      const existing = tasks.find(t => t.id === event.id);
+      if (event.status === 'deleted') {
+        if (existing) thread.tasks = tasks.filter(t => t.id !== event.id);
+        return;
+      }
+      const status =
+        event.status === 'pending' || event.status === 'in_progress' || event.status === 'completed'
+          ? (event.status as TaskItemStatus)
+          : undefined;
+      if (existing) {
+        if (status) existing.status = status;
+        if (event.content) existing.content = event.content;
+      } else if (event.content) {
+        tasks.push({ id: event.id, content: event.content, status: status ?? 'pending' });
+      }
+    }
+    thread.updatedAt = Date.now();
   }
 
   async interrupt(threadId: string): Promise<void> {

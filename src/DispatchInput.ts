@@ -17,6 +17,12 @@ export interface DispatchInputOptions {
   placeholder?: string;
   /** Built-in slash commands to show before skill completions */
   builtinCommands?: { name: string; description: string }[];
+  /**
+   * Argument completions per command name. When the input starts with
+   * "/<command> " and the cursor is in the first argument word, the matching
+   * options are offered in the same dropdown (e.g. /model → fable|opus|...).
+   */
+  argCompletions?: Record<string, { name: string; description: string }[]>;
   /** Called with the raw payload after the user submits */
   onSend: (payload: DispatchPayload) => Promise<void> | void;
 
@@ -90,6 +96,13 @@ export class DispatchInput {
   private skillDropdown: HTMLElement | null = null;
   private skillDropdownItems: { name: string; description: string }[] = [];
   private skillDropdownIndex = 0;
+  // 'command' completes the /command word itself; 'arg' completes its first argument
+  private skillDropdownMode: 'command' | 'arg' = 'command';
+
+  // Active built-in command rendered as a pill before the textarea (e.g. /goal).
+  // The command text is removed from the textarea and re-assembled on send.
+  private pendingCommand: string | null = null;
+  private commandPillEl: HTMLElement | null = null;
 
   private sttController: SttController | null = null;
   private dispatching = false;
@@ -291,9 +304,19 @@ export class DispatchInput {
 
   // ── Public getters / setters ──────────────────────────────────────────────
 
-  getValue(): string { return this.inputEl?.value ?? ''; }
+  /** Full logical value, including any active command pill. */
+  getValue(): string {
+    const raw = this.inputEl?.value ?? '';
+    return this.pendingCommand ? `/${this.pendingCommand} ${raw}` : raw;
+  }
 
-  setValue(v: string): void { if (this.inputEl) this.inputEl.value = v; }
+  setValue(v: string): void {
+    if (!this.inputEl) return;
+    this.removeCommandPill();
+    this.inputEl.value = v;
+    // Re-pill a restored draft that starts with a built-in command
+    this.maybeConvertCommandPill();
+  }
 
   setStreaming(v: boolean): void {
     if (!this.options.showStopBtn) return;
@@ -339,13 +362,15 @@ export class DispatchInput {
 
   private async send(): Promise<void> {
     if (this.dispatching) return;
-    const text = this.inputEl.value.trim();
+    const raw = this.inputEl.value.trim();
+    const text = this.pendingCommand ? `/${this.pendingCommand}${raw ? ' ' + raw : ''}` : raw;
     const attachment = this.pendingAttachment;
     const images = this.pendingImages.slice();
     if (!text && !attachment && images.length === 0) return;
 
     this.dispatching = true;
     this.inputEl.value = '';
+    this.removeCommandPill();
     this.autoGrow();
     this.pendingAttachment = null;
     this.pendingImages = [];
@@ -515,6 +540,50 @@ export class DispatchInput {
     this.fileDropdownIndex = 0;
   }
 
+  // ── Command pill ─────────────────────────────────────────────────────────
+
+  /**
+   * Converts a completed built-in command at the start of the input
+   * ("/goal ") into a pill chip and strips it from the textarea. Skills are
+   * left as text — pills are only for commands the plugin intercepts.
+   */
+  private maybeConvertCommandPill(): void {
+    if (this.pendingCommand || !this.inputEl) return;
+    const val = this.inputEl.value;
+    const match = val.match(/^\/(\S+)(\s)/);
+    if (!match) return;
+    const name = match[1].toLowerCase();
+    if (!(this.options.builtinCommands ?? []).some(c => c.name === name)) return;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    this.setCommandPill(name);
+    this.inputEl.value = val.slice(match[0].length);
+    const newPos = Math.max(0, pos - match[0].length);
+    this.inputEl.selectionStart = this.inputEl.selectionEnd = newPos;
+  }
+
+  private setCommandPill(name: string): void {
+    this.pendingCommand = name;
+    if (!this.commandPillEl) {
+      this.commandPillEl = document.createElement('span');
+      this.commandPillEl.className = 'ct-command-pill';
+      this.inputRow.insertBefore(this.commandPillEl, this.inputEl);
+    }
+    this.commandPillEl.empty();
+    this.commandPillEl.createSpan({ cls: 'ct-command-pill-name', text: `/${name}` });
+    const removeBtn = this.commandPillEl.createSpan({ cls: 'ct-command-pill-x', text: '×' });
+    removeBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      this.removeCommandPill();
+      this.inputEl.focus();
+    });
+  }
+
+  private removeCommandPill(): void {
+    this.pendingCommand = null;
+    this.commandPillEl?.remove();
+    this.commandPillEl = null;
+  }
+
   // ── /slash autocomplete ──────────────────────────────────────────────────
 
   private loadSkills(): void {
@@ -573,11 +642,46 @@ export class DispatchInput {
     return word.startsWith('/') ? word.slice(1) : null;
   }
 
+  /**
+   * Detects "/command <partial-arg>" with the cursor in the first argument
+   * word and returns the matching completion options. Only commands listed in
+   * options.argCompletions participate.
+   */
+  private getArgQuery(): { options: { name: string; description: string }[]; partial: string } | null {
+    const completions = this.options.argCompletions;
+    if (!completions) return null;
+    const val = this.inputEl.value;
+    const pos = this.inputEl.selectionStart ?? val.length;
+    const before = val.slice(0, pos);
+    // With an active command pill, the textarea holds only the arguments —
+    // offer completions while the cursor is in the first word.
+    if (this.pendingCommand) {
+      if (!/^\S*$/.test(before)) return null;
+      const options = completions[this.pendingCommand];
+      return options ? { options, partial: before } : null;
+    }
+    const match = before.match(/^\/(\S+)\s+(\S*)$/);
+    if (!match) return null;
+    const options = completions[match[1].toLowerCase()];
+    if (!options) return null;
+    return { options, partial: match[2] };
+  }
+
   private showSkillDropdown(query: string): void {
     const q = query.toLowerCase();
     const builtins = (this.options.builtinCommands ?? []).filter(c => c.name.startsWith(q));
     const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
-    const matches = [...builtins, ...skills];
+    this.skillDropdownMode = 'command';
+    this.openDropdownWith([...builtins, ...skills]);
+  }
+
+  private showArgDropdown(options: { name: string; description: string }[], partial: string): void {
+    const q = partial.toLowerCase();
+    this.skillDropdownMode = 'arg';
+    this.openDropdownWith(options.filter(o => o.name.startsWith(q)));
+  }
+
+  private openDropdownWith(matches: { name: string; description: string }[]): void {
     if (matches.length === 0) { this.hideSkillDropdown(); return; }
     this.skillDropdownItems = matches;
     if (this.skillDropdownIndex >= matches.length) this.skillDropdownIndex = 0;
@@ -595,7 +699,9 @@ export class DispatchInput {
         cls: `ct-skill-item${i === this.skillDropdownIndex ? ' ct-skill-item-active' : ''}`,
       });
       const nameRow = item.createDiv({ cls: 'ct-skill-name' });
-      nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
+      if (this.skillDropdownMode === 'command') {
+        nameRow.createSpan({ cls: 'ct-skill-slash', text: '/' });
+      }
       nameRow.createSpan({ text: skill.name });
       if (skill.description) {
         item.createDiv({ cls: 'ct-skill-desc', text: skill.description });
@@ -610,7 +716,19 @@ export class DispatchInput {
     let start = pos - 1;
     while (start >= 0 && val[start] !== ' ' && val[start] !== '\n') start--;
     start++;
-    const inserted = '/' + skillName + ' ';
+    // Selecting a built-in command at the start of the input becomes a pill
+    // chip instead of inserted text (skills stay as text in the message).
+    const isBuiltin = (this.options.builtinCommands ?? []).some(c => c.name === skillName);
+    if (this.skillDropdownMode === 'command' && start === 0 && isBuiltin && !this.pendingCommand) {
+      this.setCommandPill(skillName);
+      this.inputEl.value = val.slice(pos);
+      this.inputEl.selectionStart = this.inputEl.selectionEnd = 0;
+      this.hideSkillDropdown();
+      this.inputEl.focus();
+      return;
+    }
+    // In arg mode, replace just the partial argument word (no leading slash).
+    const inserted = this.skillDropdownMode === 'arg' ? skillName + ' ' : '/' + skillName + ' ';
     this.inputEl.value = val.slice(0, start) + inserted + val.slice(pos);
     this.inputEl.selectionStart = this.inputEl.selectionEnd = start + inserted.length;
     this.hideSkillDropdown();
@@ -622,6 +740,7 @@ export class DispatchInput {
     this.skillDropdown = null;
     this.skillDropdownItems = [];
     this.skillDropdownIndex = 0;
+    this.skillDropdownMode = 'command';
   }
 
   // ── Event handlers ───────────────────────────────────────────────────────
@@ -648,6 +767,17 @@ export class DispatchInput {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this.insertSkill(this.skillDropdownItems[this.skillDropdownIndex].name); return; }
       if (e.key === 'Escape') { this.hideSkillDropdown(); return; }
     }
+    // A single backspace at the very start of the input deletes the command pill
+    if (
+      e.key === 'Backspace' &&
+      this.pendingCommand &&
+      this.inputEl.selectionStart === 0 &&
+      this.inputEl.selectionEnd === 0
+    ) {
+      e.preventDefault();
+      this.removeCommandPill();
+      return;
+    }
     // Escape while streaming triggers stop
     if (e.key === 'Escape' && this.options.showStopBtn && this.stopBtn && !this.stopBtn.hasClass('ct-hidden')) {
       this.options.onStop?.();
@@ -669,9 +799,15 @@ export class DispatchInput {
       return;
     }
     this.hideFileDropdown();
+    this.maybeConvertCommandPill();
     const slashQuery = this.getSlashQuery();
-    if (slashQuery !== null) this.showSkillDropdown(slashQuery);
-    else this.hideSkillDropdown();
+    if (slashQuery !== null) {
+      this.showSkillDropdown(slashQuery);
+    } else {
+      const argQuery = this.getArgQuery();
+      if (argQuery) this.showArgDropdown(argQuery.options, argQuery.partial);
+      else this.hideSkillDropdown();
+    }
     this.options.onInput?.();
   }
 }

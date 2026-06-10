@@ -225,9 +225,9 @@ describe('send message → event flow', () => {
   });
 });
 
-describe('opus escalation', () => {
+describe('model escalation', () => {
   it('emits escalated event and uses opus model when keyword present', async () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
@@ -243,7 +243,7 @@ describe('opus escalation', () => {
   });
 
   it('strips keyword from prompt sent to Claude', async () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
@@ -254,7 +254,7 @@ describe('opus escalation', () => {
   });
 
   it('preserves original text in the stored user message', async () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
 
     const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
@@ -265,7 +265,7 @@ describe('opus escalation', () => {
   });
 
   it('does not escalate when feature is disabled', async () => {
-    const manager = makeManager({ opusEscalationEnabled: false, opusEscalationKeyword: '/opus' });
+    const manager = makeManager({ escalationEnabled: false, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
@@ -279,7 +279,7 @@ describe('opus escalation', () => {
   });
 
   it('does not escalate when keyword not in message', async () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '/opus' });
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
@@ -293,7 +293,7 @@ describe('opus escalation', () => {
   });
 
   it('respects custom escalation keyword', async () => {
-    const manager = makeManager({ opusEscalationEnabled: true, opusEscalationKeyword: '!expert' });
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '!expert', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));

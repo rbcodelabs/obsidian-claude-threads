@@ -26,6 +26,8 @@ Key fields worth knowing:
 | `titleUserSet?: boolean` | When `true`, the auto-titler will not overwrite the thread's title. Set to `true` only when the user explicitly renames the thread (not on blur/escape with no change). |
 | `noteFile?: string` | Vault-relative path of the saved vault note. Used by `VaultPersistence` to detect and delete stale files when the title changes. |
 | `cwd?: string` | Working directory for the Claude process. Auto-repaired to the nearest valid ancestor if the original worktree path no longer exists. |
+| `model?: string` | Per-thread model alias set via `/model` (fable, opus, sonnet, haiku). Falls back to the `defaultModel` setting, then the CLI default. |
+| `goal?: string` | Persistent goal set via `/goal`. Injected into the appended system prompt every turn until cleared with `/goal clear`. |
 
 ---
 

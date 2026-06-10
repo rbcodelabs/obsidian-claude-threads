@@ -284,4 +284,19 @@ export const fixtureThreads: Thread[] = [
     createdAt: T3 - 120000,
     updatedAt: T3 + 15000,
   },
+  {
+    id: 'thread-tasks',
+    title: 'Hip provenance initiative',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread1Messages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 30000,
+    tasks: [
+      { id: '1', content: 'Write discerning-traveler initiative doc (ideas + design direction)', status: 'completed' },
+      { id: '2', content: 'Implement Hip Provenance — "why this place" editorial layer in itinerary view', status: 'completed' },
+      { id: '3', content: 'Enhance locked preview with curation quality signals', status: 'completed' },
+      { id: '4', content: 'Add hip context to public share view (/i/[slug])', status: 'completed' },
+      { id: '5', content: 'Verify: types, unit tests, build, visual check', status: 'in_progress' },
+    ],
+  },
 ];
