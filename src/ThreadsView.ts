@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sani
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
-import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS } from './slashCommands';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES } from './slashCommands';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -133,15 +133,6 @@ export class ThreadsView extends ItemView {
   private taskCardCollapsed = false;
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
-
-  private static readonly MODEL_ALIASES: Record<string, string | undefined> = {
-    fable: 'fable',
-    opus: 'opus',
-    sonnet: 'sonnet',
-    haiku: 'haiku',
-    default: undefined,
-    reset: undefined,
-  };
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -2283,13 +2274,13 @@ export class ThreadsView extends ItemView {
         this.scrollToBottom();
         return;
       }
-      if (!(arg in ThreadsView.MODEL_ALIASES)) {
+      if (!(arg in MODEL_ALIASES)) {
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
         errEl.createEl('p', { text: `Unknown model "${arg}". Use: fable, opus, sonnet, haiku, default` });
         this.scrollToBottom();
         return;
       }
-      const resolved = ThreadsView.MODEL_ALIASES[arg];
+      const resolved = MODEL_ALIASES[arg];
       this.manager.setThreadModel(this.activeThreadId, resolved);
       await this.plugin.saveSettings();
       const label = resolved ? `Model set to ${resolved}` : 'Model reset to default';

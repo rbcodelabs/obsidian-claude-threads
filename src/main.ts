@@ -1013,12 +1013,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
-  async dispatchNewThread(text: string, images?: ImageAttachment[], titleHint?: string): Promise<string> {
+  async dispatchNewThread(text: string, images?: ImageAttachment[], titleHint?: string, model?: string): Promise<string> {
     const rawTitle = titleHint ?? text;
     const title = rawTitle.trim()
       ? rawTitle.slice(0, 50).split('\n')[0].trim()
       : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
     const thread = this.manager.createThread(title, this.getEffectiveCwd());
+    if (model) this.manager.setThreadModel(thread.id, model);
     await this.saveSettings();
     // Fire and forget — dashboard will show the running row via subscription
     this.manager.sendMessage(thread.id, text, images).catch(console.error);
