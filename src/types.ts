@@ -204,8 +204,12 @@ export interface PluginSettings {
   summarizationEnabled: boolean;
   inprocessModel: string;
   autoSummarize: boolean;
-  opusEscalationEnabled: boolean;
-  opusEscalationKeyword: string;
+  /** When the escalation keyword appears in a message, route that turn to escalationModel. */
+  escalationEnabled: boolean;
+  /** Keyword that triggers escalation for a single turn (stripped before sending). */
+  escalationKeyword: string;
+  /** Model alias the escalation keyword routes to (fable, opus, sonnet, haiku). */
+  escalationModel: string;
   alwaysAllowedTools: string[];
   disallowedTools: string[];
   threads: Thread[];
@@ -265,8 +269,9 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   summarizationEnabled: true,
   inprocessModel: 'haiku',
   autoSummarize: false,
-  opusEscalationEnabled: true,
-  opusEscalationKeyword: '/opus',
+  escalationEnabled: true,
+  escalationKeyword: '/escalate',
+  escalationModel: 'opus',
   alwaysAllowedTools: [],
   disallowedTools: ['CronCreate', 'CronDelete', 'CronList', 'CronUpdate'],
   threads: [],

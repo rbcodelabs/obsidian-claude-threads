@@ -389,26 +389,26 @@ export class ThreadManager {
   }
 
   /**
-   * Detect whether the message triggers Opus escalation. Returns the model
+   * Detect whether the message triggers model escalation. Returns the model
    * string to pass to ClaudeSession if escalation should occur, or undefined
    * if the default model should be used.
    */
   private resolveModel(userText: string): string | undefined {
-    if (!this.settings.opusEscalationEnabled) return undefined;
-    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!this.settings.escalationEnabled) return undefined;
+    const keyword = (this.settings.escalationKeyword ?? '/escalate').trim();
     if (!keyword) return undefined;
     // Match keyword anywhere in the message (case-insensitive)
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, 'i');
-    return re.test(userText) ? 'opus' : undefined;
+    return re.test(userText) ? (this.settings.escalationModel || 'opus') : undefined;
   }
 
   /**
    * Strip the escalation keyword from the message so it isn't passed to Claude verbatim.
    */
   private stripKeyword(userText: string): string {
-    if (!this.settings.opusEscalationEnabled) return userText;
-    const keyword = (this.settings.opusEscalationKeyword ?? '/opus').trim();
+    if (!this.settings.escalationEnabled) return userText;
+    const keyword = (this.settings.escalationKeyword ?? '/escalate').trim();
     if (!keyword) return userText;
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(`(?:^|\\s)${escaped}(?=\\s|$)`, 'gi');

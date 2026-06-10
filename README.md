@@ -156,7 +156,7 @@ Type `@this` (no search needed) to instantly reference the currently active file
 
 A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
 
-The active model is shown as a badge in the thread info bar. You can also use `/opus` as a one-turn override (controlled by the Opus Escalation Keyword setting) — it applies only to that message, then the thread model resumes.
+The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable.
 
 ### Context compaction
 
@@ -361,7 +361,8 @@ Both tools return a clear error if the vault-bridges plugin is not installed or 
 | Enable summarization | Show the summarize button and auto-summarize |
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
-| Opus escalation keyword | Keyword that triggers Opus for a single turn (default: `/opus`) |
+| Escalation keyword | Keyword that routes a single turn to the escalation model (default: `/escalate`) |
+| Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |

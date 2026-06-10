@@ -1060,6 +1060,23 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Migrate pre-v0.15 "Opus escalation" settings to the generic escalation
+    // settings (escalationEnabled/escalationKeyword/escalationModel). The old
+    // '/opus' default keyword becomes '/escalate'; custom keywords are kept.
+    {
+      const legacy = (data ?? {}) as Record<string, unknown>;
+      if (legacy.escalationEnabled === undefined && typeof legacy.opusEscalationEnabled === 'boolean') {
+        this.settings.escalationEnabled = legacy.opusEscalationEnabled;
+      }
+      if (legacy.escalationKeyword === undefined && typeof legacy.opusEscalationKeyword === 'string') {
+        this.settings.escalationKeyword =
+          legacy.opusEscalationKeyword === '/opus' ? '/escalate' : legacy.opusEscalationKeyword;
+      }
+      // Drop the legacy keys (carried onto settings by Object.assign) so they
+      // disappear from data.json on the next save.
+      delete (this.settings as unknown as Record<string, unknown>).opusEscalationEnabled;
+      delete (this.settings as unknown as Record<string, unknown>).opusEscalationKeyword;
+    }
     // Clear any garbage written by the SecretComponent picker (stores key names, not values)
     const storedKey = this.app.secretStorage.getSecret('openai-api-key');
     if (storedKey && !storedKey.startsWith('sk-')) {
@@ -1803,11 +1820,11 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Opus escalation')
-      .setDesc('When the escalation keyword appears in a message, route that turn to claude-opus instead of the default model. The keyword is stripped before sending.')
+      .setName('Model escalation')
+      .setDesc('When the escalation keyword appears in a message, route that single turn to the escalation model instead of the thread\'s model. The keyword is stripped before sending.')
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.opusEscalationEnabled).onChange(async (value) => {
-          this.plugin.settings.opusEscalationEnabled = value;
+        toggle.setValue(this.plugin.settings.escalationEnabled).onChange(async (value) => {
+          this.plugin.settings.escalationEnabled = value;
           this.plugin.manager.updateSettings(this.plugin.settings);
           await this.plugin.saveSettings();
         }),
@@ -1815,13 +1832,30 @@ class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Escalation keyword')
-      .setDesc('Word or phrase that triggers Opus (e.g. "/opus").')
+      .setDesc('Word or phrase that triggers escalation (e.g. "/escalate").')
       .addText((text) =>
         text
-          .setPlaceholder('/opus')
-          .setValue(this.plugin.settings.opusEscalationKeyword)
+          .setPlaceholder('/escalate')
+          .setValue(this.plugin.settings.escalationKeyword)
           .onChange(async (value) => {
-            this.plugin.settings.opusEscalationKeyword = value || '/opus';
+            this.plugin.settings.escalationKeyword = value || '/escalate';
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Escalation model')
+      .setDesc('Model the escalation keyword routes that turn to.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('fable', 'Fable 5')
+          .addOption('opus', 'Opus')
+          .addOption('sonnet', 'Sonnet')
+          .addOption('haiku', 'Haiku')
+          .setValue(this.plugin.settings.escalationModel || 'opus')
+          .onChange(async (value) => {
+            this.plugin.settings.escalationModel = value;
             this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
           }),
