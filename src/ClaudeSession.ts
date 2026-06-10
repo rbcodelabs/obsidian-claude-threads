@@ -43,6 +43,13 @@ export interface SessionCallbacks {
   onToolResultImages?: (images: Array<{ mediaType: string; data: string }>) => void;
   /** Fired when the agent's task list changes (TodoWrite / TaskCreate / TaskUpdate). */
   onTaskEvent?: (event: TaskTrackerEvent) => void;
+  /**
+   * Fired for each raw SDK event (and a synthetic `session_start` marker at the
+   * top of each turn) so a consumer can persist the verbatim event stream to a
+   * JSONL log. Partial streaming token deltas (`stream_event`) are filtered out
+   * before this fires — they're reconstructed in the final `assistant` message.
+   */
+  onRawEvent?: (event: { type?: string } & Record<string, unknown>) => void;
 }
 
 export class ClaudeSession {
@@ -157,6 +164,19 @@ export class ClaudeSession {
     }
     this.activeQuery = q;
 
+    // Synthetic boundary marker so each turn is delimited in the raw log and
+    // carries the turn's inputs (prompt, cwd, model, resume target).
+    callbacks.onRawEvent?.({
+      type: 'session_start',
+      resume: resumeSessionId ?? null,
+      cwd,
+      model: model ?? null,
+      permissionMode: permissionMode ?? null,
+      prompt,
+      imageCount: images?.length ?? 0,
+      timestamp: Date.now(),
+    });
+
     const pendingToolCalls: ToolCallRecord[] = [];
     let streamingText = '';
 
@@ -168,6 +188,11 @@ export class ClaudeSession {
     try {
       for await (const msg of q) {
         debugLog('[ClaudeThreads] msg.type:', msg.type, (msg as Record<string, unknown>).subtype ?? '');
+        // Persist the verbatim event to the raw JSONL log, skipping the noisy
+        // per-token partial deltas (reconstructed in the final assistant message).
+        if (callbacks.onRawEvent && msg.type !== 'stream_event') {
+          callbacks.onRawEvent(msg as { type?: string } & Record<string, unknown>);
+        }
         switch (msg.type) {
           case 'stream_event': {
             const evt = msg.event;

@@ -87,6 +87,14 @@ export interface Thread {
   createdAt: number;
   updatedAt: number;
   noteFile?: string;
+  /**
+   * Vault-relative path to the raw JSONL conversation log for this thread
+   * (e.g. "Claude/logs/<thread_id>.jsonl"). Append-only record of every raw
+   * SDK event (tool calls with inputs, tool results, assistant messages,
+   * usage/cost, system events) so agents can retrieve and analyze the full
+   * transcript. Linked from the markdown note's `raw_log` frontmatter.
+   */
+  rawLogPath?: string;
   recap?: string;
   summary?: string;
   lastError?: string;
@@ -204,6 +212,13 @@ export interface PluginSettings {
   claudeBinaryPath: string;
   defaultCwd: string;
   saveThreadsToVault: boolean;
+  /**
+   * When true, every thread's raw SDK event stream is appended to a JSONL log
+   * at `<vaultFolder>/logs/<thread_id>.jsonl` and linked from the markdown
+   * note's `raw_log` frontmatter. Independent of saveThreadsToVault so you can
+   * keep raw logs without markdown notes, or vice versa. Defaults to true.
+   */
+  saveRawLogs: boolean;
   vaultFolder: string;
   permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
   extraEnv: string;
@@ -275,6 +290,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   claudeBinaryPath: '/opt/homebrew/bin/claude',
   defaultCwd: '',
   saveThreadsToVault: true,
+  saveRawLogs: true,
   vaultFolder: 'Claude',
   permissionMode: 'acceptEdits',
   extraEnv: '',

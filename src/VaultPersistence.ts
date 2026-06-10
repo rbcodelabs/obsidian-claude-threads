@@ -130,6 +130,7 @@ export class VaultPersistence {
       `status: ${status}`,
       `cwd: ${thread.cwd}`,
       thread.model ? `model: ${thread.model}` : null,
+      thread.rawLogPath ? `raw_log: ${thread.rawLogPath}` : null,
       `message_count: ${messageCount}`,
       thread.summary ? `summary: "${thread.summary.replace(/"/g, '\\"').replace(/\n/g, ' ')}"` : null,
       `created: ${new Date(thread.createdAt).toISOString()}`,
@@ -184,6 +185,7 @@ export class VaultPersistence {
         ? rawStatus as ThreadStatus
         : 'waiting';
       const model = get('model');
+      const rawLogPath = get('raw_log');
       const summaryRaw = get('summary');
       const summary = summaryRaw ? summaryRaw.replace(/^"|"$/g, '') : undefined;
 
@@ -198,6 +200,7 @@ export class VaultPersistence {
         createdAt,
         updatedAt,
         noteFile: filePath,
+        rawLogPath,
         status,
         model,
         summary,
