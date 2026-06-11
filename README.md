@@ -381,6 +381,15 @@ If you have the [Vault Bridges](https://github.com/rbcodelabs/obsidian-vault-bri
 
 Both tools return a clear error if the vault-bridges plugin is not installed or not enabled.
 
+#### Bridge-aware edits
+
+When an agent edits files inside a bridged repo (rather than the synced vault copy), Claude Threads detects it automatically at the end of the turn:
+
+- **Auto-pull** — each affected bridge is synced once per turn, so the vault copies update immediately (a notice confirms success or failure).
+- **Vault-relative links** — edited-file chips, the focus button, and absolute repo paths in Claude's messages all resolve to the synced vault note: chips show the vault path and open the note in Obsidian, and message paths become clickable internal links (only when the vault copy exists).
+
+Edits made directly to vault files are unaffected — they don't match any bridge root and behave as before. Note that edits made inside a temporary coding-task worktree only reach the vault after merge plus a normal bridge pull.
+
 ## Settings
 
 | Setting | Description |
