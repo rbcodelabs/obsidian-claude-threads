@@ -4,6 +4,15 @@ import path from 'path';
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
 test.describe('Claude Threads UI', () => {
+  // Pin Date.now()/new Date() to the fixture epoch (test/harness/fixtures.ts)
+  // so relative labels ("5m ago", "Last active …") and same-day timestamp
+  // rendering are deterministic — without this, baselines with "Xd ago" text
+  // drift every midnight and timestamp prefixes depend on the run date.
+  // setFixedTime fakes only the clock; real timers keep running.
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+  });
+
   test('main view', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
