@@ -15,6 +15,7 @@ import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type ImageAttachment } from './types';
+import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
@@ -434,6 +435,55 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     });
     this.register(unsubBgTasks);
+
+    // Bridge-aware repo edits: when a turn writes files that live inside a
+    // Vault Bridge's source repo (rather than the synced vault copy), trigger
+    // a bridge pull at end of turn so the vault copies refresh immediately.
+    const pendingBridgeEdits = new Map<string, Set<string>>();
+    const bridgeSyncsInFlight = new Set<string>();
+    const unsubBridgeSync = this.manager.subscribe((threadId, event) => {
+      if (event.type === 'tool_use') {
+        if (event.record.name === 'Write' || event.record.name === 'Edit') {
+          const filePath = event.record.summary.replace(/^[^:]+: /, '');
+          if (filePath) {
+            let set = pendingBridgeEdits.get(threadId);
+            if (!set) {
+              set = new Set();
+              pendingBridgeEdits.set(threadId, set);
+            }
+            set.add(filePath);
+          }
+        }
+        return;
+      }
+      if (event.type !== 'done' && event.type !== 'error') return;
+      const files = pendingBridgeEdits.get(threadId);
+      pendingBridgeEdits.delete(threadId);
+      if (!files || files.size === 0) return;
+      const api = getVaultBridgesAPI(this.app);
+      if (!api) return;
+      let bridges: BridgeInfo[];
+      try {
+        bridges = api.getBridges();
+      } catch (err) {
+        console.error('[Claude Threads] could not read vault bridges:', err);
+        return;
+      }
+      for (const bridge of findBridgesForFiles(files, bridges)) {
+        if (bridgeSyncsInFlight.has(bridge.id)) continue;
+        bridgeSyncsInFlight.add(bridge.id);
+        api
+          .syncBridge(bridge.id)
+          .then(() => new Notice(`Vault bridge pulled: ${bridge.name}`))
+          .catch((err: unknown) => {
+            console.error('[Claude Threads] bridge sync failed:', err);
+            const msg = err instanceof Error ? err.message : String(err);
+            new Notice(`Vault bridge sync failed: ${bridge.name}: ${msg}`, 8000);
+          })
+          .finally(() => bridgeSyncsInFlight.delete(bridge.id));
+      }
+    });
+    this.register(unsubBridgeSync);
 
     // Load persisted projects + threads
     this.manager.loadProjects(this.settings.projects ?? []);
