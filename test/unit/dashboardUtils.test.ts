@@ -1,5 +1,39 @@
 import { describe, it, expect } from 'vitest';
-import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from '../../src/dashboardUtils';
+import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from '../../src/dashboardUtils';
+
+// ── formatWakeupCountdown ───────────────────────────────────────────────────────
+
+describe('formatWakeupCountdown', () => {
+  it('returns "now" when the fire time is in the past', () => {
+    expect(formatWakeupCountdown(Date.now() - 5_000)).toBe('now');
+  });
+
+  it('returns "now" when the fire time is exactly now', () => {
+    expect(formatWakeupCountdown(Date.now())).toBe('now');
+  });
+
+  it('formats sub-minute remaining as seconds', () => {
+    expect(formatWakeupCountdown(Date.now() + 45_000)).toBe('in 45s');
+    expect(formatWakeupCountdown(Date.now() + 1_000)).toBe('in 1s');
+  });
+
+  it('rounds to the nearest second', () => {
+    expect(formatWakeupCountdown(Date.now() + 45_400)).toBe('in 45s');
+    expect(formatWakeupCountdown(Date.now() + 45_600)).toBe('in 46s');
+  });
+
+  it('formats whole minutes once at least 60s remain', () => {
+    expect(formatWakeupCountdown(Date.now() + 60_000)).toBe('in 1m');
+    expect(formatWakeupCountdown(Date.now() + 4 * 60_000)).toBe('in 4m');
+    expect(formatWakeupCountdown(Date.now() + 59 * 60_000)).toBe('in 59m');
+  });
+
+  it('formats hours and minutes past one hour', () => {
+    expect(formatWakeupCountdown(Date.now() + 60 * 60_000)).toBe('in 1h');
+    expect(formatWakeupCountdown(Date.now() + 65 * 60_000)).toBe('in 1h 5m');
+    expect(formatWakeupCountdown(Date.now() + 150 * 60_000)).toBe('in 2h 30m');
+  });
+});
 
 // ── relativeTime ──────────────────────────────────────────────────────────────
 

@@ -13,7 +13,7 @@ import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { DispatchInput } from './DispatchInput';
-import { buildCwdLabel } from './dashboardUtils';
+import { buildCwdLabel, formatWakeupCountdown } from './dashboardUtils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -79,6 +79,12 @@ export class ThreadsView extends ItemView {
   private contextFooterEl!: HTMLElement;
   private statusLineRefreshTimer: ReturnType<typeof setInterval> | null = null;
   private static readonly STATUS_LINE_INTERVAL_MS = 30_000;
+
+  // Scheduled wake-up banner (shown above the input when the active thread has
+  // a pending ScheduleWakeup). The countdown ticks every second while visible.
+  private wakeupBannerEl!: HTMLElement;
+  private wakeupCountdownEl: HTMLElement | null = null;
+  private wakeupCountdownTimer: ReturnType<typeof setInterval> | null = null;
 
   // Status bar layering: context is the persistent baseline (project/model),
   // transient overrides it temporarily (queued, retrying, compacting, etc.)
@@ -394,6 +400,7 @@ export class ThreadsView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.stopStatusLineInterval();
+    this.stopWakeupCountdown();
     this.dispatchInput?.destroy();
   }
 
@@ -434,6 +441,7 @@ export class ThreadsView extends ItemView {
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
     this.statusBar = panelContext.createDiv('ct-status-bar');
+    this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
@@ -1709,6 +1717,12 @@ export class ThreadsView extends ItemView {
 
   private handleEvent(event: ThreadEvent): void {
     switch (event.type) {
+      case 'wakeup_changed': {
+        // A wake-up was registered, fired, or cancelled on the active thread.
+        this.refreshWakeupBanner();
+        break;
+      }
+
       case 'user_message_added': {
         // Only create the bubble when the message came from an external caller
         // (e.g. the voice plugin). When the message originates from the input box,
@@ -2082,6 +2096,73 @@ export class ThreadsView extends ItemView {
       this.updateStatusBar();
     } else {
       this.clearTransientStatus();
+    }
+    // A running thread can't simultaneously be waiting on a wake-up.
+    this.refreshWakeupBanner();
+  }
+
+  // ── Scheduled wake-up banner ────────────────────────────────────────────
+  /**
+   * Show/hide the wake-up banner for the active thread and (re)build its
+   * contents. Called on thread switch, run-state change, and wakeup_changed
+   * events. Starts a 1s countdown ticker while visible; stops it when hidden.
+   */
+  private refreshWakeupBanner(): void {
+    if (!this.wakeupBannerEl) return;
+    const threadId = this.activeThreadId;
+    const next = threadId ? this.plugin.getPendingWakeups(threadId)[0] : undefined;
+
+    if (!next || (threadId && this.manager.isRunning(threadId))) {
+      this.wakeupBannerEl.addClass('ct-hidden');
+      this.wakeupBannerEl.empty();
+      this.wakeupCountdownEl = null;
+      this.stopWakeupCountdown();
+      return;
+    }
+
+    this.wakeupBannerEl.empty();
+    this.wakeupBannerEl.removeClass('ct-hidden');
+
+    const text = this.wakeupBannerEl.createSpan({ cls: 'ct-wakeup-banner-text' });
+    text.createSpan({ cls: 'ct-wakeup-banner-icon', text: '⏳' });
+    text.createSpan({ text: ' Resumes ' });
+    this.wakeupCountdownEl = text.createSpan({ cls: 'ct-wakeup-banner-countdown', text: formatWakeupCountdown(next.fireAt) });
+    if (next.reason) {
+      text.createSpan({ cls: 'ct-wakeup-banner-reason', text: ` — ${next.reason}` });
+    }
+
+    const cancel = this.wakeupBannerEl.createEl('button', { cls: 'ct-wakeup-banner-cancel', text: 'Cancel' });
+    cancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (threadId) this.plugin.cancelWakeups(threadId);
+    });
+
+    this.startWakeupCountdown();
+  }
+
+  private startWakeupCountdown(): void {
+    if (this.wakeupCountdownTimer !== null) return;
+    this.wakeupCountdownTimer = setInterval(() => this.tickWakeupCountdown(), 1000);
+  }
+
+  private stopWakeupCountdown(): void {
+    if (this.wakeupCountdownTimer !== null) {
+      clearInterval(this.wakeupCountdownTimer);
+      this.wakeupCountdownTimer = null;
+    }
+  }
+
+  /** Update just the countdown text each second; rebuild/hide when it changes shape. */
+  private tickWakeupCountdown(): void {
+    const threadId = this.activeThreadId;
+    const next = threadId ? this.plugin.getPendingWakeups(threadId)[0] : undefined;
+    if (!next) {
+      // Fired or cancelled out from under us — rebuild handles hiding + cleanup.
+      this.refreshWakeupBanner();
+      return;
+    }
+    if (this.wakeupCountdownEl) {
+      this.wakeupCountdownEl.setText(formatWakeupCountdown(next.fireAt));
     }
   }
 

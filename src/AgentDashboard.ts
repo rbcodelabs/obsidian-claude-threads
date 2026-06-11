@@ -4,13 +4,13 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { formatToolName } from './ClaudeSession';
-import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
+import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
-type RowState = 'running' | 'idle' | 'error' | 'empty';
+type RowState = 'running' | 'waiting' | 'idle' | 'error' | 'empty';
 
 export class AgentDashboard extends ItemView {
   private plugin: ClaudeThreadsPlugin;
@@ -214,6 +214,12 @@ export class AgentDashboard extends ItemView {
       this.scheduleRender();
       return;
     }
+    // A wake-up was registered, fired, or cancelled — re-partition so the
+    // thread moves into/out of the "Waiting" group.
+    if (event.type === 'wakeup_changed') {
+      this.scheduleRender();
+      return;
+    }
     // When a thread finishes a new run, mark it unreviewed so it surfaces in "New"
     if (event.type === 'done') {
       const thread = this.manager.getThread(threadId);
@@ -290,6 +296,7 @@ export class AgentDashboard extends ItemView {
         )
       : allThreads;
     const running: Thread[] = [];
+    const waiting: Thread[] = [];
     const unreviewed: Thread[] = [];
     const reviewed: Thread[] = [];
     const errors: Thread[] = [];
@@ -297,6 +304,9 @@ export class AgentDashboard extends ItemView {
 
     for (const t of threads) {
       if (this.manager.isRunning(t.id)) running.push(t);
+      // A thread that has ended its turn but scheduled a wake-up isn't "done" —
+      // surface it distinctly so it doesn't look completed.
+      else if (this.plugin.hasPendingWakeup(t.id)) waiting.push(t);
       else if (t.lastError) errors.push(t);
       else if (t.messages.length > 0) {
         if (t.reviewed) reviewed.push(t);
@@ -307,6 +317,7 @@ export class AgentDashboard extends ItemView {
     // Sort each group by most recently updated first
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
     running.sort(byRecency);
+    waiting.sort(byRecency);
     unreviewed.sort(byRecency);
     reviewed.sort(byRecency);
     errors.sort(byRecency);
@@ -323,6 +334,7 @@ export class AgentDashboard extends ItemView {
     }
 
     if (running.length > 0) this.renderGroup('Working', running, 'running');
+    if (waiting.length > 0) this.renderGroup('Waiting', waiting, 'waiting');
     if (unreviewed.length > 0) this.renderGroup('New', unreviewed, 'idle', unreviewed.length);
     if (reviewed.length > 0) this.renderGroup('Reviewed', reviewed, 'idle');
     if (errors.length > 0) this.renderGroup('Failed', errors, 'error');
@@ -399,6 +411,16 @@ export class AgentDashboard extends ItemView {
     } else {
       activityEl.setText(this.getActivityText(thread, state));
 
+      // ── Scheduled wake-up: show a Cancel button ──────────────────────────
+      if (state === 'waiting') {
+        const btns = body.createDiv({ cls: 'ct-agents-wakeup-actions' });
+        const cancel = btns.createEl('button', { text: 'Cancel', cls: 'ct-permission-btn ct-wakeup-cancel' });
+        cancel.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.plugin.cancelWakeups(thread.id);
+        });
+      }
+
       // ── AWS SSO reauth button ────────────────────────────────────────────
       // When the session failed due to an expired SSO token, show a one-click
       // "Re-authenticate" button so the user doesn't have to leave Obsidian.
@@ -452,6 +474,7 @@ export class AgentDashboard extends ItemView {
     el.className = `ct-agents-icon ct-agents-icon-${state}`;
     switch (state) {
       case 'running': el.setText('✽'); break;
+      case 'waiting': el.setText('⏳'); break;
       case 'idle':    el.setText('✓'); break;
       case 'error':   el.setText('✗'); break;
       default:        el.setText('○'); break;
@@ -461,6 +484,12 @@ export class AgentDashboard extends ItemView {
   private getActivityText(thread: Thread, state: RowState): string {
     if (state === 'running') {
       return this.manager.getThreadActivity(thread.id) || 'Working...';
+    }
+    if (state === 'waiting') {
+      const next = this.plugin.getPendingWakeups(thread.id)[0];
+      if (!next) return 'Waiting to resume';
+      const when = formatWakeupCountdown(next.fireAt);
+      return next.reason ? `Resumes ${when} — ${next.reason}` : `Resumes ${when}`;
     }
     if (state === 'error') return thread.lastError ?? 'Error occurred';
     if (state === 'empty') return 'Ready to start';
@@ -477,6 +506,13 @@ export class AgentDashboard extends ItemView {
     for (const [id, el] of this.timeEls) {
       const thread = this.manager.getThread(id);
       if (thread) el.setText(relativeTime(thread.updatedAt));
+    }
+    // Keep waiting-row countdowns roughly current without a full re-render.
+    for (const [id, el] of this.activityEls) {
+      if (!this.manager.isRunning(id) && this.plugin.hasPendingWakeup(id)) {
+        const thread = this.manager.getThread(id);
+        if (thread) el.setText(this.getActivityText(thread, 'waiting'));
+      }
     }
   }
 
