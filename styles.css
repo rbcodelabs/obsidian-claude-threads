@@ -4462,3 +4462,19 @@ textarea.ct-settings-wide-input {
 
 .ct-task-row-pending .ct-task-row-icon { color: var(--text-faint); }
 .ct-task-row-pending .ct-task-row-text { color: var(--text-muted); }
+
+/* request_secret modal */
+.ct-secret-request-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
+.ct-secret-request-name {
+  font-family: var(--font-monospace);
+  background: var(--background-modifier-form-field);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.9em;
+}
