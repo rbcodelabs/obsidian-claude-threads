@@ -1,4 +1,4 @@
-import type { Thread, ChatMessage } from '../../src/types';
+import type { Thread, ChatMessage, Project } from '../../src/types';
 
 // Timestamps: Thread 1 most recent (active by default), Thread 3 oldest.
 // Pinned to a fixed wall-clock time so screenshot baselines are stable
@@ -298,5 +298,164 @@ export const fixtureThreads: Thread[] = [
       { id: '4', content: 'Add hip context to public share view (/i/[slug])', status: 'completed' },
       { id: '5', content: 'Verify: types, unit tests, build, visual check', status: 'in_progress' },
     ],
+  },
+];
+
+// ─── Kanban board fixtures ────────────────────────────────────────────────────
+// A dedicated fixture set for the Kanban harness (test/harness/kanban-index.ts).
+// Kept separate from `fixtureThreads` so the conversation-view snapshots don't
+// churn. Designed to populate every status column AND span multiple folders so
+// both the status board and the folder-swimlane layout render meaningfully.
+//
+// Folder grouping resolves to: assigned Project name → working-directory label
+// → "Unassigned". These fixtures cover all three:
+//   • HipTrip       (project)   — Working, Awaiting, New, Done
+//   • Claude Threads (project)  — New, Failed, Ready
+//   • acme-api      (cwd only)  — Done
+//   • Unassigned    (no cwd)    — New
+//
+// Running / Awaiting state is not stored on the Thread — it lives in the
+// ThreadManager's private session/permission maps. kanban-index.ts seeds those
+// maps for `k-hiptrip-running` and `k-hiptrip-awaiting` so those two land in
+// the Working and Awaiting columns respectively.
+
+const KT = EPOCH; // kanban fixtures anchor to the same pinned epoch
+
+const userMsg = (id: string, content: string, ts: number): ChatMessage => ({ id, role: 'user', content, timestamp: ts });
+const asstMsg = (id: string, content: string, ts: number, summary?: string): ChatMessage => ({
+  id, role: 'assistant', content, timestamp: ts, summary,
+});
+
+export const kanbanFixtureProjects: Project[] = [
+  { id: 'proj-hiptrip', name: 'HipTrip', vaultFolder: 'Projects/HipTrip', createdAt: KT - 7 * 24 * 60 * 60 * 1000 },
+  { id: 'proj-threads', name: 'Claude Threads', vaultFolder: 'Projects/ClaudeThreads', createdAt: KT - 5 * 24 * 60 * 60 * 1000 },
+];
+
+// Thread ids whose running / pending-permission state the harness must seed.
+export const kanbanRunningThreadId = 'k-hiptrip-running';
+export const kanbanAwaitingThreadId = 'k-hiptrip-awaiting';
+export const kanbanAwaitingPermission = { toolName: 'Bash', detail: 'npm run deploy --prod' };
+export const kanbanRunningActivity = 'Editing src/itinerary/PlaceCard.tsx';
+
+export const kanbanFixtureThreads: Thread[] = [
+  // ── HipTrip lane (most-recent activity → top lane) ──────────────────────────
+  {
+    id: kanbanRunningThreadId,
+    title: 'Add "why this place" provenance layer',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [userMsg('k1', 'Add an editorial provenance layer to the itinerary card.', KT - 60_000)],
+    createdAt: KT - 60_000,
+    updatedAt: KT - 30_000,
+    editedFiles: ['/Users/mock/projects/hip-trip/src/itinerary/PlaceCard.tsx'],
+  },
+  {
+    id: kanbanAwaitingThreadId,
+    title: 'Deploy curation quality signals',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [userMsg('k2', 'Ship the curation-quality changes to prod.', KT - 4 * 60_000)],
+    createdAt: KT - 4 * 60_000,
+    updatedAt: KT - 90_000,
+  },
+  {
+    id: 'k-hiptrip-new',
+    title: 'Social "Going too?" nudge',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [
+      userMsg('k3', 'Sketch the destination-matching nudge.', KT - 20 * 60_000),
+      asstMsg('k4', 'Proposed an index over existing saves with a low-cost viral loop.', KT - 19 * 60_000,
+        'Proposed the "Going too?" destination-matching nudge built on existing saves.'),
+    ],
+    createdAt: KT - 20 * 60_000,
+    updatedAt: KT - 19 * 60_000,
+    summary: 'Proposed the "Going too?" destination-matching nudge built on existing saves.',
+    reviewed: false,
+  },
+  {
+    id: 'k-hiptrip-done',
+    title: 'Fix auth middleware 401s',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [
+      userMsg('k5', 'Auth middleware throws 401s in staging.', KT - 60 * 60_000),
+      asstMsg('k6', 'Fixed: JWT_SECRET was missing; auth.ts now fails fast on startup.', KT - 59 * 60_000,
+        'Fixed missing JWT_SECRET in staging; auth.ts now fails fast.'),
+    ],
+    createdAt: KT - 60 * 60_000,
+    updatedAt: KT - 59 * 60_000,
+    summary: 'Fixed missing JWT_SECRET in staging; auth.ts now fails fast.',
+    reviewed: true,
+    prUrl: 'https://github.com/acme/hip-trip/pull/482',
+    editedFiles: ['/Users/mock/projects/hip-trip/src/middleware/auth.ts'],
+  },
+
+  // ── Claude Threads lane ─────────────────────────────────────────────────────
+  {
+    id: 'k-threads-new',
+    title: 'Kanban folder swimlanes',
+    cwd: '/Users/mock/projects/obsidian-claude-threads',
+    projectId: 'proj-threads',
+    messages: [
+      userMsg('k7', 'Group the kanban board by working folder.', KT - 40 * 60_000),
+      asstMsg('k8', 'Added a Group by: Status / Folder toggle rendering folder swimlanes.', KT - 39 * 60_000,
+        'Added folder-swimlane grouping to the Kanban board.'),
+    ],
+    createdAt: KT - 40 * 60_000,
+    updatedAt: KT - 39 * 60_000,
+    summary: 'Added folder-swimlane grouping to the Kanban board.',
+    reviewed: false,
+  },
+  {
+    id: 'k-threads-failed',
+    title: 'Relay reconnect backoff',
+    cwd: '/Users/mock/projects/obsidian-claude-threads',
+    projectId: 'proj-threads',
+    messages: [userMsg('k9', 'The relay client never reconnects after a drop.', KT - 80 * 60_000)],
+    createdAt: KT - 80 * 60_000,
+    updatedAt: KT - 79 * 60_000,
+    lastError: 'WebSocket closed (1006) — exhausted reconnect attempts',
+  },
+  {
+    id: 'k-threads-ready',
+    title: 'Mobile layout polish',
+    cwd: '/Users/mock/projects/obsidian-claude-threads',
+    projectId: 'proj-threads',
+    messages: [],
+    createdAt: KT - 100 * 60_000,
+    updatedAt: KT - 100 * 60_000,
+  },
+
+  // ── acme-api lane (no project → working-directory label) ────────────────────
+  {
+    id: 'k-acme-done',
+    title: 'Add rate limiting to /v1/search',
+    cwd: '/Users/mock/projects/acme-api',
+    messages: [
+      userMsg('k10', 'Rate-limit the search endpoint.', KT - 3 * 60 * 60_000),
+      asstMsg('k11', 'Added a token-bucket limiter at 20 req/s per key.', KT - 3 * 60 * 60_000 + 60_000,
+        'Added a token-bucket rate limiter to /v1/search.'),
+    ],
+    createdAt: KT - 3 * 60 * 60_000,
+    updatedAt: KT - 3 * 60 * 60_000 + 60_000,
+    summary: 'Added a token-bucket rate limiter to /v1/search.',
+    reviewed: true,
+  },
+
+  // ── Unassigned lane (no cwd → catch-all, always sorts last) ─────────────────
+  {
+    id: 'k-unassigned-new',
+    title: 'Draft Q3 planning notes',
+    cwd: '',
+    messages: [
+      userMsg('k12', 'Help me outline the Q3 planning doc.', KT - 10 * 60_000),
+      asstMsg('k13', 'Outlined goals, bets, and risks across three sections.', KT - 9 * 60_000,
+        'Outlined the Q3 planning doc — goals, bets, risks.'),
+    ],
+    createdAt: KT - 10 * 60_000,
+    updatedAt: KT - 9 * 60_000,
+    summary: 'Outlined the Q3 planning doc — goals, bets, risks.',
+    reviewed: false,
   },
 ];

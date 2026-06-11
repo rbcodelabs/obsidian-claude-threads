@@ -518,4 +518,43 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('status-line-tags.png', { fullPage: true });
   });
 
+  // ── Kanban board ──────────────────────────────────────────────────────────
+  // Served from a dedicated harness (test/harness/kanban.html) that mounts
+  // KanbanView against kanbanFixtureThreads. The wider 1180px board needs its
+  // own viewport, separate from the 420px conversation-view tests above.
+
+  const kanbanUrl = 'file://' + path.resolve('test/harness/kanban.html');
+
+  test('kanban board — group by status', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+    // Status mode is the default — assert the six status columns are present.
+    // (CSS text-transform uppercases the labels, so compare case-insensitively.)
+    const labels = (await page.locator('.ct-kanban-col-label').allInnerTexts()).map(s => s.toUpperCase());
+    for (const expected of ['Working', 'Awaiting', 'New', 'Done', 'Failed', 'Ready']) {
+      if (!labels.includes(expected.toUpperCase())) {
+        throw new Error(`Status board missing the "${expected}" column. Got: ${labels.join(', ')}`);
+      }
+    }
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('kanban-status.png', { fullPage: true });
+  });
+
+  test('kanban board — group by folder swimlanes', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+    await page.evaluate(() => (window as any).__setGroupBy('folder'));
+    await page.waitForSelector('.ct-kanban-swimlanes');
+    // One lane per app/project, in recency order with Unassigned pinned last.
+    const lanes = await page.locator('.ct-kanban-lane-name').allInnerTexts();
+    const expected = ['HipTrip', 'Claude Threads', 'acme-api', 'Unassigned'];
+    if (JSON.stringify(lanes) !== JSON.stringify(expected)) {
+      throw new Error(`Unexpected swimlane order. Expected ${expected.join(', ')} — got ${lanes.join(', ')}`);
+    }
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('kanban-folder-swimlanes.png', { fullPage: true });
+  });
+
 });

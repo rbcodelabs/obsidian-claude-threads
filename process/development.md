@@ -98,3 +98,23 @@ Snapshots are committed to `test/screenshots/snapshots/` and copied to `docs/*.p
 The harness renders the plugin against mock data in `test/harness/fixtures.ts` — it cannot test flows that require a live Claude session (PTT, background tasks, etc.). Those are noted as intentional skips in the spec.
 
 New UI states need both a fixture entry and a new test case in `test/screenshots/ui.spec.ts`.
+
+### Harness entry points
+
+Each top-level view that doesn't fit the main conversation harness gets its own
+bundle + HTML page. To add one: create `test/harness/<name>-index.ts` (mount the
+view against fixtures, expose it on `window`), a `<name>.html` (copy an existing
+page, point `<script>` at `dist/<name>-bundle.js`, size `#app` for the view), and
+add a `build()` block in `test/harness/esbuild.mjs`. Current pages:
+
+| Page | Bundle | View |
+|---|---|---|
+| `index.html` | `bundle.js` | `ThreadsView` (conversation) |
+| `skills.html` | `skills-bundle.js` | `SkillsManagerView` |
+| `settings.html` | `settings-bundle.js` | settings tabs |
+| `kanban.html` | `kanban-bundle.js` | `KanbanView` (status board + folder swimlanes) |
+
+Running/awaiting state isn't stored on `Thread` — it lives in the
+`ThreadManager`'s private `sessions` / `pendingPermissions` maps. The kanban
+harness seeds those directly (see `kanban-index.ts`) to populate the Working and
+Awaiting columns deterministically.
