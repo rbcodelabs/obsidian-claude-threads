@@ -315,6 +315,13 @@ export interface PluginSettings {
   /** Recurring scheduled tasks that fire prompts into new threads. */
   scheduledItems: ScheduledItem[];
   /**
+   * How the Kanban board groups threads. 'status' (default) renders the six
+   * status columns. 'folder' renders one horizontal swimlane per app/project
+   * (by assigned Project, falling back to working-directory label), with the
+   * status columns nested inside each lane.
+   */
+  kanbanGroupBy?: 'status' | 'folder';
+  /**
    * When true, the obsidian_open_url MCP tool is registered and available to Claude.
    * Only takes effect if the Obsidian Web Viewer core plugin is also enabled.
    * Defaults to true so the tool is available out of the box.
@@ -360,6 +367,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   },
   scheduledItems: [],
   enableWebViewerTool: true,
+  kanbanGroupBy: 'status',
 };
 
 /**

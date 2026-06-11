@@ -12,6 +12,11 @@ export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
 type RowState = 'running' | 'idle' | 'error' | 'empty';
 
+type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?: string; badge?: number };
+
+/** Group key + display label for a thread's app/project, used by folder grouping. */
+const UNASSIGNED_GROUP = 'Unassigned';
+
 export class KanbanView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
@@ -23,6 +28,7 @@ export class KanbanView extends ItemView {
   private searchInputEl!: HTMLInputElement;
   private searchClearBtn!: HTMLButtonElement;
   private searchBtn!: HTMLButtonElement;
+  private groupByBtn!: HTMLButtonElement;
   private searchQuery = '';
 
   // Per-card live-update elements
@@ -77,6 +83,12 @@ export class KanbanView extends ItemView {
     const metaRow = dispatchWrapper.createDiv('ct-agents-panel-meta');
     this.headerCountEl = metaRow.createDiv('ct-agents-count');
     const metaActions = metaRow.createDiv('ct-agents-panel-actions');
+
+    this.groupByBtn = metaActions.createEl('button', {
+      cls: 'ct-kanban-groupby clickable-icon',
+    });
+    this.groupByBtn.addEventListener('click', () => this.toggleGroupBy());
+    this.updateGroupByBtn();
 
     this.searchBtn = metaActions.createEl('button', {
       cls: 'ct-agents-search-btn clickable-icon',
@@ -208,6 +220,26 @@ export class KanbanView extends ItemView {
     this.render();
   }
 
+  private get groupBy(): 'status' | 'folder' {
+    return this.plugin.settings.kanbanGroupBy ?? 'status';
+  }
+
+  private updateGroupByBtn(): void {
+    const byFolder = this.groupBy === 'folder';
+    setIcon(this.groupByBtn, byFolder ? 'folder-tree' : 'columns-3');
+    this.groupByBtn.toggleClass('ct-kanban-groupby-active', byFolder);
+    const label = byFolder ? 'Grouping by folder — click to group by status' : 'Group by folder';
+    this.groupByBtn.setAttribute('title', label);
+    this.groupByBtn.setAttribute('aria-label', label);
+  }
+
+  private async toggleGroupBy(): Promise<void> {
+    this.plugin.settings.kanbanGroupBy = this.groupBy === 'folder' ? 'status' : 'folder';
+    await this.plugin.saveSettings();
+    this.updateGroupByBtn();
+    this.render();
+  }
+
   render(): void {
     this.boardEl.empty();
     this.activityEls.clear();
@@ -224,6 +256,33 @@ export class KanbanView extends ItemView {
         )
       : allThreads;
 
+    if (threads.length === 0) {
+      const emptyEl = this.boardEl.createDiv('ct-agents-empty');
+      if (q) {
+        emptyEl.createDiv({ text: 'No threads match your search.' });
+      } else {
+        emptyEl.createDiv({ text: 'No threads yet.' });
+        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
+      }
+      this.updateHeader(0, 0);
+      return;
+    }
+
+    if (this.groupBy === 'folder') {
+      this.renderFolderBoard(threads);
+    } else {
+      this.renderStatusBoard(threads);
+    }
+
+    const runningCount = threads.filter(t => this.manager.isRunning(t.id)).length;
+    this.updateHeader(threads.length, runningCount);
+  }
+
+  /**
+   * Buckets threads into the six status columns and sorts each by recency.
+   * Shared by both the status board and each folder swimlane.
+   */
+  private bucketize(threads: Thread[]): ColDef[] {
     const running: Thread[] = [];
     const permReqs: Thread[] = [];
     const unreviewed: Thread[] = [];
@@ -253,22 +312,7 @@ export class KanbanView extends ItemView {
     errors.sort(byRecency);
     empty.sort(byRecency);
 
-    if (threads.length === 0) {
-      const emptyEl = this.boardEl.createDiv('ct-agents-empty');
-      if (q) {
-        emptyEl.createDiv({ text: 'No threads match your search.' });
-      } else {
-        emptyEl.createDiv({ text: 'No threads yet.' });
-        emptyEl.createDiv({ cls: 'ct-agents-empty-sub', text: 'Use the dispatch input below to start a task.' });
-      }
-      this.updateHeader(0, 0);
-      return;
-    }
-
-    const board = this.boardEl.createDiv('ct-kanban-board');
-
-    type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?: string; badge?: number };
-    const cols: ColDef[] = [
+    return [
       { label: 'Working', threads: running, state: 'running' },
       { label: 'Awaiting', threads: permReqs, state: 'running', accentClass: 'ct-kanban-col-permission' },
       { label: 'New', threads: unreviewed, state: 'idle', badge: unreviewed.length > 0 ? unreviewed.length : undefined },
@@ -276,14 +320,78 @@ export class KanbanView extends ItemView {
       { label: 'Failed', threads: errors, state: 'error' },
       { label: 'Ready', threads: empty, state: 'empty' },
     ];
+  }
 
+  private renderStatusBoard(threads: Thread[]): void {
+    const board = this.boardEl.createDiv('ct-kanban-board');
+    const cols = this.bucketize(threads);
     for (const col of cols) {
       const alwaysShow = col.label === 'Working' || col.label === 'New';
       if (!alwaysShow && col.threads.length === 0) continue;
       this.renderColumn(board, col.label, col.threads, col.state, col.accentClass, col.badge);
     }
+  }
 
-    this.updateHeader(threads.length, running.length + permReqs.length);
+  /**
+   * Groups threads by app/project (assigned Project name, falling back to a
+   * working-directory label) and renders one horizontal swimlane per group.
+   * Within each lane the threads are bucketed into the same status columns;
+   * empty columns are omitted to keep lanes compact.
+   */
+  private renderFolderBoard(threads: Thread[]): void {
+    const board = this.boardEl.createDiv('ct-kanban-board ct-kanban-swimlanes');
+
+    const groups = new Map<string, Thread[]>();
+    for (const t of threads) {
+      const key = this.groupLabel(t);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(t);
+      else groups.set(key, [t]);
+    }
+
+    // Sort lanes by most-recent activity; the catch-all group always sinks last.
+    const lanes = Array.from(groups.entries()).sort((a, b) => {
+      if (a[0] === UNASSIGNED_GROUP) return 1;
+      if (b[0] === UNASSIGNED_GROUP) return -1;
+      const aRecent = Math.max(...a[1].map(t => t.updatedAt));
+      const bRecent = Math.max(...b[1].map(t => t.updatedAt));
+      return bRecent - aRecent;
+    });
+
+    for (const [label, laneThreads] of lanes) {
+      const lane = board.createDiv('ct-kanban-lane');
+
+      const header = lane.createDiv('ct-kanban-lane-header');
+      const titleSpan = header.createSpan('ct-kanban-lane-title');
+      const iconSpan = titleSpan.createSpan('ct-kanban-lane-icon');
+      setIcon(iconSpan, label === UNASSIGNED_GROUP ? 'folder-minus' : 'folder');
+      titleSpan.createSpan({ cls: 'ct-kanban-lane-name', text: label });
+      header.createSpan({ cls: 'ct-kanban-lane-count', text: String(laneThreads.length) });
+
+      const laneBoard = lane.createDiv('ct-kanban-lane-board');
+      const cols = this.bucketize(laneThreads);
+      for (const col of cols) {
+        if (col.threads.length === 0) continue;
+        this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge);
+      }
+    }
+  }
+
+  /**
+   * The app/project label a thread belongs to when grouping by folder:
+   * the assigned Project's name, else a label derived from its working
+   * directory, else the Unassigned catch-all.
+   */
+  private groupLabel(thread: Thread): string {
+    if (thread.projectId) {
+      const project = this.manager.getProject(thread.projectId);
+      if (project) return project.name;
+    }
+    if (thread.cwd) {
+      const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);
+      if (label) return label;
+    }
+    return UNASSIGNED_GROUP;
   }
 
   private renderColumn(
