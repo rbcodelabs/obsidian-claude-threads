@@ -58,6 +58,21 @@ Multiple test vaults can be open in separate Obsidian windows simultaneously.
 
 ---
 
+## Dev Builds in the Live Vault
+
+Sometimes a feature needs to be tested in the user's real vault (`~/Documents/Personal/.obsidian/plugins/claude-threads/`) rather than a test vault.
+
+**Rule: commit the work and push a branch (draft PR is fine) BEFORE copying a dev build into the live vault.** The installed plugin is overwritten by the next BRAT release update — an uncommitted dev build is the only copy of the work, and it silently evaporates.
+
+This is not hypothetical: the footer model switcher was built, deployed to the live vault for testing, and never committed. The v0.15.2 release overwrote it, and it had to be rescued from a stale worktree's uncommitted diff (#217).
+
+Checklist when deploying a dev build:
+1. `git add` + `git commit` in the worktree
+2. `git push -u origin <branch>` (open a draft PR if review isn't ready)
+3. Then copy `dist/` into the live vault for testing
+
+---
+
 ## Unit Tests
 
 ```bash
