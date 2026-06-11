@@ -14,6 +14,7 @@ import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown } from './dashboardUtils';
+import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -934,6 +935,29 @@ export class ThreadsView extends ItemView {
   // Switch to icon-only chips above this file count to keep the row compact
   private static readonly COMPACT_THRESHOLD = 8;
 
+  /** Configured vault bridges, or [] if the vault-bridges plugin isn't installed. */
+  private getBridges(): BridgeInfo[] {
+    try {
+      return getVaultBridgesAPI(this.app)?.getBridges() ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Vault-relative path for an absolute file path: directly when the file lives
+   * inside the vault, via bridge mapping when it lives in a bridged repo.
+   * Returns null for files Obsidian cannot open.
+   */
+  private toVaultRelPath(filePath: string, bridges: BridgeInfo[]): string | null {
+    const adapter = this.app.vault.adapter as { basePath?: string };
+    const vaultBase = adapter.basePath ?? '';
+    if (vaultBase && filePath.startsWith(vaultBase + path.sep)) {
+      return filePath.slice(vaultBase.length + 1);
+    }
+    return mapToVaultPath(filePath, bridges)?.vaultRelPath ?? null;
+  }
+
   /** Render (or hide) the edited-files card below the chat area. */
   private renderEditedFilesCard(): void {
     this.editedFilesEl.empty();
@@ -947,17 +971,21 @@ export class ThreadsView extends ItemView {
     const list = this.editedFilesEl.createDiv('ct-edited-files-list');
 
     // Vault files first (most-recently-edited within each group), then non-vault files.
-    const adapter = this.app.vault.adapter as { basePath?: string };
-    const vaultBase = adapter.basePath ?? '';
+    // Repo files mirrored into the vault by a bridge count as vault files since
+    // their synced copy opens inside Obsidian.
+    const bridges = this.getBridges();
     const reversed = [...this.editedFilesSet].reverse();
-    const vaultFiles = reversed.filter(f => vaultBase && f.startsWith(vaultBase + path.sep));
-    const nonVaultFiles = reversed.filter(f => !vaultBase || !f.startsWith(vaultBase + path.sep));
+    const relByPath = new Map<string, string | null>();
+    for (const f of reversed) relByPath.set(f, this.toVaultRelPath(f, bridges));
+    const vaultFiles = reversed.filter(f => relByPath.get(f) != null);
+    const nonVaultFiles = reversed.filter(f => relByPath.get(f) == null);
     const files = [...vaultFiles, ...nonVaultFiles];
     for (let i = 0; i < files.length; i++) {
       const filePath = files[i];
-      const isVaultFile = vaultBase ? filePath.startsWith(vaultBase + path.sep) : false;
+      const rel = relByPath.get(filePath) ?? null;
+      const isVaultFile = rel != null;
       // Tooltip shows vault-relative path for vault files, full path for external files.
-      const tooltipPath = isVaultFile ? filePath.slice(vaultBase.length + 1) : filePath;
+      const tooltipPath = rel ?? filePath;
       const showFull = !iconOnly || i < 3;
       const chip = list.createDiv({
         cls: showFull ? 'ct-edited-file-chip' : 'ct-edited-file-chip ct-edited-file-chip--icon-only',
@@ -983,14 +1011,11 @@ export class ThreadsView extends ItemView {
   /** Close all markdown tabs and reopen only the files edited in this thread. */
   private async focusEditedFiles(): Promise<void> {
     const workspace = this.app.workspace;
-    const adapter = this.app.vault.adapter as { basePath?: string };
-    const vaultBase = adapter.basePath ?? '';
-
+    const bridges = this.getBridges();
     const relPaths: string[] = [];
     for (const filePath of this.editedFilesSet) {
-      if (vaultBase && filePath.startsWith(vaultBase + path.sep)) {
-        relPaths.push(filePath.slice(vaultBase.length + 1));
-      }
+      const rel = this.toVaultRelPath(filePath, bridges);
+      if (rel) relPaths.push(rel);
     }
 
     if (relPaths.length === 0) {
@@ -1038,6 +1063,16 @@ export class ThreadsView extends ItemView {
               return;
             }
           }
+          const leaf = this.app.workspace.getLeaf(false);
+          await (leaf as any).openFile(file);
+          return;
+        }
+      }
+      // Repo file mirrored into the vault by a bridge: open the synced vault copy.
+      const match = mapToVaultPath(filePath, this.getBridges());
+      if (match) {
+        const file = this.app.vault.getAbstractFileByPath(match.vaultRelPath);
+        if (file) {
           const leaf = this.app.workspace.getLeaf(false);
           await (leaf as any).openFile(file);
           return;
@@ -1280,6 +1315,77 @@ export class ThreadsView extends ItemView {
         void this.app.workspace.openLinkText(href, '', false);
       });
     });
+    this.linkifyBridgePaths(el);
+  }
+
+  /**
+   * Convert absolute file paths that fall inside a configured Vault Bridge's
+   * source repo into clickable internal links targeting the synced vault copy.
+   * Walks rendered text nodes (including inline code, excluding <pre> blocks
+   * and existing anchors) so markdown structure is never disturbed. Only paths
+   * whose vault copy actually exists are linkified, so clicking can never
+   * create a stray note.
+   */
+  private linkifyBridgePaths(root: HTMLElement): void {
+    const bridges = this.getBridges();
+    if (bridges.length === 0) return;
+
+    // One regex matching any bridge root prefix followed by a path tail.
+    // Longer prefixes first so nested roots resolve to the deepest match.
+    const prefixes = new Set<string>();
+    for (const b of bridges) {
+      for (const base of [b.repoPath, b.activeWorktreePath]) {
+        if (base) prefixes.add(base.replace(/\\/g, '/').replace(/\/+$/, ''));
+      }
+    }
+    if (prefixes.size === 0) return;
+    const escaped = [...prefixes]
+      .sort((a, b) => b.length - a.length)
+      .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pathRe = new RegExp(`(?:${escaped.join('|')})(?:/[^\\s)\\]}"'\`<>:]+)+`, 'g');
+
+    // Collect text nodes first; mutating the tree during the walk is unsafe.
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const parent = (node as Text).parentElement;
+        if (!parent || parent.closest('pre, a')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    const textNodes: Text[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) textNodes.push(n as Text);
+
+    for (const tn of textNodes) {
+      const text = tn.textContent ?? '';
+      let last = 0;
+      let frag: DocumentFragment | null = null;
+      pathRe.lastIndex = 0;
+      for (let m = pathRe.exec(text); m; m = pathRe.exec(text)) {
+        // Trim trailing sentence punctuation picked up by the greedy tail.
+        const matchText = m[0].replace(/[.,;:!?]+$/, '');
+        const mapped = mapToVaultPath(matchText, bridges);
+        if (!mapped || !this.app.vault.getAbstractFileByPath(mapped.vaultRelPath)) continue;
+        if (!frag) frag = document.createDocumentFragment();
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        const a = document.createElement('a');
+        a.className = 'internal-link';
+        a.setAttribute('data-href', mapped.vaultRelPath);
+        a.setAttribute('href', '#');
+        a.textContent = matchText;
+        setTooltip(a, mapped.vaultRelPath);
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void this.app.workspace.openLinkText(mapped.vaultRelPath, '', false);
+        });
+        frag.appendChild(a);
+        last = m.index + matchText.length;
+      }
+      if (frag) {
+        frag.appendChild(document.createTextNode(text.slice(last)));
+        tn.replaceWith(frag);
+      }
+    }
   }
 
   /**
