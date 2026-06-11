@@ -18,6 +18,8 @@ Full step-by-step guides live in `process/` (also available as an Obsidian vault
 
 **Before every push:** `npx tsc --noEmit && npm test && npm run test:screenshots`
 
+**Before deploying a dev build to the live vault:** commit and push the branch first (draft PR is fine). The next BRAT release update overwrites the installed plugin — an uncommitted dev build is the only copy of the work and it silently evaporates. See "Dev Builds in the Live Vault" in `process/development.md`.
+
 **After every release:** post "Shipped in vX.Y.Z" on each merged PR; archive threads whose `prUrl` matches a shipped PR via `obsidian_archive_thread`.
 
 **Plugin type:** Obsidian desktop + mobile. Build with `npm run build`. Artifacts in `dist/`. Released via GitHub Actions on tag push — do not manually upload artifacts.
