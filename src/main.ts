@@ -104,6 +104,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   inProcessSummarizer!: InProcessSummarizer;
   wakeLock!: WakeLockService;
   scheduler!: import('./Scheduler').Scheduler;
+  statusLine: import('./StatusLineService').StatusLineService | null = null;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -188,6 +189,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
 
     this.detectClaudeBinary();
 
@@ -510,6 +513,41 @@ export default class ClaudeThreadsPlugin extends Plugin {
       threadExists: (threadId) => !!this.manager.getThread(threadId),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
+
+    // Status-line service: polls statusLineCommand per thread cwd so every
+    // thread's footer pills + derived prUrl stay fresh (desktop only).
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const childProcess = require('child_process') as typeof import('child_process');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const osMod = require('os') as typeof import('os');
+      this.statusLine = new StatusLineService(
+        this.manager,
+        () => ({
+          statusLineCommand: this.settings.statusLineCommand,
+          statusLineIntervalMs: this.settings.statusLineIntervalMs,
+        }),
+        {
+          exec: childProcess.exec,
+          now: () => Date.now(),
+          homedir: () => osMod.homedir(),
+          isMobile: Platform.isMobile,
+          getDefaultCwd: () => this.getEffectiveCwd(),
+          // Idle-pause interval polls when no relevant view is open and nothing runs;
+          // event-triggered polls (done/cwd_changed/focus) still fire.
+          shouldPoll: () => {
+            const ws = this.app.workspace;
+            const anyViewOpen =
+              ws.getLeavesOfType(VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(AGENT_VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(KANBAN_VIEW_TYPE).length > 0;
+            const anyRunning = this.manager.getThreads().some((t) => this.manager.isRunning(t.id));
+            return anyViewOpen || anyRunning;
+          },
+        },
+      );
+      this.statusLine.start();
+    }
 
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
     // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
@@ -956,6 +994,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async onunload(): Promise<void> {
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
+    this.statusLine?.stop();
     this.manager?.destroy();
 
     // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
@@ -1226,7 +1265,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // manager is null on mobile — skip thread persistence there
     if (this.manager) {
       this.settings.projects = this.manager.getProjects();
-      this.settings.threads = this.manager.getThreads();
+      // Strip ephemeral statusTags — they are re-derived each poll and must not
+      // bloat data.json or render as stale pills after a restart.
+      this.settings.threads = this.manager.getThreads().map((t) => {
+        if (!t.statusTags) return t;
+        const { statusTags: _omit, ...rest } = t;
+        return rest as typeof t;
+      });
     }
     await this.saveData(this.settings);
   }

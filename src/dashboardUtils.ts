@@ -114,17 +114,23 @@ function defaultFileExists(p: string): boolean {
 
 /**
  * Returns an env object suitable for `child_process.exec` that prepends the
- * common Homebrew / user-local bin directories to PATH. Needed so that any
- * subprocesses the AWS CLI itself spawns (e.g. `aws sso login` opening a
- * browser helper) can also find their dependencies.
+ * common Homebrew / user-local bin directories to PATH, so subprocesses can
+ * find tools like `aws`, `gh`, `jq`, and `git` despite Obsidian's minimal PATH.
+ * Shared by the AWS SSO reauth button and the status-line service.
  */
-export function awsExecEnv(): NodeJS.ProcessEnv {
+export function execEnv(): NodeJS.ProcessEnv {
   const extraPath = ['/opt/homebrew/bin', '/usr/local/bin'];
   const home = process.env.HOME;
   if (home) extraPath.push(`${home}/.local/bin`);
   const currentPath = process.env.PATH ?? '';
   return {
     ...process.env,
+    ...(home ? { HOME: home } : {}),
     PATH: `${extraPath.join(':')}:${currentPath}`,
   };
+}
+
+/** @deprecated Alias for {@link execEnv}; kept for existing AWS call sites. */
+export function awsExecEnv(): NodeJS.ProcessEnv {
+  return execEnv();
 }

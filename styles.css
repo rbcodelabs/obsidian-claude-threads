@@ -2520,6 +2520,11 @@
   color: var(--text-warning, var(--color-orange));
 }
 
+/* Error-tone status tag */
+.ct-footer-pill-error {
+  color: var(--text-error, var(--color-red));
+}
+
 /* Open PR pill — slight accent tint to distinguish from branch/status pills */
 .ct-footer-pill-pr {
   background: color-mix(in srgb, var(--color-green, #4caf50) 12%, var(--background-modifier-border) 60%);

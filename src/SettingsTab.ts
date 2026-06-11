@@ -453,8 +453,10 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setName('Context footer command')
       .setDesc(
         'Shell command that populates the context bar below the input area (git branch, PR, dev URL, …). ' +
-        'Receives the active thread\'s cwd as JSON on stdin; output is split on double-spaces into pills. ' +
-        'Compatible with the Claude Code statusLine script. Leave empty to disable.',
+        'Receives {cwd, workspace:{current_dir}} as JSON on stdin. Output may be a JSON array of status tags ' +
+        '({label, url?, icon?, tone?, kind?}) or legacy plaintext (split on double-spaces). Run per-thread ' +
+        'in the background (desktop only); a kind:"pr" tag drives the PR pill. Compatible with the Claude Code ' +
+        'statusLine script. Leave empty to disable.',
       )
       .addText((text) => {
         text
