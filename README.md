@@ -31,7 +31,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Persistent conversations** — sessions resume where you left off after restarting Obsidian
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done); the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
+- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done), or group the board into **folder swimlanes** — one lane per app/project — to see every conversation for a codebase together; the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
@@ -209,7 +209,19 @@ This combination means you can dispatch several threads in parallel, switch to o
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
 
-Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout with columns for each agent state: **Working**, **Awaiting** (permission), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The Kanban view has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving the board. List view is the default; the preference persists across reloads.
+### Kanban board
+
+Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working**, **Awaiting** (permission), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
+
+<p align="center">
+  <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, New, Done, Failed, and Ready columns, each holding thread cards" />
+</p>
+
+**Group by folder.** Use the group-by toggle in the board header (the columns/folder icon, next to search) to switch from status columns to **folder swimlanes** — one horizontal lane per app/project, so you can see every conversation for a given codebase together. Each lane is keyed by the thread's assigned **Project**, falling back to a working-directory label (git repo name) when no project is set, and an **Unassigned** lane catches threads with no folder. Inside each lane the cards are still grouped into the same status columns (empty columns are hidden to keep lanes compact). Lanes are ordered by most-recent activity, with Unassigned pinned last. The choice persists across reloads.
+
+<p align="center">
+  <img src="docs/screenshot-kanban-folder.png" width="800" alt="Kanban board grouped by folder — one horizontal swimlane per app/project, each with its own nested status columns" />
+</p>
 
 ### Push-to-talk voice input
 
