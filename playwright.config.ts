@@ -6,6 +6,12 @@ export default defineConfig({
   use: {
     viewport: { width: 420, height: 740 },
     deviceScaleFactor: 2,
+    // Pin the browser timezone + locale so message timestamps render the
+    // same regardless of the machine's system timezone. The committed
+    // baselines were captured in Eastern time — without this pin the suite
+    // fails on any machine (or after any travel) outside America/New_York.
+    timezoneId: 'America/New_York',
+    locale: 'en-US',
   },
   expect: {
     toHaveScreenshot: {
