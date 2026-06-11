@@ -14,6 +14,8 @@
 | `src/VaultPersistence.ts` | Vault note save/load/archive |
 | `src/types.ts` | Shared TypeScript types (`Thread`, `ThreadStatus`, etc.) |
 | `src/DispatchInput.ts` | Reusable dispatch textarea component used across all panels |
+| `src/slashCommands.ts` | Single source of truth for built-in slash commands, model aliases, and dispatch directive parsing |
+| `src/Scheduler.ts` | Built-in scheduler for cron items and `/loop` recurrences, persisted in `settings.scheduledItems` |
 
 ---
 
@@ -41,6 +43,21 @@ When adding a field to `Thread`:
 1. Add it to `ThreadSnapshot` in `ObsidianTools.ts`
 2. Add it to both serializers in `main.ts`: `getThreadDetail` and `getAllThreads`
 3. Update the tool description strings in `ObsidianTools.ts` to mention the new field
+
+---
+
+## Dispatch Command Directives
+
+The dashboard/kanban dispatch boxes intercept leading `/model`, `/goal`, and `/loop` commands before creating a thread. The flow:
+
+1. `parseDispatchDirective(text)` in `slashCommands.ts` returns a discriminated union (`kind: 'model' | 'goal' | 'loop'`, or `null` for plain prompts). A set `error` field means "recognized command, bad args" — the views show a Notice, restore the draft via `DispatchInput.setValue`, and create nothing.
+2. Both views map the directive to `dispatchNewThread(text, images, titleHint, opts)` where `opts` is `{ model?, goal?, loop? }`.
+3. `dispatchNewThread` applies the option **before** the first `sendMessage`: `setThreadModel` / `setThreadGoal` / `scheduler.createItem({ targetThreadId })`. For loops, the dispatch itself is iteration 1 — the scheduler's first fire is `now + interval`.
+
+Invariants to preserve:
+- `DISPATCH_BUILTIN_COMMANDS` is an allowlist — only commands the dispatch flow actually intercepts may be advertised (enforced by `test/unit/slash-commands.test.ts`). Thread-scoped commands (`/compact`, `/clear`, `/cost`) and management variants (`/goal clear`, `/loop stop`) must not appear there.
+- The goal kickoff message comes from `goalKickoffMessage()` — shared by ThreadsView and the dispatch path so the two never drift.
+- `MODEL_ALIASES` is the only alias map; ThreadsView and dispatch both import it.
 
 ---
 

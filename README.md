@@ -159,15 +159,37 @@ Type `@this` (no search needed) to instantly reference the currently active file
 
 A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
 
-`/model`, `/goal`, and `/loop` also work as prefixes in the dashboard and kanban dispatch boxes:
+The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable.
+
+### Goals and loops
+
+**Goals** — `/goal <text>` pins a persistent goal on a thread. Setting a goal does two things:
+
+1. Claude immediately starts working toward it — no separate prompt needed.
+2. The goal is injected into the system prompt on **every subsequent turn**, so it survives context compaction, topic drift, and multi-day threads. Claude is instructed to keep working toward it until it's met or blocked on your input.
+
+`/goal` alone shows the current goal; `/goal clear` (or `off`/`done`) removes it.
+
+**Loops** — `/loop <interval> <prompt>` re-sends a prompt to the thread on a schedule:
+
+```
+/loop 30s poll the deploy status     → every 30 seconds
+/loop 5m check the build             → every 5 minutes
+/loop 1h summarize new emails        → every hour
+/loop 10 check CI                    → bare numbers mean minutes
+```
+
+Intervals below 30 seconds are clamped to 30s. Loops run on the plugin's built-in scheduler, so they **persist across plugin reloads and Obsidian restarts**. A thread can have multiple loops. `/loop` alone lists the thread's loops with their next run time; `/loop stop` (or `off`/`cancel`/`clear`) stops them.
+
+### Dispatching with commands
+
+`/model`, `/goal`, and `/loop` also work as prefixes in the dashboard and kanban dispatch boxes, applying to the newly created thread:
 
 - `/model opus fix the login bug` — creates the new thread with Opus set as its model and dispatches just the prompt
 - `/goal ship the v1 login flow` — creates the thread with that persistent goal and immediately starts working toward it (same kickoff as `/goal` inside a thread)
 - `/loop 10m check CI status` — creates the thread, sends the prompt now, and re-runs it every 10 minutes (stop it later with `/loop stop` inside the thread)
 
 A command with bad or missing arguments shows a notice and keeps your draft instead of creating a thread. The thread-management variants (`/goal clear`, `/loop stop`) only work inside an existing thread.
-
-The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable.
 
 ### Context compaction
 
