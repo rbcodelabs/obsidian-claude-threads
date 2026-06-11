@@ -204,6 +204,13 @@ export interface ObsidianMcpServerOptions {
   onCronUpdate?: (id: string, patch: CronUpdatePatch) => ScheduledItem;
   onCronDelete?: (id: string) => void;
   /**
+   * Called when the agent uses the `request_secret` tool to ask the user for a
+   * credential at runtime. Implementations should open a modal, collect the
+   * value, write it to the OS keychain under `ct-secret-<secretName>`, and
+   * resolve with true if the user saved the value or false if they cancelled.
+   */
+  onRequestSecret?: (secretName: string, reason: string) => Promise<boolean>;
+  /**
    * When false, the obsidian_open_url tool is excluded from the MCP server.
    * Should be false when the Web Viewer core plugin is disabled or the user
    * has opted out in settings. Defaults to true.
@@ -1689,6 +1696,64 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     { alwaysLoad: true },
   );
 
+  // ── Secret request tool ──────────────────────────────────────────────────
+  // Lets agents ask the user for a credential at runtime without that credential
+  // ever appearing in the conversation. The value is stored in the OS keychain
+  // and injected into future sessions via secretEnvResolver.
+
+  const boundRequestSecret = tool(
+    'request_secret',
+    [
+      'Ask the user to provide a secret (API key, token, password) and store it securely in the OS keychain.',
+      'Use this when a skill or workflow needs a credential that hasn\'t been configured yet.',
+      'The secret is stored under the name you provide and injected into future sessions as an environment variable.',
+      'Returns {success: true, secretName, alreadyExisted: boolean} on success, or {success: false, reason} if the user cancelled.',
+      'IMPORTANT: never ask the user to paste a secret directly into the conversation — always use this tool.',
+    ].join(' '),
+    {
+      secretName: z.string().describe(
+        'The environment variable name for this secret (e.g. LINEAR_API_KEY, JIRA_API_TOKEN). Will be uppercased and sanitized to A-Z0-9_.',
+      ),
+      reason: z.string().describe(
+        'A short, plain-language explanation of why this secret is needed (e.g. "to list your Linear issues"). Shown to the user in the prompt.',
+      ),
+    },
+    async (args, _extra) => {
+      const varName = args.secretName.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+
+      // If the secret is already stored, return immediately without prompting.
+      const existing = app.secretStorage.getSecret(`ct-secret-${varName}`);
+      if (existing) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ success: true, secretName: varName, alreadyExisted: true }),
+          }],
+        };
+      }
+
+      if (!options.onRequestSecret) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({ success: false, reason: 'Secret request UI is not available in this context.' }),
+          }],
+          isError: true,
+        };
+      }
+
+      const saved = await options.onRequestSecret(varName, args.reason);
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ success: saved, secretName: varName, alreadyExisted: false }),
+        }],
+        ...(saved ? {} : { isError: true }),
+      };
+    },
+    { alwaysLoad: true },
+  );
+
   return createSdkMcpServer({
     name: 'obsidian',
     tools: [
@@ -1724,6 +1789,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundCronList,
       boundCronUpdate,
       boundCronDelete,
+      boundRequestSecret,
     ],
     alwaysLoad: true,
   });

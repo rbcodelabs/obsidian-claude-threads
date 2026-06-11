@@ -15,7 +15,7 @@ import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
 import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type ImageAttachment } from './types';
-import { ClaudeThreadsSettingTab, isWebViewerEnabled } from './SettingsTab';
+import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
@@ -315,6 +315,19 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onCronList: () => this.scheduler.listItems(),
           onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
           onCronDelete: (id) => this.scheduler.deleteItem(id),
+          onRequestSecret: (secretName: string, reason: string) => {
+            return new Promise<boolean>((resolve) => {
+              new RequestSecretModal(this.app, secretName, reason, async (saved) => {
+                if (saved) {
+                  if (!this.settings.secretEnvKeys.includes(secretName)) {
+                    this.settings.secretEnvKeys.push(secretName);
+                    await this.saveSettings();
+                  }
+                }
+                resolve(saved);
+              }).open();
+            });
+          },
         });
         const mcpDebug = {
           type: (mcpServer as unknown as Record<string, unknown>).type,

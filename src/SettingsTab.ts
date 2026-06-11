@@ -184,6 +184,92 @@ class SecretEnvModal extends Modal {
   }
 }
 
+/**
+ * Modal opened when an agent calls the `request_secret` MCP tool.
+ * Shows the secret name and the agent's reason for requesting it, collects
+ * a password-type value, writes it to the OS keychain, and resolves the
+ * promise with true (saved) or false (cancelled).
+ */
+export class RequestSecretModal extends Modal {
+  private valueInput: HTMLInputElement | null = null;
+  /** Ensures onSave fires exactly once — guards against double-resolve when
+   *  close() is called by a button handler (which already called onSave) and
+   *  Obsidian subsequently fires onClose(), or when the user presses Escape. */
+  private resolved = false;
+
+  constructor(
+    app: App,
+    private secretName: string,
+    private reason: string,
+    private onSave: (saved: boolean) => void,
+  ) {
+    super(app);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    contentEl.createEl('h2', { text: 'Agent is requesting a secret' });
+
+    const nameRow = contentEl.createDiv({ cls: 'ct-secret-request-name-row' });
+    nameRow.createEl('span', { text: 'Variable: ', cls: 'ct-modal-label' });
+    nameRow.createEl('code', { text: this.secretName, cls: 'ct-secret-request-name' });
+
+    contentEl.createEl('p', {
+      text: `Reason: ${this.reason}`,
+      cls: 'setting-item-description',
+    });
+
+    contentEl.createEl('p', {
+      text: 'The value will be stored in your OS keychain and injected into future sessions. It will never appear in the conversation.',
+      cls: 'setting-item-description',
+    });
+
+    contentEl.createEl('label', { text: 'Value', cls: 'ct-modal-label' });
+    this.valueInput = contentEl.createEl('input', {
+      type: 'password',
+      placeholder: 'paste your secret here',
+      cls: 'ct-modal-input',
+    });
+
+    const buttonRow = contentEl.createDiv('ct-modal-button-row');
+
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => {
+      this.resolved = true;
+      this.onSave(false);
+      this.close();
+    });
+
+    const saveBtn = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });
+    saveBtn.addEventListener('click', () => {
+      const val = this.valueInput?.value.trim() ?? '';
+      if (!val) return;
+      this.app.secretStorage.setSecret(`ct-secret-${this.secretName}`, val);
+      this.resolved = true;
+      this.onSave(true);
+      this.close();
+    });
+
+    this.valueInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') saveBtn.click();
+    });
+
+    setTimeout(() => this.valueInput?.focus(), 50);
+  }
+
+  onClose(): void {
+    // Fires on Escape, backdrop click, or after close() — resolve as cancelled
+    // if neither button handler has already resolved the promise.
+    if (!this.resolved) {
+      this.resolved = true;
+      this.onSave(false);
+    }
+    this.contentEl.empty();
+  }
+}
+
 /** Modal that displays the pairing QR code and alphanumeric code. */
 class PairingModal extends Modal {
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
