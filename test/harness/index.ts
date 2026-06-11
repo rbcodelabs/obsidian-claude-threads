@@ -22,6 +22,9 @@ const mockPlugin = {
   },
   saveSettings: async () => {},
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
+  getPendingWakeups: () => [],
+  hasPendingWakeup: () => false,
+  cancelWakeups: () => {},
 };
 
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);

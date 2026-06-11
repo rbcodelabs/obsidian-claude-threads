@@ -37,7 +37,8 @@ export type ThreadEvent =
   | { type: 'user_message_added'; message: ChatMessage }
   | { type: 'summary_updated' }
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
-  | { type: 'tasks_updated'; tasks: TaskItem[] };
+  | { type: 'tasks_updated'; tasks: TaskItem[] }
+  | { type: 'wakeup_changed' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -824,6 +825,16 @@ export class ThreadManager {
 
   notifySummaryUpdated(threadId: string): void {
     this.emit(threadId, { type: 'summary_updated' });
+  }
+
+  /**
+   * Notify listeners that a thread's pending ScheduleWakeup set changed
+   * (registered, fired, or cancelled). The wake-up timers themselves live in
+   * the plugin (alongside the background-task poll timers), so this is a thin
+   * pass-through that lets the dashboard and chat view re-read wake-up state.
+   */
+  notifyWakeupChanged(threadId: string): void {
+    this.emit(threadId, { type: 'wakeup_changed' });
   }
 
   private emit(threadId: string, event: ThreadEvent): void {

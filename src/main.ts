@@ -86,6 +86,16 @@ if (!Platform.isMobile) {
   }
 }
 
+/** A scheduled ScheduleWakeup timer awaiting fire, tracked per thread. */
+export interface PendingWakeup {
+  /** window.setTimeout handle, used to clear the timer on cancel/unload. */
+  timerId: number;
+  /** Wall-clock epoch ms at which the wake-up will fire. Drives the UI countdown. */
+  fireAt: number;
+  /** Agent-supplied reason for the wake-up, surfaced in the dashboard and banner. */
+  reason: string;
+}
+
 export default class ClaudeThreadsPlugin extends Plugin {
   settings!: PluginSettings;
   manager!: ThreadManager;
@@ -98,8 +108,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
   relayClient: RelayClient | null = null;
   mobileStore: MobileThreadStore | null = null;
 
-  // Tracks pending ScheduleWakeup timeout IDs keyed by threadId for cleanup on unload.
-  pendingWakeups = new Map<string, number[]>();
+  // Tracks pending ScheduleWakeup timers keyed by threadId. Each entry carries
+  // the timer ID (for cleanup/cancel), the wall-clock fire time (for the UI
+  // countdown), and the agent-supplied reason (shown in the dashboard + banner).
+  pendingWakeups = new Map<string, PendingWakeup[]>();
 
   // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).
   private pendingBgTaskTimers = new Map<string, number>();
@@ -192,6 +204,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
           },
           onScheduleWakeup: (delayMs: number, prompt: string, reason: string) => {
             const id = window.setTimeout(async () => {
+              // Drop this entry before firing so the UI stops showing "waiting"
+              // the moment the wake-up triggers, even while sendMessage runs.
+              const list = this.pendingWakeups.get(threadId) ?? [];
+              const idx = list.findIndex(w => w.timerId === id);
+              if (idx !== -1) list.splice(idx, 1);
+              if (list.length === 0) this.pendingWakeups.delete(threadId);
+              this.manager.notifyWakeupChanged(threadId);
               try {
                 if (!this.manager.getThread(threadId)) {
                   console.warn(`[ClaudeThreads] ScheduleWakeup: thread ${threadId} no longer exists, skipping`);
@@ -200,15 +219,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
                 await this.manager.sendMessage(threadId, prompt);
               } catch (err) {
                 console.error(`[ClaudeThreads] ScheduleWakeup failed for thread ${threadId}:`, err);
-              } finally {
-                const ids = this.pendingWakeups.get(threadId) ?? [];
-                const idx = ids.indexOf(id);
-                if (idx !== -1) ids.splice(idx, 1);
               }
             }, delayMs) as unknown as number;
-            const ids = this.pendingWakeups.get(threadId) ?? [];
-            ids.push(id);
-            this.pendingWakeups.set(threadId, ids);
+            const list = this.pendingWakeups.get(threadId) ?? [];
+            list.push({ timerId: id, fireAt: Date.now() + delayMs, reason });
+            this.pendingWakeups.set(threadId, list);
+            this.manager.notifyWakeupChanged(threadId);
             debugLog(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
           onForkRequested: async (focusArea: string) => {
@@ -846,14 +862,42 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return '';
   }
 
+  /**
+   * Pending ScheduleWakeup timers for a thread, soonest-to-fire first.
+   * Returns an empty array when the thread has none.
+   */
+  getPendingWakeups(threadId: string): PendingWakeup[] {
+    const list = this.pendingWakeups.get(threadId);
+    if (!list || list.length === 0) return [];
+    return [...list].sort((a, b) => a.fireAt - b.fireAt);
+  }
+
+  /** Whether a thread has at least one scheduled wake-up awaiting fire. */
+  hasPendingWakeup(threadId: string): boolean {
+    return (this.pendingWakeups.get(threadId)?.length ?? 0) > 0;
+  }
+
+  /**
+   * Cancel all pending wake-ups for a thread (user clicked "Cancel"). Clears the
+   * underlying timers and notifies the views so the waiting indicator disappears.
+   */
+  cancelWakeups(threadId: string): void {
+    const list = this.pendingWakeups.get(threadId);
+    if (!list || list.length === 0) return;
+    for (const w of list) window.clearTimeout(w.timerId);
+    this.pendingWakeups.delete(threadId);
+    this.manager.notifyWakeupChanged(threadId);
+    debugLog(`[ClaudeThreads] Cancelled ${list.length} pending wake-up(s) for thread ${threadId}`);
+  }
+
   async onunload(): Promise<void> {
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.manager?.destroy();
 
     // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
-    for (const ids of this.pendingWakeups.values()) {
-      for (const id of ids) window.clearTimeout(id);
+    for (const list of this.pendingWakeups.values()) {
+      for (const w of list) window.clearTimeout(w.timerId);
     }
     this.pendingWakeups.clear();
 

@@ -1109,6 +1109,60 @@
   gap: 6px;
 }
 
+/* Scheduled wake-up banner (above the input row) */
+.ct-wakeup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-blue, #4a8fe7) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-blue, #4a8fe7) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-wakeup-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-wakeup-banner-icon {
+  margin-right: 2px;
+}
+
+.ct-wakeup-banner-countdown {
+  font-weight: 600;
+  color: var(--color-blue, #4a8fe7);
+}
+
+.ct-wakeup-banner-reason {
+  color: var(--text-muted);
+}
+
+.ct-wakeup-banner-cancel {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-wakeup-banner-cancel:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
 /* Edited-files card */
 .ct-edited-files {
   padding: 4px 8px;
@@ -2342,6 +2396,38 @@
 .ct-agents-permission-actions .ct-permission-btn {
   padding: 2px 8px;
   font-size: var(--font-ui-smaller);
+}
+
+/* -- Agent dashboard: scheduled wake-up (waiting) row ----------------- */
+.ct-agents-row-waiting {
+  border-left: 2px solid var(--color-blue, #4a8fe7);
+}
+
+.ct-agents-icon-waiting {
+  color: var(--color-blue, #4a8fe7);
+  animation: ct-dot-pulse 1.6s ease-in-out infinite;
+}
+
+.ct-agents-row-waiting .ct-agents-row-activity {
+  color: var(--color-blue, #4a8fe7);
+}
+
+.ct-agents-wakeup-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.ct-agents-wakeup-actions .ct-wakeup-cancel {
+  padding: 2px 8px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.ct-agents-wakeup-actions .ct-wakeup-cancel:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
 }
 
 /* ── AWS SSO reauth button ────────────────────────────────────────────────── */
