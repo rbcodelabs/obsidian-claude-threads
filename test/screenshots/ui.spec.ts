@@ -79,9 +79,23 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open the more menu
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await expect(page).toHaveScreenshot('fork-menu.png', { fullPage: true });
+  });
+
+  test('model switcher menu', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Open the footer model switcher (cpu icon, left of the more button)
+    await page.click('.ct-model-btn');
+    await page.waitForSelector('.menu');
+    // Move mouse away so no menu item is in hover state
+    await page.mouse.move(0, 0);
+    await expect(page).toHaveScreenshot('model-switcher-menu.png', { fullPage: true });
   });
 
   // Modal IS mocked in obsidian-mock.ts and renders .modal-container into document.body on open()
@@ -92,7 +106,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open the more menu and click Fork
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Fork conversation').click();
     await page.waitForSelector('.modal-container');
@@ -107,7 +121,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open fork modal
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Fork conversation').click();
     await page.waitForSelector('.modal-container');
@@ -226,7 +240,7 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
     await page.waitForTimeout(200);
     // Open the more menu — "Compress view" should be the first item
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     // Move mouse away so no menu item is in hover state
     await page.mouse.move(0, 0);
@@ -243,7 +257,7 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
     await page.waitForTimeout(200);
     // Toggle compress view via the more menu
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Compress view').click();
     // Wait for the compressed layout to render (3 consecutive assistant msgs → grouped block)
@@ -262,7 +276,7 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
     await page.waitForTimeout(200);
     // Activate compress view
-    await page.click('.ct-more-btn');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await page.getByText('Compress view').click();
     await page.waitForSelector('.ct-message-compressed');

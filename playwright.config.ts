@@ -16,12 +16,13 @@ export default defineConfig({
   expect: {
     toHaveScreenshot: {
       scale: 'device',
-      // Tolerate minor sub-pixel anti-aliasing differences in SVG/circular
-      // icons (status dots, action buttons) that vary between renders.
-      // 200 px @ 2x device scale ≈ 0.02% of a 420×740 viewport — tight
-      // enough to catch real layout regressions, loose enough for rendering
-      // noise.
-      maxDiffPixels: 200,
+      // Small allowance for sub-pixel anti-aliasing noise. With the clock,
+      // timezone, and locale pinned above, renders are fully deterministic
+      // on a given machine (verified: two consecutive runs pass at 0), so
+      // this stays tight. The previous 200px tolerance silently swallowed an
+      // entire added footer icon (~116 differing pixels) — keep this below
+      // the footprint of the smallest meaningful UI change.
+      maxDiffPixels: 25,
     },
   },
   projects: [{ name: 'chromium', use: { channel: 'chromium' } }],
