@@ -1513,6 +1513,15 @@
   cursor: not-allowed;
 }
 
+/* Model switcher button — accent-colored when a per-thread model override is active */
+.ct-model-btn.ct-model-btn-active {
+  color: var(--interactive-accent);
+}
+
+.ct-model-btn.ct-model-btn-active:hover {
+  color: var(--interactive-accent);
+}
+
 .ct-hidden {
   display: none !important;
 }

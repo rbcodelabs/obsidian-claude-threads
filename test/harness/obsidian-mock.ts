@@ -571,7 +571,7 @@ export class Menu {
       const itemEl = document.createElement('div');
       itemEl.className = 'menu-item';
       itemEl.style.cssText = 'padding:6px 12px;cursor:pointer;color:var(--text-normal,#dcddde);font-size:14px;';
-      itemEl.textContent = item.title;
+      itemEl.textContent = item.checked ? `\u2713 ${item.title}` : item.title;
       itemEl.addEventListener('click', () => {
         item.triggerClick();
         if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
@@ -602,10 +602,12 @@ export class Menu {
 
 class MenuItem {
   title = '';
+  checked = false;
   private _cb?: () => void;
 
   setTitle(title: string): this { this.title = title; return this; }
   setIcon(_icon: string): this { return this; }
+  setChecked(checked: boolean): this { this.checked = checked; return this; }
   onClick(cb: () => void): this { this._cb = cb; return this; }
   triggerClick(): void { this._cb?.(); }
 }

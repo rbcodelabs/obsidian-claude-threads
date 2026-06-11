@@ -36,6 +36,7 @@ export class ThreadsView extends ItemView {
   private messagesEl!: HTMLElement;
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
+  private modelBtn!: HTMLButtonElement;
   private statusBar!: HTMLElement;
   private editedFilesEl!: HTMLElement;
 
@@ -133,6 +134,16 @@ export class ThreadsView extends ItemView {
   private taskCardCollapsed = false;
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
+
+  // Ordered list for the footer model switcher menu. `value: undefined` means
+  // "use the global default" (clears the per-thread override).
+  private static readonly MODEL_OPTIONS: Array<{ label: string; value: string | undefined }> = [
+    { label: 'Default', value: undefined },
+    { label: 'Opus', value: 'opus' },
+    { label: 'Sonnet', value: 'sonnet' },
+    { label: 'Haiku', value: 'haiku' },
+    { label: 'Fable', value: 'fable' },
+  ];
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -444,8 +455,15 @@ export class ThreadsView extends ItemView {
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterActions: (container) => {
+        this.modelBtn = container.createEl('button', {
+          cls: 'ct-more-btn ct-model-btn',
+        });
+        setIcon(this.modelBtn, 'cpu');
+        this.modelBtn.addEventListener('click', (e) => this.toggleModelMenu(e));
+        this.updateModelIndicator();
+
         this.moreBtn = container.createEl('button', {
-          cls: 'ct-more-btn',
+          cls: 'ct-more-btn ct-thread-more-btn',
           attr: { title: 'More actions' },
         });
         setIcon(this.moreBtn, 'menu');
@@ -616,6 +634,7 @@ export class ThreadsView extends ItemView {
     this.renderMessages();
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
+    this.updateModelIndicator();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -1127,6 +1146,42 @@ export class ThreadsView extends ItemView {
         .setIcon('git-branch')
         .onClick(() => this.forkThread(thread.id))
     );
+    menu.showAtMouseEvent(event);
+  }
+
+  /** Returns the model active for the current thread, or undefined for the global default. */
+  private currentModel(): string | undefined {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    return thread?.model ?? undefined;
+  }
+
+  /** Refreshes the footer model button's tooltip/state to match the active thread. */
+  private updateModelIndicator(): void {
+    if (!this.modelBtn) return;
+    const model = this.currentModel();
+    const label = model ?? 'default';
+    setTooltip(this.modelBtn, `Model: ${label} — click to switch`);
+    this.modelBtn.toggleClass('ct-model-btn-active', !!model);
+  }
+
+  private toggleModelMenu(event: MouseEvent): void {
+    if (!this.activeThreadId) return;
+    const current = this.currentModel();
+    const menu = new Menu();
+    for (const opt of ThreadsView.MODEL_OPTIONS) {
+      menu.addItem(item => {
+        item
+          .setTitle(opt.label)
+          .setChecked(current === opt.value)
+          .onClick(async () => {
+            if (!this.activeThreadId) return;
+            this.manager.setThreadModel(this.activeThreadId, opt.value);
+            await this.plugin.saveSettings();
+            this.updateModelIndicator();
+            this.renderThreadInfo();
+          });
+      });
+    }
     menu.showAtMouseEvent(event);
   }
 
@@ -2282,6 +2337,7 @@ export class ThreadsView extends ItemView {
       const label = resolved ? `Model set to ${resolved}` : 'Model reset to default';
       const divider = this.messagesEl.createDiv('ct-compact-divider');
       divider.createSpan({ cls: 'ct-compact-label', text: label });
+      this.updateModelIndicator();
       this.renderThreadInfo();
       this.scrollToBottom();
       return;
