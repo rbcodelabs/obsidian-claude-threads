@@ -22,9 +22,21 @@ const mockPlugin = {
   },
   saveSettings: async () => {},
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
-  getPendingWakeups: () => [],
-  hasPendingWakeup: () => false,
-  cancelWakeups: () => {},
+  getPendingWakeups: (threadId: string) =>
+    [...(pendingWakeups.get(threadId) ?? [])].sort((a, b) => a.fireAt - b.fireAt),
+  hasPendingWakeup: (threadId: string) => (pendingWakeups.get(threadId)?.length ?? 0) > 0,
+  cancelWakeups: (threadId: string) => {
+    pendingWakeups.delete(threadId);
+    manager.notifyWakeupChanged(threadId);
+  },
+};
+
+// Mutable wake-up state so screenshot tests can drive the waiting indicator
+// through the real notifyWakeupChanged → handleEvent → refreshWakeupBanner path.
+const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();
+(window as any).__setWakeup = (threadId: string, fireAt: number, reason: string) => {
+  pendingWakeups.set(threadId, [{ timerId: 0, fireAt, reason }]);
+  manager.notifyWakeupChanged(threadId);
 };
 
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);

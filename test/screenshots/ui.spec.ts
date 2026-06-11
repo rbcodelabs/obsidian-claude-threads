@@ -72,6 +72,25 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('permission-card.png', { fullPage: true });
   });
 
+  test('scheduled wake-up banner', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.waitForTimeout(200);
+    // Schedule a wake-up 4 minutes past the pinned clock (10:00:00Z) so the
+    // countdown renders deterministically as "in 4m".
+    await page.evaluate(() => {
+      const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
+      (window as any).__setWakeup('thread-fix-auth', fireAt, 'check CI status');
+    });
+    await page.waitForSelector('.ct-wakeup-banner:not(.ct-hidden)');
+    await expect(page.locator('.ct-wakeup-banner')).toContainText('in 4m');
+    await expect(page).toHaveScreenshot('wakeup-banner.png', { fullPage: true });
+  });
+
   test('fork conversation menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
