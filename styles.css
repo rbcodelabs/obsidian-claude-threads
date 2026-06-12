@@ -3334,6 +3334,15 @@
   height: 15px;
 }
 
+.ct-kanban-groupby {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ct-kanban-groupby.ct-kanban-groupby-active {
+  color: var(--interactive-accent);
+}
+
 .ct-kanban-board {
   display: flex;
   flex-direction: row;
@@ -3344,6 +3353,79 @@
   overflow-y: hidden;
   align-items: flex-start;
   box-sizing: border-box;
+}
+
+/* ── Folder swimlanes ──────────────────────────────────────────────────── */
+.ct-kanban-board.ct-kanban-swimlanes {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 14px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  align-items: stretch;
+}
+
+.ct-kanban-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ct-kanban-lane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  position: sticky;
+  left: 0;
+}
+.ct-kanban-lane-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ct-kanban-lane-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+.ct-kanban-lane-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.ct-kanban-lane-name {
+  font-weight: 600;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ct-kanban-lane-count {
+  font-size: 11px;
+  background: var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  color: var(--text-muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.ct-kanban-lane-board {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: flex-start;
+  padding-bottom: 2px;
+}
+
+/* In swimlanes columns size to their content rather than the full board height. */
+.ct-kanban-swimlanes .ct-kanban-col {
+  max-height: 460px;
 }
 
 .ct-agents-list:has(.ct-kanban-board) {
