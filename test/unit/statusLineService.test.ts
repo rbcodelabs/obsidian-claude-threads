@@ -136,6 +136,44 @@ describe('StatusLineService — error handling', () => {
   });
 });
 
+describe('StatusLineService — stdin contract', () => {
+  function capturingExec() {
+    const captured: string[] = [];
+    const exec: StatusLineExec = (_cmd, _opts, cb) => {
+      setTimeout(() => cb(null, '[]', ''), 0);
+      return { stdin: { write: (s: string) => { captured.push(s); }, end() {} } };
+    };
+    return { exec, captured };
+  }
+
+  it('passes cwd, workspace.current_dir, and provider on stdin', async () => {
+    const mgr = fakeManager([makeThread('a', '/repo')]);
+    const { exec, captured } = capturingExec();
+    const svc = new StatusLineService(
+      mgr as unknown as ThreadManager,
+      () => ({ statusLineCommand: 'x.sh', provider: 'bedrock' }),
+      baseDeps(exec),
+    );
+    await svc.pollAll();
+    const parsed = JSON.parse(captured.join(''));
+    expect(parsed.cwd).toBe('/repo');
+    expect(parsed.workspace.current_dir).toBe('/repo');
+    expect(parsed.provider).toBe('bedrock');
+  });
+
+  it('defaults provider to "claude" when unset', async () => {
+    const mgr = fakeManager([makeThread('a', '/repo')]);
+    const { exec, captured } = capturingExec();
+    const svc = new StatusLineService(
+      mgr as unknown as ThreadManager,
+      () => ({ statusLineCommand: 'x.sh' }),
+      baseDeps(exec),
+    );
+    await svc.pollAll();
+    expect(JSON.parse(captured.join('')).provider).toBe('claude');
+  });
+});
+
 describe('StatusLineService — pokeThread', () => {
   it('bypasses cache and refreshes the thread cwd', async () => {
     const mgr = fakeManager([makeThread('a', '/repo')]);

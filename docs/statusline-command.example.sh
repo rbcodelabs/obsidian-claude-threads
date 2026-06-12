@@ -15,6 +15,7 @@
 
 input=$(cat)
 cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
+provider=$(echo "$input" | jq -r '.provider // empty')
 
 branch=""; remote=""
 if [ -n "$cwd" ]; then
@@ -52,8 +53,10 @@ if [ -n "$branch" ] && [ -n "$remote" ]; then
   fi
 fi
 
-# AWS SSO status with tone
-if command -v aws >/dev/null 2>&1; then
+# AWS SSO status with tone — only relevant when Claude routes through Bedrock.
+# The plugin passes the active provider on stdin; skip the check otherwise so a
+# logged-out AWS session doesn't show a spurious "AWS expired" pill.
+if [ "$provider" = "bedrock" ] && command -v aws >/dev/null 2>&1; then
   if aws sts get-caller-identity --query Account --output text >/dev/null 2>&1; then
     add "$(jq -nc '{label:"AWS ok",kind:"aws"}')"
   else

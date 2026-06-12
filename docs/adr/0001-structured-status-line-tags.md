@@ -93,8 +93,12 @@ does *not* compute git branch today, so `branch` is best-effort/optional and may
 must keep deriving branch from `cwd` as the user's script does):
 
 ```jsonc
-{ "cwd": "/abs/path", "workspace": { "current_dir": "/abs/path" }, "branch": "feat/x" }
+{ "cwd": "/abs/path", "workspace": { "current_dir": "/abs/path" }, "provider": "claude" }
 ```
+
+`provider` is the active Claude provider (`"claude"` | `"bedrock"`), so scripts can
+gate provider-specific status — e.g. only emit an AWS pill when `provider == "bedrock"`,
+avoiding a spurious "AWS expired" on a machine that isn't routing through Bedrock.
 
 Keeping `workspace.current_dir` preserves compatibility with stock Claude Code statusline scripts.
 

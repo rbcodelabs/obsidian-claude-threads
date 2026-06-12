@@ -33,6 +33,9 @@ export interface StatusLineServiceDeps {
 interface StatusLineConfig {
   statusLineCommand: string;
   statusLineIntervalMs?: number;
+  /** Active Claude provider ('claude' | 'bedrock'), passed to the script so it
+   *  can gate provider-specific status (e.g. only check AWS when on bedrock). */
+  provider?: string;
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -209,7 +212,8 @@ export class StatusLineService {
   private execScript(cmd: string, cwd: string): Promise<string | null> {
     const home = this.deps.homedir();
     const expanded = cmd.replace(/\$HOME/g, home).replace(/^~\//, `${home}/`);
-    const stdin = JSON.stringify({ cwd, workspace: { current_dir: cwd } });
+    const provider = this.getConfig().provider ?? 'claude';
+    const stdin = JSON.stringify({ cwd, workspace: { current_dir: cwd }, provider });
 
     return new Promise((resolve) => {
       let settled = false;

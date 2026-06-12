@@ -526,6 +526,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         () => ({
           statusLineCommand: this.settings.statusLineCommand,
           statusLineIntervalMs: this.settings.statusLineIntervalMs,
+          provider: this.settings.provider,
         }),
         {
           exec: childProcess.exec,
