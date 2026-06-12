@@ -46,9 +46,7 @@ function groupThreadsIntoLanes(
   return Array.from(groups.entries()).sort((a, b) => {
     if (a[0] === UNASSIGNED_GROUP) return 1;
     if (b[0] === UNASSIGNED_GROUP) return -1;
-    const aRecent = Math.max(...a[1].map(t => t.updatedAt));
-    const bRecent = Math.max(...b[1].map(t => t.updatedAt));
-    return bRecent - aRecent;
+    return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
   });
 }
 
@@ -71,7 +69,9 @@ function makeThread(
 // Default resolvers used by most tests.
 const projectNames: Record<string, string> = { p1: 'Acme App', p2: 'Side Project' };
 const getProjectName = (id: string) => projectNames[id];
-// Deterministic stand-in for buildCwdLabel: last path segment.
+// Deterministic stand-in for the real resolveProjectName (git repo name): last
+// path segment. The real resolver collapses worktrees to the repo name — see the
+// dedicated "worktree collapsing" block below for that behavior.
 const cwdLabel = (cwd: string) => cwd.replace(/\/$/, '').split('/').pop() ?? '';
 
 // ── groupLabel resolution precedence ──────────────────────────────────────────
@@ -115,15 +115,16 @@ describe('KanbanView folder grouping — lanes', () => {
     expect(lanes[0][1].map(t => t.id)).toEqual(['a', 'b']);
   });
 
-  it('lanes are ordered by most-recent thread activity, descending', () => {
-    const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });
-    const sideNew = makeThread('sideNew', 9_000, { projectId: 'p2' });
-    const lanes = groupThreadsIntoLanes([acmeOld, sideNew], getProjectName, cwdLabel);
-    expect(lanes.map(l => l[0])).toEqual(['Side Project', 'Acme App']);
+  it('lanes are ordered alphabetically (case-insensitive), not by recency', () => {
+    // Acme is older than Side but sorts first alphabetically — lanes must not
+    // jump around as threads update; the recency sort lives within each lane.
+    const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });   // "Acme App"
+    const sideNew = makeThread('sideNew', 9_000, { projectId: 'p2' });   // "Side Project"
+    const lanes = groupThreadsIntoLanes([sideNew, acmeOld], getProjectName, cwdLabel);
+    expect(lanes.map(l => l[0])).toEqual(['Acme App', 'Side Project']);
   });
 
-  it('a lane recency uses its single most-recent thread, not the average', () => {
-    // Acme has one very recent thread; Side has two middling ones.
+  it('lane order is stable regardless of which lane has the most recent thread', () => {
     const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });
     const acmeNew = makeThread('acmeNew', 10_000, { projectId: 'p1' });
     const sideA = makeThread('sideA', 5_000, { projectId: 'p2' });
@@ -132,7 +133,7 @@ describe('KanbanView folder grouping — lanes', () => {
     expect(lanes.map(l => l[0])).toEqual(['Acme App', 'Side Project']);
   });
 
-  it('the Unassigned lane always sorts last regardless of recency', () => {
+  it('the Unassigned lane always sorts last regardless of name', () => {
     const unassignedFresh = makeThread('u', 99_000, { cwd: '' });
     const acme = makeThread('a', 1_000, { projectId: 'p1' });
     const lanes = groupThreadsIntoLanes([unassignedFresh, acme], getProjectName, cwdLabel);
@@ -154,5 +155,38 @@ describe('KanbanView folder grouping — lanes', () => {
 
   it('empty input produces no lanes', () => {
     expect(groupThreadsIntoLanes([], getProjectName, cwdLabel)).toEqual([]);
+  });
+});
+
+// ── worktree collapsing (group by repo name, not project · branch) ────────────
+// The real KanbanView.groupLabel resolves a cwd to its git REPO name via
+// resolveProjectName, so a main checkout and all of its worktrees (feature
+// worktrees under .claude/worktrees/, temp worktrees under claude-worktrees/)
+// collapse into one lane instead of separate "repo · branch" lanes.
+
+describe('KanbanView folder grouping — worktree collapsing', () => {
+  // resolver that mimics resolveProjectName: every worktree of a repo → repo name.
+  const repoName = (cwd: string): string => {
+    if (cwd.includes('hip-trip-marketing-site')) return 'hip-trip-marketing-site';
+    if (cwd.includes('claude-worktrees/')) return 'hip-trip-marketing-site'; // temp worktree of same repo
+    return cwd.replace(/\/$/, '').split('/').pop() ?? '';
+  };
+
+  it('a main checkout and its feature/temp worktrees collapse into one lane', () => {
+    const main = makeThread('main', 1_000, { cwd: '/Users/me/projects/hip-trip-marketing-site' });
+    const feat = makeThread('feat', 2_000, { cwd: '/Users/me/projects/hip-trip-marketing-site/.claude/worktrees/feat-ugc-ads' });
+    const temp = makeThread('temp', 3_000, { cwd: '/var/folders/x/T/claude-worktrees/b278f8ba' });
+
+    const lanes = groupThreadsIntoLanes([main, feat, temp], getProjectName, repoName);
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0][0]).toBe('hip-trip-marketing-site');
+    expect(lanes[0][1].map(t => t.id).sort()).toEqual(['feat', 'main', 'temp']);
+  });
+
+  it('different repos stay in separate lanes', () => {
+    const a = makeThread('a', 2_000, { cwd: '/Users/me/projects/hip-trip-marketing-site/.claude/worktrees/x' });
+    const b = makeThread('b', 1_000, { cwd: '/Users/me/projects/other-repo' });
+    const lanes = groupThreadsIntoLanes([a, b], getProjectName, repoName);
+    expect(lanes.map(l => l[0])).toEqual(['hip-trip-marketing-site', 'other-repo']);
   });
 });
