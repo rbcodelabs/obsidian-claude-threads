@@ -15,6 +15,8 @@ import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon } from './statusLine';
+import { isWebViewerEnabled } from './SettingsTab';
+import { openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
 
 export const VIEW_TYPE = 'claude-threads:chat';
@@ -805,12 +807,25 @@ export class ThreadsView extends ItemView {
       link.title = url;
       link.addEventListener('click', (e) => {
         e.preventDefault();
-        const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
-        shell.openExternal(url);
+        this.openLink(url);
       });
     } else {
       pill.createSpan({ cls: 'ct-footer-pill-text' + toneCls, text: tag.label });
     }
+  }
+
+  /**
+   * Open a URL from a status pill — in the Web Viewer when enabled, else the
+   * system browser. See {@link openUrlPreferringWebViewer}.
+   */
+  private openLink(url: string): void {
+    openUrlPreferringWebViewer(this.app, url, {
+      webViewerEnabled: isWebViewerEnabled(this.app),
+      openExternal: (u) => {
+        const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
+        shell.openExternal(u);
+      },
+    });
   }
 
   /** Called from settings when the command changes: restart the service + re-render. */
