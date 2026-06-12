@@ -46,9 +46,7 @@ function groupThreadsIntoLanes(
   return Array.from(groups.entries()).sort((a, b) => {
     if (a[0] === UNASSIGNED_GROUP) return 1;
     if (b[0] === UNASSIGNED_GROUP) return -1;
-    const aRecent = Math.max(...a[1].map(t => t.updatedAt));
-    const bRecent = Math.max(...b[1].map(t => t.updatedAt));
-    return bRecent - aRecent;
+    return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
   });
 }
 
@@ -117,15 +115,16 @@ describe('KanbanView folder grouping — lanes', () => {
     expect(lanes[0][1].map(t => t.id)).toEqual(['a', 'b']);
   });
 
-  it('lanes are ordered by most-recent thread activity, descending', () => {
-    const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });
-    const sideNew = makeThread('sideNew', 9_000, { projectId: 'p2' });
-    const lanes = groupThreadsIntoLanes([acmeOld, sideNew], getProjectName, cwdLabel);
-    expect(lanes.map(l => l[0])).toEqual(['Side Project', 'Acme App']);
+  it('lanes are ordered alphabetically (case-insensitive), not by recency', () => {
+    // Acme is older than Side but sorts first alphabetically — lanes must not
+    // jump around as threads update; the recency sort lives within each lane.
+    const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });   // "Acme App"
+    const sideNew = makeThread('sideNew', 9_000, { projectId: 'p2' });   // "Side Project"
+    const lanes = groupThreadsIntoLanes([sideNew, acmeOld], getProjectName, cwdLabel);
+    expect(lanes.map(l => l[0])).toEqual(['Acme App', 'Side Project']);
   });
 
-  it('a lane recency uses its single most-recent thread, not the average', () => {
-    // Acme has one very recent thread; Side has two middling ones.
+  it('lane order is stable regardless of which lane has the most recent thread', () => {
     const acmeOld = makeThread('acmeOld', 1_000, { projectId: 'p1' });
     const acmeNew = makeThread('acmeNew', 10_000, { projectId: 'p1' });
     const sideA = makeThread('sideA', 5_000, { projectId: 'p2' });
@@ -134,7 +133,7 @@ describe('KanbanView folder grouping — lanes', () => {
     expect(lanes.map(l => l[0])).toEqual(['Acme App', 'Side Project']);
   });
 
-  it('the Unassigned lane always sorts last regardless of recency', () => {
+  it('the Unassigned lane always sorts last regardless of name', () => {
     const unassignedFresh = makeThread('u', 99_000, { cwd: '' });
     const acme = makeThread('a', 1_000, { projectId: 'p1' });
     const lanes = groupThreadsIntoLanes([unassignedFresh, acme], getProjectName, cwdLabel);

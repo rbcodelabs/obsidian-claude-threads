@@ -350,13 +350,13 @@ export class KanbanView extends ItemView {
       else groups.set(key, [t]);
     }
 
-    // Sort lanes by most-recent activity; the catch-all group always sinks last.
+    // Sort lanes alphabetically (case-insensitive) so they stay put as threads
+    // update — the last-modified sort happens WITHIN each lane (per status column
+    // in bucketize), not across lanes. The catch-all group always sinks last.
     const lanes = Array.from(groups.entries()).sort((a, b) => {
       if (a[0] === UNASSIGNED_GROUP) return 1;
       if (b[0] === UNASSIGNED_GROUP) return -1;
-      const aRecent = Math.max(...a[1].map(t => t.updatedAt));
-      const bRecent = Math.max(...b[1].map(t => t.updatedAt));
-      return bRecent - aRecent;
+      return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
     });
 
     for (const [label, laneThreads] of lanes) {

@@ -547,9 +547,9 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-kanban-board');
     await page.evaluate(() => (window as any).__setGroupBy('folder'));
     await page.waitForSelector('.ct-kanban-swimlanes');
-    // One lane per app/project, in recency order with Unassigned pinned last.
+    // One lane per app/project, alphabetical (case-insensitive) with Unassigned last.
     const lanes = await page.locator('.ct-kanban-lane-name').allInnerTexts();
-    const expected = ['HipTrip', 'Claude Threads', 'acme-api', 'Unassigned'];
+    const expected = ['acme-api', 'Claude Threads', 'HipTrip', 'Unassigned'];
     if (JSON.stringify(lanes) !== JSON.stringify(expected)) {
       throw new Error(`Unexpected swimlane order. Expected ${expected.join(', ')} — got ${lanes.join(', ')}`);
     }
