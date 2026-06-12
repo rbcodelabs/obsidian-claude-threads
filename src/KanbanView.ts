@@ -4,6 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
+import { resolveProjectName } from './pathUtils';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
@@ -379,8 +380,14 @@ export class KanbanView extends ItemView {
 
   /**
    * The app/project label a thread belongs to when grouping by folder:
-   * the assigned Project's name, else a label derived from its working
-   * directory, else the Unassigned catch-all.
+   * the assigned Project's name, else the thread's git repo / project name,
+   * else the Unassigned catch-all.
+   *
+   * Uses the repo NAME (resolveProjectName) rather than buildCwdLabel so that
+   * every worktree of a repo collapses into a single lane — e.g. a main checkout
+   * and its `feat-x` / temp worktrees all group under "my-repo" instead of
+   * appearing as separate "my-repo · feat-x" lanes. Each card still shows its own
+   * branch/worktree via the cwd chip in the footer.
    */
   private groupLabel(thread: Thread): string {
     if (thread.projectId) {
@@ -388,6 +395,10 @@ export class KanbanView extends ItemView {
       if (project) return project.name;
     }
     if (thread.cwd) {
+      const repo = resolveProjectName(thread.cwd);
+      if (repo) return repo;
+      // Fallback for non-repo paths (resolveProjectName already returns the last
+      // path segment, but guard anyway): shortened cwd label.
       const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);
       if (label) return label;
     }

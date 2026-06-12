@@ -71,7 +71,9 @@ function makeThread(
 // Default resolvers used by most tests.
 const projectNames: Record<string, string> = { p1: 'Acme App', p2: 'Side Project' };
 const getProjectName = (id: string) => projectNames[id];
-// Deterministic stand-in for buildCwdLabel: last path segment.
+// Deterministic stand-in for the real resolveProjectName (git repo name): last
+// path segment. The real resolver collapses worktrees to the repo name — see the
+// dedicated "worktree collapsing" block below for that behavior.
 const cwdLabel = (cwd: string) => cwd.replace(/\/$/, '').split('/').pop() ?? '';
 
 // ── groupLabel resolution precedence ──────────────────────────────────────────
@@ -154,5 +156,38 @@ describe('KanbanView folder grouping — lanes', () => {
 
   it('empty input produces no lanes', () => {
     expect(groupThreadsIntoLanes([], getProjectName, cwdLabel)).toEqual([]);
+  });
+});
+
+// ── worktree collapsing (group by repo name, not project · branch) ────────────
+// The real KanbanView.groupLabel resolves a cwd to its git REPO name via
+// resolveProjectName, so a main checkout and all of its worktrees (feature
+// worktrees under .claude/worktrees/, temp worktrees under claude-worktrees/)
+// collapse into one lane instead of separate "repo · branch" lanes.
+
+describe('KanbanView folder grouping — worktree collapsing', () => {
+  // resolver that mimics resolveProjectName: every worktree of a repo → repo name.
+  const repoName = (cwd: string): string => {
+    if (cwd.includes('hip-trip-marketing-site')) return 'hip-trip-marketing-site';
+    if (cwd.includes('claude-worktrees/')) return 'hip-trip-marketing-site'; // temp worktree of same repo
+    return cwd.replace(/\/$/, '').split('/').pop() ?? '';
+  };
+
+  it('a main checkout and its feature/temp worktrees collapse into one lane', () => {
+    const main = makeThread('main', 1_000, { cwd: '/Users/me/projects/hip-trip-marketing-site' });
+    const feat = makeThread('feat', 2_000, { cwd: '/Users/me/projects/hip-trip-marketing-site/.claude/worktrees/feat-ugc-ads' });
+    const temp = makeThread('temp', 3_000, { cwd: '/var/folders/x/T/claude-worktrees/b278f8ba' });
+
+    const lanes = groupThreadsIntoLanes([main, feat, temp], getProjectName, repoName);
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0][0]).toBe('hip-trip-marketing-site');
+    expect(lanes[0][1].map(t => t.id).sort()).toEqual(['feat', 'main', 'temp']);
+  });
+
+  it('different repos stay in separate lanes', () => {
+    const a = makeThread('a', 2_000, { cwd: '/Users/me/projects/hip-trip-marketing-site/.claude/worktrees/x' });
+    const b = makeThread('b', 1_000, { cwd: '/Users/me/projects/other-repo' });
+    const lanes = groupThreadsIntoLanes([a, b], getProjectName, repoName);
+    expect(lanes.map(l => l[0])).toEqual(['hip-trip-marketing-site', 'other-repo']);
   });
 });
