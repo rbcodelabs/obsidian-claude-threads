@@ -8,13 +8,16 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
+import { resolveTagIcon } from './statusLine';
+import { isWebViewerEnabled } from './SettingsTab';
+import { openUrlPreferringWebViewer } from './linkUtils';
+import type { StatusTag } from './types';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -78,8 +81,6 @@ export class ThreadsView extends ItemView {
 
   // Context footer (status line below input)
   private contextFooterEl!: HTMLElement;
-  private statusLineRefreshTimer: ReturnType<typeof setInterval> | null = null;
-  private static readonly STATUS_LINE_INTERVAL_MS = 30_000;
 
   // Scheduled wake-up banner (shown above the input when the active thread has
   // a pending ScheduleWakeup). The countdown ticks every second while visible.
@@ -394,13 +395,13 @@ export class ThreadsView extends ItemView {
     this.renderProjectBar();
     this.renderTitleBar();
 
-    // Start periodic status line refresh
-    this.startStatusLineInterval();
+    // Render the status footer from the active thread's current tags. The
+    // StatusLineService (owned by main.ts) keeps statusTags fresh in the background.
+    this.renderStatusFooter();
   }
 
   async onClose(): Promise<void> {
     this.unsubscribe?.();
-    this.stopStatusLineInterval();
     this.stopWakeupCountdown();
     this.dispatchInput?.destroy();
   }
@@ -648,8 +649,9 @@ export class ThreadsView extends ItemView {
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
     this.restoreDraftFromThread(id);
-    // Refresh context footer for the new thread's cwd
-    void this.refreshStatusLine();
+    // Re-render the footer for the new thread and kick a fresh poll for its cwd.
+    this.renderStatusFooter();
+    this.plugin.statusLine?.pokeThread(id);
 
     // Show the context recap banner when switching back to a thread after being away
     this.maybeShowSummaryBanner(id, previousId, undefined);
@@ -759,152 +761,77 @@ export class ThreadsView extends ItemView {
   // Context footer (status line)
   // ---------------------------------------------------------------------------
 
-  private startStatusLineInterval(): void {
-    this.stopStatusLineInterval();
-    const cmd = this.plugin.settings.statusLineCommand;
-    if (!cmd) return;
-    this.statusLineRefreshTimer = setInterval(
-      () => void this.refreshStatusLine(),
-      ThreadsView.STATUS_LINE_INTERVAL_MS,
-    );
+  /**
+   * Render the active thread's status-line pills from its `statusTags` (kept
+   * fresh by StatusLineService). A sticky `prUrl` with no live PR tag still
+   * renders a leading PR pill, preserving the "PR pill always first" behavior.
+   */
+  renderStatusFooter(): void {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const tags = thread?.statusTags ?? [];
+    const prUrl = thread?.prUrl;
+    const hasPrTag = tags.some((t) => t.kind === 'pr' && !!t.url);
+
+    this.contextFooterEl.empty();
+
+    // Synthesized leading PR pill from sticky prUrl when the live tags don't
+    // include a PR tag (e.g. legacy persisted prUrl, or the PR has merged).
+    if (prUrl && !hasPrTag) {
+      const prNumMatch = prUrl.match(/\/pull\/(\d+)/);
+      const label = prNumMatch ? `PR #${prNumMatch[1]}` : 'Open PR';
+      this.renderFooterPill({ label, url: prUrl, icon: 'git-pull-request', kind: 'pr' }, 'ct-footer-pill-pr');
+    }
+
+    for (const tag of tags) {
+      this.renderFooterPill(tag, tag.kind === 'pr' ? 'ct-footer-pill-pr' : undefined);
+    }
+
+    const empty = !prUrl && tags.length === 0;
+    this.contextFooterEl.toggleClass('ct-hidden', empty);
   }
 
-  private stopStatusLineInterval(): void {
-    if (this.statusLineRefreshTimer !== null) {
-      clearInterval(this.statusLineRefreshTimer);
-      this.statusLineRefreshTimer = null;
+  /** Render a single status pill (icon + label, link if the tag has a url). */
+  private renderFooterPill(tag: StatusTag, extraCls?: string): void {
+    const pill = this.contextFooterEl.createDiv('ct-footer-pill' + (extraCls ? ' ' + extraCls : ''));
+    const iconEl = pill.createSpan('ct-footer-pill-icon');
+    setIcon(iconEl, resolveTagIcon(tag));
+
+    const toneCls =
+      tag.tone === 'warn' ? ' ct-footer-pill-warn' :
+      tag.tone === 'error' ? ' ct-footer-pill-error' : '';
+
+    if (tag.url) {
+      const url = tag.url;
+      const link = pill.createEl('a', { cls: 'ct-footer-pill-text ct-footer-link' + toneCls, text: tag.label });
+      link.href = url;
+      link.title = url;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.openLink(url);
+      });
+    } else {
+      pill.createSpan({ cls: 'ct-footer-pill-text' + toneCls, text: tag.label });
     }
   }
 
   /**
-   * Run the configured statusLineCommand, pipe the active thread's cwd as JSON
-   * to stdin, and render the stdout output in the context footer bar.
-   * Silently hides the footer on error or empty output.
+   * Open a URL from a status pill — in the Web Viewer when enabled, else the
+   * system browser. See {@link openUrlPreferringWebViewer}.
    */
-  refreshStatusLine(): void {
-    const cmd = this.plugin.settings.statusLineCommand;
-    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-
-    // Lazy-scan existing threads for a PR URL in case it was created before
-    // the prUrl field was introduced (scans the last 20 messages for a GitHub PR link).
-    if (thread && !thread.prUrl) {
-      const msgs = thread.messages.slice(-20);
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (m.role === 'assistant') {
-          const match = m.content.match(/https:\/\/github\.com\/[^\s>)"']+\/pull\/\d+/);
-          if (match) { thread.prUrl = match[0]; break; }
-        }
-      }
-    }
-
-    const prUrl = thread?.prUrl;
-
-    if (!cmd) {
-      if (prUrl) {
-        this.renderContextFooter('', prUrl);
-      } else {
-        this.contextFooterEl.addClass('ct-hidden');
-      }
-      return;
-    }
-
-    const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    const stdin = JSON.stringify({ cwd, workspace: { current_dir: cwd } });
-
-    // Expand $HOME / ~ in the command so paths work outside a login shell
-    const expandedCmd = cmd.replace(/\$HOME/g, os.homedir()).replace(/^~\//, `${os.homedir()}/`);
-
-    const child = exec(
-      expandedCmd,
-      { env: { ...process.env, HOME: os.homedir() }, timeout: 5000 },
-      (err, stdout) => {
-        const text = stdout.trim();
-        if (err || !text) {
-          if (prUrl) {
-            this.renderContextFooter('', prUrl);
-          } else {
-            this.contextFooterEl.addClass('ct-hidden');
-          }
-          return;
-        }
-        this.renderContextFooter(text, prUrl);
-      },
-    );
-
-    child.stdin?.write(stdin);
-    child.stdin?.end();
-  }
-
-  private renderContextFooter(shellText: string, prUrl?: string): void {
-    this.contextFooterEl.empty();
-
-    // PR pill — always rendered first when the thread has an associated PR.
-    if (prUrl) {
-      const prNumMatch = prUrl.match(/\/pull\/(\d+)/);
-      const label = prNumMatch ? `PR #${prNumMatch[1]}` : 'Open PR';
-      const pill = this.contextFooterEl.createDiv('ct-footer-pill ct-footer-pill-pr');
-      const iconEl = pill.createSpan('ct-footer-pill-icon');
-      setIcon(iconEl, 'git-pull-request');
-      const link = pill.createEl('a', { cls: 'ct-footer-pill-text ct-footer-link', text: label });
-      link.href = prUrl;
-      link.title = prUrl;
-      link.addEventListener('click', (e) => {
-        e.preventDefault();
+  private openLink(url: string): void {
+    openUrlPreferringWebViewer(this.app, url, {
+      webViewerEnabled: isWebViewerEnabled(this.app),
+      openExternal: (u) => {
         const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
-        shell.openExternal(prUrl);
-      });
-    }
-
-    // Shell-command pills — split on two-or-more spaces, each segment is a pill.
-    const segments = shellText.split(/  +/).map(s => s.trim()).filter(Boolean);
-
-    for (const segment of segments) {
-      const pill = this.contextFooterEl.createDiv('ct-footer-pill');
-
-      // Heuristic decoration: URL gets a globe icon, branch gets git-branch,
-      // "PR #N" gets a pull-request marker, AWS status gets a cloud icon.
-      if (/^https?:\/\//.test(segment)) {
-        const iconEl = pill.createSpan('ct-footer-pill-icon');
-        setIcon(iconEl, 'globe');
-        const link = pill.createEl('a', { cls: 'ct-footer-pill-text ct-footer-link', text: segment });
-        link.href = segment;
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
-          shell.openExternal(segment);
-        });
-      } else if (/^PR #\d+/.test(segment)) {
-        const iconEl = pill.createSpan('ct-footer-pill-icon');
-        setIcon(iconEl, 'git-pull-request');
-        pill.createSpan({ cls: 'ct-footer-pill-text', text: segment });
-      } else if (/AWS/.test(segment)) {
-        const iconEl = pill.createSpan('ct-footer-pill-icon');
-        setIcon(iconEl, segment.includes('ok') ? 'cloud' : 'cloud-off');
-        pill.createSpan({
-          cls: `ct-footer-pill-text ${segment.includes('expired') ? 'ct-footer-pill-warn' : ''}`,
-          text: segment,
-        });
-      } else {
-        // Default: treat as git branch name
-        const iconEl = pill.createSpan('ct-footer-pill-icon');
-        setIcon(iconEl, 'git-branch');
-        pill.createSpan({ cls: 'ct-footer-pill-text', text: segment });
-      }
-    }
-
-    if (!prUrl && segments.length === 0) {
-      this.contextFooterEl.addClass('ct-hidden');
-    } else {
-      this.contextFooterEl.removeClass('ct-hidden');
-    }
+        shell.openExternal(u);
+      },
+    });
   }
 
-  /** Called from settings tab when the command is changed so the footer updates live. */
+  /** Called from settings when the command changes: restart the service + re-render. */
   updateStatusLineCommand(): void {
-    this.stopStatusLineInterval();
-    this.startStatusLineInterval();
-    void this.refreshStatusLine();
+    this.plugin.statusLine?.restart();
+    this.renderStatusFooter();
   }
 
   /** Rebuild the edited-files set from saved thread state for the active thread. */
@@ -2031,6 +1958,11 @@ export class ThreadsView extends ItemView {
         } else if (event.status === null) {
           this.updateStatusBar();
         }
+        break;
+      }
+
+      case 'status_tags': {
+        this.renderStatusFooter();
         break;
       }
 

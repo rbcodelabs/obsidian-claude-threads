@@ -78,6 +78,27 @@ export interface TaskItem {
   status: TaskItemStatus;
 }
 
+/**
+ * One pill in a thread's status-line footer, produced by the configured
+ * statusLineCommand. Scripts may emit these as a JSON array; legacy plaintext
+ * output is normalized into the same shape (see src/statusLine.ts).
+ */
+export interface StatusTag {
+  /** Required display text, e.g. "PR #42", "main", "AWS ok". */
+  label: string;
+  /** If set, the pill is a link (opened via electron shell.openExternal). */
+  url?: string;
+  /** Lucide icon name. If omitted, derived from `kind` at render time. */
+  icon?: string;
+  /** Visual tone. Defaults to 'normal'. */
+  tone?: 'normal' | 'warn' | 'error';
+  /**
+   * Semantic category. 'pr' drives prUrl derivation and the leading PR pill.
+   * Open-ended so scripts can introduce new kinds without a plugin change.
+   */
+  kind?: 'pr' | 'branch' | 'dev' | 'aws' | string;
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -107,8 +128,19 @@ export interface Thread {
   draft?: ThreadDraft;
   /** Current lifecycle status of the thread. */
   status?: ThreadStatus;
-  /** URL of the most recent GitHub PR opened during this thread (e.g. https://github.com/owner/repo/pull/42). */
+  /**
+   * URL of the GitHub PR associated with this thread (e.g. https://github.com/owner/repo/pull/42).
+   * DERIVED from `statusTags` by StatusLineService (a tag with kind:'pr' or a /pull/N url).
+   * Sticky: only overwritten when a poll yields a PR tag, never cleared on absence, so the
+   * release archive-on-merge workflow can still match a thread after its PR merges.
+   */
   prUrl?: string;
+  /**
+   * Status-line pills for this thread, populated by StatusLineService from the
+   * configured statusLineCommand. Ephemeral — never persisted to data.json,
+   * re-derived on the next poll. Undefined on mobile / when no script is set.
+   */
+  statusTags?: StatusTag[];
   /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
   lastSummarizedAt?: number;
   /**
@@ -247,10 +279,14 @@ export interface PluginSettings {
   layoutDensity: LayoutDensity;
   /**
    * Shell command for the context footer bar. Receives JSON on stdin with
-   * {cwd, branch} describing the active thread. stdout is displayed as a
-   * one-line status strip below the input area. Empty string disables it.
+   * {cwd, workspace:{current_dir}, branch} describing the thread. stdout may be
+   * a JSON array of status tags (see StatusTag) or legacy plaintext (segments
+   * split on 2+ spaces). Rendered as pills below the input area. Empty disables
+   * it. Run per-thread by StatusLineService (desktop only).
    */
   statusLineCommand: string;
+  /** How often (ms) StatusLineService polls the statusLineCommand per thread cwd. Default 30000. */
+  statusLineIntervalMs?: number;
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
@@ -309,6 +345,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   wakeLockEnabled: true,
   layoutDensity: 'comfortable',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
+  statusLineIntervalMs: 30_000,
   debugLogging: false,
   hasSeenWelcome: false,
   pttKey: 'Alt+Space',

@@ -16,6 +16,8 @@
 | `src/DispatchInput.ts` | Reusable dispatch textarea component used across all panels |
 | `src/slashCommands.ts` | Single source of truth for built-in slash commands, model aliases, and dispatch directive parsing |
 | `src/Scheduler.ts` | Built-in scheduler for cron items and `/loop` recurrences, persisted in `settings.scheduledItems` |
+| `src/statusLine.ts` | Pure parser for `statusLineCommand` output (JSON tags or legacy plaintext → `StatusTag[]`) + `derivePrUrl`/`resolveTagIcon`. No Obsidian/Node deps |
+| `src/StatusLineService.ts` | Desktop-only service that polls `statusLineCommand` per thread cwd (coalesced, capped, cached, idle-paused) and writes `statusTags` + derived `prUrl`. See `docs/adr/0001-structured-status-line-tags.md` |
 
 ---
 
@@ -25,7 +27,8 @@ Key fields worth knowing:
 
 | Field | Notes |
 |---|---|
-| `prUrl?: string` | URL of the most recent GitHub PR opened in this session. Surfaced in `obsidian_list_threads` and `obsidian_get_current_thread` — use it to match threads to PRs without reading message history. |
+| `prUrl?: string` | URL of the thread's GitHub PR. **Derived** by `StatusLineService` from `statusTags` (a `kind:'pr'` tag or `/pull/N` url) — no longer scanned from assistant prose. **Sticky**: only overwritten when a poll finds a PR, never cleared on absence, so the release archive-on-merge flow still matches after merge. Surfaced in `obsidian_list_threads` / `obsidian_get_current_thread`. |
+| `statusTags?: StatusTag[]` | Context-footer pills for this thread, set by `StatusLineService` from the `statusLineCommand` output (JSON tags or legacy plaintext, see `src/statusLine.ts`). **Ephemeral** — stripped before persisting to data.json, re-derived each poll; `undefined` on mobile / no script. |
 | `titleUserSet?: boolean` | When `true`, the auto-titler will not overwrite the thread's title. Set to `true` only when the user explicitly renames the thread (not on blur/escape with no change). |
 | `noteFile?: string` | Vault-relative path of the saved vault note. Used by `VaultPersistence` to detect and delete stale files when the title changes. |
 | `cwd?: string` | Working directory for the Claude process. Auto-repaired to the nearest valid ancestor if the original worktree path no longer exists. |

@@ -495,4 +495,27 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-task-row')).toHaveCount(0);
   });
 
+  test('status line — structured tag pills', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+    // Drive the footer the same way StatusLineService would: store status tags
+    // on the active thread (dev url, branch, PR with url, AWS warn tone).
+    await page.evaluate(() => {
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'http://localhost:3001', url: 'http://localhost:3001', kind: 'dev' },
+        { label: 'feat/social-nudge', kind: 'branch' },
+        { label: 'PR #225', url: 'https://github.com/acme/hip-trip/pull/225', kind: 'pr' },
+        { label: 'AWS expired', tone: 'warn', kind: 'aws' },
+      ]);
+    });
+    await page.waitForSelector('.ct-footer-pill-pr');
+    // Four pills, in order, with the PR pill rendered.
+    await expect(page.locator('.ct-footer-pill')).toHaveCount(4);
+    await expect(page.locator('.ct-footer-pill-warn')).toHaveCount(1);
+    await expect(page).toHaveScreenshot('status-line-tags.png', { fullPage: true });
+  });
+
 });

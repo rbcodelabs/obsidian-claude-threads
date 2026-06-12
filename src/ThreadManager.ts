@@ -1,7 +1,8 @@
 import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus } from './types';
+import { derivePrUrl } from './statusLine';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
@@ -38,7 +39,8 @@ export type ThreadEvent =
   | { type: 'summary_updated' }
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
-  | { type: 'wakeup_changed' };
+  | { type: 'wakeup_changed' }
+  | { type: 'status_tags' };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -377,6 +379,27 @@ export class ThreadManager {
     return this.threadActivity.get(id);
   }
 
+  /**
+   * Store status-line tags for a thread (from StatusLineService) and derive its
+   * prUrl. prUrl is STICKY: only overwritten when the tags yield a PR url, never
+   * cleared on absence — so the release archive-on-merge workflow can still match
+   * a thread after its PR merges. Emits `status_tags` so views re-render.
+   * Returns true if prUrl changed (so the caller can decide to persist).
+   */
+  applyStatusTags(threadId: string, tags: StatusTag[]): boolean {
+    const thread = this.threads.get(threadId);
+    if (!thread) return false;
+    thread.statusTags = tags;
+    const pr = derivePrUrl(tags);
+    let prChanged = false;
+    if (pr && pr !== thread.prUrl) {
+      thread.prUrl = pr;
+      prChanged = true;
+    }
+    this.emit(threadId, { type: 'status_tags' });
+    return prChanged;
+  }
+
   // ── Background task tracking ─────────────────────────────────────────────────
 
   getPendingBackgroundTasks(threadId: string): PendingBackgroundTask[] {
@@ -626,10 +649,6 @@ export class ThreadManager {
           thread.messages.push(assistantMsg);
           thread.updatedAt = Date.now();
           pendingToolCalls.length = 0;
-          // Detect the most recent GitHub PR URL in assistant output so the
-          // context footer can surface a clickable PR pill automatically.
-          const prMatch = content.match(/https:\/\/github\.com\/[^\s>)"']+\/pull\/\d+/);
-          if (prMatch) thread.prUrl = prMatch[0];
           this.emit(threadId, { type: 'message', message: assistantMsg });
         },
         onDone: (sessionId, cost) => {

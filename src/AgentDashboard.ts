@@ -236,7 +236,8 @@ export class AgentDashboard extends ItemView {
       event.type === 'error' ||
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
-      event.type === 'summary_updated';
+      event.type === 'summary_updated' ||
+      event.type === 'status_tags';
     if (isStateChange) {
       this.scheduleRender();
       return;

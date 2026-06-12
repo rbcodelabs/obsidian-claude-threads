@@ -290,6 +290,45 @@ Projects group threads by vault sub-folder and inject shared context into every 
 
 **Managing projects:** Edit the name, folder, or context prompt at any time in Settings → Projects. Deleting a project keeps all its threads — they just lose the project association.
 
+### Status line (context footer)
+
+A row of pills below the input area shows live context for each thread — git branch, an open PR, a running dev server URL, AWS session status, or anything else you want. It's powered by a shell command (Settings → **Context footer command**) that the plugin runs **per thread, in the background**, against that thread's working directory. Desktop only.
+
+<p align="center">
+  <img src="docs/screenshot-status-line.png" width="800" alt="Status-line footer pills — dev URL, git branch, a clickable PR pill, and an AWS status pill below the message input" />
+</p>
+
+**Output format.** The command can return either:
+
+- **A JSON array of tags** (recommended) — each pill is a `StatusTag`:
+
+  ```json
+  [
+    { "label": "http://localhost:3001", "url": "http://localhost:3001", "kind": "dev" },
+    { "label": "feat/social-nudge", "kind": "branch" },
+    { "label": "PR #225", "url": "https://github.com/acme/app/pull/225", "kind": "pr" },
+    { "label": "AWS expired", "tone": "warn", "kind": "aws" }
+  ]
+  ```
+
+  | Field | Meaning |
+  |---|---|
+  | `label` | **Required.** Pill text. |
+  | `url` | Makes the pill a clickable link (opens in your browser). |
+  | `icon` | [Lucide](https://lucide.dev) icon name. Defaults from `kind` if omitted. |
+  | `tone` | `normal` (default), `warn`, or `error` — colors the pill. |
+  | `kind` | `pr`, `branch`, `dev`, `aws`, or any custom string. A `kind:"pr"` tag (or any `url` ending in `/pull/N`) becomes the thread's PR — shown as the PR pill and surfaced to the Kanban board, MCP tools, and release automation. |
+
+- **Plaintext** (the Claude Code statusline convention) — segments split on 2+ spaces, with heuristic icons (URL→globe, `PR #N`→pull-request, `AWS …`→cloud, else→branch). Existing scripts keep working unchanged.
+
+**Input.** The command receives JSON on stdin: `{ "cwd": "…", "workspace": { "current_dir": "…" }, "provider": "claude" | "bedrock" }`. Use `provider` to gate provider-specific pills — e.g. only emit an AWS pill when `provider == "bedrock"` so a logged-out AWS session doesn't show a spurious warning on a non-Bedrock machine.
+
+**PR detection** is fully script-driven: a `kind:"pr"` tag with a `url` (e.g. from `gh pr view`) populates the thread's `prUrl`, which is **sticky** — it survives after the PR merges so release tooling can still match the thread.
+
+**Opening links:** clicking a pill with a `url` opens it in Obsidian's in-app **Web Viewer** when that core plugin is enabled (reusing an existing tab); otherwise it opens in your system browser.
+
+A ready-to-use reference script (branch · PR · dev URL · Bedrock-gated AWS) ships at [`docs/statusline-command.example.sh`](docs/statusline-command.example.sh).
+
 ## Agent tools reference
 
 Every Claude thread runs with a built-in MCP server that exposes tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. These tools are available automatically; no configuration is required.
@@ -408,6 +447,7 @@ Edits made directly to vault files are unaffected — they don't match any bridg
 | Escalation keyword | Keyword that routes a single turn to the escalation model (default: `/escalate`) |
 | Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
+| Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |
 | Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
