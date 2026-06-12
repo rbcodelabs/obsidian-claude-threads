@@ -59,6 +59,12 @@ export class ThreadsView extends ItemView {
   // Task start times for elapsed-time display: taskId → epoch ms
   private taskStartTimes: Map<string, number> = new Map();
 
+  // Workflow progress state
+  private activeWorkflowTaskId: string | null = null;
+  private workflowBlockEl: HTMLElement | null = null;
+  private workflowPhaseEl: HTMLElement | null = null;
+  private workflowAgentRows: Map<string, HTMLElement> = new Map();
+
   // Whether the current streaming element was created as a "sub-agent waiting"
   // placeholder (no real token content yet). Used to decide whether to keep it
   // alive when a message commits with an Agent tool call.
@@ -328,12 +334,15 @@ export class ThreadsView extends ItemView {
           this.streamingBuffers.delete(threadId);
         }
       } else if (event.type === 'task_started') {
-        // Update the sub-agent label in the buffer so thread restoration shows
-        // the specific task description rather than the generic placeholder.
         let buf = this.streamingBuffers.get(threadId);
         if (!buf) { buf = { content: '', tools: [] }; this.streamingBuffers.set(threadId, buf); }
-        const kind = event.skipTranscript ? 'Background' : 'Sub-agent';
-        buf.subagentLabel = `${kind}: ${event.description}`;
+        if (event.taskType === 'local_workflow') {
+          buf.subagentLabel = `Workflow: ${event.workflowName ?? event.description}`;
+        } else if (!buf.subagentLabel?.startsWith('Workflow:')) {
+          // Don't overwrite a workflow label with individual agent labels
+          const kind = event.skipTranscript ? 'Background' : 'Sub-agent';
+          buf.subagentLabel = `${kind}: ${event.description}`;
+        }
       } else if (event.type === 'done') {
         this.streamingBuffers.delete(threadId);
       }
@@ -1915,6 +1924,10 @@ export class ThreadsView extends ItemView {
         this.taskPills.clear();
         this.taskStartTimes.clear();
         this.subagentWaiting = false;
+        this.activeWorkflowTaskId = null;
+        this.workflowBlockEl = null;
+        this.workflowPhaseEl = null;
+        this.workflowAgentRows.clear();
         // Message completed normally — discard the saved sent text so it can't
         // bleed into another thread if the user later stops a different thread.
         if (this.activeThreadId) this.lastSentTexts.delete(this.activeThreadId);
@@ -1937,6 +1950,10 @@ export class ThreadsView extends ItemView {
         this.taskPills.clear();
         this.taskStartTimes.clear();
         this.subagentWaiting = false;
+        this.activeWorkflowTaskId = null;
+        this.workflowBlockEl = null;
+        this.workflowPhaseEl = null;
+        this.workflowAgentRows.clear();
         // Restore the sent message so the user can edit and re-send
         const lastSent = this.activeThreadId ? this.lastSentTexts.get(this.activeThreadId) : undefined;
         if (lastSent) {
@@ -1973,35 +1990,88 @@ export class ThreadsView extends ItemView {
       }
 
       case 'task_started': {
-        // task_started fires when a sub-agent begins. We may already have a
-        // "Sub-agent working…" placeholder from the message handler; reuse it
-        // rather than creating another element.
         if (!this.streamingEl) this.createStreamingEl('Sub-agent working');
-        this.subagentWaiting = false; // real task data is now driving the pill
+        this.subagentWaiting = false;
         this.taskStartTimes.set(event.taskId, Date.now());
-        const taskPill = document.createElement('div');
-        taskPill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
-        const taskIconEl = document.createElement('span');
-        taskIconEl.className = 'ct-tool-pill-icon';
-        setIcon(taskIconEl, event.skipTranscript ? 'layers' : 'bot');
-        const taskBadge = document.createElement('span');
-        taskBadge.className = 'ct-tool-pill-name';
-        taskBadge.textContent = event.skipTranscript ? 'background' : 'sub-agent';
-        const taskLabel = document.createElement('span');
-        taskLabel.className = 'ct-tool-pill-text';
-        taskLabel.textContent = event.description;
-        taskPill.append(taskIconEl, taskBadge, taskLabel);
-        this.streamingEl!.prepend(taskPill);
-        this.taskPills.set(event.taskId, taskPill);
-        this.scrollToBottom();
+
+        if (event.taskType === 'local_workflow') {
+          // Workflow orchestrator — render a structured block
+          this.activeWorkflowTaskId = event.taskId;
+          this.workflowAgentRows.clear();
+
+          const block = document.createElement('div');
+          block.className = 'ct-workflow-block';
+
+          const header = document.createElement('div');
+          header.className = 'ct-workflow-header';
+          const iconEl = document.createElement('span');
+          iconEl.className = 'ct-workflow-icon';
+          setIcon(iconEl, 'git-fork');
+          const nameEl = document.createElement('span');
+          nameEl.className = 'ct-workflow-name';
+          nameEl.textContent = event.workflowName ?? event.description;
+          const phaseEl = document.createElement('span');
+          phaseEl.className = 'ct-workflow-phase';
+          this.workflowPhaseEl = phaseEl;
+          header.append(iconEl, nameEl, phaseEl);
+
+          const agentList = document.createElement('div');
+          agentList.className = 'ct-workflow-agents';
+
+          block.append(header, agentList);
+          this.workflowBlockEl = block;
+          this.streamingEl!.appendChild(block);
+          this.taskPills.set(event.taskId, block);
+          this.scrollToBottom();
+
+        } else if (this.activeWorkflowTaskId !== null) {
+          // Sub-agent within active workflow — add a row to the workflow block
+          const agentList = this.workflowBlockEl?.querySelector<HTMLElement>('.ct-workflow-agents');
+          if (agentList) {
+            const row = document.createElement('div');
+            row.className = 'ct-workflow-agent-row ct-workflow-agent-running';
+            const dotEl = document.createElement('span');
+            dotEl.className = 'ct-workflow-agent-dot';
+            setIcon(dotEl, 'loader');
+            const descEl = document.createElement('span');
+            descEl.className = 'ct-workflow-agent-desc';
+            descEl.textContent = event.description;
+            row.append(dotEl, descEl);
+            agentList.appendChild(row);
+            this.taskPills.set(event.taskId, row);
+            this.workflowAgentRows.set(event.taskId, row);
+            this.scrollToBottom();
+          }
+        } else {
+          // Regular (non-workflow) sub-agent — existing pill behavior
+          const taskPill = document.createElement('div');
+          taskPill.className = 'ct-tool-pill ct-tool-active ct-task-pill';
+          const taskIconEl = document.createElement('span');
+          taskIconEl.className = 'ct-tool-pill-icon';
+          setIcon(taskIconEl, event.skipTranscript ? 'layers' : 'bot');
+          const taskBadge = document.createElement('span');
+          taskBadge.className = 'ct-tool-pill-name';
+          taskBadge.textContent = event.skipTranscript ? 'background' : 'sub-agent';
+          const taskLabel = document.createElement('span');
+          taskLabel.className = 'ct-tool-pill-text';
+          taskLabel.textContent = event.description;
+          taskPill.append(taskIconEl, taskBadge, taskLabel);
+          this.streamingEl!.prepend(taskPill);
+          this.taskPills.set(event.taskId, taskPill);
+          this.scrollToBottom();
+        }
         break;
       }
 
       case 'task_progress': {
-        const progressPill = this.taskPills.get(event.taskId);
-        if (progressPill) {
-          const label = progressPill.querySelector('.ct-tool-pill-text');
-          if (label) {
+        if (event.taskId === this.activeWorkflowTaskId) {
+          // Progress on the workflow itself — update phase label
+          if (this.workflowPhaseEl) {
+            this.workflowPhaseEl.textContent = event.description ? ` · ${event.description}` : '';
+          }
+        } else {
+          const progressEl = this.taskPills.get(event.taskId);
+          if (progressEl) {
             const startedAt = this.taskStartTimes.get(event.taskId);
             const elapsedSec = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
             const elapsedStr = elapsedSec >= 60
@@ -2009,32 +2079,83 @@ export class ThreadsView extends ItemView {
               : elapsedSec > 0 ? `${elapsedSec}s` : '';
             const toolSuffix = event.lastToolName ? ` · ${event.lastToolName}` : '';
             const timeSuffix = elapsedStr ? ` (${elapsedStr})` : '';
-            label.textContent = event.description + toolSuffix + timeSuffix;
+            const text = event.description + toolSuffix + timeSuffix;
+
+            if (this.workflowAgentRows.has(event.taskId)) {
+              // Workflow sub-agent row
+              const descEl = progressEl.querySelector('.ct-workflow-agent-desc');
+              if (descEl) descEl.textContent = text;
+            } else {
+              // Regular pill
+              const label = progressEl.querySelector('.ct-tool-pill-text');
+              if (label) label.textContent = text;
+            }
           }
         }
         break;
       }
 
       case 'task_notification': {
-        const notifPill = this.taskPills.get(event.taskId);
-        if (notifPill) {
-          notifPill.classList.remove('ct-tool-active');
-          const iconEl = notifPill.querySelector('.ct-tool-pill-icon');
-          const label = notifPill.querySelector('.ct-tool-pill-text');
-          if (event.status === 'completed') {
-            notifPill.classList.add('ct-task-done');
-            if (iconEl) setIcon(iconEl as HTMLElement, 'check-circle');
-          } else {
-            notifPill.classList.add('ct-task-failed');
-            if (iconEl) setIcon(iconEl as HTMLElement, 'x-circle');
+        if (event.taskId === this.activeWorkflowTaskId) {
+          // Workflow orchestrator finished
+          if (this.workflowBlockEl) {
+            if (event.status === 'completed') {
+              this.workflowBlockEl.classList.add('ct-workflow-done');
+              if (this.workflowPhaseEl) this.workflowPhaseEl.textContent = ' · Done';
+            } else {
+              this.workflowBlockEl.classList.add('ct-workflow-failed');
+              if (this.workflowPhaseEl) this.workflowPhaseEl.textContent = ' · Failed';
+            }
           }
-          if (label) label.textContent = event.summary;
           this.taskPills.delete(event.taskId);
           this.taskStartTimes.delete(event.taskId);
+          this.activeWorkflowTaskId = null;
+          this.workflowBlockEl = null;
+          this.workflowPhaseEl = null;
+        } else {
+          const notifEl = this.taskPills.get(event.taskId);
+          if (notifEl) {
+            if (this.workflowAgentRows.has(event.taskId)) {
+              // Workflow sub-agent row
+              notifEl.classList.remove('ct-workflow-agent-running');
+              const dotEl = notifEl.querySelector<HTMLElement>('.ct-workflow-agent-dot');
+              const descEl = notifEl.querySelector('.ct-workflow-agent-desc');
+              if (event.status === 'completed') {
+                notifEl.classList.add('ct-workflow-agent-done');
+                if (dotEl) setIcon(dotEl, 'check');
+              } else {
+                notifEl.classList.add('ct-workflow-agent-failed');
+                if (dotEl) setIcon(dotEl, 'x');
+              }
+              if (descEl) descEl.textContent = event.summary;
+              this.workflowAgentRows.delete(event.taskId);
+            } else {
+              // Regular sub-agent pill — existing behavior
+              notifEl.classList.remove('ct-tool-active');
+              const iconEl = notifEl.querySelector<HTMLElement>('.ct-tool-pill-icon');
+              const label = notifEl.querySelector('.ct-tool-pill-text');
+              if (event.status === 'completed') {
+                notifEl.classList.add('ct-task-done');
+                if (iconEl) setIcon(iconEl, 'check-circle');
+              } else {
+                notifEl.classList.add('ct-task-failed');
+                if (iconEl) setIcon(iconEl, 'x-circle');
+              }
+              if (label) label.textContent = event.summary;
+            }
+            this.taskPills.delete(event.taskId);
+            this.taskStartTimes.delete(event.taskId);
+          }
         }
         this.subagentWaiting = false;
         // When the thread is idle (no active streaming container / no pill), the
         // main.ts subscriber shows a Notice. Nothing more needed here.
+        break;
+      }
+
+      case 'task_updated': {
+        // Status patches — primarily useful for workflow sub-agents completing/failing
+        // before task_notification arrives. No-op for now; task_notification handles terminal states.
         break;
       }
 
@@ -2088,6 +2209,10 @@ export class ThreadsView extends ItemView {
         this.taskPills.clear();
         this.taskStartTimes.clear();
         this.subagentWaiting = false;
+        this.activeWorkflowTaskId = null;
+        this.workflowBlockEl = null;
+        this.workflowPhaseEl = null;
+        this.workflowAgentRows.clear();
         if (this.streamingEl) {
           this.streamingEl.remove();
           this.streamingEl = null;
