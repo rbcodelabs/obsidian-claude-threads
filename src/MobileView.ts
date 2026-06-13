@@ -451,7 +451,7 @@ export class MobileView extends ItemView {
         contentEl.createEl('p', { text: content });
       }
     } else if (tools.length === 0) {
-      contentEl.createSpan({ cls: 'ct-thinking-label', text: 'Claude is thinking ' });
+      contentEl.createSpan({ cls: 'ct-thinking-spinner', attr: { 'aria-label': 'Claude is thinking' } });
     }
     contentEl.createSpan({ cls: 'ct-cursor' });
 

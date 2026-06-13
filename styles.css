@@ -869,12 +869,17 @@
   min-height: 32px;
 }
 
-/* "Claude is thinking " label shown before first token arrives */
-.ct-thinking-label {
-  font-family: var(--font-interface);
-  font-size: var(--font-ui-small);
-  color: var(--text-muted);
-  font-style: italic;
+/* Spinner shown before first token arrives (replaces the old italic label) */
+.ct-thinking-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border: 2px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: ct-spin 0.8s linear infinite;
 }
 
 /* Slim animated cursor — replaces block blink */
@@ -1097,16 +1102,177 @@
   padding: 0;
 }
 
-/* Status bar */
-.ct-status-bar {
+/* Status rail — replaces the old flat status bar */
+.ct-status-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* Base style for typed status cards (active, warning, error) */
+.ct-status-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin: 2px 6px 0;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+/* Active-work card: blue, with a spinner */
+.ct-status-card-active {
+  background: color-mix(in srgb, var(--color-blue, #4a8fe7) 10%, var(--background-secondary));
+  border-color: color-mix(in srgb, var(--color-blue, #4a8fe7) 30%, transparent);
+  color: var(--text-muted);
+}
+
+/* Warning card: amber */
+.ct-status-card-warning {
+  background: color-mix(in srgb, var(--color-yellow, #e6a817) 12%, var(--background-secondary));
+  border-color: color-mix(in srgb, var(--color-yellow, #e6a817) 35%, transparent);
+}
+
+/* Error card: red */
+.ct-status-card-error {
+  background: color-mix(in srgb, var(--color-red, #e05c5c) 12%, var(--background-secondary));
+  border-color: color-mix(in srgb, var(--color-red, #e05c5c) 35%, transparent);
+}
+
+/* Spinner inside the active card */
+.ct-status-card-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid color-mix(in srgb, var(--color-blue, #4a8fe7) 40%, transparent);
+  border-top-color: var(--color-blue, #4a8fe7);
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: ct-spin 0.8s linear infinite;
+}
+
+.ct-status-card-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ephemeral toast (auto-dismiss after 2 s) */
+.ct-status-toast {
+  padding: 4px 10px;
+  margin: 2px 6px 0;
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
-  padding: 2px 8px;
-  min-height: 18px;
-  flex-shrink: 0;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.ct-status-toast-fade {
+  opacity: 0;
+}
+
+/* Queue rows container */
+.ct-queue-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 2px;
+}
+
+/* Individual queue row */
+.ct-queue-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 8px;
+  background: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+  font-size: var(--font-ui-smaller);
+  min-width: 0;
+}
+
+.ct-queue-row:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 8%, var(--background-secondary));
+  border-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+}
+
+.ct-queue-row-delete {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-faint);
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: color 0.1s;
+}
+
+.ct-queue-row-delete:hover {
+  color: var(--color-red, #e05c5c);
+}
+
+.ct-queue-row-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-normal);
+  pointer-events: none;
+}
+
+.ct-queue-row-attach {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* "+N more" row */
+.ct-queue-more {
+  padding: 2px 8px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* Inline "Replace draft?" confirm row */
+.ct-queue-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ct-queue-confirm-yes,
+.ct-queue-confirm-no {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.ct-queue-confirm-yes:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 15%, var(--background-secondary));
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
+.ct-queue-confirm-no:hover {
+  background: var(--background-modifier-hover);
 }
 
 /* Scheduled wake-up banner (above the input row) */
@@ -1273,10 +1439,12 @@
   flex-direction: column;
 }
 
-/* Hide status bar when it has no text so it doesn't trip the :has checks below */
-.ct-status-bar:empty {
+/* Status rail: hide when empty (no cards, no toast) */
+.ct-status-rail:empty {
   display: none;
 }
+
+/* Queue rows: ct-hidden is toggled by JS */
 
 /* Hide the whole context zone when every child is either .ct-hidden or empty */
 .ct-panel-context:not(:has(:not(.ct-hidden):not(:empty))) {
@@ -2172,9 +2340,14 @@
   font-size: 10px;
 }
 
-.ct-root[data-density="compact"] .ct-status-bar {
-  min-height: 14px;
-  padding: 1px 6px;
+.ct-root[data-density="compact"] .ct-status-card {
+  padding: 3px 8px;
+  margin: 1px 4px 0;
+  font-size: 10px;
+}
+
+.ct-root[data-density="compact"] .ct-queue-row {
+  padding: 3px 6px;
   font-size: 10px;
 }
 
@@ -2221,9 +2394,13 @@
   font-size: 12px;
 }
 
-.ct-root[data-density="spacious"] .ct-status-bar {
-  min-height: 22px;
-  padding: 4px 12px;
+.ct-root[data-density="spacious"] .ct-status-card {
+  padding: 7px 14px;
+  margin: 3px 8px 0;
+}
+
+.ct-root[data-density="spacious"] .ct-queue-row {
+  padding: 6px 10px;
 }
 
 .ct-root[data-density="spacious"] .ct-input-row {
@@ -3006,10 +3183,7 @@
 
 /* ── Streaming / thinking ───────────────────────────────────────────────── */
 
-.ct-thinking-label {
-  color: var(--text-muted);
-  font-style: italic;
-}
+/* Mobile section: the ct-thinking-spinner rule from above applies here too */
 
 /* ct-cursor in the mobile section intentionally removed — the desktop rule
    (accent colour, smooth pulse) defined earlier in this file applies here too. */
