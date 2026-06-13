@@ -190,6 +190,10 @@ export interface ObsidianMcpServerOptions {
   ) => Promise<{ path: string; total: number; returned: number; entries: unknown[] } | null>;
   /** Returns all projects. */
   getAllProjects?: () => ProjectSnapshot[];
+  /** Creates a new project and persists it. Returns the created project snapshot. */
+  createProject?: (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => ProjectSnapshot;
+  /** Assigns or clears the project on a thread. Pass null to detach. */
+  setThreadProject?: (threadId: string, projectId: string | null) => void;
   /** Returns true if the given thread is currently processing a request. */
   isThreadRunning?: (id: string) => boolean;
   /** Sends a message to a thread, triggering Claude to process it. */
@@ -1057,6 +1061,71 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     { alwaysLoad: true },
   );
 
+  const boundCreateProject = tool(
+    'obsidian_create_project',
+    'Creates a new project with the given name and vault folder. Returns the created project snapshot including its id. Capture the returned id — it is the projectId used by CronCreate, obsidian_set_thread_project, and other project-aware APIs.',
+    {
+      name: z.string().describe('Human-readable project name (e.g. "Golden Wealth", "HipTrip", "Personal")'),
+      vaultFolder: z
+        .string()
+        .describe(
+          'Vault-relative folder path for this project (e.g. "Projects/GoldenWealth"). Claude threads in this project will default to this folder as their working context.',
+        ),
+      description: z.string().optional().describe('Optional one-line description of the project'),
+      cwdOverride: z
+        .string()
+        .optional()
+        .describe(
+          'Optional absolute filesystem path to use as the working directory instead of deriving it from vaultFolder + vault root',
+        ),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.createProject) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'createProject is not available in this context.' }) }], isError: true };
+        }
+        const project = options.createProject(args.name, args.vaultFolder, args.description, args.cwdOverride);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundSetThreadProject = tool(
+    'obsidian_set_thread_project',
+    'Assigns a thread to a project or clears its project assignment. Call obsidian_list_projects first to get a valid projectId. Pass projectId as null to detach the thread from any project.',
+    {
+      threadId: z.string().describe('ID of the thread to update'),
+      projectId: z
+        .string()
+        .nullable()
+        .describe('Project ID to assign to the thread, or null to clear the project assignment'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.setThreadProject) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadProject is not available in this context.' }) }], isError: true };
+        }
+        options.setThreadProject(args.threadId, args.projectId);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ success: true, threadId: args.threadId, projectId: args.projectId }),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
   const boundGetThreadMessages = tool(
     'obsidian_get_thread_messages',
     'Returns the live message history of any thread by ID. Use limit to get just the most recent N messages (default 20). Useful for reading what another thread has done or decided before coordinating.',
@@ -1776,6 +1845,8 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundGetCurrentThread,
       boundListThreads,
       boundListProjects,
+      boundCreateProject,
+      boundSetThreadProject,
       boundGetThreadMessages,
       boundGetThreadLog,
       boundWaitForThread,

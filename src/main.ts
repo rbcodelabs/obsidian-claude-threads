@@ -318,6 +318,17 @@ export default class ClaudeThreadsPlugin extends Plugin {
             description: p.description,
             vaultFolder: p.vaultFolder,
           })),
+          createProject: (name, vaultFolder, description, cwdOverride) => {
+            const p = this.manager.createProject(name, vaultFolder, description, cwdOverride);
+            this.saveSettings().catch(console.error);
+            return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder };
+          },
+          setThreadProject: (threadId, projectId) => {
+            const thread = this.manager.getThread(threadId);
+            if (!thread) throw new Error(`Thread not found: ${threadId}`);
+            thread.projectId = projectId ?? undefined;
+            this.saveSettings().catch(console.error);
+          },
           readThreadLog: (id: string, opts: { limit?: number; type?: string }) => this.manager.readRawLog(id, opts),
           isThreadRunning: (id: string) => this.manager.isRunning(id),
           sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
