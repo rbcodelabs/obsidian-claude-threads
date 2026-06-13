@@ -371,8 +371,19 @@ export class ThreadManager {
     return queue && queue.length > 0 ? queue[0].text : undefined;
   }
 
+  getQueuedMessages(id: string): { text: string; images?: ImageAttachment[] }[] {
+    return this.queuedMessages.get(id) ?? [];
+  }
+
   getQueuedCount(id: string): number {
     return this.queuedMessages.get(id)?.length ?? 0;
+  }
+
+  removeQueuedMessageAt(id: string, index: number): void {
+    const queue = this.queuedMessages.get(id);
+    if (!queue || index < 0 || index >= queue.length) return;
+    queue.splice(index, 1);
+    if (queue.length === 0) this.queuedMessages.delete(id);
   }
 
   getThreadActivity(id: string): string | undefined {
