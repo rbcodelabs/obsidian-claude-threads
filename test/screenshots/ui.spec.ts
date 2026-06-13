@@ -557,4 +557,68 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('kanban-folder-swimlanes.png', { fullPage: true });
   });
 
+  // ─── Status area redesign ─────────────────────────────────────────────────
+
+  test('queue rows — stacked removable rows above composer', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Inject 3 queued messages into the active thread via manager internals
+    await page.evaluate(() => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const threadId = view['activeThreadId'];
+      if (!threadId) throw new Error('No active thread');
+      // Set running state so the queue accumulates (not auto-sent)
+      manager['isRunningMap'] = manager['isRunningMap'] ?? new Map();
+      manager['runningThreads'] = manager['runningThreads'] ?? new Set();
+      manager['runningThreads'].add(threadId);
+      // Push 3 items into the private queue map
+      const queue = [
+        { text: 'Quick reply about the deploy status, is it green yet?' },
+        { text: 'Need help with the rate limit logs from last night' },
+        { text: 'Can you draft an email to Lindsey about the timeline change?' },
+      ];
+      manager['queuedMessages'].set(threadId, queue);
+      // Fire a queued event so the view re-renders
+      view['renderQueueRows']();
+    });
+    await page.waitForSelector('.ct-queue-row');
+    await expect(page).toHaveScreenshot('queue-rows.png', { fullPage: true });
+  });
+
+  test('status rail — active-work card with spinner', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Show a "Compacting context…" active-work card in the rail
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['showStatusCard']('active', 'Compacting context…');
+    });
+    await page.waitForSelector('.ct-status-card-active');
+    await expect(page).toHaveScreenshot('status-rail-active-card.png', { fullPage: true });
+  });
+
+  test('thinking spinner — shown before first token', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Trigger the streaming placeholder (thinking spinner) via private method
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['createStreamingEl']();
+      view['scrollToBottom']();
+    });
+    await page.waitForSelector('.ct-thinking-spinner');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('thinking-spinner.png', { fullPage: true });
+  });
+
 });
