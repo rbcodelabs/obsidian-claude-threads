@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.16.0-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.17.0-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -97,6 +97,22 @@ Tabs are renamed automatically after the first exchange using the thread summari
 - **Shift+Enter** — newline
 - **`/`** — opens slash command autocomplete
 - **Escape** — cancel the running session; the sent message is restored to the input box so you can edit and re-send
+
+**Message queue.** If you send a message while Claude is already processing, it goes into a queue — displayed as stacked removable rows above the composer. Each row shows a preview of the queued message and an `×` button to discard it. Click any row to pull it back into the input box for editing (an inline confirm prompt prevents you from accidentally discarding your current draft). The queue drains automatically as Claude finishes each turn. Queued messages survive thread switches and plugin reloads.
+
+<p align="center">
+  <img src="docs/screenshot-queue-rows.png" width="800" alt="Message queue rows — stacked removable chips above the composer showing queued messages" />
+</p>
+
+**Activity indicator.** While Claude is processing, a typed status card appears above the input area showing what's happening:
+
+- **Active work** — a pulsing spinner with a short label (e.g. "Compacting context…" during automatic compaction, "Retrying API call…" on transient errors). The card disappears as soon as the operation completes.
+- **Rate limit** — if the API returns a rate limit response, a card shows in warning or error style depending on whether the request was allowed to proceed or rejected outright.
+- **Model escalation tip** — when a turn is routed to the escalation model (e.g. Fable 5 when you send `/escalate`), a brief tooltip pops up from the model button rather than reshuffling the layout. It fades in, holds for a moment, then fades out automatically — no interaction needed and zero layout shift.
+
+<p align="center">
+  <img src="docs/screenshot-status-rail.png" width="800" alt="Status rail — active-work card with spinner above the composer" />
+</p>
 
 ### Slash commands
 
@@ -208,6 +224,20 @@ Open the **Agent Dashboard** from the ribbon or command palette to see all threa
 This combination means you can dispatch several threads in parallel, switch to other work, then return to the dashboard to understand the state of every agent without reading through each conversation.
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
+
+### Inline workflow progress
+
+When a thread runs the `Workflow` tool (multi-agent orchestration), a live progress block appears inline in the conversation — pinned above the streaming output — showing:
+
+- **Workflow name** and **current phase** (updates as the workflow transitions between phases)
+- **Per-agent rows** — each spawned sub-agent gets a row with a dot (pulsing while running, filled when done, ✗ on failure) and its task description. Rows appear as agents are launched and update in place as they complete; they don't disappear, so you can see the full run at a glance even before the workflow finishes.
+- **Done / Failed badge** — when the workflow completes, the block locks into a final state with a "Done" or "Failed" annotation.
+
+<p align="center">
+  <img src="docs/screenshot-workflow-progress.png" width="800" alt="Inline workflow progress block — live agent rows with running/done dots and a phase label" />
+</p>
+
+The block is rendered entirely from the SDK event stream (no extra API calls), so it appears immediately when the first sub-agent starts and has zero overhead for threads that don't use workflows.
 
 ### Kanban board
 
