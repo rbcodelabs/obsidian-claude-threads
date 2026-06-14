@@ -1162,18 +1162,57 @@
   white-space: nowrap;
 }
 
-/* Ephemeral toast (auto-dismiss after 2 s) */
-.ct-status-toast {
-  padding: 4px 10px;
-  margin: 2px 6px 0;
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  opacity: 1;
-  transition: opacity 0.3s ease;
+/* Model-escalation popover tip — pops out of the model button, no layout shift */
+.ct-more-btn {
+  position: relative; /* anchor for the escalation tip */
 }
 
-.ct-status-toast-fade {
-  opacity: 0;
+.ct-escalation-tip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  pointer-events: none;
+  z-index: 50;
+  /* arrow pointing down to the button */
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15));
+  animation: ct-escalation-tip 3s ease forwards;
+}
+
+/* Downward-pointing arrow */
+.ct-escalation-tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--background-modifier-border);
+}
+
+.ct-escalation-tip::before {
+  content: '';
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--background-secondary);
+  z-index: 1;
+}
+
+@keyframes ct-escalation-tip {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  12%  { opacity: 1; transform: translateX(-50%) translateY(0);   }
+  78%  { opacity: 1; transform: translateX(-50%) translateY(0);   }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-3px);}
 }
 
 /* Queue rows container */

@@ -45,8 +45,6 @@ export class ThreadsView extends ItemView {
   private queueRowsEl!: HTMLElement;
   private activeWorkCardEl: HTMLElement | null = null;
   private rateLimitCardEl: HTMLElement | null = null;
-  private toastEl: HTMLElement | null = null;
-  private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private editedFilesEl!: HTMLElement;
 
   // Shared dispatch input component
@@ -1795,7 +1793,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'escalated': {
-        this.showEphemeralToast(`⚡ Using ${event.model} for this turn`);
+        this.showModelEscalationTip(`⚡ Using ${event.model} for this turn`);
         break;
       }
 
@@ -2152,23 +2150,19 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  /** Show a 2-second auto-dismiss toast inside the panel context. */
-  private showEphemeralToast(text: string): void {
-    if (this.toastTimer !== null) {
-      clearTimeout(this.toastTimer);
-      this.toastTimer = null;
-    }
-    this.toastEl?.remove();
-    const toast = this.statusRailEl.createDiv('ct-status-toast');
-    toast.setText(text);
-    this.toastEl = toast;
-    this.toastTimer = setTimeout(() => {
-      toast.addClass('ct-status-toast-fade');
-      this.toastTimer = setTimeout(() => {
-        toast.remove();
-        if (this.toastEl === toast) this.toastEl = null;
-      }, 300);
-    }, 2000);
+  /**
+   * Show a transient popover tip above the model button when the session
+   * escalates to a different model for a turn. Positions absolutely off the
+   * button so it causes zero layout shift. Self-removes when the CSS
+   * animation finishes (~3 s total).
+   */
+  private showModelEscalationTip(text: string): void {
+    if (!this.modelBtn) return;
+    // Remove any in-flight tip before showing a new one.
+    this.modelBtn.querySelector('.ct-escalation-tip')?.remove();
+    const tip = this.modelBtn.createDiv('ct-escalation-tip');
+    tip.setText(text);
+    tip.addEventListener('animationend', () => tip.remove(), { once: true });
   }
 
   /** Rebuild the stacked queue rows. */

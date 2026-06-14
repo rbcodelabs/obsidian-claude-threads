@@ -621,4 +621,22 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('thinking-spinner.png', { fullPage: true });
   });
 
+  test('model escalation tip — popover above model button', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['showModelEscalationTip']('⚡ Using claude-sonnet-4-5 for this turn');
+    });
+    await page.waitForSelector('.ct-escalation-tip');
+    // Playwright freezes CSS animations at frame 0 (opacity: 0). Override to show
+    // the tip at full opacity for the snapshot.
+    await page.addStyleTag({ content: '.ct-escalation-tip { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; }' });
+    await page.waitForTimeout(100);
+    await expect(page).toHaveScreenshot('model-escalation-tip.png', { fullPage: true });
+  });
+
 });
