@@ -41,7 +41,10 @@ export class ThreadsView extends ItemView {
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
-  private statusBar!: HTMLElement;
+  private statusRailEl!: HTMLElement;
+  private queueRowsEl!: HTMLElement;
+  private activeWorkCardEl: HTMLElement | null = null;
+  private rateLimitCardEl: HTMLElement | null = null;
   private editedFilesEl!: HTMLElement;
 
   // Shared dispatch input component
@@ -88,10 +91,7 @@ export class ThreadsView extends ItemView {
   private wakeupCountdownEl: HTMLElement | null = null;
   private wakeupCountdownTimer: ReturnType<typeof setInterval> | null = null;
 
-  // Status bar layering: context is the persistent baseline (project/model),
-  // transient overrides it temporarily (queued, retrying, compacting, etc.)
-  private statusContextText = '';
-  private statusTransientText = '';
+  // (status rail state tracked via activeWorkCardEl / rateLimitCardEl / toastEl fields above)
 
   // Project indicator pill (near input)
   private projectIndicatorEl!: HTMLElement;
@@ -442,8 +442,9 @@ export class ThreadsView extends ItemView {
     this.floatingPanelEl = floatingPanel;
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
-    this.statusBar = panelContext.createDiv('ct-status-bar');
     this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
+    this.statusRailEl = panelContext.createDiv('ct-status-rail');
+    this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
@@ -1040,9 +1041,8 @@ export class ThreadsView extends ItemView {
     this.renderCwdChip();
     this.renderTaskCard();
 
-    // Status bar: only show a non-default model override (purely operational info).
-    // Project name lives in the CWD chip now.
-    this.updateStatusContext(thread.model ?? '');
+    // Re-render queue rows in case the thread changed.
+    this.renderQueueRows();
   }
 
   /**
@@ -1411,7 +1411,7 @@ export class ThreadsView extends ItemView {
     this.moreBtn.addClass('ct-summarize-spinning');
 
     const onProgress = (status: string) => {
-      this.showStatusTransient(status);
+      this.showStatusCard('active', status);
     };
 
     try {
@@ -1422,7 +1422,7 @@ export class ThreadsView extends ItemView {
       // message) uses applyAutoTitle which guards against overwriting a user-set name.
       if (result.title) this.manager.renameThread(thread.id, result.title);
       await this.plugin.saveSettings();
-      this.clearTransientStatus();
+      this.clearStatusCard('active');
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1433,7 +1433,7 @@ export class ThreadsView extends ItemView {
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
       console.error('[Claude Threads] summarize error:', err);
-      this.clearTransientStatus();
+      this.clearStatusCard('active');
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');
       this.moreBtn.disabled = false;
@@ -1466,7 +1466,7 @@ export class ThreadsView extends ItemView {
   private createStreamingEl(label = 'Claude is thinking'): void {
     this.streamingEl = this.messagesEl.createDiv('ct-message ct-message-assistant ct-streaming');
     this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
-    this.streamingContentEl.createSpan({ cls: 'ct-thinking-label', text: label + ' ' });
+    this.streamingContentEl.createSpan({ cls: 'ct-thinking-spinner', attr: { 'aria-label': label } });
     this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
   }
 
@@ -1793,7 +1793,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'escalated': {
-        this.showStatusTransient(`⚡ Using ${event.model} for this turn`);
+        this.showModelEscalationTip(`⚡ Using ${event.model} for this turn`);
         break;
       }
 
@@ -1883,11 +1883,14 @@ export class ThreadsView extends ItemView {
       }
 
       case 'queued': {
-        this.updateStatusBar();
+        this.renderQueueRows();
         break;
       }
 
       case 'dequeued': {
+        // Re-render queue rows immediately so the dequeued item disappears from
+        // the list without waiting for the subsequent streaming_start event.
+        this.renderQueueRows();
         const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
         this.pendingUserEl = userEl; // prevent the subsequent 'send' event from creating a duplicate bubble
         const dqContent = userEl.createDiv('ct-message-content');
@@ -1954,9 +1957,9 @@ export class ThreadsView extends ItemView {
 
       case 'status': {
         if (event.status === 'compacting') {
-          this.showStatusTransient('Compacting context...');
+          this.showStatusCard('active', 'Compacting context…');
         } else if (event.status === null) {
-          this.updateStatusBar();
+          this.clearStatusCard('active');
         }
         break;
       }
@@ -2045,7 +2048,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'api_retry': {
-        this.showStatusTransient(`Retrying (${event.attempt}/${event.maxRetries})...`);
+        this.showStatusCard('active', `Retrying (${event.attempt}/${event.maxRetries})…`);
         break;
       }
 
@@ -2055,9 +2058,9 @@ export class ThreadsView extends ItemView {
             ? ` Resets ${new Date(event.resetsAt).toLocaleTimeString()}.`
             : '';
           new Notice(`Rate limit reached.${resetMsg}`, 0);
-          this.showStatusTransient('Rate limited');
+          this.showStatusCard('rateLimit', '⛔ Rate limited', { variant: 'error' });
         } else if (event.limitStatus === 'allowed_warning') {
-          this.showStatusTransient('Approaching rate limit');
+          this.showStatusCard('rateLimit', '⚠ Approaching rate limit', { variant: 'warning' });
         }
         break;
       }
@@ -2105,36 +2108,166 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  // ── Status bar helpers ────────────────────────────────────────────────────
-  // The status bar has two logical layers:
-  //   context  — persistent: GitHub project + model, set on every thread switch
-  //   transient — temporary: queued, retrying, compacting, etc.
-  // Transient overrides context while active; clearing it restores context.
+  // ── Status rail helpers ───────────────────────────────────────────────────
+  // showStatusCard / clearStatusCard: typed cards for persistent states
+  // showEphemeralToast: 2-second auto-dismiss for one-off notices
+  // renderQueueRows: rebuilds the stacked queue rows above the composer
 
-  private showStatusTransient(text: string): void {
-    this.statusTransientText = text;
-    this.statusBar.setText(text);
-  }
-
-  private clearTransientStatus(): void {
-    this.statusTransientText = '';
-    this.statusBar.setText(this.statusContextText);
-  }
-
-  private updateStatusContext(text: string): void {
-    this.statusContextText = text;
-    if (!this.statusTransientText) {
-      this.statusBar.setText(text);
+  /**
+   * Show or replace a typed status card in the rail.
+   * type 'active': blue card with a CSS spinner (compacting, retrying, summarizing)
+   * type 'rateLimit': colored warning/error card for rate-limit states
+   */
+  private showStatusCard(
+    type: 'active' | 'rateLimit',
+    text: string,
+    opts?: { variant?: 'warning' | 'error' },
+  ): void {
+    if (type === 'active') {
+      this.activeWorkCardEl?.remove();
+      const card = this.statusRailEl.createDiv('ct-status-card ct-status-card-active');
+      card.createSpan({ cls: 'ct-status-card-spinner' });
+      card.createSpan({ cls: 'ct-status-card-text', text });
+      this.activeWorkCardEl = card;
+    } else {
+      this.rateLimitCardEl?.remove();
+      const variant = opts?.variant ?? 'warning';
+      const card = this.statusRailEl.createDiv(
+        `ct-status-card ct-status-card-${variant}`,
+      );
+      card.createSpan({ cls: 'ct-status-card-text', text });
+      this.rateLimitCardEl = card;
     }
+  }
+
+  private clearStatusCard(type: 'active' | 'rateLimit'): void {
+    if (type === 'active') {
+      this.activeWorkCardEl?.remove();
+      this.activeWorkCardEl = null;
+    } else {
+      this.rateLimitCardEl?.remove();
+      this.rateLimitCardEl = null;
+    }
+  }
+
+  /**
+   * Show a transient popover tip above the model button when the session
+   * escalates to a different model for a turn. Positions absolutely off the
+   * button so it causes zero layout shift. Self-removes when the CSS
+   * animation finishes (~3 s total).
+   */
+  private showModelEscalationTip(text: string): void {
+    if (!this.modelBtn) return;
+    // Remove any in-flight tip before showing a new one.
+    this.modelBtn.querySelector('.ct-escalation-tip')?.remove();
+    const tip = this.modelBtn.createDiv('ct-escalation-tip');
+    tip.setText(text);
+    tip.addEventListener('animationend', () => tip.remove(), { once: true });
+  }
+
+  /** Rebuild the stacked queue rows. */
+  private renderQueueRows(): void {
+    if (!this.queueRowsEl || !this.activeThreadId) {
+      this.queueRowsEl?.addClass('ct-hidden');
+      return;
+    }
+    const msgs = this.manager.getQueuedMessages(this.activeThreadId);
+    this.queueRowsEl.empty();
+    if (msgs.length === 0) {
+      this.queueRowsEl.addClass('ct-hidden');
+      return;
+    }
+    this.queueRowsEl.removeClass('ct-hidden');
+
+    const MAX_VISIBLE = 3;
+    const visible = msgs.length <= MAX_VISIBLE ? msgs : msgs.slice(0, MAX_VISIBLE);
+
+    visible.forEach((msg, i) => {
+      const row = this.queueRowsEl.createDiv('ct-queue-row');
+
+      // × delete button
+      const del = row.createEl('button', { cls: 'ct-queue-row-delete', text: '×', attr: { title: 'Remove' } });
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!this.activeThreadId) return;
+        this.manager.removeQueuedMessageAt(this.activeThreadId, i);
+        this.renderQueueRows();
+      });
+
+      // preview text
+      const preview = msg.text.length > 60 ? msg.text.slice(0, 60) + '…' : msg.text;
+      const previewEl = row.createSpan({ cls: 'ct-queue-row-preview', text: preview || '(empty)' });
+
+      // 📎 if has images
+      if (msg.images && msg.images.length > 0) {
+        row.createSpan({ cls: 'ct-queue-row-attach', text: ' 📎' });
+      }
+
+      // click row body → pull into composer (B2)
+      previewEl.addEventListener('click', () => this.pullQueuedIntoComposer(i));
+      row.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.ct-queue-row-delete')) return;
+        this.pullQueuedIntoComposer(i);
+      });
+    });
+
+    // "+N more" row
+    if (msgs.length > MAX_VISIBLE) {
+      const extra = msgs.length - MAX_VISIBLE;
+      const more = this.queueRowsEl.createDiv('ct-queue-more');
+      more.setText(`+${extra} more queued`);
+    }
+  }
+
+  /**
+   * Pull a queued message at the given index into the composer (B2).
+   * If the composer has content, insert an inline confirm row first.
+   */
+  private pullQueuedIntoComposer(index: number): void {
+    if (!this.activeThreadId) return;
+    const msgs = this.manager.getQueuedMessages(this.activeThreadId);
+    const msg = msgs[index];
+    if (!msg) return;
+
+    const currentText = this.dispatchInput?.getValue()?.trim() ?? '';
+    const doLoad = () => {
+      if (!this.activeThreadId) return;
+      this.manager.removeQueuedMessageAt(this.activeThreadId, index);
+      this.dispatchInput?.setValue(msg.text);
+      if (msg.images && msg.images.length > 0) {
+        this.dispatchInput?.setPendingImages(msg.images);
+      }
+      this.renderQueueRows();
+      this.dispatchInput?.focus();
+    };
+
+    if (!currentText) {
+      doLoad();
+      return;
+    }
+
+    // Show inline confirm row
+    // Remove any existing confirm row
+    this.queueRowsEl.querySelector('.ct-queue-confirm')?.remove();
+    const row = this.queueRowsEl.querySelectorAll('.ct-queue-row')[index];
+    if (!row) { doLoad(); return; }
+
+    const confirm = this.queueRowsEl.createDiv('ct-queue-confirm');
+    confirm.createSpan({ text: 'Replace draft?' });
+    const yes = confirm.createEl('button', { cls: 'ct-queue-confirm-yes', text: 'Yes' });
+    const no = confirm.createEl('button', { cls: 'ct-queue-confirm-no', text: 'Cancel' });
+    yes.addEventListener('click', () => { confirm.remove(); doLoad(); });
+    no.addEventListener('click', () => confirm.remove());
+    row.after(confirm);
   }
 
   private setRunningState(running: boolean): void {
     this.dispatchInput?.setStreaming(running);
-    if (running) {
-      this.updateStatusBar();
-    } else {
-      this.clearTransientStatus();
+    if (!running) {
+      this.clearStatusCard('active');
     }
+    // Queue rows should always reflect current queue state.
+    this.renderQueueRows();
     // A running thread can't simultaneously be waiting on a wake-up.
     this.refreshWakeupBanner();
   }
@@ -2201,19 +2334,6 @@ export class ThreadsView extends ItemView {
     }
     if (this.wakeupCountdownEl) {
       this.wakeupCountdownEl.setText(formatWakeupCountdown(next.fireAt));
-    }
-  }
-
-  private updateStatusBar(): void {
-    if (!this.activeThreadId) return;
-    const queued = this.manager.getQueuedMessage(this.activeThreadId);
-    const count = this.manager.getQueuedCount(this.activeThreadId);
-    if (queued) {
-      const preview = queued.length > 40 ? queued.slice(0, 40) + '…' : queued;
-      const countSuffix = count > 1 ? ` (+${count - 1} more)` : '';
-      this.showStatusTransient(`Queued: "${preview}"${countSuffix}`);
-    } else {
-      this.clearTransientStatus();
     }
   }
 
