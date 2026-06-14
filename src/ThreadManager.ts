@@ -20,7 +20,8 @@ export type ThreadEvent =
   | { type: 'dequeued'; text: string; images?: ImageAttachment[] }
   | { type: 'status'; status: 'compacting' | 'requesting' | null }
   | { type: 'compact'; message: ChatMessage }
-  | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean }
+  | { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean; taskType?: string; workflowName?: string; subagentType?: string }
+  | { type: 'task_updated'; taskId: string; status?: string; description?: string; error?: string }
   | { type: 'task_progress'; taskId: string; description: string; lastToolName?: string }
   | { type: 'task_notification'; taskId: string; status: 'completed' | 'failed' | 'stopped'; summary: string }
   | { type: 'background_tasks_pending'; tasks: PendingBackgroundTask[] }
@@ -749,14 +750,17 @@ export class ThreadManager {
           thread.updatedAt = Date.now();
           this.emit(threadId, { type: 'compact', message: compactMsg });
         },
-        onTaskStarted: (taskId, description, skipTranscript) => {
+        onTaskStarted: (taskId, description, skipTranscript, taskType, workflowName, subagentType) => {
           this.threadActivity.set(threadId, description);
           // Background tasks use skipTranscript=true. Track them so we can detect
           // if they're still running when the session ends.
           if (skipTranscript) {
             activeBgTasks.set(taskId, { description, startedAt: Date.now() });
           }
-          this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript });
+          this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript, taskType, workflowName, subagentType });
+        },
+        onTaskUpdated: (taskId, patch) => {
+          this.emit(threadId, { type: 'task_updated', taskId, ...patch });
         },
         onTaskProgress: (taskId, description, lastToolName) => {
           const suffix = lastToolName ? ` · ${lastToolName}` : '';

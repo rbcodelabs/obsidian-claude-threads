@@ -476,6 +476,84 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('subagent-task-pill.png', { fullPage: true });
   });
 
+  test('workflow progress block while running', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+
+    // Simulate the workflow block DOM that task_started (local_workflow) produces,
+    // followed by two sub-agent rows (one running, one done).
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['createStreamingEl']('Sub-agent working');
+
+      const block = document.createElement('div');
+      block.className = 'ct-workflow-block';
+
+      // Header
+      const header = document.createElement('div');
+      header.className = 'ct-workflow-header';
+      const iconEl = document.createElement('span');
+      iconEl.className = 'ct-workflow-icon';
+      iconEl.textContent = '⑂';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'ct-workflow-name';
+      nameEl.textContent = 'review-changes';
+      const phaseEl = document.createElement('span');
+      phaseEl.className = 'ct-workflow-phase';
+      phaseEl.textContent = ' · Review';
+      header.append(iconEl, nameEl, phaseEl);
+
+      // Agent list
+      const agentList = document.createElement('div');
+      agentList.className = 'ct-workflow-agents';
+
+      // Running agent
+      const row1 = document.createElement('div');
+      row1.className = 'ct-workflow-agent-row ct-workflow-agent-running';
+      const dot1 = document.createElement('span');
+      dot1.className = 'ct-workflow-agent-dot';
+      dot1.textContent = '●';
+      const desc1 = document.createElement('span');
+      desc1.className = 'ct-workflow-agent-desc';
+      desc1.textContent = 'Review for bugs · Bash (4s)';
+      row1.append(dot1, desc1);
+
+      // Done agent
+      const row2 = document.createElement('div');
+      row2.className = 'ct-workflow-agent-row ct-workflow-agent-done';
+      const dot2 = document.createElement('span');
+      dot2.className = 'ct-workflow-agent-dot';
+      dot2.textContent = '✔';
+      const desc2 = document.createElement('span');
+      desc2.className = 'ct-workflow-agent-desc';
+      desc2.textContent = 'No security issues found';
+      row2.append(dot2, desc2);
+
+      agentList.append(row1, row2);
+      block.append(header, agentList);
+      view['streamingEl'].appendChild(block);
+      view['scrollToBottom']();
+    });
+
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('workflow-block-running.png', { fullPage: true });
+
+    // Simulate workflow completion
+    await page.evaluate(() => {
+      const block = document.querySelector('.ct-workflow-block');
+      if (block) {
+        block.classList.add('ct-workflow-done');
+        const phase = block.querySelector('.ct-workflow-phase');
+        if (phase) phase.textContent = ' · Done';
+      }
+    });
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('workflow-block-done.png', { fullPage: true });
+  });
+
   test('task list card', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

@@ -1019,6 +1019,118 @@
   color: var(--color-red);
 }
 
+/* ── Workflow progress block ─────────────────────────────────────────────── */
+
+.ct-workflow-block {
+  margin: 4px 0 6px 0;
+  border-left: 2px solid var(--interactive-accent);
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--interactive-accent) 4%, transparent);
+  padding: 6px 8px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-workflow-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--interactive-accent);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.ct-workflow-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.ct-workflow-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ct-workflow-name {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+}
+
+.ct-workflow-phase {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.9em;
+}
+
+.ct-workflow-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ct-workflow-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 0;
+  color: var(--text-muted);
+}
+
+.ct-workflow-agent-dot {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 12px;
+}
+.ct-workflow-agent-dot svg {
+  width: 10px;
+  height: 10px;
+}
+
+.ct-workflow-agent-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Running agent: pulsing dot */
+.ct-workflow-agent-running .ct-workflow-agent-dot {
+  color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
+  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+/* Completed agent */
+.ct-workflow-agent-done .ct-workflow-agent-dot {
+  color: var(--color-green);
+}
+.ct-workflow-agent-done .ct-workflow-agent-desc {
+  color: var(--text-faint);
+}
+
+/* Failed agent */
+.ct-workflow-agent-failed .ct-workflow-agent-dot {
+  color: var(--color-red);
+}
+.ct-workflow-agent-failed .ct-workflow-agent-desc {
+  color: var(--text-faint);
+}
+
+/* Terminal states for the whole block */
+.ct-workflow-done {
+  border-left-color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 4%, transparent);
+}
+.ct-workflow-done .ct-workflow-header {
+  color: var(--color-green);
+}
+
+.ct-workflow-failed {
+  border-left-color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 4%, transparent);
+}
+.ct-workflow-failed .ct-workflow-header {
+  color: var(--color-red);
+}
+
 /* Cost label */
 .ct-message-footer {
   display: flex;

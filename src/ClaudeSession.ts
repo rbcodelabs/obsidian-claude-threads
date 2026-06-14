@@ -33,7 +33,8 @@ export interface SessionCallbacks {
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
   onStatus?: (status: 'compacting' | 'requesting' | null) => void;
   onCompact?: (trigger: 'auto' | 'manual', preTokens: number) => void;
-  onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean) => void;
+  onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean, taskType?: string, workflowName?: string, subagentType?: string) => void;
+  onTaskUpdated?: (taskId: string, patch: { status?: string; description?: string; error?: string }) => void;
   onTaskProgress?: (taskId: string, description: string, lastToolName?: string) => void;
   onTaskNotification?: (taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) => void;
   onNotification?: (text: string, priority: 'low' | 'medium' | 'high' | 'immediate') => void;
@@ -296,8 +297,23 @@ export class ClaudeSession {
                   sys.task_id as string,
                   sys.description as string,
                   !!(sys.skip_transcript),
+                  sys.task_type as string | undefined,
+                  sys.workflow_name as string | undefined,
+                  sys.subagent_type as string | undefined,
                 );
                 break;
+              case 'task_updated': {
+                const patch = sys.patch as Record<string, unknown>;
+                callbacks.onTaskUpdated?.(
+                  sys.task_id as string,
+                  {
+                    status: patch.status as string | undefined,
+                    description: patch.description as string | undefined,
+                    error: patch.error as string | undefined,
+                  }
+                );
+                break;
+              }
               case 'task_progress':
                 callbacks.onTaskProgress?.(
                   sys.task_id as string,
