@@ -242,6 +242,9 @@ export class KanbanView extends ItemView {
   }
 
   render(): void {
+    const scrollLeft = this.boardEl.scrollLeft;
+    const scrollTop = this.boardEl.scrollTop;
+
     this.boardEl.empty();
     this.activityEls.clear();
     this.timeEls.clear();
@@ -277,6 +280,9 @@ export class KanbanView extends ItemView {
 
     const runningCount = threads.filter(t => this.manager.isRunning(t.id)).length;
     this.updateHeader(threads.length, runningCount);
+
+    this.boardEl.scrollLeft = scrollLeft;
+    this.boardEl.scrollTop = scrollTop;
   }
 
   /**
