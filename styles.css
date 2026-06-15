@@ -5076,9 +5076,34 @@ textarea.ct-settings-wide-input {
   transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
-/* — Meta strip (KanbanView: running/total count + group-by + search) ─────── */
-/* Zero padding AND border-width (color alone still leaves a 1px gap)         */
-.ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta {
+/* — Status line pills row (ThreadsView: branch / PR / dev-URL footer) ──────── */
+/* ct-context-footer has padding: 4px 10px AND min-height: 26px — must zero both */
+.ct-floating-panel.ct-panel-collapsible .ct-context-footer:not(.ct-hidden) {
+  max-height: 0;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, min-height 0.2s ease, padding 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-floating-panel.ct-panel-collapsible:hover .ct-context-footer:not(.ct-hidden),
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-context-footer:not(.ct-hidden) {
+  max-height: 60px;
+  min-height: 26px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, min-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Meta strip (KanbanView + AgentDashboard: thread count + search/actions) ─ */
+/* Zero padding AND border-width (color alone still leaves a 1px gap)          */
+.ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta,
+.ct-agents-floating-panel.ct-panel-collapsible .ct-agents-panel-meta {
   max-height: 0;
   padding-top: 0;
   padding-bottom: 0;
@@ -5090,7 +5115,9 @@ textarea.ct-settings-wide-input {
 }
 
 .ct-kanban-dispatch.ct-panel-collapsible:hover .ct-agents-panel-meta,
-.ct-kanban-dispatch.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
+.ct-kanban-dispatch.ct-panel-collapsible:focus-within .ct-agents-panel-meta,
+.ct-agents-floating-panel.ct-panel-collapsible:hover .ct-agents-panel-meta,
+.ct-agents-floating-panel.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
   max-height: 50px;
   padding-top: 6px;
   padding-bottom: 6px;
