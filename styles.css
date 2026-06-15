@@ -5037,8 +5037,8 @@ textarea.ct-settings-wide-input {
   transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
-/* — Status rail (ThreadsView: branch / file / status pills) ─────────────── */
-.ct-floating-panel.ct-panel-collapsible .ct-status-rail:not(:empty) {
+/* — Status rail (ThreadsView: active-work / tool status pills) ──────────── */
+.ct-floating-panel.ct-panel-collapsible .ct-status-rail {
   max-height: 0;
   overflow: hidden;
   opacity: 0;
@@ -5046,29 +5046,58 @@ textarea.ct-settings-wide-input {
   transition: max-height 0.2s ease, opacity 0.16s ease;
 }
 
-.ct-floating-panel.ct-panel-collapsible:hover .ct-status-rail:not(:empty),
-.ct-floating-panel.ct-panel-collapsible:focus-within .ct-status-rail:not(:empty) {
+.ct-floating-panel.ct-panel-collapsible:hover .ct-status-rail,
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-status-rail {
   max-height: 120px;
   opacity: 1;
   pointer-events: auto;
   transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
-/* — Meta strip (KanbanView: running/total count + group-by + search) ─────── */
-.ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta {
+/* — Edited-files chips (ThreadsView: file edit chips above input) ─────────── */
+/* ct-edited-files has padding: 4px 8px — must zero it out alongside max-height */
+.ct-floating-panel.ct-panel-collapsible .ct-edited-files:not(.ct-hidden) {
   max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
-  transition: max-height 0.2s ease, opacity 0.16s ease;
+  transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-floating-panel.ct-panel-collapsible:hover .ct-edited-files:not(.ct-hidden),
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-edited-files:not(.ct-hidden) {
+  max-height: 50px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Meta strip (KanbanView: running/total count + group-by + search) ─────── */
+/* Zero padding AND border-width (color alone still leaves a 1px gap)         */
+.ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, padding 0.2s ease, border-width 0.2s ease, opacity 0.16s ease;
 }
 
 .ct-kanban-dispatch.ct-panel-collapsible:hover .ct-agents-panel-meta,
 .ct-kanban-dispatch.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
   max-height: 50px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom-width: 1px;
   opacity: 1;
   pointer-events: auto;
-  transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+  transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, border-width 0.2s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
 /* — Soften border + shadow when collapsed ───────────────────────────────── */
