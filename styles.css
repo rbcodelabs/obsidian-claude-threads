@@ -5133,6 +5133,15 @@ textarea.ct-settings-wide-input {
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 
+/* — Hide the context-zone divider line when everything inside is collapsed ── */
+/* ct-panel-context shows border-bottom via :has() whenever a child is present  */
+/* in the DOM (even if max-height:0 / opacity:0). Suppress it at rest so the   */
+/* panel doesn't show a double-line between the ghost context and the input.    */
+.ct-floating-panel.ct-panel-collapsible:not(:hover):not(:focus-within) .ct-panel-context {
+  border-bottom-color: transparent;
+  transition: border-color 0.2s ease;
+}
+
 .ct-kanban-dispatch.ct-panel-collapsible:not(:hover):not(:focus-within) {
   border-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
