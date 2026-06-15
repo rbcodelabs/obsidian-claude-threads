@@ -25,6 +25,17 @@ describe('openUrlPreferringWebViewer', () => {
     expect(setViewState).not.toHaveBeenCalled();
   });
 
+  it('forces the system browser (Cmd/Ctrl-click) even with a Web Viewer tab open', () => {
+    // Cmd-click maps to webViewerEnabled:false; it must NOT reuse an open viewer tab.
+    const { app, setViewState, ws } = fakeApp({ existingWebviewer: true });
+    const openExternal = vi.fn();
+    const path = openUrlPreferringWebViewer(app, 'https://x/pull/9', { webViewerEnabled: false, openExternal });
+    expect(path).toBe('external');
+    expect(openExternal).toHaveBeenCalledWith('https://x/pull/9');
+    expect(setViewState).not.toHaveBeenCalled();
+    expect(ws.getLeavesOfType).not.toHaveBeenCalled();
+  });
+
   it('opens in the Web Viewer when enabled (new tab) and does not open externally', () => {
     const { app, setViewState, reveal, ws } = fakeApp({ existingWebviewer: false });
     const openExternal = vi.fn();

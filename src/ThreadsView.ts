@@ -817,7 +817,10 @@ export class ThreadsView extends ItemView {
       link.title = url;
       link.addEventListener('click', (e) => {
         e.preventDefault();
-        this.openLink(url);
+        // Cmd-click (Mac) / Ctrl-click (other) forces the system browser even
+        // when the Web Viewer is enabled — matching Obsidian's "open in default
+        // app" modifier convention.
+        this.openLink(url, e.metaKey || e.ctrlKey);
       });
     } else {
       pill.createSpan({ cls: 'ct-footer-pill-text' + toneCls, text: tag.label });
@@ -826,11 +829,12 @@ export class ThreadsView extends ItemView {
 
   /**
    * Open a URL from a status pill — in the Web Viewer when enabled, else the
+   * system browser. When `forceExternal` is set (Cmd/Ctrl-click), always use the
    * system browser. See {@link openUrlPreferringWebViewer}.
    */
-  private openLink(url: string): void {
+  private openLink(url: string, forceExternal = false): void {
     openUrlPreferringWebViewer(this.app, url, {
-      webViewerEnabled: isWebViewerEnabled(this.app),
+      webViewerEnabled: !forceExternal && isWebViewerEnabled(this.app),
       openExternal: (u) => {
         const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
         shell.openExternal(u);
