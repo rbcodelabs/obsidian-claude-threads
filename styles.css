@@ -5076,6 +5076,32 @@ textarea.ct-settings-wide-input {
   transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
+/* — Task list card (ThreadsView: TodoWrite / TaskCreate checklist) ──────────── */
+/* ct-task-card has padding: 6px 10px, margin-bottom: 6px, border: 1px solid   */
+.ct-floating-panel.ct-panel-collapsible .ct-task-card:not(.ct-hidden) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, padding 0.2s ease, margin 0.2s ease, border-width 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-floating-panel.ct-panel-collapsible:hover .ct-task-card:not(.ct-hidden),
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-task-card:not(.ct-hidden) {
+  max-height: 240px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-width: 1px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, margin 0.25s ease 0.05s, border-width 0.2s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
 /* — Status line pills row (ThreadsView: branch / PR / dev-URL footer) ──────── */
 /* ct-context-footer has padding: 4px 10px AND min-height: 26px — must zero both */
 .ct-floating-panel.ct-panel-collapsible .ct-context-footer:not(.ct-hidden) {
