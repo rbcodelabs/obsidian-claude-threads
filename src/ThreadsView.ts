@@ -146,6 +146,8 @@ export class ThreadsView extends ItemView {
   // Task list card (Claude Code's TodoWrite/TaskCreate checklist)
   private taskCardEl: HTMLElement | null = null;
   private taskCardCollapsed = false;
+  /** Thread IDs whose task card has been auto-dismissed after all tasks completed. */
+  private taskCardDismissed = new Set<string>();
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
@@ -1068,6 +1070,15 @@ export class ThreadsView extends ItemView {
       this.taskCardEl.addClass('ct-hidden');
       return;
     }
+    const allDone = tasks.every(t => t.status === 'completed');
+    // If tasks exist but are no longer all done, clear the dismissed flag so the
+    // card reappears (e.g. Claude creates new tasks on the next turn).
+    if (!allDone && this.activeThreadId) this.taskCardDismissed.delete(this.activeThreadId);
+    // Auto-hide after all tasks complete: card dismissed by user moving on.
+    if (allDone && this.activeThreadId && this.taskCardDismissed.has(this.activeThreadId)) {
+      this.taskCardEl.addClass('ct-hidden');
+      return;
+    }
     this.taskCardEl.removeClass('ct-hidden');
 
     const done = tasks.filter(t => t.status === 'completed').length;
@@ -1766,6 +1777,16 @@ export class ThreadsView extends ItemView {
       }
 
       case 'user_message_added': {
+        // Auto-dismiss the task card if all tasks completed on the previous turn.
+        // This hides the checklist the moment the user moves on, rather than
+        // immediately when the last task is ticked — giving them a chance to review.
+        if (this.activeThreadId) {
+          const tasks = this.manager.getThread(this.activeThreadId)?.tasks ?? [];
+          if (tasks.length > 0 && tasks.every(t => t.status === 'completed')) {
+            this.taskCardDismissed.add(this.activeThreadId);
+            this.renderTaskCard();
+          }
+        }
         // Only create the bubble when the message came from an external caller
         // (e.g. the voice plugin). When the message originates from the input box,
         // handleSendMessage() already inserted the bubble synchronously before
