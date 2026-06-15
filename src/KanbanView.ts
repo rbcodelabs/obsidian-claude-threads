@@ -78,7 +78,7 @@ export class KanbanView extends ItemView {
     this.boardEl = root.createDiv('ct-agents-list');
 
     // Floating dispatch panel — centered at bottom of the board
-    const dispatchWrapper = root.createDiv('ct-kanban-dispatch');
+    const dispatchWrapper = root.createDiv('ct-kanban-dispatch ct-panel-collapsible');
 
     // Meta strip: thread count (left) + search button (right)
     const metaRow = dispatchWrapper.createDiv('ct-agents-panel-meta');

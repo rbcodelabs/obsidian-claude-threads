@@ -4976,3 +4976,74 @@ textarea.ct-settings-wide-input {
   padding: 2px 6px;
   font-size: 0.9em;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Collapsible dispatch panels
+   Panels with .ct-panel-collapsible start compact at rest (secondary controls
+   hidden) and reveal their full capability set on hover or :focus-within.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* — Footer row (ThreadsView: attach, mic, model, more, CWD chip) ─────────── */
+.ct-panel-collapsible .ct-input-footer {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-panel-collapsible:hover .ct-input-footer,
+.ct-panel-collapsible:focus-within .ct-input-footer {
+  max-height: 50px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Left actions in inline layout (KanbanView: attach + mic) ────────────── */
+.ct-kanban-dispatch.ct-panel-collapsible .ct-dispatch-left-actions {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-width 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-kanban-dispatch.ct-panel-collapsible:hover .ct-dispatch-left-actions,
+.ct-kanban-dispatch.ct-panel-collapsible:focus-within .ct-dispatch-left-actions {
+  max-width: 80px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-width 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Attach + mic in inputActions column (AgentDashboard: no-footer path) ── */
+.ct-agents-floating-panel.ct-panel-collapsible .ct-input-actions .ct-agents-dispatch-attach-btn,
+.ct-agents-floating-panel.ct-panel-collapsible .ct-input-actions .ct-mic-btn {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-agents-floating-panel.ct-panel-collapsible:hover .ct-input-actions .ct-agents-dispatch-attach-btn,
+.ct-agents-floating-panel.ct-panel-collapsible:hover .ct-input-actions .ct-mic-btn,
+.ct-agents-floating-panel.ct-panel-collapsible:focus-within .ct-input-actions .ct-agents-dispatch-attach-btn,
+.ct-agents-floating-panel.ct-panel-collapsible:focus-within .ct-input-actions .ct-mic-btn {
+  max-height: 30px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Soften border + shadow when collapsed ───────────────────────────────── */
+.ct-floating-panel.ct-panel-collapsible:not(:hover):not(:focus-within) {
+  border-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+
+.ct-kanban-dispatch.ct-panel-collapsible:not(:hover):not(:focus-within) {
+  border-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+}

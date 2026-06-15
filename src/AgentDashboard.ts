@@ -77,7 +77,7 @@ export class AgentDashboard extends ItemView {
     this.listEl = root.createDiv('ct-agents-list');
 
     // Floating panel anchored at the bottom (matches ThreadsView pattern)
-    const panel = root.createDiv('ct-floating-panel ct-agents-floating-panel');
+    const panel = root.createDiv('ct-floating-panel ct-agents-floating-panel ct-panel-collapsible');
 
     // Meta strip: thread count (left) + action buttons (right)
     const metaRow = panel.createDiv('ct-agents-panel-meta');

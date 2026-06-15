@@ -447,7 +447,7 @@ export class ThreadsView extends ItemView {
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
     const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
-    const floatingPanel = panelWrapper.createDiv('ct-floating-panel');
+    const floatingPanel = panelWrapper.createDiv('ct-floating-panel ct-panel-collapsible');
     this.floatingPanelEl = floatingPanel;
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
