@@ -633,12 +633,15 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
   );
 
   // ── Worktree tools ──────────────────────────────────────────────────────────
-  // These replace the built-in EnterWorktree / ExitWorktree SDK tools for
-  // sessions running inside the Obsidian plugin.  The SDK's built-in tools use
-  // the frozen OS-level subprocess cwd (set at session start), so they always
-  // operate on whatever repo was active when the thread was created — usually
-  // the vault root.  These MCP versions read effectiveCwd instead, which is
-  // updated immediately whenever set_working_directory is called.
+  // The SDK's built-in EnterWorktree / ExitWorktree tools use the frozen
+  // OS-level subprocess cwd (set at session start), so they always operate on
+  // whatever repo was active when the thread was created — usually the vault
+  // root.  These MCP versions read effectiveCwd instead, which is updated
+  // immediately whenever set_working_directory is called.
+  //
+  // ClaudeSession wires Options.toolAliases so that any EnterWorktree /
+  // ExitWorktree call the model emits is automatically routed here — callers
+  // can use either name.
 
   const boundEnterWorktree = tool(
     'enter_worktree',
@@ -647,7 +650,6 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       'The worktree is an isolated copy of the repo on a new branch — changes there do not affect the main checkout.',
       'After this call the session cwd is updated to the worktree path (takes effect next turn).',
       'Use exit_worktree to remove the worktree and restore the original repo path.',
-      'Use this instead of the built-in EnterWorktree tool when running inside the Obsidian plugin.',
     ].join(' '),
     {
       branch: z.string().optional().describe(
@@ -747,7 +749,6 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     [
       'Removes a git worktree created by enter_worktree and restores the session working directory to the original repo root.',
       'If no path is provided, removes the current effective working directory if it is a tracked worktree.',
-      'Use this instead of the built-in ExitWorktree tool when running inside the Obsidian plugin.',
     ].join(' '),
     {
       worktreePath: z.string().optional().describe(

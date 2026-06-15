@@ -128,6 +128,13 @@ export class ClaudeSession {
       console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
     }
     if (disallowedTools?.length) options.disallowedTools = disallowedTools;
+    // Route the built-in EnterWorktree / ExitWorktree SDK tools to the plugin's
+    // MCP versions, which read effectiveCwd (updated by set_working_directory)
+    // rather than the frozen OS-level subprocess cwd.
+    options.toolAliases = {
+      EnterWorktree: 'mcp__obsidian__enter_worktree',
+      ExitWorktree: 'mcp__obsidian__exit_worktree',
+    };
 
     debugLog('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
