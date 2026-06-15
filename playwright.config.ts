@@ -3,6 +3,11 @@ import path from 'path';
 
 export default defineConfig({
   testDir: './test/screenshots',
+  // One worker so all screenshot tests share the same GPU context.  Parallel
+  // Chromium workers produce consistent-but-diverging subpixel antialiasing
+  // (~18 000 pixel delta per run) that defeats the tight maxDiffPixels: 25
+  // tolerance below.  Wall-clock cost is negligible — tests average <1 s each.
+  workers: 1,
   use: {
     viewport: { width: 420, height: 740 },
     deviceScaleFactor: 2,
