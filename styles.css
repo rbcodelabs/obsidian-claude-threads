@@ -5037,6 +5037,40 @@ textarea.ct-settings-wide-input {
   transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
+/* — Status rail (ThreadsView: branch / file / status pills) ─────────────── */
+.ct-floating-panel.ct-panel-collapsible .ct-status-rail:not(:empty) {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-floating-panel.ct-panel-collapsible:hover .ct-status-rail:not(:empty),
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-status-rail:not(:empty) {
+  max-height: 120px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* — Meta strip (KanbanView: running/total count + group-by + search) ─────── */
+.ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-kanban-dispatch.ct-panel-collapsible:hover .ct-agents-panel-meta,
+.ct-kanban-dispatch.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
+  max-height: 50px;
+  opacity: 1;
+  pointer-events: auto;
+  transition: max-height 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
 /* — Soften border + shadow when collapsed ───────────────────────────────── */
 .ct-floating-panel.ct-panel-collapsible:not(:hover):not(:focus-within) {
   border-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
