@@ -48,6 +48,10 @@ export class ThreadsView extends ItemView {
   private editedFilesEl!: HTMLElement;
   /** Small badge shown in the title bar when the active thread is ephemeral. */
   private ephemeralBadgeEl!: HTMLSpanElement;
+  /** Models discovered from the active session via supportedModels(). */
+  private discoveredModels: import('@anthropic-ai/claude-agent-sdk').ModelInfo[] = [];
+  /** Agents discovered from the active session via supportedAgents(). */
+  private discoveredAgents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] = [];
 
   // Shared dispatch input component
   private dispatchInput!: DispatchInput;
@@ -1809,6 +1813,68 @@ export class ThreadsView extends ItemView {
     return card;
   }
 
+  /**
+   * Renders a context usage breakdown card in the message stream.
+   * Shown in response to the /context slash command.
+   */
+  private renderContextUsageCard(
+    usage: import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-context-usage-card');
+
+    const header = card.createDiv('ct-context-usage-header');
+    const iconEl = header.createSpan('ct-context-usage-icon');
+    setIcon(iconEl, 'layers');
+    header.createSpan({ cls: 'ct-context-usage-title', text: 'Context usage' });
+    const pct = usage.percentage.toFixed(1);
+    header.createSpan({
+      cls: 'ct-context-usage-pct',
+      text: `${usage.totalTokens.toLocaleString()} / ${usage.maxTokens.toLocaleString()} tokens (${pct}%)`,
+    });
+
+    const bar = card.createDiv('ct-context-usage-bar');
+    let offset = 0;
+    for (const cat of usage.categories) {
+      if (cat.tokens <= 0) continue;
+      const catPct = (cat.tokens / usage.maxTokens) * 100;
+      const seg = bar.createDiv('ct-context-usage-seg');
+      seg.style.width = `${catPct}%`;
+      seg.style.backgroundColor = cat.color;
+      seg.title = `${cat.name}: ${cat.tokens.toLocaleString()}`;
+      offset += catPct;
+    }
+    void offset; // suppress unused warning
+
+    const list = card.createDiv('ct-context-usage-list');
+    for (const cat of usage.categories) {
+      if (cat.tokens <= 0) continue;
+      const row = list.createDiv('ct-context-usage-row');
+      const dot = row.createSpan('ct-context-usage-dot');
+      dot.style.backgroundColor = cat.color;
+      row.createSpan({ cls: 'ct-context-usage-name', text: cat.name });
+      row.createSpan({
+        cls: 'ct-context-usage-tokens',
+        text: `${cat.tokens.toLocaleString()} tokens`,
+      });
+    }
+
+    // Show available agents from last capabilities discovery
+    if (this.discoveredAgents.length > 0) {
+      const agentSection = card.createDiv('ct-context-usage-agents');
+      agentSection.createEl('h4', { cls: 'ct-context-usage-section-title', text: 'Available agents' });
+      for (const agent of this.discoveredAgents) {
+        const row = agentSection.createDiv('ct-context-usage-agent-row');
+        row.createSpan({ cls: 'ct-context-usage-agent-name', text: agent.name });
+        if (agent.description) {
+          row.createSpan({ cls: 'ct-context-usage-agent-desc', text: agent.description });
+        }
+      }
+    }
+
+    this.scrollToBottom();
+  }
+
   private clearStreamingState(): void {
     if (this.streamingRenderTimer !== null) {
       clearTimeout(this.streamingRenderTimer);
@@ -2383,6 +2449,14 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'capabilities_discovered': {
+        // Dynamically extend the model selector with models discovered from the active session.
+        // Store for later so /context can reference agent names too.
+        this.discoveredModels = event.models;
+        this.discoveredAgents = event.agents;
+        break;
+      }
+
       case 'enter_plan_mode': {
         // Show a "Planning..." status card so the user knows Claude is in read-only planning mode.
         this.showStatusCard('active', 'Planning...');
@@ -2791,6 +2865,17 @@ export class ThreadsView extends ItemView {
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
       await this.forkThread(this.activeThreadId!, focusArea || undefined);
+      return;
+    }
+
+    // /context — show context window usage breakdown for the active session.
+    if (/^\/context$/i.test(typed.trim())) {
+      const usage = await this.manager.getContextUsage(this.activeThreadId);
+      if (!usage) {
+        this.showCommandDivider('No active session — start a conversation first.');
+      } else {
+        this.renderContextUsageCard(usage);
+      }
       return;
     }
 

@@ -85,6 +85,14 @@ export interface SessionCallbacks {
    * - reject() - deny with interrupt, cancelling the session.
    */
   onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => void) => void;
+  /**
+   * Fired once per session after the Query is initialized with the list of
+   * available models and subagent types for this session.
+   */
+  onCapabilitiesDiscovered?: (
+    models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[],
+    agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[],
+  ) => void;
 }
 
 export class ClaudeSession {
@@ -242,6 +250,17 @@ export class ClaudeSession {
       return;
     }
     this.activeQuery = q;
+
+    // Discover supported models and agents once per session init — fire and
+    // forget; failures are non-fatal.
+    if (callbacks.onCapabilitiesDiscovered) {
+      Promise.all([
+        q.supportedModels().catch(() => []),
+        q.supportedAgents().catch(() => []),
+      ]).then(([models, agents]) => {
+        callbacks.onCapabilitiesDiscovered?.(models, agents);
+      }).catch(() => { /* ignore */ });
+    }
 
     // Synthetic boundary marker so each turn is delimited in the raw log and
     // carries the turn's inputs (prompt, cwd, model, resume target).
@@ -597,6 +616,19 @@ export class ClaudeSession {
     if (this.activeQuery) {
       this.activeQuery.close();
       this.activeQuery = null;
+    }
+  }
+
+  /**
+   * Returns a snapshot of current context window usage from the active query.
+   * Returns null when no session is active or the call fails.
+   */
+  async getContextUsage(): Promise<import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse | null> {
+    if (!this.activeQuery) return null;
+    try {
+      return await this.activeQuery.getContextUsage();
+    } catch {
+      return null;
     }
   }
 }

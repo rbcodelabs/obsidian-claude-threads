@@ -51,7 +51,8 @@ export type ThreadEvent =
   | { type: 'git_operation'; summary: string }
   | { type: 'file_user_modified'; filePath: string }
   | { type: 'enter_plan_mode' }
-  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void };
+  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
+  | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -796,6 +797,7 @@ export class ThreadManager {
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
         onPlanReady: (planText, approve, reject) => this.emit(threadId, { type: 'plan_ready', planText, approve, reject }),
+        onCapabilitiesDiscovered: (models, agents) => this.emit(threadId, { type: 'capabilities_discovered', models, agents }),
         onFileUserModified: (filePath) => {
           if (!thread.userModifiedFiles) thread.userModifiedFiles = [];
           if (!thread.userModifiedFiles.includes(filePath)) thread.userModifiedFiles.push(filePath);
@@ -904,6 +906,16 @@ export class ThreadManager {
     }
 
     return opts;
+  }
+
+  /**
+   * Returns a context usage snapshot for the active session on the given thread.
+   * Returns null when no session is running or the SDK call fails.
+   */
+  async getContextUsage(threadId: string): Promise<import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse | null> {
+    const session = this.sessions.get(threadId);
+    if (!session) return null;
+    return session.getContextUsage();
   }
 
   async interrupt(threadId: string): Promise<void> {
