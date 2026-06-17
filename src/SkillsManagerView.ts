@@ -898,7 +898,7 @@ export class SkillsManagerView extends ItemView {
       this.installOutput = 'Copying files…';
       this.renderDetail();
 
-      await fs.promises.cp(skillSrcDir, targetDir, { recursive: true });
+      await copySkillFiles(skillSrcDir, targetDir);
 
       // Remove .git and other dev-only artifacts from root-level installs
       const dotGit = path.join(targetDir, '.git');
@@ -937,6 +937,23 @@ export class SkillsManagerView extends ItemView {
     }
   }
 
+}
+
+// ── Skill Install Helpers ────────────────────────────────────────────────────
+
+/**
+ * Copy a skill's source directory to the target install path.
+ *
+ * `dereference: true` is critical: some skill repos (e.g. nextlevelbuilder/ui-ux-pro-max-skill)
+ * contain `data/` and `scripts/` as intra-repo symlinks. Without dereferencing, those symlinks
+ * would be copied as-is, pointing into the now-deleted temp clone directory and leaving the
+ * installed skill permanently broken.
+ *
+ * Exported so it can be unit-tested without instantiating the full ItemView.
+ */
+export async function copySkillFiles(src: string, dest: string): Promise<void> {
+  const { cp } = await import('fs/promises');
+  await cp(src, dest, { recursive: true, dereference: true });
 }
 
 // ── Skill Discovery ──────────────────────────────────────────────────────────
