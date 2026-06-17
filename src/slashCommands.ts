@@ -19,6 +19,8 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'model', description: 'Set persistent model: /model fable|opus|sonnet|haiku|default' },
   { name: 'goal', description: 'Set a persistent goal for this thread: /goal <text> · /goal clear' },
   { name: 'loop', description: 'Re-run a prompt on an interval: /loop 5m <prompt> · /loop stop' },
+  { name: 'ephemeral', description: 'Mark this thread as ephemeral: sessions will not be persisted to disk' },
+  { name: 'context', description: 'Show current context window usage breakdown' },
 ];
 
 /**

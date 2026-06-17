@@ -41,23 +41,35 @@ export class ThreadsView extends ItemView {
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
+  private permissionModeBtn!: HTMLButtonElement;
   private statusRailEl!: HTMLElement;
   private queueRowsEl!: HTMLElement;
   private activeWorkCardEl: HTMLElement | null = null;
   private rateLimitCardEl: HTMLElement | null = null;
   private editedFilesEl!: HTMLElement;
+  /** Small badge shown in the title bar when the active thread is ephemeral. */
+  private ephemeralBadgeEl!: HTMLSpanElement;
+  /** Models discovered from the active session via supportedModels(). */
+  private discoveredModels: import('@anthropic-ai/claude-agent-sdk').ModelInfo[] = [];
+  /** Agents discovered from the active session via supportedAgents(). */
+  private discoveredAgents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] = [];
 
   // Shared dispatch input component
   private dispatchInput!: DispatchInput;
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
+  // Files where the user modified the proposed content in the permission dialog
+  private userModifiedFilesSet: Set<string> = new Set();
 
   // Debounce timer for persisting per-thread drafts to settings
   private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
+
+  // Active tool pills by tool_use_id for elapsed-time updates from tool_progress events
+  private toolPillsByUseId: Map<string, HTMLElement> = new Map();
 
   // Task start times for elapsed-time display: taskId → epoch ms
   private taskStartTimes: Map<string, number> = new Map();
@@ -150,6 +162,18 @@ export class ThreadsView extends ItemView {
   private taskCardDismissed = new Set<string>();
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
+
+  // Ordered list for the footer permission-mode picker menu.
+  // `value: undefined` means "use the global default" (clears the per-thread override).
+  private static readonly PERMISSION_MODE_OPTIONS: Array<{ label: string; value: import('./types').PluginSettings['permissionMode'] | undefined }> = [
+    { label: 'Global default', value: undefined },
+    { label: 'Prompt for permissions', value: 'default' },
+    { label: 'Accept edits automatically', value: 'acceptEdits' },
+    { label: 'Bypass all permissions', value: 'bypassPermissions' },
+    { label: 'Plan only (read & propose, no execute)', value: 'plan' },
+    { label: 'Silent deny (CI/cron)', value: 'dontAsk' },
+    { label: 'Auto-approve', value: 'auto' },
+  ];
 
   // Ordered list for the footer model switcher menu. `value: undefined` means
   // "use the global default" (clears the per-thread override).
@@ -436,6 +460,8 @@ export class ThreadsView extends ItemView {
       e.stopPropagation();
       if (this.activeThreadId) this.renameThread(this.activeThreadId, this.titleTextEl);
     });
+    this.ephemeralBadgeEl = titleRow.createSpan({ cls: 'ct-ephemeral-badge ct-hidden', text: 'ephemeral' });
+
     this.newThreadBtn = titleRow.createEl('button', { cls: 'ct-tab-new', attr: { title: 'New thread' } });
     setIcon(this.newThreadBtn, 'square-pen');
     this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
@@ -477,6 +503,13 @@ export class ThreadsView extends ItemView {
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterActions: (container) => {
+        this.permissionModeBtn = container.createEl('button', {
+          cls: 'ct-more-btn ct-permission-mode-btn',
+        });
+        setIcon(this.permissionModeBtn, 'shield');
+        this.permissionModeBtn.addEventListener('click', (e) => this.togglePermissionModeMenu(e));
+        this.updatePermissionModeIndicator();
+
         this.modelBtn = container.createEl('button', {
           cls: 'ct-more-btn ct-model-btn',
         });
@@ -563,6 +596,11 @@ export class ThreadsView extends ItemView {
     if (!this.titleTextEl) return;
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     this.titleTextEl.textContent = thread?.title ?? 'Claude Threads';
+
+    // Show the ephemeral badge when the active thread is marked ephemeral
+    if (this.ephemeralBadgeEl) {
+      this.ephemeralBadgeEl.toggleClass('ct-hidden', !thread?.ephemeral);
+    }
 
     const threads = this.manager.getThreads();
     const hasRunning = threads.some(t => t.id !== this.activeThreadId && this.manager.isRunning(t.id));
@@ -657,6 +695,8 @@ export class ThreadsView extends ItemView {
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
     this.updateModelIndicator();
+    this.updatePermissionModeIndicator();
+    this.restorePendingPlanCard();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -853,6 +893,7 @@ export class ThreadsView extends ItemView {
   /** Rebuild the edited-files set from saved thread state for the active thread. */
   private syncEditedFiles(): void {
     this.editedFilesSet.clear();
+    this.userModifiedFilesSet.clear();
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     if (thread) {
       if (thread.editedFiles && thread.editedFiles.length > 0) {
@@ -870,6 +911,9 @@ export class ThreadsView extends ItemView {
             }
           }
         }
+      }
+      for (const filePath of thread.userModifiedFiles ?? []) {
+        this.userModifiedFilesSet.add(filePath);
       }
     }
     this.renderEditedFilesCard();
@@ -938,6 +982,9 @@ export class ThreadsView extends ItemView {
       setIcon(fileIcon, isVaultFile ? 'file-edit' : 'link');
       if (showFull) {
         chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      }
+      if (this.userModifiedFilesSet.has(filePath)) {
+        chip.createSpan({ cls: 'ct-edited-file-chip-modified', text: '✎', attr: { title: 'You modified this file' } });
       }
       setTooltip(chip, tooltipPath);
       chip.addEventListener('click', () => this.openEditedFile(filePath));
@@ -1172,6 +1219,41 @@ export class ThreadsView extends ItemView {
             this.manager.setThreadModel(this.activeThreadId, opt.value);
             await this.plugin.saveSettings();
             this.updateModelIndicator();
+            this.renderThreadInfo();
+          });
+      });
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private currentPermissionMode(): import('./types').PluginSettings['permissionMode'] | undefined {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    return thread?.permissionMode ?? undefined;
+  }
+
+  private updatePermissionModeIndicator(): void {
+    if (!this.permissionModeBtn) return;
+    const mode = this.currentPermissionMode();
+    const opt = ThreadsView.PERMISSION_MODE_OPTIONS.find(o => o.value === mode);
+    const label = opt?.label ?? 'Global default';
+    setTooltip(this.permissionModeBtn, `Permission: ${label} — click to change`);
+    this.permissionModeBtn.toggleClass('ct-permission-mode-btn-active', mode !== undefined);
+  }
+
+  private togglePermissionModeMenu(event: MouseEvent): void {
+    if (!this.activeThreadId) return;
+    const current = this.currentPermissionMode();
+    const menu = new Menu();
+    for (const opt of ThreadsView.PERMISSION_MODE_OPTIONS) {
+      menu.addItem(item => {
+        item
+          .setTitle(opt.label)
+          .setChecked(current === opt.value)
+          .onClick(async () => {
+            if (!this.activeThreadId) return;
+            this.manager.setThreadPermissionMode(this.activeThreadId, opt.value);
+            await this.plugin.saveSettings();
+            this.updatePermissionModeIndicator();
             this.renderThreadInfo();
           });
       });
@@ -1745,6 +1827,330 @@ export class ThreadsView extends ItemView {
     return card;
   }
 
+  /**
+   * Renders the plan approval card shown when Claude calls ExitPlanMode.
+   * The card is anchored to the current streaming element (or messagesEl) so it
+   * sits visually inside the current response turn.
+   * Approve proceeds with implementation; Reject cancels the session with interrupt.
+   * Edit opens a textarea pre-populated with the plan so the user can revise it.
+   */
+  private renderPlanCard(
+    planText: string,
+    approve: (editedPlan?: string) => void,
+    reject: () => void,
+  ): HTMLElement {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-plan-card');
+
+    const header = card.createDiv('ct-plan-header');
+    const iconEl = header.createSpan('ct-plan-icon');
+    setIcon(iconEl, 'map');
+    header.createSpan({ cls: 'ct-plan-label', text: 'Plan ready' });
+
+    // Body: rendered markdown by default; Edit toggles to a textarea.
+    const bodyEl = card.createDiv('ct-plan-body');
+    const mdEl = bodyEl.createDiv('ct-plan-md');
+    // renderMarkdown is async — fire-and-forget; content fills in immediately
+    this.renderMarkdown(planText, mdEl).catch(() => {
+      mdEl.setText(planText);
+    });
+
+    let editing = false;
+    let textarea: HTMLTextAreaElement | null = null;
+
+    const actions = card.createDiv('ct-plan-actions');
+
+    // Snapshot thread ID at card-creation time so the async reject handler
+    // targets the right thread even if the active selection changes.
+    const rejectThreadId = this.activeThreadId;
+    const rejectBtn = actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' });
+    rejectBtn.addEventListener('click', () => {
+      card.remove();
+      reject();
+      // Inject a follow-up turn so Claude acknowledges the rejection and offers
+      // to revise. sendMessage() queues automatically while the session is still
+      // active and fires as a new turn once the denial response lands.
+      if (rejectThreadId) {
+        void this.manager.sendMessage(
+          rejectThreadId,
+          'I rejected the plan. Please ask what changes I\'d like, or suggest alternative approaches.',
+        );
+      }
+    });
+
+    const editBtn = actions.createEl('button', { text: 'Edit', cls: 'ct-plan-btn ct-plan-edit' });
+    editBtn.addEventListener('click', () => {
+      editing = !editing;
+      if (editing) {
+        mdEl.style.display = 'none';
+        textarea = bodyEl.createEl('textarea', { cls: 'ct-plan-textarea' });
+        textarea.value = planText;
+        textarea.focus();
+        editBtn.setText('Cancel');
+      } else {
+        textarea?.remove();
+        textarea = null;
+        mdEl.style.display = '';
+        editBtn.setText('Edit');
+      }
+    });
+
+    const approveBtn = actions.createEl('button', { text: 'Approve', cls: 'ct-plan-btn ct-plan-approve' });
+    approveBtn.addEventListener('click', () => {
+      const edited = editing && textarea ? textarea.value : undefined;
+      card.remove();
+      approve(edited !== undefined && edited !== planText ? edited : undefined);
+    });
+
+    this.scrollToBottom();
+    return card;
+  }
+
+  /**
+   * Re-renders the plan card when focusing a thread that has a pendingPlan.
+   *
+   * Two paths:
+   *  - Live session waiting: the session is still running and blocked on the
+   *    canUseTool promise. We use the stored approve/reject resolvers from
+   *    ThreadManager so the card can still resolve the live callback even though
+   *    the original plan_ready event was fired before the user switched threads.
+   *  - Post-crash restore: the session is gone. Buttons dispatch via sendMessage
+   *    to start a new session turn.
+   *
+   * Safe to call repeatedly — no-ops if the card is already visible or there is
+   * no pending plan for the active thread.
+   */
+  private restorePendingPlanCard(): void {
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (!thread?.pendingPlan) return;
+    // Avoid duplicating the card if it's already visible.
+    if (this.messagesEl.querySelector('.ct-plan-card')) return;
+
+    const planText = thread.pendingPlan;
+    const threadId = this.activeThreadId;
+
+    // Check if a live session is still waiting on this plan (user switched
+    // threads mid-session). If so, use the stored resolvers so the card can
+    // resolve the canUseTool promise directly — sendMessage won't work here
+    // because the session is blocked, not done.
+    const liveResolvers = this.manager.getPendingPlanResolvers(threadId);
+    if (liveResolvers) {
+      // Live path: wire directly to the existing wrapped callbacks.
+      this.renderPlanCard(planText, liveResolvers.approve, liveResolvers.reject);
+      return;
+    }
+
+    // Post-crash / post-reload path: no live session. Dispatch via sendMessage.
+    const clearPlan = () => {
+      this.manager.setThreadPendingPlan(threadId, undefined);
+      void this.plugin.saveSettings();
+    };
+
+    this.renderPlanCard(
+      planText,
+      (editedPlan) => {
+        clearPlan();
+        const effectivePlan = editedPlan ?? planText;
+        const msg = editedPlan && editedPlan !== planText
+          ? `Plan approved with edits. Please proceed with implementation:\n\n${effectivePlan}`
+          : `Plan approved. Please proceed with implementation:\n\n${effectivePlan}`;
+        void this.manager.sendMessage(threadId, msg);
+      },
+      () => {
+        // Reject: just clear the persisted plan. The follow-up sendMessage is
+        // injected by renderPlanCard's reject button handler (same as live path).
+        clearPlan();
+      },
+    );
+  }
+
+  /**
+   * Renders a URL-mode elicitation card. Opens the URL in the system browser
+   * and shows a "Waiting for authentication..." card. When the signal fires
+   * (session interrupted) the card resolves with cancel.
+   */
+  private renderElicitationUrlCard(
+    req: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+    respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-elicitation-card');
+
+    const header = card.createDiv('ct-elicitation-header');
+    const iconEl = header.createSpan('ct-elicitation-icon');
+    setIcon(iconEl, 'external-link');
+    header.createSpan({ cls: 'ct-elicitation-label', text: req.title ?? `${req.serverName}: authentication` });
+
+    const body = card.createDiv('ct-elicitation-body');
+    if (req.message) body.createEl('p', { cls: 'ct-elicitation-message', text: req.message });
+    if (req.description) body.createEl('p', { cls: 'ct-elicitation-desc', text: req.description });
+
+    const actions = card.createDiv('ct-elicitation-actions');
+    const openBtn = actions.createEl('button', { text: 'Open in browser', cls: 'ct-elicitation-btn ct-elicitation-open' });
+    openBtn.addEventListener('click', () => {
+      // Use Obsidian's electron shell or fall back to window.open for mobile
+      const electron = (window as unknown as Record<string, unknown>).electron as { shell?: { openExternal?: (url: string) => void } } | undefined;
+      if (electron?.shell?.openExternal) {
+        electron.shell.openExternal(req.url!);
+      } else {
+        window.open(req.url!, '_blank');
+      }
+    });
+    const waitEl = body.createEl('p', { cls: 'ct-elicitation-waiting', text: 'Waiting for authentication...' });
+    actions.createEl('button', { text: 'Cancel', cls: 'ct-elicitation-btn ct-elicitation-cancel' })
+      .addEventListener('click', () => {
+        card.remove();
+        respond({ action: 'cancel' });
+      });
+
+    // Auto-resolve cancel when the session is interrupted
+    signal.addEventListener('abort', () => {
+      card.remove();
+      respond({ action: 'cancel' });
+    }, { once: true });
+
+    void waitEl; // referenced but only for display
+    this.scrollToBottom();
+  }
+
+  /**
+   * Renders a form-mode elicitation card. Builds input fields from requestedSchema
+   * (JSON Schema object with properties). When submitted, resolves with accept +
+   * the collected field values.
+   */
+  private renderElicitationFormCard(
+    req: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+    respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-elicitation-card');
+
+    const header = card.createDiv('ct-elicitation-header');
+    const iconEl = header.createSpan('ct-elicitation-icon');
+    setIcon(iconEl, 'form-input');
+    header.createSpan({ cls: 'ct-elicitation-label', text: req.title ?? `${req.serverName}: input required` });
+
+    const body = card.createDiv('ct-elicitation-body');
+    if (req.message) body.createEl('p', { cls: 'ct-elicitation-message', text: req.message });
+    if (req.description) body.createEl('p', { cls: 'ct-elicitation-desc', text: req.description });
+
+    // Build input fields from requestedSchema.properties
+    const inputs: Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement> = new Map();
+    const schema = req.requestedSchema as { properties?: Record<string, { type?: string; title?: string; description?: string; enum?: string[] }> } | undefined;
+    const props = schema?.properties ?? {};
+    for (const [key, def] of Object.entries(props)) {
+      const fieldRow = body.createDiv('ct-elicitation-field');
+      const label = fieldRow.createEl('label', { cls: 'ct-elicitation-field-label' });
+      label.textContent = def.title ?? key;
+
+      if (def.enum && def.enum.length > 0) {
+        const sel = fieldRow.createEl('select', { cls: 'ct-elicitation-field-input' });
+        for (const opt of def.enum) {
+          sel.createEl('option', { value: opt, text: opt });
+        }
+        inputs.set(key, sel);
+      } else if (def.type === 'string') {
+        const inp = fieldRow.createEl('input', { cls: 'ct-elicitation-field-input', attr: { type: 'text' } });
+        inputs.set(key, inp);
+      } else {
+        const inp = fieldRow.createEl('input', { cls: 'ct-elicitation-field-input', attr: { type: 'text' } });
+        inputs.set(key, inp);
+      }
+      if (def.description) {
+        fieldRow.createEl('small', { cls: 'ct-elicitation-field-desc', text: def.description });
+      }
+    }
+
+    const actions = card.createDiv('ct-elicitation-actions');
+    actions.createEl('button', { text: 'Cancel', cls: 'ct-elicitation-btn ct-elicitation-cancel' })
+      .addEventListener('click', () => {
+        card.remove();
+        respond({ action: 'cancel' });
+      });
+    actions.createEl('button', { text: 'Submit', cls: 'ct-elicitation-btn ct-elicitation-submit' })
+      .addEventListener('click', () => {
+        const content: Record<string, string> = {};
+        for (const [key, el] of inputs) {
+          content[key] = el.value;
+        }
+        card.remove();
+        respond({ action: 'accept', content });
+      });
+
+    // Auto-resolve cancel when the session is interrupted
+    signal.addEventListener('abort', () => {
+      card.remove();
+      respond({ action: 'cancel' });
+    }, { once: true });
+
+    this.scrollToBottom();
+  }
+
+  /**
+   * Renders a context usage breakdown card in the message stream.
+   * Shown in response to the /context slash command.
+   */
+  private renderContextUsageCard(
+    usage: import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-context-usage-card');
+
+    const header = card.createDiv('ct-context-usage-header');
+    const iconEl = header.createSpan('ct-context-usage-icon');
+    setIcon(iconEl, 'layers');
+    header.createSpan({ cls: 'ct-context-usage-title', text: 'Context usage' });
+    const pct = usage.percentage.toFixed(1);
+    header.createSpan({
+      cls: 'ct-context-usage-pct',
+      text: `${usage.totalTokens.toLocaleString()} / ${usage.maxTokens.toLocaleString()} tokens (${pct}%)`,
+    });
+
+    const bar = card.createDiv('ct-context-usage-bar');
+    let offset = 0;
+    for (const cat of usage.categories) {
+      if (cat.tokens <= 0) continue;
+      const catPct = (cat.tokens / usage.maxTokens) * 100;
+      const seg = bar.createDiv('ct-context-usage-seg');
+      seg.style.width = `${catPct}%`;
+      seg.style.backgroundColor = cat.color;
+      seg.title = `${cat.name}: ${cat.tokens.toLocaleString()}`;
+      offset += catPct;
+    }
+    void offset; // suppress unused warning
+
+    const list = card.createDiv('ct-context-usage-list');
+    for (const cat of usage.categories) {
+      if (cat.tokens <= 0) continue;
+      const row = list.createDiv('ct-context-usage-row');
+      const dot = row.createSpan('ct-context-usage-dot');
+      dot.style.backgroundColor = cat.color;
+      row.createSpan({ cls: 'ct-context-usage-name', text: cat.name });
+      row.createSpan({
+        cls: 'ct-context-usage-tokens',
+        text: `${cat.tokens.toLocaleString()} tokens`,
+      });
+    }
+
+    // Show available agents from last capabilities discovery
+    if (this.discoveredAgents.length > 0) {
+      const agentSection = card.createDiv('ct-context-usage-agents');
+      agentSection.createEl('h4', { cls: 'ct-context-usage-section-title', text: 'Available agents' });
+      for (const agent of this.discoveredAgents) {
+        const row = agentSection.createDiv('ct-context-usage-agent-row');
+        row.createSpan({ cls: 'ct-context-usage-agent-name', text: agent.name });
+        if (agent.description) {
+          row.createSpan({ cls: 'ct-context-usage-agent-desc', text: agent.description });
+        }
+      }
+    }
+
+    this.scrollToBottom();
+  }
+
   private clearStreamingState(): void {
     if (this.streamingRenderTimer !== null) {
       clearTimeout(this.streamingRenderTimer);
@@ -1849,6 +2255,10 @@ export class ThreadsView extends ItemView {
         if (this.streamingEl && !isAgentCall) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
+          if (event.record.toolUseId) {
+            pill.dataset.toolUseId = event.record.toolUseId;
+            this.toolPillsByUseId.set(event.record.toolUseId, pill);
+          }
           const iconEl = document.createElement('span');
           iconEl.className = 'ct-tool-pill-icon';
           setIcon(iconEl, getToolIcon(event.record.name));
@@ -1951,6 +2361,7 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;
@@ -1977,6 +2388,7 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;
@@ -2182,8 +2594,27 @@ export class ThreadsView extends ItemView {
       }
 
       case 'task_updated': {
-        // Status patches — primarily useful for workflow sub-agents completing/failing
-        // before task_notification arrives. No-op for now; task_notification handles terminal states.
+        // Apply status/description patches to the live task pill when present.
+        // task_notification handles terminal states, but task_updated can arrive
+        // first for workflow sub-agents or when backgrounded tasks resume.
+        const updatedPill = this.taskPills.get(event.taskId);
+        if (updatedPill) {
+          if (event.description) {
+            const label = updatedPill.querySelector('.ct-tool-pill-text');
+            if (label) label.textContent = event.description;
+          }
+          if (event.error) {
+            updatedPill.classList.add('ct-task-failed');
+            updatedPill.classList.remove('ct-tool-active');
+            const iconEl = updatedPill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+            if (iconEl) setIcon(iconEl, 'x-circle');
+          } else if (event.status === 'completed') {
+            updatedPill.classList.add('ct-task-done');
+            updatedPill.classList.remove('ct-tool-active');
+            const iconEl = updatedPill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+            if (iconEl) setIcon(iconEl, 'check-circle');
+          }
+        }
         break;
       }
 
@@ -2232,10 +2663,104 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'model_fallback': {
+        new Notice(`Claude switched to ${event.toModel} (${event.trigger})`, 5000);
+        break;
+      }
+
+      case 'tool_progress': {
+        // Update the elapsed-time label on the active pill for this tool_use_id.
+        const pill = this.toolPillsByUseId.get(event.toolUseId);
+        if (pill) {
+          const secs = Math.round(event.elapsedSeconds);
+          const label = pill.querySelector<HTMLElement>('.ct-tool-pill-name');
+          if (label) {
+            label.textContent = `${formatToolName(event.toolName)} (${secs}s)`;
+          }
+        }
+        break;
+      }
+
+      case 'memory_recall': {
+        // Show a subtle annotation in the streaming element.
+        if (this.streamingEl && event.paths.length > 0) {
+          const annEl = this.streamingEl.createDiv('ct-memory-recall-annotation');
+          annEl.createSpan({ cls: 'ct-memory-recall-label', text: `Recalled ${event.paths.length} memory file${event.paths.length === 1 ? '' : 's'}` });
+          const fileList = annEl.createEl('ul', { cls: 'ct-memory-recall-files' });
+          for (const p of event.paths) {
+            fileList.createEl('li', { text: p.replace(/.*\//, '') });
+          }
+        }
+        break;
+      }
+
+      case 'commands_changed': {
+        // Forward the updated command list to the dispatch input autocomplete.
+        this.dispatchInput?.setAvailableCommands?.(event.commands);
+        break;
+      }
+
+      case 'task_progress_summary': {
+        // Update the task pill label with the AI-generated summary.
+        const progressEl = this.taskPills.get(event.taskId);
+        if (progressEl) {
+          const label = progressEl.querySelector<HTMLElement>('.ct-tool-pill-text');
+          if (label) label.textContent = event.summary;
+        }
+        break;
+      }
+
+      case 'git_operation': {
+        // Show a brief git-activity annotation below the active streaming content.
+        if (this.streamingEl) {
+          const gitEl = this.streamingEl.createDiv('ct-git-operation-annotation');
+          gitEl.createSpan({ cls: 'ct-git-operation-text', text: event.summary });
+        }
+        break;
+      }
+
+      case 'file_user_modified': {
+        this.userModifiedFilesSet.add(event.filePath);
+        this.renderEditedFilesCard();
+        break;
+      }
+
+      case 'capabilities_discovered': {
+        // Dynamically extend the model selector with models discovered from the active session.
+        // Store for later so /context can reference agent names too.
+        this.discoveredModels = event.models;
+        this.discoveredAgents = event.agents;
+        break;
+      }
+
+      case 'elicitation_request': {
+        if (event.request.mode === 'url' && event.request.url) {
+          this.renderElicitationUrlCard(event.request, event.signal, event.respond);
+        } else {
+          this.renderElicitationFormCard(event.request, event.signal, event.respond);
+        }
+        break;
+      }
+
+      case 'enter_plan_mode': {
+        // Show a "Planning..." status card so the user knows Claude is in read-only planning mode.
+        this.showStatusCard('active', 'Planning...');
+        break;
+      }
+
+      case 'plan_ready': {
+        // Clear the "Planning..." card and show the Approve/Reject/Edit card.
+        this.activeWorkCardEl?.remove();
+        this.activeWorkCardEl = null;
+        this.renderPlanCard(event.planText, event.approve, event.reject);
+        break;
+      }
+
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;
@@ -2625,6 +3150,34 @@ export class ThreadsView extends ItemView {
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
       await this.forkThread(this.activeThreadId!, focusArea || undefined);
+      return;
+    }
+
+    // /context — show context window usage breakdown for the active session.
+    if (/^\/context$/i.test(typed.trim())) {
+      const usage = await this.manager.getContextUsage(this.activeThreadId);
+      if (!usage) {
+        this.showCommandDivider('No active session — start a conversation first.');
+      } else {
+        this.renderContextUsageCard(usage);
+      }
+      return;
+    }
+
+    // /ephemeral — mark this thread as ephemeral (sessions not persisted to disk).
+    if (/^\/ephemeral$/i.test(typed.trim())) {
+      const t = thread;
+      if (t) {
+        const wasEphemeral = !!t.ephemeral;
+        t.ephemeral = !wasEphemeral;
+        await this.plugin.saveSettings();
+        this.renderTitleBar();
+        this.showCommandDivider(
+          t.ephemeral
+            ? 'Ephemeral mode on: future sessions in this thread will not be persisted to disk.'
+            : 'Ephemeral mode off: sessions in this thread will be persisted normally.',
+        );
+      }
       return;
     }
 

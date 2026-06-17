@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath } from 'obsidian';
+import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -427,6 +427,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubCwdRepair);
 
+    // Persist pending plan text so the plan card survives a reload/crash.
+    const unsubPendingPlan = this.manager.subscribe((_threadId, event) => {
+      if (event.type === 'pending_plan_changed') {
+        this.saveSettings().catch(console.error);
+      }
+    });
+    this.register(unsubPendingPlan);
+
     // Background task monitoring: when a session ends with unresolved background
     // tasks, schedule an automatic poll to check completion.
     const unsubBgTasks = this.manager.subscribe((threadId, event) => {
@@ -518,7 +526,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
         this.settings.scheduledItems = (this.settings.scheduledItems ?? []).filter((i) => i.id !== id);
         await this.saveSettings();
       },
-      createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
+      createThread: (title, cwd, projectId) => {
+        const thread = this.manager.createThread(title, cwd, projectId);
+        // Scheduled sessions should not block on permission prompts. When the
+        // global permissionMode is 'default' (ask every time), override to
+        // 'dontAsk' so unattended runs complete without hanging.
+        if (!thread.permissionMode && this.settings.permissionMode === 'default') {
+          thread.permissionMode = 'dontAsk';
+        }
+        return thread;
+      },
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),
@@ -835,14 +852,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // 3. Open welcome guide in the CENTER editor
     try {
       const guideFile = vault.getAbstractFileByPath(guidePath);
-      if (guideFile) {
-        // TFile is available on the obsidian global — cast is safe here
-        const { TFile } = await import('obsidian');
-        if (guideFile instanceof TFile) {
-          const centerLeaf = workspace.getLeaf('tab');
-          await centerLeaf.openFile(guideFile);
-          workspace.revealLeaf(centerLeaf);
-        }
+      if (guideFile instanceof TFile) {
+        const centerLeaf = workspace.getLeaf('tab');
+        await centerLeaf.openFile(guideFile);
+        workspace.revealLeaf(centerLeaf);
       }
     } catch (err) {
       console.error('[ClaudeThreads] Failed to open welcome guide:', err);

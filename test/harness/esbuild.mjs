@@ -15,6 +15,7 @@ const sharedConfig = {
   alias: {
     'obsidian':                         resolve('./obsidian-mock.ts'),
     'fs':                               resolve('./mocks/fs.ts'),
+    'fs/promises':                      resolve('./mocks/fs-promises.ts'),
     'path':                             resolve('./mocks/path.ts'),
     'os':                               resolve('./mocks/os.ts'),
     // child_process is statically imported by ThreadsView — stub it so the

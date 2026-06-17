@@ -51,6 +51,57 @@ export interface SessionCallbacks {
    * before this fires — they're reconstructed in the final `assistant` message.
    */
   onRawEvent?: (event: { type?: string } & Record<string, unknown>) => void;
+  /** Fired when Claude falls back to an alternate model (e.g. primary overloaded). */
+  onModelFallback?: (trigger: string, fromModel: string, toModel: string) => void;
+  /** Fired when a running tool emits a progress heartbeat with elapsed time. */
+  onToolProgress?: (toolUseId: string, toolName: string, elapsedSeconds: number) => void;
+  /** Fired when the session surfaces memory files into the current turn. */
+  onMemoryRecall?: (paths: string[], mode: 'select' | 'synthesize') => void;
+  /** Fired when the slash-command list changes mid-session (e.g. new skill discovered). */
+  onCommandsChanged?: (commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[]) => void;
+  /** Fired when agentProgressSummaries is enabled and a task emits an AI summary. */
+  onTaskProgressSummary?: (taskId: string, summary: string) => void;
+  /**
+   * Fired when a Bash tool result contains a gitOperation classification
+   * (commit, push, PR create/merge, etc.). Lets the UI render a structured
+   * git-activity summary without re-parsing stdout.
+   */
+  onGitOperation?: (summary: string) => void;
+  /**
+   * Fired when a Write/Edit tool result indicates the user modified the
+   * proposed content in the permission dialog before accepting.
+   */
+  onFileUserModified?: (filePath: string) => void;
+  /**
+   * Fired when Claude calls EnterPlanMode. The session is now in read-only
+   * planning mode. Non-blocking: fire and continue.
+   */
+  onEnterPlanMode?: () => void;
+  /**
+   * Fired when Claude calls ExitPlanMode with a completed plan. Blocking:
+   * the session waits until either approve() or reject() is called.
+   * - approve(editedPlan?) - allow implementation to proceed; pass the edited
+   *   plan text if the user modified it, otherwise undefined.
+   * - reject() - deny without interrupt; Claude reads the rejection message and stops cleanly.
+   */
+  onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => void) => void;
+  /**
+   * Fired once per session after the Query is initialized with the list of
+   * available models and subagent types for this session.
+   */
+  onCapabilitiesDiscovered?: (
+    models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[],
+    agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[],
+  ) => void;
+  /**
+   * Fired when an MCP server sends an elicitation request (e.g. for OAuth or
+   * structured form input). Blocking: the session waits until the returned
+   * Promise resolves with an ElicitationResult.
+   */
+  onElicitation?: (
+    request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+  ) => Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>;
 }
 
 export class ClaudeSession {
@@ -75,6 +126,13 @@ export class ClaudeSession {
     mcpServers?: Record<string, McpServerConfig>,
     secretEnv?: Record<string, string>,
     disallowedTools?: string[],
+    sessionOptions?: {
+      thinking?: Options['thinking'];
+      effort?: Options['effort'];
+      agentProgressSummaries?: boolean;
+      betas?: import('@anthropic-ai/claude-agent-sdk').SdkBeta[];
+      persistSession?: boolean;
+    },
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -91,6 +149,37 @@ export class ClaudeSession {
           const inp = input as { title?: string; initialPrompt?: string };
           const result = await callbacks.onOpenNewTab(inp.title, inp.initialPrompt);
           return { behavior: 'allow' as const, updatedInput: { ...input, result: JSON.stringify(result) } };
+        }
+        if (toolName === 'EnterPlanMode') {
+          callbacks.onEnterPlanMode?.();
+          return { behavior: 'allow' as const };
+        }
+        if (toolName === 'ExitPlanMode') {
+          // ExitPlanMode cannot be allowed to execute: the CLI's Zod schema rejects the
+          // extra `plan` field Claude sends in the input, causing a validation error.
+          // Instead we show the plan card, then signal approval/rejection via deny messages
+          // so Claude's turn continues (approve) or is interrupted (reject) without the
+          // CLI ever attempting to run the tool.
+          const planText = String((input as { plan?: unknown }).plan ?? '');
+          if (callbacks.onPlanReady) {
+            const result = await new Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult>((resolve) => {
+              callbacks.onPlanReady!(
+                planText,
+                (editedPlan) => {
+                  // Approve: deny the tool call (avoids Zod error) with a message Claude
+                  // can read to understand it should proceed with implementation.
+                  const approvalNote = editedPlan !== undefined && editedPlan !== planText
+                    ? `Plan approved with edits:\n\n${editedPlan}`
+                    : 'Plan approved — proceed with implementation.';
+                  resolve({ behavior: 'deny' as const, message: approvalNote, interrupt: false });
+                },
+                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false }),
+              );
+            });
+            return result;
+          }
+          // No handler registered: deny non-interruptingly so Claude can proceed normally.
+          return { behavior: 'deny' as const, message: 'Plan approved — proceed with implementation.', interrupt: false };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;
@@ -128,6 +217,14 @@ export class ClaudeSession {
       console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
     }
     if (disallowedTools?.length) options.disallowedTools = disallowedTools;
+    if (sessionOptions?.thinking) options.thinking = sessionOptions.thinking;
+    if (sessionOptions?.effort) options.effort = sessionOptions.effort;
+    if (sessionOptions?.agentProgressSummaries !== undefined) options.agentProgressSummaries = sessionOptions.agentProgressSummaries;
+    if (sessionOptions?.betas?.length) options.betas = sessionOptions.betas;
+    if (sessionOptions?.persistSession === false) options.persistSession = false;
+    if (callbacks.onElicitation) {
+      options.onElicitation = (request, opts) => callbacks.onElicitation!(request, opts.signal);
+    }
     // Route the built-in EnterWorktree / ExitWorktree SDK tools to the plugin's
     // MCP versions, which read effectiveCwd (updated by set_working_directory)
     // rather than the frozen OS-level subprocess cwd.
@@ -171,6 +268,17 @@ export class ClaudeSession {
       return;
     }
     this.activeQuery = q;
+
+    // Discover supported models and agents once per session init — fire and
+    // forget; failures are non-fatal.
+    if (callbacks.onCapabilitiesDiscovered) {
+      Promise.all([
+        q.supportedModels().catch(() => []),
+        q.supportedAgents().catch(() => []),
+      ]).then(([models, agents]) => {
+        callbacks.onCapabilitiesDiscovered?.(models, agents);
+      }).catch(() => { /* ignore */ });
+    }
 
     // Synthetic boundary marker so each turn is delimited in the raw log and
     // carries the turn's inputs (prompt, cwd, model, resume target).
@@ -224,7 +332,7 @@ export class ClaudeSession {
                   block.name,
                   block.input as Record<string, unknown>,
                 );
-                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now() };
+                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id };
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
                 callbacks.onToolUse(record);
@@ -327,6 +435,9 @@ export class ClaudeSession {
                   sys.description as string,
                   sys.last_tool_name as string | undefined,
                 );
+                if (sys.summary && callbacks.onTaskProgressSummary) {
+                  callbacks.onTaskProgressSummary(sys.task_id as string, sys.summary as string);
+                }
                 break;
               case 'task_notification':
                 callbacks.onTaskNotification?.(
@@ -348,7 +459,34 @@ export class ClaudeSession {
                   sys.error as string,
                 );
                 break;
+              case 'model_fallback':
+                callbacks.onModelFallback?.(
+                  sys.trigger as string,
+                  sys.from_model as string,
+                  sys.to_model as string,
+                );
+                break;
+              case 'memory_recall': {
+                const paths = ((sys.memories as Array<{ path: string }>) ?? []).map(m => m.path);
+                callbacks.onMemoryRecall?.(paths, sys.mode as 'select' | 'synthesize');
+                break;
+              }
+              case 'commands_changed':
+                callbacks.onCommandsChanged?.(
+                  sys.commands as import('@anthropic-ai/claude-agent-sdk').SlashCommand[],
+                );
+                break;
             }
+            break;
+          }
+
+          case 'tool_progress': {
+            const tp = msg as Record<string, unknown>;
+            callbacks.onToolProgress?.(
+              tp.tool_use_id as string,
+              tp.tool_name as string,
+              tp.elapsed_time_seconds as number,
+            );
             break;
           }
 
@@ -384,6 +522,59 @@ export class ClaudeSession {
                     }
                   }
                   if (images.length > 0) callbacks.onToolResultImages(images);
+                }
+
+                // gitOperation structured summary from BashOutput
+                if (callbacks.onGitOperation) {
+                  const resultRaw = b.tool_result ?? b.content;
+                  let parsedResult: Record<string, unknown> | null = null;
+                  try {
+                    if (typeof resultRaw === 'string') {
+                      parsedResult = JSON.parse(resultRaw) as Record<string, unknown>;
+                    } else if (resultRaw && typeof resultRaw === 'object') {
+                      parsedResult = resultRaw as Record<string, unknown>;
+                    }
+                  } catch { /* non-JSON tool result — skip */ }
+                  if (parsedResult?.gitOperation) {
+                    const op = parsedResult.gitOperation as Record<string, unknown>;
+                    const parts: string[] = [];
+                    if (op.commit) {
+                      const c = op.commit as Record<string, unknown>;
+                      parts.push(`${c.kind ?? 'committed'} ${String(c.sha ?? '').substring(0, 7)}`);
+                    }
+                    if (op.push) {
+                      const p = op.push as Record<string, unknown>;
+                      parts.push(`pushed to ${p.branch}`);
+                    }
+                    if (op.branch) {
+                      const br = op.branch as Record<string, unknown>;
+                      parts.push(`${br.action} ${br.ref}`);
+                    }
+                    if (op.pr) {
+                      const pr = op.pr as Record<string, unknown>;
+                      const prDesc = pr.url ? `PR #${pr.number} ${pr.action}` : `PR #${pr.number} ${pr.action}`;
+                      parts.push(prDesc);
+                    }
+                    if (parts.length > 0) {
+                      callbacks.onGitOperation(`git: ${parts.join(', ')}`);
+                    }
+                  }
+                }
+
+                // userModified flag from FileEditOutput / FileWriteOutput
+                if (callbacks.onFileUserModified) {
+                  const resultRaw = b.tool_result ?? b.content;
+                  let parsedResult: Record<string, unknown> | null = null;
+                  try {
+                    if (typeof resultRaw === 'string') {
+                      parsedResult = JSON.parse(resultRaw) as Record<string, unknown>;
+                    } else if (resultRaw && typeof resultRaw === 'object') {
+                      parsedResult = resultRaw as Record<string, unknown>;
+                    }
+                  } catch { /* non-JSON tool result — skip */ }
+                  if (parsedResult?.userModified === true && typeof parsedResult.filePath === 'string') {
+                    callbacks.onFileUserModified(parsedResult.filePath);
+                  }
                 }
 
                 // TaskCreate confirmation — "Task #N created successfully: <subject>"
@@ -445,6 +636,19 @@ export class ClaudeSession {
       this.activeQuery = null;
     }
   }
+
+  /**
+   * Returns a snapshot of current context window usage from the active query.
+   * Returns null when no session is active or the call fails.
+   */
+  async getContextUsage(): Promise<import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse | null> {
+    if (!this.activeQuery) return null;
+    try {
+      return await this.activeQuery.getContextUsage();
+    } catch {
+      return null;
+    }
+  }
 }
 
 
@@ -466,6 +670,11 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
       return `${String(input.file_path ?? input.path ?? input.pattern ?? '')}`;
     case 'Bash':
       return `${String(input.command ?? '').substring(0, 60)}`;
+    case 'REPL': {
+      const code = String(input.code ?? '');
+      const firstLine = code.split('\n')[0].trim();
+      return `Run JS: ${firstLine.substring(0, 60)}`;
+    }
     case 'WebFetch':
       return `${input.url}`;
     case 'WebSearch':

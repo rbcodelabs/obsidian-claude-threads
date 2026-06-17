@@ -720,4 +720,91 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('model-escalation-tip.png', { fullPage: true });
   });
 
+  // ─── SDK alignment gap features (Group 4 + 5) ────────────────────────────
+
+  test('plan mode — planning state card', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Trigger the "Planning..." status card the same way the enter_plan_mode event does.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['createStreamingEl']();
+      view['showStatusCard']('active', 'Planning...');
+      view['scrollToBottom']();
+    });
+    await page.waitForSelector('.ct-status-card-active');
+    await expect(page.locator('.ct-status-card-active')).toContainText('Planning...');
+    await expect(page).toHaveScreenshot('plan-mode-planning.png', { fullPage: true });
+  });
+
+  test('plan mode — approve/reject card', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Render the plan approval card with sample plan text.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      view['createStreamingEl']();
+      const planText = [
+        '## Plan: Fix the auth middleware',
+        '',
+        '**Step 1:** Read src/middleware/auth.ts to understand the current implementation.',
+        '**Step 2:** Identify the JWT_SECRET fallback bug.',
+        '**Step 3:** Fix the empty-string fallback — throw on startup instead.',
+        '**Step 4:** Add a test covering the missing-secret case.',
+        '**Step 5:** Verify tsc and tests pass.',
+      ].join('\n');
+      // approve/reject are no-ops for the screenshot
+      view['renderPlanCard'](planText, () => {}, () => {});
+      view['scrollToBottom']();
+    });
+    await page.waitForSelector('.ct-plan-card');
+    // Wait for async markdown rendering to finish
+    await page.waitForSelector('.ct-plan-md', { state: 'visible' });
+    await page.waitForTimeout(200);
+    await expect(page.locator('.ct-plan-card')).toBeVisible();
+    await expect(page.locator('.ct-plan-approve')).toBeVisible();
+    await expect(page.locator('.ct-plan-edit')).toBeVisible();
+    await expect(page.locator('.ct-plan-reject')).toBeVisible();
+    // Default view should show rendered markdown, not a textarea
+    await expect(page.locator('.ct-plan-md')).toBeVisible();
+    await expect(page.locator('.ct-plan-textarea')).not.toBeVisible();
+    await expect(page).toHaveScreenshot('plan-mode-approve-reject.png', { fullPage: true });
+  });
+
+  test('context usage panel', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Render the context usage card with a representative usage snapshot.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const fakeUsage = {
+        totalTokens: 42850,
+        maxTokens: 200000,
+        percentage: 21.4,
+        categories: [
+          { name: 'System prompt', tokens: 3200, color: '#4b9cd3' },
+          { name: 'Tools', tokens: 8400, color: '#7cb9e8' },
+          { name: 'Messages', tokens: 28050, color: '#97c1e8' },
+          { name: 'MCP tools', tokens: 3200, color: '#b0cfe8' },
+        ],
+        agents: [],
+      };
+      view['renderContextUsageCard'](fakeUsage);
+      view['scrollToBottom']();
+    });
+    await page.waitForSelector('.ct-context-usage-card');
+    await expect(page.locator('.ct-context-usage-card')).toBeVisible();
+    await expect(page.locator('.ct-context-usage-title')).toContainText('Context usage');
+    await expect(page).toHaveScreenshot('context-usage-panel.png', { fullPage: true });
+  });
+
 });

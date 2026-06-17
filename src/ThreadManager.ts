@@ -3,7 +3,8 @@ import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -41,7 +42,19 @@ export type ThreadEvent =
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
-  | { type: 'status_tags' };
+  | { type: 'status_tags' }
+  | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
+  | { type: 'tool_progress'; toolUseId: string; toolName: string; elapsedSeconds: number }
+  | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
+  | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
+  | { type: 'task_progress_summary'; taskId: string; summary: string }
+  | { type: 'git_operation'; summary: string }
+  | { type: 'file_user_modified'; filePath: string }
+  | { type: 'enter_plan_mode' }
+  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
+  | { type: 'pending_plan_changed'; planText: string | undefined }
+  | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
+  | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -72,6 +85,12 @@ export class ThreadManager {
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
+  /**
+   * In-memory store for the live approve/reject callbacks from a plan_ready event.
+   * Keyed by thread ID. NOT serialized to JSON — only set while the session is
+   * actively waiting for the user to act on the plan card.
+   */
+  private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => void }> = new Map();
   /** Appends each thread's raw SDK event stream to a per-thread JSONL log. */
   private rawLogWriter: RawLogWriter;
 
@@ -312,6 +331,29 @@ export class ThreadManager {
     const thread = this.threads.get(id);
     if (thread) {
       thread.model = model;
+      thread.updatedAt = Date.now();
+    }
+  }
+
+  setThreadPendingPlan(id: string, planText: string | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (planText !== undefined) thread.pendingPlan = planText;
+      else delete thread.pendingPlan;
+      thread.updatedAt = Date.now();
+    }
+  }
+
+  /** Returns the live approve/reject callbacks if a plan is actively awaiting user action. */
+  getPendingPlanResolvers(id: string): { approve: (edited?: string) => void; reject: () => void } | undefined {
+    return this.pendingPlanResolvers.get(id);
+  }
+
+  setThreadPermissionMode(id: string, mode: PluginSettings['permissionMode'] | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (mode !== undefined) thread.permissionMode = mode;
+      else delete thread.permissionMode;
       thread.updatedAt = Date.now();
     }
   }
@@ -609,7 +651,7 @@ export class ThreadManager {
       effectivePrompt,
       thread.sessionId,
       cwdAtStart,
-      this.settings.permissionMode,
+      thread.permissionMode ?? this.settings.permissionMode,
       effectiveExtraEnv(this.settings),
       {
         onRawEvent: (event) => {
@@ -680,6 +722,15 @@ export class ThreadManager {
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
+
+          // Safety net: if a pending plan somehow survived to onDone (e.g. the
+          // session completed without user action), clear it so a stale card
+          // can't reappear on the next focus.
+          if (thread.pendingPlan) {
+            delete thread.pendingPlan;
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
 
           // If any background tasks started but never notified, persist them so
           // main.ts can schedule polling resumption after the session closes.
@@ -778,6 +829,50 @@ export class ThreadManager {
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
         onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
+        onModelFallback: (trigger, fromModel, toModel) => this.emit(threadId, { type: 'model_fallback', trigger, fromModel, toModel }),
+        onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),
+        onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
+        onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
+        onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
+        onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
+        onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
+        onPlanReady: (planText, approve, reject) => {
+          // Persist the plan text so the card can be restored after a reload/crash
+          // OR after the user switches threads mid-session.
+          thread.pendingPlan = planText;
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'pending_plan_changed', planText });
+          // Wrap callbacks to clear both the persisted plan and the in-memory
+          // resolvers when the user acts on the card.
+          const wrappedApprove = (editedPlan?: string) => {
+            delete thread.pendingPlan;
+            thread.updatedAt = Date.now();
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+            approve(editedPlan);
+          };
+          const wrappedReject = () => {
+            delete thread.pendingPlan;
+            thread.updatedAt = Date.now();
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+            reject();
+          };
+          // Store resolvers in-memory so restorePendingPlanCard() can re-wire the
+          // card after the user switches threads and switches back mid-session.
+          this.pendingPlanResolvers.set(threadId, { approve: wrappedApprove, reject: wrappedReject });
+          this.emit(threadId, { type: 'plan_ready', planText, approve: wrappedApprove, reject: wrappedReject });
+        },
+        onCapabilitiesDiscovered: (models, agents) => this.emit(threadId, { type: 'capabilities_discovered', models, agents }),
+        onElicitation: (request, signal) =>
+          new Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>((resolve) => {
+            this.emit(threadId, { type: 'elicitation_request', request, signal, respond: resolve });
+          }),
+        onFileUserModified: (filePath) => {
+          if (!thread.userModifiedFiles) thread.userModifiedFiles = [];
+          if (!thread.userModifiedFiles.includes(filePath)) thread.userModifiedFiles.push(filePath);
+          this.emit(threadId, { type: 'file_user_modified', filePath });
+        },
         onToolResultImages: (images) => {
           pendingToolImages.push(...images);
           this.emit(threadId, { type: 'tool_result_images', images });
@@ -794,6 +889,7 @@ export class ThreadManager {
       sessionMcpServers,
       resolvedSecretEnv,
       this.settings.disallowedTools,
+      this.buildSessionOptions(thread),
     );
 
     if (completedSuccessfully) {
@@ -839,6 +935,57 @@ export class ThreadManager {
       }
     }
     thread.updatedAt = Date.now();
+  }
+
+  /** Build the sessionOptions object from plugin settings (and thread-level overrides). */
+  private buildSessionOptions(thread: Thread): Parameters<ClaudeSession['run']>[13] {
+    const s = this.settings;
+    const opts: {
+      thinking?: Options['thinking'];
+      effort?: Options['effort'];
+      agentProgressSummaries?: boolean;
+      betas?: SdkBeta[];
+      persistSession?: boolean;
+    } = {};
+
+    // Thinking mode
+    if (s.thinkingMode && s.thinkingMode !== 'disabled') {
+      if (s.thinkingMode === 'adaptive') {
+        opts.thinking = { type: 'adaptive' };
+      } else {
+        opts.thinking = { type: 'enabled', budgetTokens: s.thinkingBudgetTokens ?? 8000 };
+      }
+    }
+
+    // Effort level
+    if (s.effort && s.effort !== 'default') {
+      opts.effort = s.effort as Options['effort'];
+    }
+
+    // Agent progress summaries
+    opts.agentProgressSummaries = s.agentProgressSummaries ?? true;
+
+    // 1M context beta
+    if (s.enable1MContext) {
+      opts.betas = ['context-1m-2025-08-07'];
+    }
+
+    // Ephemeral session (thread-level flag)
+    if (thread.ephemeral) {
+      opts.persistSession = false;
+    }
+
+    return opts;
+  }
+
+  /**
+   * Returns a context usage snapshot for the active session on the given thread.
+   * Returns null when no session is running or the SDK call fails.
+   */
+  async getContextUsage(threadId: string): Promise<import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse | null> {
+    const session = this.sessions.get(threadId);
+    if (!session) return null;
+    return session.getContextUsage();
   }
 
   async interrupt(threadId: string): Promise<void> {
