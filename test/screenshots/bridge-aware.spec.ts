@@ -85,8 +85,12 @@ test.describe('Bridge-aware edits', () => {
       '/Users/mock/projects/hip-trip/src/middleware/__tests__/auth.test.ts'
     );
 
-    await page.hover('.ct-edited-files');
-    await page.waitForTimeout(200);
+    // Remove the collapsible class so all context-zone items are always visible
+    // regardless of hover/focus state — this test checks chip ordering, not
+    // collapse behaviour, and CSS pseudo-class rendering varies under parallel load.
+    await page.evaluate(() => {
+      document.querySelector('.ct-floating-panel')?.classList.remove('ct-panel-collapsible');
+    });
     await expect(page).toHaveScreenshot('edited-files-bridge.png', { fullPage: true });
   });
 

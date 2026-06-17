@@ -560,6 +560,9 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-title-row');
     await page.evaluate(() => (window as any).__view.focusThread('thread-tasks'));
     await page.waitForSelector('.ct-task-card:not(.ct-hidden)');
+    // Hover the panel so the task card is expanded (it collapses at rest via CSS)
+    await page.hover('.ct-floating-panel');
+    await page.waitForTimeout(300); // let expand animation complete
     const header = await page.locator('.ct-task-card-header').innerText();
     if (!header.includes('5 tasks') || !header.includes('4 done, 1 in progress, 0 open')) {
       throw new Error(`Unexpected task card header: ${header}`);
