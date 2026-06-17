@@ -5470,3 +5470,43 @@ textarea.ct-settings-wide-input {
   color: var(--color-orange);
   background: transparent;
 }
+
+/* ── Plugin card in Installed tab ───────────────────────────────────────── */
+
+.ct-skills-plugin-card {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.ct-skills-badge--warn {
+  background: transparent;
+  color: var(--color-orange);
+  font-weight: 600;
+}
+
+/* ── GitHub plugin detail skill list ────────────────────────────────────── */
+
+.ct-skills-plugin-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ct-skills-plugin-skill-row {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+}
+
+.ct-skills-plugin-skill-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ct-skills-plugin-skill-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
