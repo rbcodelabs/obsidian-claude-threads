@@ -167,6 +167,16 @@ export interface Thread {
   goal?: string;
   /** Claude Code task list (TodoWrite / TaskCreate+TaskUpdate), rendered as a checklist card. */
   tasks?: TaskItem[];
+  /**
+   * When true, this thread is ephemeral: sessions are not persisted to disk
+   * and the thread note is not saved to the vault.
+   */
+  ephemeral?: boolean;
+  /**
+   * Per-thread permission mode override. When set, takes precedence over the
+   * global settings.permissionMode for sessions in this thread.
+   */
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 }
 
 /**
@@ -256,7 +266,17 @@ export interface PluginSettings {
    */
   saveRawLogs: boolean;
   vaultFolder: string;
-  permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions';
+  permissionMode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+  /** Thinking mode for extended reasoning. 'disabled' sends no thinking param; 'adaptive' lets Claude decide; 'enabled' uses a fixed token budget. */
+  thinkingMode: 'disabled' | 'adaptive' | 'enabled';
+  /** Token budget for thinking when thinkingMode is 'enabled'. */
+  thinkingBudgetTokens: number;
+  /** Effort level passed to query(). 'default' omits the param. */
+  effort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /** When true, subagents emit AI-generated progress summaries every ~30s. */
+  agentProgressSummaries: boolean;
+  /** When true, passes the context-1m-2025-08-07 beta header for 1M context window. */
+  enable1MContext: boolean;
   extraEnv: string;
   /** Account/backend the Claude CLI authenticates against. Defaults to 'claude'. */
   provider: ProviderMode;
@@ -340,6 +360,11 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   saveRawLogs: true,
   vaultFolder: 'Claude',
   permissionMode: 'acceptEdits',
+  thinkingMode: 'disabled',
+  thinkingBudgetTokens: 8000,
+  effort: 'default',
+  agentProgressSummaries: true,
+  enable1MContext: false,
   extraEnv: '',
   provider: 'claude',
   defaultModel: '',

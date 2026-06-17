@@ -46,6 +46,8 @@ export class ThreadsView extends ItemView {
   private activeWorkCardEl: HTMLElement | null = null;
   private rateLimitCardEl: HTMLElement | null = null;
   private editedFilesEl!: HTMLElement;
+  /** Small badge shown in the title bar when the active thread is ephemeral. */
+  private ephemeralBadgeEl!: HTMLSpanElement;
 
   // Shared dispatch input component
   private dispatchInput!: DispatchInput;
@@ -441,6 +443,8 @@ export class ThreadsView extends ItemView {
       e.stopPropagation();
       if (this.activeThreadId) this.renameThread(this.activeThreadId, this.titleTextEl);
     });
+    this.ephemeralBadgeEl = titleRow.createSpan({ cls: 'ct-ephemeral-badge ct-hidden', text: 'ephemeral' });
+
     this.newThreadBtn = titleRow.createEl('button', { cls: 'ct-tab-new', attr: { title: 'New thread' } });
     setIcon(this.newThreadBtn, 'square-pen');
     this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
@@ -568,6 +572,11 @@ export class ThreadsView extends ItemView {
     if (!this.titleTextEl) return;
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     this.titleTextEl.textContent = thread?.title ?? 'Claude Threads';
+
+    // Show the ephemeral badge when the active thread is marked ephemeral
+    if (this.ephemeralBadgeEl) {
+      this.ephemeralBadgeEl.toggleClass('ct-hidden', !thread?.ephemeral);
+    }
 
     const threads = this.manager.getThreads();
     const hasRunning = threads.some(t => t.id !== this.activeThreadId && this.manager.isRunning(t.id));
@@ -2725,6 +2734,23 @@ export class ThreadsView extends ItemView {
     if (forkMatch) {
       const focusArea = (forkMatch[1] ?? '').trim();
       await this.forkThread(this.activeThreadId!, focusArea || undefined);
+      return;
+    }
+
+    // /ephemeral — mark this thread as ephemeral (sessions not persisted to disk).
+    if (/^\/ephemeral$/i.test(typed.trim())) {
+      const t = thread;
+      if (t) {
+        const wasEphemeral = !!t.ephemeral;
+        t.ephemeral = !wasEphemeral;
+        await this.plugin.saveSettings();
+        this.renderTitleBar();
+        this.showCommandDivider(
+          t.ephemeral
+            ? 'Ephemeral mode on: future sessions in this thread will not be persisted to disk.'
+            : 'Ephemeral mode off: sessions in this thread will be persisted normally.',
+        );
+      }
       return;
     }
 

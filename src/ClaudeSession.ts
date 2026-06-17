@@ -96,6 +96,13 @@ export class ClaudeSession {
     mcpServers?: Record<string, McpServerConfig>,
     secretEnv?: Record<string, string>,
     disallowedTools?: string[],
+    sessionOptions?: {
+      thinking?: Options['thinking'];
+      effort?: Options['effort'];
+      agentProgressSummaries?: boolean;
+      betas?: import('@anthropic-ai/claude-agent-sdk').SdkBeta[];
+      persistSession?: boolean;
+    },
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
@@ -149,6 +156,11 @@ export class ClaudeSession {
       console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
     }
     if (disallowedTools?.length) options.disallowedTools = disallowedTools;
+    if (sessionOptions?.thinking) options.thinking = sessionOptions.thinking;
+    if (sessionOptions?.effort) options.effort = sessionOptions.effort;
+    if (sessionOptions?.agentProgressSummaries !== undefined) options.agentProgressSummaries = sessionOptions.agentProgressSummaries;
+    if (sessionOptions?.betas?.length) options.betas = sessionOptions.betas;
+    if (sessionOptions?.persistSession === false) options.persistSession = false;
     // Route the built-in EnterWorktree / ExitWorktree SDK tools to the plugin's
     // MCP versions, which read effectiveCwd (updated by set_working_directory)
     // rather than the frozen OS-level subprocess cwd.

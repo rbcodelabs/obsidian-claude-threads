@@ -547,6 +547,79 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Thinking mode')
+      .setDesc('Controls extended reasoning. "Adaptive" lets Claude decide; "Enabled" uses a fixed token budget; "Disabled" turns off extended thinking.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('disabled', 'Disabled')
+          .addOption('adaptive', 'Adaptive (Claude decides)')
+          .addOption('enabled', 'Enabled (fixed token budget)')
+          .setValue(this.plugin.settings.thinkingMode ?? 'disabled')
+          .onChange(async (value) => {
+            this.plugin.settings.thinkingMode = value as PluginSettings['thinkingMode'];
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Thinking token budget')
+      .setDesc('Maximum tokens for thinking when mode is "Enabled".')
+      .addText((text) =>
+        text
+          .setPlaceholder('8000')
+          .setValue(String(this.plugin.settings.thinkingBudgetTokens ?? 8000))
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (!isNaN(n) && n > 0) {
+              this.plugin.settings.thinkingBudgetTokens = n;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Effort level')
+      .setDesc('How much reasoning effort Claude applies. "Default" uses the CLI default.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('default', 'Default')
+          .addOption('low', 'Low (fastest)')
+          .addOption('medium', 'Medium')
+          .addOption('high', 'High')
+          .addOption('xhigh', 'Extra high (Opus 4.7+)')
+          .addOption('max', 'Max (Opus 4.6+, Sonnet 4.6)')
+          .setValue(this.plugin.settings.effort ?? 'default')
+          .onChange(async (value) => {
+            this.plugin.settings.effort = value as PluginSettings['effort'];
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Agent progress summaries')
+      .setDesc('When enabled, running subagents emit an AI-generated progress summary every ~30 seconds.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.agentProgressSummaries ?? true)
+          .onChange(async (value) => {
+            this.plugin.settings.agentProgressSummaries = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Enable 1M context window (beta)')
+      .setDesc('Passes the context-1m-2025-08-07 beta header for Sonnet 4/4.5. Requires a model that supports it.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enable1MContext ?? false)
+          .onChange(async (value) => {
+            this.plugin.settings.enable1MContext = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Default working directory')
       .setDesc('Starting directory for new threads. Leave empty to use the vault root.')
       .addText((text) =>
@@ -699,6 +772,9 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           .addOption('default', 'Prompt for permissions')
           .addOption('acceptEdits', 'Accept edits automatically')
           .addOption('bypassPermissions', 'Bypass all permissions (trusted directories only)')
+          .addOption('plan', 'Plan only: Claude reads and proposes, never executes')
+          .addOption('dontAsk', 'Silent deny: unrecognized tools denied without prompting (CI)')
+          .addOption('auto', 'Auto-approve: classifier approves common ops, escalates uncertain ones')
           .setValue(this.plugin.settings.permissionMode)
           .onChange(async (value) => {
             this.plugin.settings.permissionMode = value as PluginSettings['permissionMode'];

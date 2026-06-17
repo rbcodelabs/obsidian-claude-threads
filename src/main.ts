@@ -518,7 +518,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
         this.settings.scheduledItems = (this.settings.scheduledItems ?? []).filter((i) => i.id !== id);
         await this.saveSettings();
       },
-      createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
+      createThread: (title, cwd, projectId) => {
+        const thread = this.manager.createThread(title, cwd, projectId);
+        // Scheduled sessions should not block on permission prompts. When the
+        // global permissionMode is 'default' (ask every time), override to
+        // 'dontAsk' so unattended runs complete without hanging.
+        if (!thread.permissionMode && this.settings.permissionMode === 'default') {
+          thread.permissionMode = 'dontAsk';
+        }
+        return thread;
+      },
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),

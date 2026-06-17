@@ -3,7 +3,8 @@ import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
-import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
@@ -616,7 +617,7 @@ export class ThreadManager {
       effectivePrompt,
       thread.sessionId,
       cwdAtStart,
-      this.settings.permissionMode,
+      thread.permissionMode ?? this.settings.permissionMode,
       effectiveExtraEnv(this.settings),
       {
         onRawEvent: (event) => {
@@ -812,6 +813,7 @@ export class ThreadManager {
       sessionMcpServers,
       resolvedSecretEnv,
       this.settings.disallowedTools,
+      this.buildSessionOptions(thread),
     );
 
     if (completedSuccessfully) {
@@ -857,6 +859,47 @@ export class ThreadManager {
       }
     }
     thread.updatedAt = Date.now();
+  }
+
+  /** Build the sessionOptions object from plugin settings (and thread-level overrides). */
+  private buildSessionOptions(thread: Thread): Parameters<ClaudeSession['run']>[13] {
+    const s = this.settings;
+    const opts: {
+      thinking?: Options['thinking'];
+      effort?: Options['effort'];
+      agentProgressSummaries?: boolean;
+      betas?: SdkBeta[];
+      persistSession?: boolean;
+    } = {};
+
+    // Thinking mode
+    if (s.thinkingMode && s.thinkingMode !== 'disabled') {
+      if (s.thinkingMode === 'adaptive') {
+        opts.thinking = { type: 'adaptive' };
+      } else {
+        opts.thinking = { type: 'enabled', budgetTokens: s.thinkingBudgetTokens ?? 8000 };
+      }
+    }
+
+    // Effort level
+    if (s.effort && s.effort !== 'default') {
+      opts.effort = s.effort as Options['effort'];
+    }
+
+    // Agent progress summaries
+    opts.agentProgressSummaries = s.agentProgressSummaries ?? true;
+
+    // 1M context beta
+    if (s.enable1MContext) {
+      opts.betas = ['context-1m-2025-08-07'];
+    }
+
+    // Ephemeral session (thread-level flag)
+    if (thread.ephemeral) {
+      opts.persistSession = false;
+    }
+
+    return opts;
   }
 
   async interrupt(threadId: string): Promise<void> {
