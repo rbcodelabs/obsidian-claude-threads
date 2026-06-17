@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { findSkillDir } from '../../src/SkillsManagerView';
+import { findSkillDir, copySkillFiles } from '../../src/SkillsManagerView';
 
 /**
  * Regression suite for the Skills Manager install path resolver. The original
@@ -82,5 +82,52 @@ describe('findSkillDir', () => {
     fs.writeFileSync(path.join(tmpRoot, 'src', 'index.ts'), '// nothing here', 'utf-8');
     const result = await findSkillDir(tmpRoot, 'anything', 'Anything', fs, path);
     expect(result).toBeNull();
+  });
+});
+
+// ── copySkillFiles ────────────────────────────────────────────────────────────
+
+describe('copySkillFiles', () => {
+  let src: string;
+  let dest: string;
+
+  beforeEach(() => {
+    src = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-skill-src-'));
+    dest = fs.mkdtempSync(path.join(os.tmpdir(), 'copy-skill-dest-'));
+    // Remove the auto-created dest so cp can create it fresh
+    fs.rmdirSync(dest);
+  });
+
+  afterEach(() => {
+    fs.rmSync(src, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+  });
+
+  it('dereferences symlinks so the installed skill contains real files, not dangling symlinks', async () => {
+    // Simulate the GitHub repo structure: SKILL.md at root, plus data/ and scripts/
+    // as symlinked subdirectories (the pattern that caused the breakage).
+    fs.writeFileSync(path.join(src, 'SKILL.md'), '---\nname: test-skill\n---\n', 'utf-8');
+
+    // Create the real directories the symlinks point to (inside the temp clone)
+    const realData = path.join(src, '_real_data');
+    const realScripts = path.join(src, '_real_scripts');
+    fs.mkdirSync(realData);
+    fs.mkdirSync(realScripts);
+    fs.writeFileSync(path.join(realData, 'colors.csv'), 'name,hex\nred,#f00\n', 'utf-8');
+    fs.writeFileSync(path.join(realScripts, 'search.py'), '# search\n', 'utf-8');
+
+    // Create symlinks as the GitHub repo has them
+    fs.symlinkSync(realData, path.join(src, 'data'));
+    fs.symlinkSync(realScripts, path.join(src, 'scripts'));
+
+    await copySkillFiles(src, dest);
+
+    // dest/data and dest/scripts must be real directories, not symlinks
+    expect(fs.lstatSync(path.join(dest, 'data')).isSymbolicLink()).toBe(false);
+    expect(fs.lstatSync(path.join(dest, 'scripts')).isSymbolicLink()).toBe(false);
+
+    // The files inside must exist and be readable
+    expect(fs.readFileSync(path.join(dest, 'data', 'colors.csv'), 'utf-8')).toContain('red');
+    expect(fs.readFileSync(path.join(dest, 'scripts', 'search.py'), 'utf-8')).toContain('search');
   });
 });
