@@ -1790,24 +1790,48 @@ export class ThreadsView extends ItemView {
     setIcon(iconEl, 'map');
     header.createSpan({ cls: 'ct-plan-label', text: 'Plan ready' });
 
+    // Body: rendered markdown by default; Edit toggles to a textarea.
     const bodyEl = card.createDiv('ct-plan-body');
-    // Render the plan as a textarea so the user can edit before approving
-    const textarea = bodyEl.createEl('textarea', { cls: 'ct-plan-textarea' });
-    textarea.value = planText;
-    textarea.rows = Math.min(20, (planText.match(/\n/g) ?? []).length + 3);
+    const mdEl = bodyEl.createDiv('ct-plan-md');
+    // renderMarkdown is async — fire-and-forget; content fills in immediately
+    this.renderMarkdown(planText, mdEl).catch(() => {
+      mdEl.setText(planText);
+    });
+
+    let editing = false;
+    let textarea: HTMLTextAreaElement | null = null;
 
     const actions = card.createDiv('ct-plan-actions');
-    actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' })
-      .addEventListener('click', () => {
-        card.remove();
-        reject();
-      });
-    actions.createEl('button', { text: 'Approve', cls: 'ct-plan-btn ct-plan-approve' })
-      .addEventListener('click', () => {
-        const edited = textarea.value;
-        card.remove();
-        approve(edited !== planText ? edited : undefined);
-      });
+
+    const rejectBtn = actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' });
+    rejectBtn.addEventListener('click', () => {
+      card.remove();
+      reject();
+    });
+
+    const editBtn = actions.createEl('button', { text: 'Edit', cls: 'ct-plan-btn ct-plan-edit' });
+    editBtn.addEventListener('click', () => {
+      editing = !editing;
+      if (editing) {
+        mdEl.style.display = 'none';
+        textarea = bodyEl.createEl('textarea', { cls: 'ct-plan-textarea' });
+        textarea.value = planText;
+        textarea.focus();
+        editBtn.setText('Cancel');
+      } else {
+        textarea?.remove();
+        textarea = null;
+        mdEl.style.display = '';
+        editBtn.setText('Edit');
+      }
+    });
+
+    const approveBtn = actions.createEl('button', { text: 'Approve', cls: 'ct-plan-btn ct-plan-approve' });
+    approveBtn.addEventListener('click', () => {
+      const edited = editing && textarea ? textarea.value : undefined;
+      card.remove();
+      approve(edited !== undefined && edited !== planText ? edited : undefined);
+    });
 
     this.scrollToBottom();
     return card;

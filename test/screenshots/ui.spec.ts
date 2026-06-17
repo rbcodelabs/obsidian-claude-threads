@@ -764,9 +764,16 @@ test.describe('Claude Threads UI', () => {
       view['scrollToBottom']();
     });
     await page.waitForSelector('.ct-plan-card');
+    // Wait for async markdown rendering to finish
+    await page.waitForSelector('.ct-plan-md', { state: 'visible' });
+    await page.waitForTimeout(200);
     await expect(page.locator('.ct-plan-card')).toBeVisible();
     await expect(page.locator('.ct-plan-approve')).toBeVisible();
+    await expect(page.locator('.ct-plan-edit')).toBeVisible();
     await expect(page.locator('.ct-plan-reject')).toBeVisible();
+    // Default view should show rendered markdown, not a textarea
+    await expect(page.locator('.ct-plan-md')).toBeVisible();
+    await expect(page.locator('.ct-plan-textarea')).not.toBeVisible();
     await expect(page).toHaveScreenshot('plan-mode-approve-reject.png', { fullPage: true });
   });
 
