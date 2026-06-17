@@ -1907,25 +1907,41 @@ export class ThreadsView extends ItemView {
   }
 
   /**
-   * If the active thread has a persisted pendingPlan (from a session that was
-   * killed before the user could approve/reject), renders a restored plan card
-   * whose buttons dispatch via sendMessage rather than resolving a live callback.
-   * Safe to call repeatedly — no-ops if the card already exists, there is no
-   * pending plan, or a session is currently running.
+   * Re-renders the plan card when focusing a thread that has a pendingPlan.
+   *
+   * Two paths:
+   *  - Live session waiting: the session is still running and blocked on the
+   *    canUseTool promise. We use the stored approve/reject resolvers from
+   *    ThreadManager so the card can still resolve the live callback even though
+   *    the original plan_ready event was fired before the user switched threads.
+   *  - Post-crash restore: the session is gone. Buttons dispatch via sendMessage
+   *    to start a new session turn.
+   *
+   * Safe to call repeatedly — no-ops if the card is already visible or there is
+   * no pending plan for the active thread.
    */
   private restorePendingPlanCard(): void {
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread?.pendingPlan) return;
-    // Don't show the restored card while a live session is running (the live
-    // plan_ready event will render its own card via the normal path).
-    if (this.manager.isRunning(this.activeThreadId)) return;
     // Avoid duplicating the card if it's already visible.
     if (this.messagesEl.querySelector('.ct-plan-card')) return;
 
     const planText = thread.pendingPlan;
     const threadId = this.activeThreadId;
 
+    // Check if a live session is still waiting on this plan (user switched
+    // threads mid-session). If so, use the stored resolvers so the card can
+    // resolve the canUseTool promise directly — sendMessage won't work here
+    // because the session is blocked, not done.
+    const liveResolvers = this.manager.getPendingPlanResolvers(threadId);
+    if (liveResolvers) {
+      // Live path: wire directly to the existing wrapped callbacks.
+      this.renderPlanCard(planText, liveResolvers.approve, liveResolvers.reject);
+      return;
+    }
+
+    // Post-crash / post-reload path: no live session. Dispatch via sendMessage.
     const clearPlan = () => {
       this.manager.setThreadPendingPlan(threadId, undefined);
       void this.plugin.saveSettings();
@@ -1934,7 +1950,6 @@ export class ThreadsView extends ItemView {
     this.renderPlanCard(
       planText,
       (editedPlan) => {
-        // Approve: clear the persisted plan and start a new session turn.
         clearPlan();
         const effectivePlan = editedPlan ?? planText;
         const msg = editedPlan && editedPlan !== planText

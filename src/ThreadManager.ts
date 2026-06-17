@@ -85,6 +85,12 @@ export class ThreadManager {
   questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
+  /**
+   * In-memory store for the live approve/reject callbacks from a plan_ready event.
+   * Keyed by thread ID. NOT serialized to JSON — only set while the session is
+   * actively waiting for the user to act on the plan card.
+   */
+  private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => void }> = new Map();
   /** Appends each thread's raw SDK event stream to a per-thread JSONL log. */
   private rawLogWriter: RawLogWriter;
 
@@ -336,6 +342,11 @@ export class ThreadManager {
       else delete thread.pendingPlan;
       thread.updatedAt = Date.now();
     }
+  }
+
+  /** Returns the live approve/reject callbacks if a plan is actively awaiting user action. */
+  getPendingPlanResolvers(id: string): { approve: (edited?: string) => void; reject: () => void } | undefined {
+    return this.pendingPlanResolvers.get(id);
   }
 
   setThreadPermissionMode(id: string, mode: PluginSettings['permissionMode'] | undefined): void {
@@ -717,6 +728,7 @@ export class ThreadManager {
           // can't reappear on the next focus.
           if (thread.pendingPlan) {
             delete thread.pendingPlan;
+            this.pendingPlanResolvers.delete(threadId);
             this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
           }
 
@@ -825,23 +837,30 @@ export class ThreadManager {
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
         onPlanReady: (planText, approve, reject) => {
-          // Persist the plan text so the card can be restored after a reload/crash.
+          // Persist the plan text so the card can be restored after a reload/crash
+          // OR after the user switches threads mid-session.
           thread.pendingPlan = planText;
           thread.updatedAt = Date.now();
           this.emit(threadId, { type: 'pending_plan_changed', planText });
-          // Wrap callbacks to clear pendingPlan when the user acts on the card.
+          // Wrap callbacks to clear both the persisted plan and the in-memory
+          // resolvers when the user acts on the card.
           const wrappedApprove = (editedPlan?: string) => {
             delete thread.pendingPlan;
             thread.updatedAt = Date.now();
+            this.pendingPlanResolvers.delete(threadId);
             this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
             approve(editedPlan);
           };
           const wrappedReject = () => {
             delete thread.pendingPlan;
             thread.updatedAt = Date.now();
+            this.pendingPlanResolvers.delete(threadId);
             this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
             reject();
           };
+          // Store resolvers in-memory so restorePendingPlanCard() can re-wire the
+          // card after the user switches threads and switches back mid-session.
+          this.pendingPlanResolvers.set(threadId, { approve: wrappedApprove, reject: wrappedReject });
           this.emit(threadId, { type: 'plan_ready', planText, approve: wrappedApprove, reject: wrappedReject });
         },
         onCapabilitiesDiscovered: (models, agents) => this.emit(threadId, { type: 'capabilities_discovered', models, agents }),
