@@ -229,6 +229,8 @@ describe('canUseTool ExitPlanMode', () => {
 
     const result = await callPromise;
     expect(result.behavior).toBe('deny');
+    expect((result as any).interrupt).toBe(false);
+    expect((result as any).message).toContain('rejected');
 
     await runPromise;
   });

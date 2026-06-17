@@ -82,7 +82,7 @@ export interface SessionCallbacks {
    * the session waits until either approve() or reject() is called.
    * - approve(editedPlan?) - allow implementation to proceed; pass the edited
    *   plan text if the user modified it, otherwise undefined.
-   * - reject() - deny with interrupt, cancelling the session.
+   * - reject() - deny without interrupt; Claude reads the rejection message and stops cleanly.
    */
   onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => void) => void;
   /**
@@ -173,7 +173,7 @@ export class ClaudeSession {
                     : 'Plan approved — proceed with implementation.';
                   resolve({ behavior: 'deny' as const, message: approvalNote, interrupt: false });
                 },
-                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop and await new instructions.', interrupt: true }),
+                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false }),
               );
             });
             return result;
