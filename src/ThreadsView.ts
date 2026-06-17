@@ -1803,10 +1803,22 @@ export class ThreadsView extends ItemView {
 
     const actions = card.createDiv('ct-plan-actions');
 
+    // Snapshot thread ID at card-creation time so the async reject handler
+    // targets the right thread even if the active selection changes.
+    const rejectThreadId = this.activeThreadId;
     const rejectBtn = actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' });
     rejectBtn.addEventListener('click', () => {
       card.remove();
       reject();
+      // Inject a follow-up turn so Claude acknowledges the rejection and offers
+      // to revise. sendMessage() queues automatically while the session is still
+      // active and fires as a new turn once the denial response lands.
+      if (rejectThreadId) {
+        void this.manager.sendMessage(
+          rejectThreadId,
+          'I rejected the plan. Please ask what changes I\'d like, or suggest alternative approaches.',
+        );
+      }
     });
 
     const editBtn = actions.createEl('button', { text: 'Edit', cls: 'ct-plan-btn ct-plan-edit' });
