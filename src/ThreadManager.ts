@@ -49,7 +49,9 @@ export type ThreadEvent =
   | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
   | { type: 'task_progress_summary'; taskId: string; summary: string }
   | { type: 'git_operation'; summary: string }
-  | { type: 'file_user_modified'; filePath: string };
+  | { type: 'file_user_modified'; filePath: string }
+  | { type: 'enter_plan_mode' }
+  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -792,6 +794,8 @@ export class ThreadManager {
         onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
         onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
+        onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
+        onPlanReady: (planText, approve, reject) => this.emit(threadId, { type: 'plan_ready', planText, approve, reject }),
         onFileUserModified: (filePath) => {
           if (!thread.userModifiedFiles) thread.userModifiedFiles = [];
           if (!thread.userModifiedFiles.includes(filePath)) thread.userModifiedFiles.push(filePath);

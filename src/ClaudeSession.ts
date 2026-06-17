@@ -72,6 +72,19 @@ export interface SessionCallbacks {
    * proposed content in the permission dialog before accepting.
    */
   onFileUserModified?: (filePath: string) => void;
+  /**
+   * Fired when Claude calls EnterPlanMode. The session is now in read-only
+   * planning mode. Non-blocking: fire and continue.
+   */
+  onEnterPlanMode?: () => void;
+  /**
+   * Fired when Claude calls ExitPlanMode with a completed plan. Blocking:
+   * the session waits until either approve() or reject() is called.
+   * - approve(editedPlan?) - allow implementation to proceed; pass the edited
+   *   plan text if the user modified it, otherwise undefined.
+   * - reject() - deny with interrupt, cancelling the session.
+   */
+  onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => void) => void;
 }
 
 export class ClaudeSession {
@@ -119,6 +132,31 @@ export class ClaudeSession {
           const inp = input as { title?: string; initialPrompt?: string };
           const result = await callbacks.onOpenNewTab(inp.title, inp.initialPrompt);
           return { behavior: 'allow' as const, updatedInput: { ...input, result: JSON.stringify(result) } };
+        }
+        if (toolName === 'EnterPlanMode') {
+          callbacks.onEnterPlanMode?.();
+          return { behavior: 'allow' as const };
+        }
+        if (toolName === 'ExitPlanMode') {
+          const planText = String((input as { plan?: unknown }).plan ?? '');
+          if (callbacks.onPlanReady) {
+            const result = await new Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult>((resolve) => {
+              callbacks.onPlanReady!(
+                planText,
+                (editedPlan) => {
+                  if (editedPlan !== undefined && editedPlan !== planText) {
+                    resolve({ behavior: 'allow' as const, updatedInput: { ...input, plan: editedPlan } });
+                  } else {
+                    resolve({ behavior: 'allow' as const });
+                  }
+                },
+                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user', interrupt: true }),
+              );
+            });
+            return result;
+          }
+          // No handler registered: allow by default
+          return { behavior: 'allow' as const };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;

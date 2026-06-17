@@ -1766,6 +1766,49 @@ export class ThreadsView extends ItemView {
     return card;
   }
 
+  /**
+   * Renders the plan approval card shown when Claude calls ExitPlanMode.
+   * The card is anchored to the current streaming element (or messagesEl) so it
+   * sits visually inside the current response turn.
+   * Approve proceeds with implementation; Reject cancels the session with interrupt.
+   * Edit opens a textarea pre-populated with the plan so the user can revise it.
+   */
+  private renderPlanCard(
+    planText: string,
+    approve: (editedPlan?: string) => void,
+    reject: () => void,
+  ): HTMLElement {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-plan-card');
+
+    const header = card.createDiv('ct-plan-header');
+    const iconEl = header.createSpan('ct-plan-icon');
+    setIcon(iconEl, 'map');
+    header.createSpan({ cls: 'ct-plan-label', text: 'Plan ready' });
+
+    const bodyEl = card.createDiv('ct-plan-body');
+    // Render the plan as a textarea so the user can edit before approving
+    const textarea = bodyEl.createEl('textarea', { cls: 'ct-plan-textarea' });
+    textarea.value = planText;
+    textarea.rows = Math.min(20, (planText.match(/\n/g) ?? []).length + 3);
+
+    const actions = card.createDiv('ct-plan-actions');
+    actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' })
+      .addEventListener('click', () => {
+        card.remove();
+        reject();
+      });
+    actions.createEl('button', { text: 'Approve', cls: 'ct-plan-btn ct-plan-approve' })
+      .addEventListener('click', () => {
+        const edited = textarea.value;
+        card.remove();
+        approve(edited !== planText ? edited : undefined);
+      });
+
+    this.scrollToBottom();
+    return card;
+  }
+
   private clearStreamingState(): void {
     if (this.streamingRenderTimer !== null) {
       clearTimeout(this.streamingRenderTimer);
@@ -2337,6 +2380,20 @@ export class ThreadsView extends ItemView {
       case 'file_user_modified': {
         this.userModifiedFilesSet.add(event.filePath);
         this.renderEditedFilesCard();
+        break;
+      }
+
+      case 'enter_plan_mode': {
+        // Show a "Planning..." status card so the user knows Claude is in read-only planning mode.
+        this.showStatusCard('active', 'Planning...');
+        break;
+      }
+
+      case 'plan_ready': {
+        // Clear the "Planning..." card and show the Approve/Reject/Edit card.
+        this.activeWorkCardEl?.remove();
+        this.activeWorkCardEl = null;
+        this.renderPlanCard(event.planText, event.approve, event.reject);
         break;
       }
 
