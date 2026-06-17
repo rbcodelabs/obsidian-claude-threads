@@ -1943,12 +1943,9 @@ export class ThreadsView extends ItemView {
         void this.manager.sendMessage(threadId, msg);
       },
       () => {
-        // Reject: clear the persisted plan and inject the follow-up turn.
+        // Reject: just clear the persisted plan. The follow-up sendMessage is
+        // injected by renderPlanCard's reject button handler (same as live path).
         clearPlan();
-        void this.manager.sendMessage(
-          threadId,
-          'I rejected the plan. Please ask what changes I\'d like, or suggest alternative approaches.',
-        );
       },
     );
   }
