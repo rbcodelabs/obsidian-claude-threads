@@ -98,6 +98,8 @@ Tabs are renamed automatically after the first exchange using the thread summari
 - **`/`** — opens slash command autocomplete
 - **Escape** — cancel the running session; the sent message is restored to the input box so you can edit and re-send
 
+**Collapsible input panels.** All three message-input panels (Threads view, Agent Dashboard sidebar, and Kanban dispatch) collapse to a minimal bar at rest — just the textarea and send button. Hover over the panel or click into the textarea to expand secondary controls (attach, mic, model picker, more menu, CWD chip) with a smooth animation. The panel border softens when collapsed so it reads as a quiet background element.
+
 **Message queue.** If you send a message while Claude is already processing, it goes into a queue — displayed as stacked removable rows above the composer. Each row shows a preview of the queued message and an `×` button to discard it. Click any row to pull it back into the input box for editing (an inline confirm prompt prevents you from accidentally discarding your current draft). The queue drains automatically as Claude finishes each turn. Queued messages survive thread switches and plugin reloads.
 
 <p align="center">
