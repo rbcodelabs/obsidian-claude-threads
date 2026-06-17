@@ -12,7 +12,7 @@ import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { DispatchInput } from './DispatchInput';
-import { buildCwdLabel, formatWakeupCountdown } from './dashboardUtils';
+import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
@@ -2776,6 +2776,39 @@ export class ThreadsView extends ItemView {
           text: event.error.message,
           cls: 'ct-error-text',
         });
+        // ── AWS SSO reauth button ──────────────────────────────────────────
+        // When the error looks like an expired SSO token, show a one-click
+        // button inline in the conversation so the user doesn't need to find
+        // the Agent Dashboard to re-authenticate.
+        if (isAwsSsoError(event.error.message)) {
+          const profile = extractAwsProfile(this.plugin.settings.extraEnv ?? '');
+          const reauthBtn = errEl.createEl('button', {
+            cls: 'ct-aws-reauth-btn',
+            text: '🔑 Re-authenticate AWS SSO',
+          });
+          reauthBtn.addEventListener('click', async () => {
+            reauthBtn.setText('Authenticating…');
+            reauthBtn.disabled = true;
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { exec } = require('child_process') as typeof import('child_process');
+              const awsBin = resolveAwsBinary();
+              const cmd = profile ? `${awsBin} sso login --profile ${profile}` : `${awsBin} sso login`;
+              await new Promise<void>((resolve, reject) => {
+                exec(cmd, { env: awsExecEnv() }, (err, _stdout, stderr) => {
+                  if (err) reject(new Error(stderr?.trim() || err.message));
+                  else resolve();
+                });
+              });
+              new Notice('AWS SSO login successful — retry your request');
+              reauthBtn.setText('✓ Done — retry your request');
+            } catch (err) {
+              new Notice(`AWS SSO login failed: ${(err as Error).message}`);
+              reauthBtn.setText('🔑 Re-authenticate AWS SSO');
+              reauthBtn.disabled = false;
+            }
+          });
+        }
         this.setRunningState(false);
         this.scrollToBottom();
         break;
