@@ -51,6 +51,16 @@ export interface SessionCallbacks {
    * before this fires — they're reconstructed in the final `assistant` message.
    */
   onRawEvent?: (event: { type?: string } & Record<string, unknown>) => void;
+  /** Fired when Claude falls back to an alternate model (e.g. primary overloaded). */
+  onModelFallback?: (trigger: string, fromModel: string, toModel: string) => void;
+  /** Fired when a running tool emits a progress heartbeat with elapsed time. */
+  onToolProgress?: (toolUseId: string, toolName: string, elapsedSeconds: number) => void;
+  /** Fired when the session surfaces memory files into the current turn. */
+  onMemoryRecall?: (paths: string[], mode: 'select' | 'synthesize') => void;
+  /** Fired when the slash-command list changes mid-session (e.g. new skill discovered). */
+  onCommandsChanged?: (commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[]) => void;
+  /** Fired when agentProgressSummaries is enabled and a task emits an AI summary. */
+  onTaskProgressSummary?: (taskId: string, summary: string) => void;
 }
 
 export class ClaudeSession {
@@ -224,7 +234,7 @@ export class ClaudeSession {
                   block.name,
                   block.input as Record<string, unknown>,
                 );
-                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now() };
+                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id };
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
                 callbacks.onToolUse(record);
@@ -327,6 +337,9 @@ export class ClaudeSession {
                   sys.description as string,
                   sys.last_tool_name as string | undefined,
                 );
+                if (sys.summary && callbacks.onTaskProgressSummary) {
+                  callbacks.onTaskProgressSummary(sys.task_id as string, sys.summary as string);
+                }
                 break;
               case 'task_notification':
                 callbacks.onTaskNotification?.(
@@ -348,7 +361,34 @@ export class ClaudeSession {
                   sys.error as string,
                 );
                 break;
+              case 'model_fallback':
+                callbacks.onModelFallback?.(
+                  sys.trigger as string,
+                  sys.from_model as string,
+                  sys.to_model as string,
+                );
+                break;
+              case 'memory_recall': {
+                const paths = ((sys.memories as Array<{ path: string }>) ?? []).map(m => m.path);
+                callbacks.onMemoryRecall?.(paths, sys.mode as 'select' | 'synthesize');
+                break;
+              }
+              case 'commands_changed':
+                callbacks.onCommandsChanged?.(
+                  sys.commands as import('@anthropic-ai/claude-agent-sdk').SlashCommand[],
+                );
+                break;
             }
+            break;
+          }
+
+          case 'tool_progress': {
+            const tp = msg as Record<string, unknown>;
+            callbacks.onToolProgress?.(
+              tp.tool_use_id as string,
+              tp.tool_name as string,
+              tp.elapsed_time_seconds as number,
+            );
             break;
           }
 

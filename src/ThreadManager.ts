@@ -41,7 +41,12 @@ export type ThreadEvent =
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
-  | { type: 'status_tags' };
+  | { type: 'status_tags' }
+  | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
+  | { type: 'tool_progress'; toolUseId: string; toolName: string; elapsedSeconds: number }
+  | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
+  | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
+  | { type: 'task_progress_summary'; taskId: string; summary: string };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -778,6 +783,11 @@ export class ThreadManager {
         onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
         onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
         onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
+        onModelFallback: (trigger, fromModel, toModel) => this.emit(threadId, { type: 'model_fallback', trigger, fromModel, toModel }),
+        onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),
+        onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
+        onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
+        onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
         onToolResultImages: (images) => {
           pendingToolImages.push(...images);
           this.emit(threadId, { type: 'tool_result_images', images });

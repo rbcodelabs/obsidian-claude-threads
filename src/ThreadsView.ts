@@ -59,6 +59,9 @@ export class ThreadsView extends ItemView {
   // Active subagent task pills: taskId → pill element
   private taskPills: Map<string, HTMLElement> = new Map();
 
+  // Active tool pills by tool_use_id for elapsed-time updates from tool_progress events
+  private toolPillsByUseId: Map<string, HTMLElement> = new Map();
+
   // Task start times for elapsed-time display: taskId → epoch ms
   private taskStartTimes: Map<string, number> = new Map();
 
@@ -1849,6 +1852,10 @@ export class ThreadsView extends ItemView {
         if (this.streamingEl && !isAgentCall) {
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
+          if (event.record.toolUseId) {
+            pill.dataset.toolUseId = event.record.toolUseId;
+            this.toolPillsByUseId.set(event.record.toolUseId, pill);
+          }
           const iconEl = document.createElement('span');
           iconEl.className = 'ct-tool-pill-icon';
           setIcon(iconEl, getToolIcon(event.record.name));
@@ -1951,6 +1958,7 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;
@@ -1977,6 +1985,7 @@ export class ThreadsView extends ItemView {
         }
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;
@@ -2182,8 +2191,27 @@ export class ThreadsView extends ItemView {
       }
 
       case 'task_updated': {
-        // Status patches — primarily useful for workflow sub-agents completing/failing
-        // before task_notification arrives. No-op for now; task_notification handles terminal states.
+        // Apply status/description patches to the live task pill when present.
+        // task_notification handles terminal states, but task_updated can arrive
+        // first for workflow sub-agents or when backgrounded tasks resume.
+        const updatedPill = this.taskPills.get(event.taskId);
+        if (updatedPill) {
+          if (event.description) {
+            const label = updatedPill.querySelector('.ct-tool-pill-text');
+            if (label) label.textContent = event.description;
+          }
+          if (event.error) {
+            updatedPill.classList.add('ct-task-failed');
+            updatedPill.classList.remove('ct-tool-active');
+            const iconEl = updatedPill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+            if (iconEl) setIcon(iconEl, 'x-circle');
+          } else if (event.status === 'completed') {
+            updatedPill.classList.add('ct-task-done');
+            updatedPill.classList.remove('ct-tool-active');
+            const iconEl = updatedPill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+            if (iconEl) setIcon(iconEl, 'check-circle');
+          }
+        }
         break;
       }
 
@@ -2232,10 +2260,58 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'model_fallback': {
+        new Notice(`Claude switched to ${event.toModel} (${event.trigger})`, 5000);
+        break;
+      }
+
+      case 'tool_progress': {
+        // Update the elapsed-time label on the active pill for this tool_use_id.
+        const pill = this.toolPillsByUseId.get(event.toolUseId);
+        if (pill) {
+          const secs = Math.round(event.elapsedSeconds);
+          const label = pill.querySelector<HTMLElement>('.ct-tool-pill-name');
+          if (label) {
+            label.textContent = `${formatToolName(event.toolName)} (${secs}s)`;
+          }
+        }
+        break;
+      }
+
+      case 'memory_recall': {
+        // Show a subtle annotation in the streaming element.
+        if (this.streamingEl && event.paths.length > 0) {
+          const annEl = this.streamingEl.createDiv('ct-memory-recall-annotation');
+          annEl.createSpan({ cls: 'ct-memory-recall-label', text: `Recalled ${event.paths.length} memory file${event.paths.length === 1 ? '' : 's'}` });
+          const fileList = annEl.createEl('ul', { cls: 'ct-memory-recall-files' });
+          for (const p of event.paths) {
+            fileList.createEl('li', { text: p.replace(/.*\//, '') });
+          }
+        }
+        break;
+      }
+
+      case 'commands_changed': {
+        // Forward the updated command list to the dispatch input autocomplete.
+        this.dispatchInput?.setAvailableCommands?.(event.commands);
+        break;
+      }
+
+      case 'task_progress_summary': {
+        // Update the task pill label with the AI-generated summary.
+        const progressEl = this.taskPills.get(event.taskId);
+        if (progressEl) {
+          const label = progressEl.querySelector<HTMLElement>('.ct-tool-pill-text');
+          if (label) label.textContent = event.summary;
+        }
+        break;
+      }
+
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
         this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
         this.subagentWaiting = false;
         this.activeWorkflowTaskId = null;
         this.workflowBlockEl = null;

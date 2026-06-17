@@ -28,6 +28,8 @@ export interface ToolCallRecord {
   name: string;
   summary: string;
   timestamp?: number;
+  /** tool_use block id from the SDK, used to correlate tool_progress heartbeats. */
+  toolUseId?: string;
 }
 
 export interface ChatMessage {

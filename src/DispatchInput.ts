@@ -633,6 +633,20 @@ export class DispatchInput {
     }
   }
 
+  /**
+   * Replace the cached skill list with the dynamically-discovered command list
+   * from an SDKCommandsChangedMessage. Filters to skill-type commands (excludes
+   * built-in commands that are already in builtinCommands).
+   */
+  setAvailableCommands(commands: { name: string; description: string }[]): void {
+    const builtinNames = new Set(
+      (this.options.builtinCommands ?? []).map(c => c.name.toLowerCase()),
+    );
+    this.skills = commands
+      .filter(c => !builtinNames.has(c.name.toLowerCase()))
+      .map(c => ({ name: c.name, description: c.description }));
+  }
+
   private getSlashQuery(): string | null {
     const val = this.inputEl.value;
     const pos = this.inputEl.selectionStart ?? val.length;
