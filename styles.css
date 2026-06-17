@@ -2748,6 +2748,27 @@
 .ct-plan-md h1,
 .ct-plan-md h2,
 .ct-plan-md h3  { margin: 0.6em 0 0.2em; font-size: inherit; font-weight: 600; }
+/* Fenced code blocks — horizontally scrollable, not clipped */
+.ct-plan-md pre {
+  overflow-x: auto;
+  white-space: pre;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0.5em 0;
+  line-height: 1.5;
+}
+
+.ct-plan-md pre code {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Inline code */
 .ct-plan-md code {
   font-family: var(--font-monospace);
   font-size: 0.88em;
