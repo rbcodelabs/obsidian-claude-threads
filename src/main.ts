@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath } from 'obsidian';
+import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -844,14 +844,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // 3. Open welcome guide in the CENTER editor
     try {
       const guideFile = vault.getAbstractFileByPath(guidePath);
-      if (guideFile) {
-        // TFile is available on the obsidian global — cast is safe here
-        const { TFile } = await import('obsidian');
-        if (guideFile instanceof TFile) {
-          const centerLeaf = workspace.getLeaf('tab');
-          await centerLeaf.openFile(guideFile);
-          workspace.revealLeaf(centerLeaf);
-        }
+      if (guideFile instanceof TFile) {
+        const centerLeaf = workspace.getLeaf('tab');
+        await centerLeaf.openFile(guideFile);
+        workspace.revealLeaf(centerLeaf);
       }
     } catch (err) {
       console.error('[ClaudeThreads] Failed to open welcome guide:', err);
