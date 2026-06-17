@@ -10,6 +10,7 @@ import fs from 'fs';
 import os from 'os';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 import { execFileSync } from 'child_process';
+import { secretStorageKey } from './secretUtils';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -1792,7 +1793,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       const varName = args.secretName.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
 
       // If the secret is already stored, return immediately without prompting.
-      const existing = app.secretStorage.getSecret(`ct-secret-${varName}`);
+      const existing = app.secretStorage.getSecret(secretStorageKey(varName));
       if (existing) {
         return {
           content: [{

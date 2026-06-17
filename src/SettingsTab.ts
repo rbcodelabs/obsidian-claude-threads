@@ -3,6 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItemSchedule } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
+import { secretStorageKey } from './secretUtils';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -246,7 +247,7 @@ export class RequestSecretModal extends Modal {
     saveBtn.addEventListener('click', () => {
       const val = this.valueInput?.value.trim() ?? '';
       if (!val) return;
-      this.app.secretStorage.setSecret(`ct-secret-${this.secretName}`, val);
+      this.app.secretStorage.setSecret(secretStorageKey(this.secretName), val);
       this.resolved = true;
       this.onSave(true);
       this.close();
@@ -657,7 +658,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         secretsList.createEl('p', { text: 'No secrets configured yet.', cls: 'ct-settings-empty' });
       } else {
         for (const varName of keys) {
-          const existingVal = this.plugin.app.secretStorage.getSecret(`ct-secret-${varName}`);
+          const existingVal = this.plugin.app.secretStorage.getSecret(secretStorageKey(varName));
           const maskedVal = existingVal
             ? (existingVal.length <= 8 ? '••••••••' : existingVal.slice(0, 4) + '••••' + existingVal.slice(-4))
             : '(not set)';
@@ -667,7 +668,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
             .addButton((btn) =>
               btn.setButtonText('Change').onClick(() => {
                 new SecretEnvModal(this.app, varName, (newVal) => {
-                  this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, newVal);
+                  this.plugin.app.secretStorage.setSecret(secretStorageKey(varName), newVal);
                   renderSecrets();
                 }).open();
               }),
@@ -676,7 +677,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
               btn.setButtonText('Remove').setWarning().onClick(async () => {
                 this.plugin.settings.secretEnvKeys =
                   this.plugin.settings.secretEnvKeys.filter((k) => k !== varName);
-                this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, '');
+                this.plugin.app.secretStorage.setSecret(secretStorageKey(varName), '');
                 await this.plugin.saveSettings();
                 renderSecrets();
               }),
@@ -696,7 +697,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
               this.plugin.settings.secretEnvKeys.push(varName);
               await this.plugin.saveSettings();
             }
-            this.plugin.app.secretStorage.setSecret(`ct-secret-${varName}`, val);
+            this.plugin.app.secretStorage.setSecret(secretStorageKey(varName), val);
             renderSecrets();
           }).open();
         }),
