@@ -177,6 +177,12 @@ export interface Thread {
    * global settings.permissionMode for sessions in this thread.
    */
   permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+  /**
+   * Plan text from a pending ExitPlanMode call that hasn't been approved or
+   * rejected yet. Persisted so the plan card can be restored after a reload
+   * or crash that killed the session mid-turn.
+   */
+  pendingPlan?: string;
 }
 
 /**

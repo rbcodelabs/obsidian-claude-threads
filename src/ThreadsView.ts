@@ -696,6 +696,7 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
+    this.restorePendingPlanCard();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -1903,6 +1904,53 @@ export class ThreadsView extends ItemView {
 
     this.scrollToBottom();
     return card;
+  }
+
+  /**
+   * If the active thread has a persisted pendingPlan (from a session that was
+   * killed before the user could approve/reject), renders a restored plan card
+   * whose buttons dispatch via sendMessage rather than resolving a live callback.
+   * Safe to call repeatedly — no-ops if the card already exists, there is no
+   * pending plan, or a session is currently running.
+   */
+  private restorePendingPlanCard(): void {
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (!thread?.pendingPlan) return;
+    // Don't show the restored card while a live session is running (the live
+    // plan_ready event will render its own card via the normal path).
+    if (this.manager.isRunning(this.activeThreadId)) return;
+    // Avoid duplicating the card if it's already visible.
+    if (this.messagesEl.querySelector('.ct-plan-card')) return;
+
+    const planText = thread.pendingPlan;
+    const threadId = this.activeThreadId;
+
+    const clearPlan = () => {
+      this.manager.setThreadPendingPlan(threadId, undefined);
+      void this.plugin.saveSettings();
+    };
+
+    this.renderPlanCard(
+      planText,
+      (editedPlan) => {
+        // Approve: clear the persisted plan and start a new session turn.
+        clearPlan();
+        const effectivePlan = editedPlan ?? planText;
+        const msg = editedPlan && editedPlan !== planText
+          ? `Plan approved with edits. Please proceed with implementation:\n\n${effectivePlan}`
+          : `Plan approved. Please proceed with implementation:\n\n${effectivePlan}`;
+        void this.manager.sendMessage(threadId, msg);
+      },
+      () => {
+        // Reject: clear the persisted plan and inject the follow-up turn.
+        clearPlan();
+        void this.manager.sendMessage(
+          threadId,
+          'I rejected the plan. Please ask what changes I\'d like, or suggest alternative approaches.',
+        );
+      },
+    );
   }
 
   /**

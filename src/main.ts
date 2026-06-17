@@ -427,6 +427,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
     this.register(unsubCwdRepair);
 
+    // Persist pending plan text so the plan card survives a reload/crash.
+    const unsubPendingPlan = this.manager.subscribe((_threadId, event) => {
+      if (event.type === 'pending_plan_changed') {
+        this.saveSettings().catch(console.error);
+      }
+    });
+    this.register(unsubPendingPlan);
+
     // Background task monitoring: when a session ends with unresolved background
     // tasks, schedule an automatic poll to check completion.
     const unsubBgTasks = this.manager.subscribe((threadId, event) => {

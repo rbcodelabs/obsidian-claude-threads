@@ -52,6 +52,7 @@ export type ThreadEvent =
   | { type: 'file_user_modified'; filePath: string }
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
+  | { type: 'pending_plan_changed'; planText: string | undefined }
   | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
   | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
@@ -324,6 +325,15 @@ export class ThreadManager {
     const thread = this.threads.get(id);
     if (thread) {
       thread.model = model;
+      thread.updatedAt = Date.now();
+    }
+  }
+
+  setThreadPendingPlan(id: string, planText: string | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (planText !== undefined) thread.pendingPlan = planText;
+      else delete thread.pendingPlan;
       thread.updatedAt = Date.now();
     }
   }
@@ -702,6 +712,14 @@ export class ThreadManager {
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
 
+          // Safety net: if a pending plan somehow survived to onDone (e.g. the
+          // session completed without user action), clear it so a stale card
+          // can't reappear on the next focus.
+          if (thread.pendingPlan) {
+            delete thread.pendingPlan;
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
+
           // If any background tasks started but never notified, persist them so
           // main.ts can schedule polling resumption after the session closes.
           if (activeBgTasks.size > 0) {
@@ -806,7 +824,26 @@ export class ThreadManager {
         onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
-        onPlanReady: (planText, approve, reject) => this.emit(threadId, { type: 'plan_ready', planText, approve, reject }),
+        onPlanReady: (planText, approve, reject) => {
+          // Persist the plan text so the card can be restored after a reload/crash.
+          thread.pendingPlan = planText;
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'pending_plan_changed', planText });
+          // Wrap callbacks to clear pendingPlan when the user acts on the card.
+          const wrappedApprove = (editedPlan?: string) => {
+            delete thread.pendingPlan;
+            thread.updatedAt = Date.now();
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+            approve(editedPlan);
+          };
+          const wrappedReject = () => {
+            delete thread.pendingPlan;
+            thread.updatedAt = Date.now();
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+            reject();
+          };
+          this.emit(threadId, { type: 'plan_ready', planText, approve: wrappedApprove, reject: wrappedReject });
+        },
         onCapabilitiesDiscovered: (models, agents) => this.emit(threadId, { type: 'capabilities_discovered', models, agents }),
         onElicitation: (request, signal) =>
           new Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>((resolve) => {
