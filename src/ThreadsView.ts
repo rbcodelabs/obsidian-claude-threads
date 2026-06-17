@@ -52,6 +52,8 @@ export class ThreadsView extends ItemView {
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
+  // Files where the user modified the proposed content in the permission dialog
+  private userModifiedFilesSet: Set<string> = new Set();
 
   // Debounce timer for persisting per-thread drafts to settings
   private draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -856,6 +858,7 @@ export class ThreadsView extends ItemView {
   /** Rebuild the edited-files set from saved thread state for the active thread. */
   private syncEditedFiles(): void {
     this.editedFilesSet.clear();
+    this.userModifiedFilesSet.clear();
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     if (thread) {
       if (thread.editedFiles && thread.editedFiles.length > 0) {
@@ -873,6 +876,9 @@ export class ThreadsView extends ItemView {
             }
           }
         }
+      }
+      for (const filePath of thread.userModifiedFiles ?? []) {
+        this.userModifiedFilesSet.add(filePath);
       }
     }
     this.renderEditedFilesCard();
@@ -941,6 +947,9 @@ export class ThreadsView extends ItemView {
       setIcon(fileIcon, isVaultFile ? 'file-edit' : 'link');
       if (showFull) {
         chip.createSpan({ cls: 'ct-edited-file-chip-name', text: path.basename(filePath) });
+      }
+      if (this.userModifiedFilesSet.has(filePath)) {
+        chip.createSpan({ cls: 'ct-edited-file-chip-modified', text: '✎', attr: { title: 'You modified this file' } });
       }
       setTooltip(chip, tooltipPath);
       chip.addEventListener('click', () => this.openEditedFile(filePath));
@@ -2304,6 +2313,21 @@ export class ThreadsView extends ItemView {
           const label = progressEl.querySelector<HTMLElement>('.ct-tool-pill-text');
           if (label) label.textContent = event.summary;
         }
+        break;
+      }
+
+      case 'git_operation': {
+        // Show a brief git-activity annotation below the active streaming content.
+        if (this.streamingEl) {
+          const gitEl = this.streamingEl.createDiv('ct-git-operation-annotation');
+          gitEl.createSpan({ cls: 'ct-git-operation-text', text: event.summary });
+        }
+        break;
+      }
+
+      case 'file_user_modified': {
+        this.userModifiedFilesSet.add(event.filePath);
+        this.renderEditedFilesCard();
         break;
       }
 

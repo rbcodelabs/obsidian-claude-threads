@@ -126,6 +126,8 @@ export interface Thread {
   reviewed?: boolean;
   /** Paths of files written or edited during this thread's lifetime. */
   editedFiles?: string[];
+  /** Subset of editedFiles where the user modified the proposed content in the permission dialog. */
+  userModifiedFiles?: string[];
   /** Unsent draft message and attachments for this thread. */
   draft?: ThreadDraft;
   /** Current lifecycle status of the thread. */

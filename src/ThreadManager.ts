@@ -46,7 +46,9 @@ export type ThreadEvent =
   | { type: 'tool_progress'; toolUseId: string; toolName: string; elapsedSeconds: number }
   | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
   | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
-  | { type: 'task_progress_summary'; taskId: string; summary: string };
+  | { type: 'task_progress_summary'; taskId: string; summary: string }
+  | { type: 'git_operation'; summary: string }
+  | { type: 'file_user_modified'; filePath: string };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -788,6 +790,12 @@ export class ThreadManager {
         onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
         onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
         onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
+        onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
+        onFileUserModified: (filePath) => {
+          if (!thread.userModifiedFiles) thread.userModifiedFiles = [];
+          if (!thread.userModifiedFiles.includes(filePath)) thread.userModifiedFiles.push(filePath);
+          this.emit(threadId, { type: 'file_user_modified', filePath });
+        },
         onToolResultImages: (images) => {
           pendingToolImages.push(...images);
           this.emit(threadId, { type: 'tool_result_images', images });

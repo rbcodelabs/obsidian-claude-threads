@@ -61,6 +61,17 @@ export interface SessionCallbacks {
   onCommandsChanged?: (commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[]) => void;
   /** Fired when agentProgressSummaries is enabled and a task emits an AI summary. */
   onTaskProgressSummary?: (taskId: string, summary: string) => void;
+  /**
+   * Fired when a Bash tool result contains a gitOperation classification
+   * (commit, push, PR create/merge, etc.). Lets the UI render a structured
+   * git-activity summary without re-parsing stdout.
+   */
+  onGitOperation?: (summary: string) => void;
+  /**
+   * Fired when a Write/Edit tool result indicates the user modified the
+   * proposed content in the permission dialog before accepting.
+   */
+  onFileUserModified?: (filePath: string) => void;
 }
 
 export class ClaudeSession {
@@ -426,6 +437,59 @@ export class ClaudeSession {
                   if (images.length > 0) callbacks.onToolResultImages(images);
                 }
 
+                // gitOperation structured summary from BashOutput
+                if (callbacks.onGitOperation) {
+                  const resultRaw = b.tool_result ?? b.content;
+                  let parsedResult: Record<string, unknown> | null = null;
+                  try {
+                    if (typeof resultRaw === 'string') {
+                      parsedResult = JSON.parse(resultRaw) as Record<string, unknown>;
+                    } else if (resultRaw && typeof resultRaw === 'object') {
+                      parsedResult = resultRaw as Record<string, unknown>;
+                    }
+                  } catch { /* non-JSON tool result — skip */ }
+                  if (parsedResult?.gitOperation) {
+                    const op = parsedResult.gitOperation as Record<string, unknown>;
+                    const parts: string[] = [];
+                    if (op.commit) {
+                      const c = op.commit as Record<string, unknown>;
+                      parts.push(`${c.kind ?? 'committed'} ${String(c.sha ?? '').substring(0, 7)}`);
+                    }
+                    if (op.push) {
+                      const p = op.push as Record<string, unknown>;
+                      parts.push(`pushed to ${p.branch}`);
+                    }
+                    if (op.branch) {
+                      const br = op.branch as Record<string, unknown>;
+                      parts.push(`${br.action} ${br.ref}`);
+                    }
+                    if (op.pr) {
+                      const pr = op.pr as Record<string, unknown>;
+                      const prDesc = pr.url ? `PR #${pr.number} ${pr.action}` : `PR #${pr.number} ${pr.action}`;
+                      parts.push(prDesc);
+                    }
+                    if (parts.length > 0) {
+                      callbacks.onGitOperation(`git: ${parts.join(', ')}`);
+                    }
+                  }
+                }
+
+                // userModified flag from FileEditOutput / FileWriteOutput
+                if (callbacks.onFileUserModified) {
+                  const resultRaw = b.tool_result ?? b.content;
+                  let parsedResult: Record<string, unknown> | null = null;
+                  try {
+                    if (typeof resultRaw === 'string') {
+                      parsedResult = JSON.parse(resultRaw) as Record<string, unknown>;
+                    } else if (resultRaw && typeof resultRaw === 'object') {
+                      parsedResult = resultRaw as Record<string, unknown>;
+                    }
+                  } catch { /* non-JSON tool result — skip */ }
+                  if (parsedResult?.userModified === true && typeof parsedResult.filePath === 'string') {
+                    callbacks.onFileUserModified(parsedResult.filePath);
+                  }
+                }
+
                 // TaskCreate confirmation — "Task #N created successfully: <subject>"
                 const toolUseId = b.tool_use_id as string | undefined;
                 if (toolUseId && pendingTaskCreates.has(toolUseId)) {
@@ -506,6 +570,11 @@ function formatToolSummary(name: string, input: Record<string, unknown>): string
       return `${String(input.file_path ?? input.path ?? input.pattern ?? '')}`;
     case 'Bash':
       return `${String(input.command ?? '').substring(0, 60)}`;
+    case 'REPL': {
+      const code = String(input.code ?? '');
+      const firstLine = code.split('\n')[0].trim();
+      return `Run JS: ${firstLine.substring(0, 60)}`;
+    }
     case 'WebFetch':
       return `${input.url}`;
     case 'WebSearch':

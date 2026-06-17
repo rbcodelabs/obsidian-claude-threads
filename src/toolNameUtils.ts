@@ -56,6 +56,7 @@ export function getToolIcon(raw: string): string {
     case 'Glob':           return 'folder-search';
     case 'Grep':           return 'search-code';
     case 'Bash':           return 'terminal';
+    case 'REPL':           return 'code-2';
     // Web tools
     case 'WebFetch':       return 'globe';
     case 'WebSearch':      return 'search';
