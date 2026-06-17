@@ -2,8 +2,10 @@
  * Tests for Group 4 Plan Mode:
  *   - canUseTool('EnterPlanMode') → { behavior: 'allow' } and fires onEnterPlanMode
  *   - canUseTool('ExitPlanMode') → does NOT immediately resolve
- *   - approve() callback from onPlanReady → canUseTool resolves { behavior: 'allow' }
- *   - reject() callback from onPlanReady → canUseTool resolves { behavior: 'deny' }
+ *   - approve() callback from onPlanReady → canUseTool resolves { behavior: 'deny', interrupt: false }
+ *     (ExitPlanMode must NOT be allowed to execute: the CLI Zod schema rejects the extra `plan`
+ *      field Claude sends in the input. We signal approval via a non-interrupting deny message.)
+ *   - reject() callback from onPlanReady → canUseTool resolves { behavior: 'deny', interrupt: true }
  *
  * These are tested through ClaudeSession directly (not ThreadManager) because
  * the plan-mode logic lives in ClaudeSession.canUseTool.  We drive the SDK
@@ -162,15 +164,16 @@ describe('canUseTool ExitPlanMode', () => {
     await new Promise<void>((r) => setTimeout(r, 0));
     expect(resolved).toBe(false);
 
-    // Now approve
+    // Now approve — returns deny+no-interrupt to avoid Zod error on ExitPlanMode execution
     approveRef!();
     const result = await callPromise;
-    expect(result.behavior).toBe('allow');
+    expect(result.behavior).toBe('deny');
+    expect((result as any).interrupt).toBe(false);
 
     await runPromise;
   });
 
-  it("approve() makes canUseTool resolve with { behavior: 'allow' }", async () => {
+  it("approve() makes canUseTool resolve with { behavior: 'deny', interrupt: false } (avoids Zod error on ExitPlanMode execution)", async () => {
     const { __setIterable, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
 
     __setIterable(makeMessages([
@@ -193,7 +196,11 @@ describe('canUseTool ExitPlanMode', () => {
     approveRef!();
 
     const result = await callPromise;
-    expect(result.behavior).toBe('allow');
+    // Approve signals via deny+no-interrupt so the CLI never tries to execute
+    // ExitPlanMode (which fails with a Zod schema error on the extra `plan` field).
+    expect(result.behavior).toBe('deny');
+    expect((result as any).interrupt).toBe(false);
+    expect((result as any).message).toContain('approved');
 
     await runPromise;
   });
@@ -252,7 +259,7 @@ describe('canUseTool ExitPlanMode', () => {
     expect(receivedPlan).toBe('Step 1: research\nStep 2: implement');
   });
 
-  it("allows no-handler ExitPlanMode to resolve with { behavior: 'allow' }", async () => {
+  it("no-handler ExitPlanMode resolves with { behavior: 'deny', interrupt: false } to avoid Zod execution error", async () => {
     const { __setIterable, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
 
     __setIterable(makeMessages([
@@ -268,7 +275,8 @@ describe('canUseTool ExitPlanMode', () => {
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<{ behavior: string }>;
     const result = await canUseTool('ExitPlanMode', { plan: 'plan text' }, {});
-    expect(result.behavior).toBe('allow');
+    expect(result.behavior).toBe('deny');
+    expect((result as any).interrupt).toBe(false);
 
     await runPromise;
   });

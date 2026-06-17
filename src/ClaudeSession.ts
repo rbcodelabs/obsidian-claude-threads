@@ -155,25 +155,31 @@ export class ClaudeSession {
           return { behavior: 'allow' as const };
         }
         if (toolName === 'ExitPlanMode') {
+          // ExitPlanMode cannot be allowed to execute: the CLI's Zod schema rejects the
+          // extra `plan` field Claude sends in the input, causing a validation error.
+          // Instead we show the plan card, then signal approval/rejection via deny messages
+          // so Claude's turn continues (approve) or is interrupted (reject) without the
+          // CLI ever attempting to run the tool.
           const planText = String((input as { plan?: unknown }).plan ?? '');
           if (callbacks.onPlanReady) {
             const result = await new Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult>((resolve) => {
               callbacks.onPlanReady!(
                 planText,
                 (editedPlan) => {
-                  if (editedPlan !== undefined && editedPlan !== planText) {
-                    resolve({ behavior: 'allow' as const, updatedInput: { ...input, plan: editedPlan } });
-                  } else {
-                    resolve({ behavior: 'allow' as const });
-                  }
+                  // Approve: deny the tool call (avoids Zod error) with a message Claude
+                  // can read to understand it should proceed with implementation.
+                  const approvalNote = editedPlan !== undefined && editedPlan !== planText
+                    ? `Plan approved with edits:\n\n${editedPlan}`
+                    : 'Plan approved — proceed with implementation.';
+                  resolve({ behavior: 'deny' as const, message: approvalNote, interrupt: false });
                 },
-                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user', interrupt: true }),
+                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop and await new instructions.', interrupt: true }),
               );
             });
             return result;
           }
-          // No handler registered: allow by default
-          return { behavior: 'allow' as const };
+          // No handler registered: deny non-interruptingly so Claude can proceed normally.
+          return { behavior: 'deny' as const, message: 'Plan approved — proceed with implementation.', interrupt: false };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
         const title = opts.title ?? toolName;
