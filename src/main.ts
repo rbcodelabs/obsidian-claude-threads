@@ -21,6 +21,7 @@ import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
 import { setDebugLogging, debugLog } from './logger';
+import { secretStorageKey } from './secretUtils';
 
 // View-type string constants. Must match the values exported by each view module.
 // Defined here as literals so both desktop and mobile code can reference them without
@@ -378,7 +379,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.secretEnvResolver = () => {
       const result: Record<string, string> = {};
       for (const varName of this.settings.secretEnvKeys ?? []) {
-        const val = this.app.secretStorage.getSecret(`ct-secret-${varName}`);
+        const val = this.app.secretStorage.getSecret(secretStorageKey(varName));
         if (val) result[varName] = val;
       }
       return result;
