@@ -1895,6 +1895,15 @@
   color: var(--interactive-accent);
 }
 
+/* Permission mode button — accent-colored when a per-thread override is active */
+.ct-permission-mode-btn.ct-permission-mode-btn-active {
+  color: var(--interactive-accent);
+}
+
+.ct-permission-mode-btn.ct-permission-mode-btn-active:hover {
+  color: var(--interactive-accent);
+}
+
 .ct-hidden {
   display: none !important;
 }

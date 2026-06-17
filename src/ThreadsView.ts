@@ -41,6 +41,7 @@ export class ThreadsView extends ItemView {
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
+  private permissionModeBtn!: HTMLButtonElement;
   private statusRailEl!: HTMLElement;
   private queueRowsEl!: HTMLElement;
   private activeWorkCardEl: HTMLElement | null = null;
@@ -161,6 +162,18 @@ export class ThreadsView extends ItemView {
   private taskCardDismissed = new Set<string>();
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
+
+  // Ordered list for the footer permission-mode picker menu.
+  // `value: undefined` means "use the global default" (clears the per-thread override).
+  private static readonly PERMISSION_MODE_OPTIONS: Array<{ label: string; value: import('./types').PluginSettings['permissionMode'] | undefined }> = [
+    { label: 'Global default', value: undefined },
+    { label: 'Prompt for permissions', value: 'default' },
+    { label: 'Accept edits automatically', value: 'acceptEdits' },
+    { label: 'Bypass all permissions', value: 'bypassPermissions' },
+    { label: 'Plan only (read & propose, no execute)', value: 'plan' },
+    { label: 'Silent deny (CI/cron)', value: 'dontAsk' },
+    { label: 'Auto-approve', value: 'auto' },
+  ];
 
   // Ordered list for the footer model switcher menu. `value: undefined` means
   // "use the global default" (clears the per-thread override).
@@ -490,6 +503,13 @@ export class ThreadsView extends ItemView {
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterActions: (container) => {
+        this.permissionModeBtn = container.createEl('button', {
+          cls: 'ct-more-btn ct-permission-mode-btn',
+        });
+        setIcon(this.permissionModeBtn, 'shield');
+        this.permissionModeBtn.addEventListener('click', (e) => this.togglePermissionModeMenu(e));
+        this.updatePermissionModeIndicator();
+
         this.modelBtn = container.createEl('button', {
           cls: 'ct-more-btn ct-model-btn',
         });
@@ -675,6 +695,7 @@ export class ThreadsView extends ItemView {
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
     this.updateModelIndicator();
+    this.updatePermissionModeIndicator();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -1197,6 +1218,41 @@ export class ThreadsView extends ItemView {
             this.manager.setThreadModel(this.activeThreadId, opt.value);
             await this.plugin.saveSettings();
             this.updateModelIndicator();
+            this.renderThreadInfo();
+          });
+      });
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private currentPermissionMode(): import('./types').PluginSettings['permissionMode'] | undefined {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    return thread?.permissionMode ?? undefined;
+  }
+
+  private updatePermissionModeIndicator(): void {
+    if (!this.permissionModeBtn) return;
+    const mode = this.currentPermissionMode();
+    const opt = ThreadsView.PERMISSION_MODE_OPTIONS.find(o => o.value === mode);
+    const label = opt?.label ?? 'Global default';
+    setTooltip(this.permissionModeBtn, `Permission: ${label} — click to change`);
+    this.permissionModeBtn.toggleClass('ct-permission-mode-btn-active', mode !== undefined);
+  }
+
+  private togglePermissionModeMenu(event: MouseEvent): void {
+    if (!this.activeThreadId) return;
+    const current = this.currentPermissionMode();
+    const menu = new Menu();
+    for (const opt of ThreadsView.PERMISSION_MODE_OPTIONS) {
+      menu.addItem(item => {
+        item
+          .setTitle(opt.label)
+          .setChecked(current === opt.value)
+          .onClick(async () => {
+            if (!this.activeThreadId) return;
+            this.manager.setThreadPermissionMode(this.activeThreadId, opt.value);
+            await this.plugin.saveSettings();
+            this.updatePermissionModeIndicator();
             this.renderThreadInfo();
           });
       });

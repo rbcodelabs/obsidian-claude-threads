@@ -328,6 +328,15 @@ export class ThreadManager {
     }
   }
 
+  setThreadPermissionMode(id: string, mode: PluginSettings['permissionMode'] | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (mode !== undefined) thread.permissionMode = mode;
+      else delete thread.permissionMode;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   /** Set or clear (pass undefined) the persistent goal for a thread. */
   setThreadGoal(id: string, goal: string | undefined): void {
     const thread = this.threads.get(id);
