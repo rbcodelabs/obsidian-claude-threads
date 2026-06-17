@@ -49,7 +49,11 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
 - **Keep computer awake** — prevents the Mac from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses `caffeinate -i` on macOS, Web Lock API as fallback)
-- **Tool call visibility** — see exactly which files Claude is reading/writing during each response
+- **Plan Mode** — set permission mode to `plan` and Claude will propose a written plan before touching any files. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before Claude proceeds
+- **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
+- **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
+- **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Obsidian
+- **Tool call visibility** — see exactly which files Claude is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files Claude edited that you subsequently modified show a "Modified by user" badge
 - **Cancel and restore** — press Escape (or click Stop) while Claude is running to cancel; the sent message pops back into the input box ready to edit and re-send
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
 
@@ -134,6 +138,7 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/compact` | Summarize conversation history to free up context window |
 | `/clear` | Clear conversation history and start a fresh session |
 | `/cost` | Show token usage and cost for the current session |
+| `/context` | Show a per-category token usage breakdown for the active session (tools, system prompt, skills, MCP tools, conversation, etc.) |
 
 **Command pills** — when you complete a built-in command (type `/goal ` or pick one from the dropdown), it turns into a pill chip at the left of the input box. Type the arguments after it; a single Backspace at the start of the input (or clicking the pill's ×) deletes the whole command. After a command, argument autocomplete kicks in — `/model ` offers `fable|opus|sonnet|haiku|default`.
 
@@ -175,7 +180,7 @@ Type `@this` (no search needed) to instantly reference the currently active file
 /model default  → resets to the plugin's Default model setting (or the CLI default)
 ```
 
-A **Default model** dropdown in settings picks the model for threads that have no `/model` override.
+A **Default model** dropdown in settings picks the model for threads that have no `/model` override. The dropdown is populated dynamically at startup by calling `supportedModels()` on the running Claude CLI, so it always reflects whatever the installed CLI version actually supports — no plugin update needed when Anthropic adds a new model.
 
 You can also switch models without typing: a **model switcher button** (CPU icon) sits in the conversation footer, left of the menu button. Hover it to see the active model; click it to pick Default / Opus / Sonnet / Haiku / Fable from a dropdown. The icon turns accent-colored whenever a per-thread override is active, and it stays in sync with the `/model` command.
 
@@ -261,7 +266,43 @@ Hold the configured push-to-talk key (default: none — set it in Settings → P
 
 ### Permissions
 
-When Claude needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in settings.
+When Claude needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in settings via **Permission Mode**:
+
+| Mode | Behavior |
+|---|---|
+| `default` | Use the Claude CLI default (prompts for most tool calls) |
+| `acceptEdits` | Automatically accept file edits; prompt for commands and other tools |
+| `bypassPermissions` | Skip all permission prompts — Claude executes everything without asking |
+| `plan` | Claude proposes a written plan before taking any action; you approve, edit, or reject it before it proceeds (see [Plan Mode](#plan-mode) below) |
+| `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
+| `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
+
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching.
+
+### Plan Mode
+
+Set **Permission Mode → `plan`** in settings (or via a `/model`-style dispatch prefix in future) to enable Plan Mode. In this mode Claude reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it.
+
+**The flow:**
+
+1. You send a message as normal.
+2. A **"Planning…"** visual state appears in the thread while Claude gathers context.
+3. When Claude finishes its plan, an inline card replaces the spinner, showing the full proposed plan text.
+4. You pick one of three actions on the card:
+   - **Approve** — Claude proceeds to execute the plan immediately.
+   - **Edit** — The plan text becomes editable in-place; submitting the edited version sends it back to Claude as the confirmed plan before execution.
+   - **Reject** — Claude stops; no edits are made. You can send a follow-up message to redirect.
+
+Plan Mode is useful for risky or large-scale tasks where you want to review the approach before any files are touched.
+
+### MCP Elicitation
+
+Some MCP servers need a credential or a form filled before they can proceed — for example, an OAuth flow or a confirmation dialog. When this happens, Claude Threads renders an elicitation card inline in the conversation rather than silently failing.
+
+- **URL auth card** — displays a clickable link for the OAuth URL. Click it to open the auth page in Obsidian's Web Viewer (or your system browser), complete the flow, then return to the thread. Claude resumes automatically once the server receives the credential.
+- **Form card** — renders input fields derived from the server's JSON schema (text fields, selects, checkboxes). Fill in the form and submit; the response is forwarded to the MCP server and the session continues.
+
+Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Obsidian.
 
 ### Remote access (mobile)
 
@@ -485,7 +526,13 @@ Edits made directly to vault files are unaffected — they don't match any bridg
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Secret environment variables | Keychain-backed env vars (values stored in the OS keychain, never in `data.json`) — for API keys and tokens |
-| Permission mode | `Accept edits automatically`, `Bypass all permissions`, or `Prompt for permissions` |
+| Permission mode | How Claude handles tool-use confirmation. Options: `default` (CLI default), `acceptEdits` (auto-approve file edits), `bypassPermissions` (skip all prompts), `plan` (propose a plan first — see [Plan Mode](#plan-mode)), `dontAsk` (no dialogs; for unattended/scheduled sessions), `auto` (Claude decides). See [Permissions](#permissions). |
+| Thinking mode | `disabled` (default), `enabled`, or `auto` — controls whether Claude uses extended thinking for harder problems |
+| Thinking budget tokens | Maximum tokens Claude can spend on reasoning when thinking mode is `enabled` (default: 8 000). Only shown when thinking mode is `enabled` |
+| Effort level | `default`, `low`, `medium`, or `high` — how much work Claude invests per turn. `default` uses the CLI setting |
+| Agent progress summaries | Whether sub-agent progress is summarised and shown inline (default: on) |
+| Enable 1M context (beta) | Opt-in to the 1-million-token context window beta (uses the `interleaved-thinking-2025-05-14` beta flag) |
+| Ephemeral session | When on, sessions are not persisted to disk — they cannot be resumed after the thread closes |
 | Layout density | `Comfortable`, `Compact`, or `Spacious` — controls message spacing and padding |
 | Enable summarization | Show the summarize button and auto-summarize |
 | Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
