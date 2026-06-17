@@ -93,6 +93,15 @@ export interface SessionCallbacks {
     models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[],
     agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[],
   ) => void;
+  /**
+   * Fired when an MCP server sends an elicitation request (e.g. for OAuth or
+   * structured form input). Blocking: the session waits until the returned
+   * Promise resolves with an ElicitationResult.
+   */
+  onElicitation?: (
+    request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+  ) => Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>;
 }
 
 export class ClaudeSession {
@@ -207,6 +216,9 @@ export class ClaudeSession {
     if (sessionOptions?.agentProgressSummaries !== undefined) options.agentProgressSummaries = sessionOptions.agentProgressSummaries;
     if (sessionOptions?.betas?.length) options.betas = sessionOptions.betas;
     if (sessionOptions?.persistSession === false) options.persistSession = false;
+    if (callbacks.onElicitation) {
+      options.onElicitation = (request, opts) => callbacks.onElicitation!(request, opts.signal);
+    }
     // Route the built-in EnterWorktree / ExitWorktree SDK tools to the plugin's
     // MCP versions, which read effectiveCwd (updated by set_working_directory)
     // rather than the frozen OS-level subprocess cwd.

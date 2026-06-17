@@ -52,7 +52,8 @@ export type ThreadEvent =
   | { type: 'file_user_modified'; filePath: string }
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
-  | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] };
+  | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
+  | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
@@ -798,6 +799,10 @@ export class ThreadManager {
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
         onPlanReady: (planText, approve, reject) => this.emit(threadId, { type: 'plan_ready', planText, approve, reject }),
         onCapabilitiesDiscovered: (models, agents) => this.emit(threadId, { type: 'capabilities_discovered', models, agents }),
+        onElicitation: (request, signal) =>
+          new Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>((resolve) => {
+            this.emit(threadId, { type: 'elicitation_request', request, signal, respond: resolve });
+          }),
         onFileUserModified: (filePath) => {
           if (!thread.userModifiedFiles) thread.userModifiedFiles = [];
           if (!thread.userModifiedFiles.includes(filePath)) thread.userModifiedFiles.push(filePath);

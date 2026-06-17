@@ -1814,6 +1814,130 @@ export class ThreadsView extends ItemView {
   }
 
   /**
+   * Renders a URL-mode elicitation card. Opens the URL in the system browser
+   * and shows a "Waiting for authentication..." card. When the signal fires
+   * (session interrupted) the card resolves with cancel.
+   */
+  private renderElicitationUrlCard(
+    req: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+    respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-elicitation-card');
+
+    const header = card.createDiv('ct-elicitation-header');
+    const iconEl = header.createSpan('ct-elicitation-icon');
+    setIcon(iconEl, 'external-link');
+    header.createSpan({ cls: 'ct-elicitation-label', text: req.title ?? `${req.serverName}: authentication` });
+
+    const body = card.createDiv('ct-elicitation-body');
+    if (req.message) body.createEl('p', { cls: 'ct-elicitation-message', text: req.message });
+    if (req.description) body.createEl('p', { cls: 'ct-elicitation-desc', text: req.description });
+
+    const actions = card.createDiv('ct-elicitation-actions');
+    const openBtn = actions.createEl('button', { text: 'Open in browser', cls: 'ct-elicitation-btn ct-elicitation-open' });
+    openBtn.addEventListener('click', () => {
+      // Use Obsidian's electron shell or fall back to window.open for mobile
+      const electron = (window as unknown as Record<string, unknown>).electron as { shell?: { openExternal?: (url: string) => void } } | undefined;
+      if (electron?.shell?.openExternal) {
+        electron.shell.openExternal(req.url!);
+      } else {
+        window.open(req.url!, '_blank');
+      }
+    });
+    const waitEl = body.createEl('p', { cls: 'ct-elicitation-waiting', text: 'Waiting for authentication...' });
+    actions.createEl('button', { text: 'Cancel', cls: 'ct-elicitation-btn ct-elicitation-cancel' })
+      .addEventListener('click', () => {
+        card.remove();
+        respond({ action: 'cancel' });
+      });
+
+    // Auto-resolve cancel when the session is interrupted
+    signal.addEventListener('abort', () => {
+      card.remove();
+      respond({ action: 'cancel' });
+    }, { once: true });
+
+    void waitEl; // referenced but only for display
+    this.scrollToBottom();
+  }
+
+  /**
+   * Renders a form-mode elicitation card. Builds input fields from requestedSchema
+   * (JSON Schema object with properties). When submitted, resolves with accept +
+   * the collected field values.
+   */
+  private renderElicitationFormCard(
+    req: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest,
+    signal: AbortSignal,
+    respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
+  ): void {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-elicitation-card');
+
+    const header = card.createDiv('ct-elicitation-header');
+    const iconEl = header.createSpan('ct-elicitation-icon');
+    setIcon(iconEl, 'form-input');
+    header.createSpan({ cls: 'ct-elicitation-label', text: req.title ?? `${req.serverName}: input required` });
+
+    const body = card.createDiv('ct-elicitation-body');
+    if (req.message) body.createEl('p', { cls: 'ct-elicitation-message', text: req.message });
+    if (req.description) body.createEl('p', { cls: 'ct-elicitation-desc', text: req.description });
+
+    // Build input fields from requestedSchema.properties
+    const inputs: Map<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement> = new Map();
+    const schema = req.requestedSchema as { properties?: Record<string, { type?: string; title?: string; description?: string; enum?: string[] }> } | undefined;
+    const props = schema?.properties ?? {};
+    for (const [key, def] of Object.entries(props)) {
+      const fieldRow = body.createDiv('ct-elicitation-field');
+      const label = fieldRow.createEl('label', { cls: 'ct-elicitation-field-label' });
+      label.textContent = def.title ?? key;
+
+      if (def.enum && def.enum.length > 0) {
+        const sel = fieldRow.createEl('select', { cls: 'ct-elicitation-field-input' });
+        for (const opt of def.enum) {
+          sel.createEl('option', { value: opt, text: opt });
+        }
+        inputs.set(key, sel);
+      } else if (def.type === 'string') {
+        const inp = fieldRow.createEl('input', { cls: 'ct-elicitation-field-input', attr: { type: 'text' } });
+        inputs.set(key, inp);
+      } else {
+        const inp = fieldRow.createEl('input', { cls: 'ct-elicitation-field-input', attr: { type: 'text' } });
+        inputs.set(key, inp);
+      }
+      if (def.description) {
+        fieldRow.createEl('small', { cls: 'ct-elicitation-field-desc', text: def.description });
+      }
+    }
+
+    const actions = card.createDiv('ct-elicitation-actions');
+    actions.createEl('button', { text: 'Cancel', cls: 'ct-elicitation-btn ct-elicitation-cancel' })
+      .addEventListener('click', () => {
+        card.remove();
+        respond({ action: 'cancel' });
+      });
+    actions.createEl('button', { text: 'Submit', cls: 'ct-elicitation-btn ct-elicitation-submit' })
+      .addEventListener('click', () => {
+        const content: Record<string, string> = {};
+        for (const [key, el] of inputs) {
+          content[key] = el.value;
+        }
+        card.remove();
+        respond({ action: 'accept', content });
+      });
+
+    // Auto-resolve cancel when the session is interrupted
+    signal.addEventListener('abort', () => {
+      card.remove();
+      respond({ action: 'cancel' });
+    }, { once: true });
+
+    this.scrollToBottom();
+  }
+
+  /**
    * Renders a context usage breakdown card in the message stream.
    * Shown in response to the /context slash command.
    */
@@ -2454,6 +2578,15 @@ export class ThreadsView extends ItemView {
         // Store for later so /context can reference agent names too.
         this.discoveredModels = event.models;
         this.discoveredAgents = event.agents;
+        break;
+      }
+
+      case 'elicitation_request': {
+        if (event.request.mode === 'url' && event.request.url) {
+          this.renderElicitationUrlCard(event.request, event.signal, event.respond);
+        } else {
+          this.renderElicitationFormCard(event.request, event.signal, event.respond);
+        }
         break;
       }
 
