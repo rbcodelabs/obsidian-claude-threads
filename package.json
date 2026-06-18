@@ -1,40 +1,40 @@
 {
-	"name": "obsidian-claude-threads",
-	"version": "0.18.5",
-	"description": "Multi-threaded Claude Code sessions in Obsidian",
-	"main": "dist/main.js",
-	"scripts": {
-		"build": "node esbuild.config.mjs",
-		"dev": "node esbuild.config.mjs --watch",
-		"build:harness": "node test/harness/esbuild.mjs",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"pretest:screenshots": "node test/harness/esbuild.mjs",
-		"pretest:screenshots:update": "node test/harness/esbuild.mjs",
-		"test:screenshots": "npx playwright test",
-		"test:screenshots:update": "npx playwright test --update-snapshots",
-		"posttest:screenshots:update": "cp test/screenshots/snapshots/ui.spec.ts-snapshots/main-view-chromium-darwin.png docs/screenshot-main.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/slash-commands-chromium-darwin.png docs/screenshot-slash-commands.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/permission-card-chromium-darwin.png docs/screenshot-permission.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-menu-chromium-darwin.png docs/screenshot-fork-menu.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-modal-initial-chromium-darwin.png docs/screenshot-fork-modal-initial.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-modal-review-chromium-darwin.png docs/screenshot-fork-modal-review.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/edited-files-focus-chromium-darwin.png docs/screenshot-edited-files-focus.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/file-mention-chromium-darwin.png docs/screenshot-file-mention.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/context-recap-banner-chromium-darwin.png docs/screenshot-context-recap-banner.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/skills-manager-installed-chromium-darwin.png docs/screenshot-skills-manager.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/status-line-tags-chromium-darwin.png docs/screenshot-status-line.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/kanban-status-chromium-darwin.png docs/screenshot-kanban-status.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/kanban-folder-swimlanes-chromium-darwin.png docs/screenshot-kanban-folder.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/queue-rows-chromium-darwin.png docs/screenshot-queue-rows.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/status-rail-active-card-chromium-darwin.png docs/screenshot-status-rail.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/model-escalation-tip-chromium-darwin.png docs/screenshot-model-escalation.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/workflow-block-running-chromium-darwin.png docs/screenshot-workflow-progress.png",
-		"vault": "node scripts/create-test-vault.mjs",
-		"vault:update": "node scripts/create-test-vault.mjs --update",
-		"vault:open": "node scripts/create-test-vault.mjs --open",
-		"version": "node -e \"const fs=require('fs'); const m=JSON.parse(fs.readFileSync('manifest.json','utf8')); m.version=process.env.npm_new_version; fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\\n');\""
-	},
-	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.3.165",
-		"@anthropic-ai/sdk": "^0.93.0",
-		"marked": "^18.0.3",
-		"qrcode": "^1.5.4"
-	},
-	"devDependencies": {
-		"@playwright/test": "^1.59.1",
-		"@types/jsdom": "^28.0.3",
-		"@types/marked": "^5.0.2",
-		"@types/node": "^20.0.0",
-		"@types/qrcode": "^1.5.5",
-		"esbuild": "^0.28.0",
-		"jsdom": "^29.1.1",
-		"obsidian": "^1.7.2",
-		"typescript": "^5.0.0",
-		"vitest": "^4.1.5"
-	}
+  "name": "obsidian-claude-threads",
+  "version": "0.18.6",
+  "description": "Multi-threaded Claude Code sessions in Obsidian",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "build:harness": "node test/harness/esbuild.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pretest:screenshots": "node test/harness/esbuild.mjs",
+    "pretest:screenshots:update": "node test/harness/esbuild.mjs",
+    "test:screenshots": "npx playwright test",
+    "test:screenshots:update": "npx playwright test --update-snapshots",
+    "posttest:screenshots:update": "cp test/screenshots/snapshots/ui.spec.ts-snapshots/main-view-chromium-darwin.png docs/screenshot-main.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/slash-commands-chromium-darwin.png docs/screenshot-slash-commands.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/permission-card-chromium-darwin.png docs/screenshot-permission.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-menu-chromium-darwin.png docs/screenshot-fork-menu.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-modal-initial-chromium-darwin.png docs/screenshot-fork-modal-initial.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/fork-modal-review-chromium-darwin.png docs/screenshot-fork-modal-review.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/edited-files-focus-chromium-darwin.png docs/screenshot-edited-files-focus.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/file-mention-chromium-darwin.png docs/screenshot-file-mention.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/context-recap-banner-chromium-darwin.png docs/screenshot-context-recap-banner.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/skills-manager-installed-chromium-darwin.png docs/screenshot-skills-manager.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/status-line-tags-chromium-darwin.png docs/screenshot-status-line.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/kanban-status-chromium-darwin.png docs/screenshot-kanban-status.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/kanban-folder-swimlanes-chromium-darwin.png docs/screenshot-kanban-folder.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/queue-rows-chromium-darwin.png docs/screenshot-queue-rows.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/status-rail-active-card-chromium-darwin.png docs/screenshot-status-rail.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/model-escalation-tip-chromium-darwin.png docs/screenshot-model-escalation.png && cp test/screenshots/snapshots/ui.spec.ts-snapshots/workflow-block-running-chromium-darwin.png docs/screenshot-workflow-progress.png",
+    "vault": "node scripts/create-test-vault.mjs",
+    "vault:update": "node scripts/create-test-vault.mjs --update",
+    "vault:open": "node scripts/create-test-vault.mjs --open",
+    "version": "node -e \"const fs=require('fs'); const m=JSON.parse(fs.readFileSync('manifest.json','utf8')); m.version=process.env.npm_new_version; fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\\n');\""
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.165",
+    "@anthropic-ai/sdk": "^0.93.0",
+    "marked": "^18.0.3",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/jsdom": "^28.0.3",
+    "@types/marked": "^5.0.2",
+    "@types/node": "^20.0.0",
+    "@types/qrcode": "^1.5.5",
+    "esbuild": "^0.28.0",
+    "jsdom": "^29.1.1",
+    "obsidian": "^1.7.2",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5"
+  }
 }
