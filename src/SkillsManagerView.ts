@@ -164,45 +164,8 @@ export class SkillsManagerView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildShell();
     await this.loadInstalledSkills();
-    // Ensure symlinks exist for any github sources added via the old flow
-    const githubSources = (this.plugin.settings.skillSources ?? []).filter(
-      s => s.type === 'github' && s.clonePath,
-    );
-    for (const source of githubSources) {
-      void this.ensureGithubSourceSymlinks(source);
-    }
     // Background staleness check for github sources
     void this.checkAllSourceStaleness();
-  }
-
-  private async ensureGithubSourceSymlinks(source: import('./types').SkillSource): Promise<void> {
-    if (!source.clonePath) return;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
-    const { getSkillsDirForSource } = await import('./claudeSettings');
-
-    const skillsDir = getSkillsDirForSource(source.clonePath);
-    const claudeSkillsDir = path.join(os.homedir(), '.claude', 'skills');
-    fs.mkdirSync(claudeSkillsDir, { recursive: true });
-
-    try {
-      const entries = fs.readdirSync(skillsDir);
-      for (const entry of entries) {
-        const entryPath = path.join(skillsDir, entry);
-        try {
-          if (!fs.statSync(entryPath).isDirectory()) continue;
-          if (!fs.existsSync(path.join(entryPath, 'SKILL.md'))) continue;
-          const linkPath = path.join(claudeSkillsDir, entry);
-          if (!fs.existsSync(linkPath)) {
-            fs.symlinkSync(entryPath, linkPath);
-          }
-        } catch { continue; }
-      }
-    } catch { /* skills dir missing or unreadable */ }
   }
 
   private async checkAllSourceStaleness(): Promise<void> {
@@ -816,30 +779,8 @@ export class SkillsManagerView extends ItemView {
   private async doRemoveGithubSource(source: import('./types').SkillSource): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
 
-    // Remove symlinks in ~/.claude/skills/ that point into this clone
     if (source.clonePath) {
-      const claudeSkillsDir = path.join(os.homedir(), '.claude', 'skills');
-      try {
-        const entries = fs.readdirSync(claudeSkillsDir);
-        for (const entry of entries) {
-          const linkPath = path.join(claudeSkillsDir, entry);
-          try {
-            if (fs.lstatSync(linkPath).isSymbolicLink()) {
-              const target = fs.readlinkSync(linkPath);
-              if (target.startsWith(source.clonePath)) {
-                fs.unlinkSync(linkPath);
-              }
-            }
-          } catch { /* skip */ }
-        }
-      } catch { /* skip if dir missing */ }
-
-      // Delete the clone
       try { fs.rmSync(source.clonePath, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
@@ -1277,15 +1218,7 @@ export class SkillsManagerView extends ItemView {
       }
     }
 
-    // Filter out skills that belong to a github plugin source (they show in Active Plugins section)
-    const githubClonePaths = (this.plugin.settings.skillSources ?? [])
-      .filter(s => s.type === 'github' && s.clonePath)
-      .map(s => s.clonePath!);
-
-    const filteredSkills = skills.filter(skill =>
-      !githubClonePaths.some(cp => skill.realPath.startsWith(cp))
-    );
-    this.installedSkills = filteredSkills.sort((a, b) => a.name.localeCompare(b.name));
+    this.installedSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
 
     // Compute sourceName for symlinked skills by matching against configured SkillSources
     const skillSources = this.plugin.settings.skillSources ?? [];

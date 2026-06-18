@@ -946,6 +946,7 @@ export class ThreadManager {
       agentProgressSummaries?: boolean;
       betas?: SdkBeta[];
       persistSession?: boolean;
+      plugins?: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[];
     } = {};
 
     // Thinking mode
@@ -974,6 +975,12 @@ export class ThreadManager {
     if (thread.ephemeral) {
       opts.persistSession = false;
     }
+
+    // GitHub skill source plugins — inject per-session so each vault is independent
+    const githubPlugins = (s.skillSources ?? [])
+      .filter(src => src.type === 'github' && src.clonePath)
+      .map(src => ({ type: 'local' as const, path: src.clonePath! }));
+    if (githubPlugins.length > 0) opts.plugins = githubPlugins;
 
     return opts;
   }
