@@ -380,9 +380,7 @@ test.describe('Claude Threads UI', () => {
     const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
     await page.setViewportSize({ width: 640, height: 700 });
     await page.goto(skillsUrl);
-    await page.waitForSelector('.ct-skills-card');
-    await page.click('.ct-skills-card');
-    await page.waitForSelector('.ct-skills-detail-header');
+    await page.waitForSelector('.ct-skills-count');
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('skills-manager-installed.png', { fullPage: true });
   });
@@ -391,7 +389,7 @@ test.describe('Claude Threads UI', () => {
     const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
     await page.setViewportSize({ width: 640, height: 700 });
     await page.goto(skillsUrl);
-    await page.waitForSelector('.ct-skills-card');
+    await page.waitForSelector('.ct-skills-tabs');
     await page.getByText('Browse').click();
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('skills-manager-browse.png', { fullPage: true });

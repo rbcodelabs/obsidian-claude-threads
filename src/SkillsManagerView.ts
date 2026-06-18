@@ -152,10 +152,14 @@ export class SkillsManagerView extends ItemView {
 
   /** Selected GitHub source plugin in the Installed tab */
   private selectedGithubSource: import('./types').SkillSource | null = null;
-  /** Skills loaded for the selected GitHub source (installed tab detail) */
-  private githubSourceSkills: LocalSkill[] = [];
-  /** Whether github source skills are loading */
-  private isGithubSourceSkillsLoading = false;
+  /** Skills loaded per GitHub source id (installed tab detail) */
+  private githubSourceSkillsMap: Map<string, LocalSkill[]> = new Map();
+  /** Source ids whose skills are currently being loaded */
+  private githubSourceSkillsLoadingSet: Set<string> = new Set();
+  /** Which source tree nodes are expanded (source id or '__local__') */
+  private expandedSources: Set<string> = new Set();
+  /** Selected child skill within a GitHub source node */
+  private selectedGithubSourceSkill: { skill: LocalSkill; source: import('./types').SkillSource } | null = null;
 
   // Install progress
   private installingSlug: string | null = null;
@@ -177,7 +181,18 @@ export class SkillsManagerView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildShell();
+
+    // Expand all sources (including __local__) by default
+    const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
+    this.expandedSources = new Set([...githubSources.map(s => s.id), '__local__']);
+
     await Promise.all([this.loadInstalledSkills(), this.loadInstalledAgents()]);
+
+    // Preload skills for all github sources in the background
+    for (const source of githubSources) {
+      void this.loadGithubSourceSkillsForInstalled(source);
+    }
+
     // Background staleness check for github sources
     void this.checkAllSourceStaleness();
   }
@@ -272,7 +287,7 @@ export class SkillsManagerView extends ItemView {
         this.activeTab = tab.id;
         if (tab.id !== 'installed') {
           this.selectedGithubSource = null;
-          this.githubSourceSkills = [];
+          this.selectedGithubSourceSkill = null;
         }
         this.buildTabs();
         this.renderList();
@@ -298,158 +313,171 @@ export class SkillsManagerView extends ItemView {
   private renderInstalledList(): void {
     const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
 
-    // ── Agents section ───────────────────────────────────────────────────────
-    const filteredAgents = this.installedAgents.filter(
-      (a) =>
-        !this.installedFilter ||
-        a.name.toLowerCase().includes(this.installedFilter.toLowerCase()) ||
-        a.description.toLowerCase().includes(this.installedFilter.toLowerCase()),
-    );
-
-    if (this.installedAgents.length > 0) {
-      this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Agents' });
-
-      for (const agent of filteredAgents) {
-        const isActive = this.selectedAgent?.name === agent.name;
-        const card = this.listEl.createEl('div', {
-          cls: 'ct-skills-card' + (isActive ? ' ct-skills-card--active' : ''),
-        });
-
-        const main = card.createEl('div', { cls: 'ct-skills-card-main' });
-        main.createEl('div', { cls: 'ct-skills-card-name', text: agent.name });
-        if (agent.description) {
-          main.createEl('div', { cls: 'ct-skills-card-desc', text: agent.description });
-        }
-
-        card.addEventListener('click', () => {
-          this.selectedAgent = agent;
-          this.selectedInstalled = null;
-          this.selectedGithubSource = null;
-          this.agentEditContent = agent.content;
-          this.isAgentDirty = false;
-          this.renderList();
-          this.renderDetail();
-        });
-      }
-    }
-
-    // ── Active Plugins section ───────────────────────────────────────────────
-    if (githubSources.length > 0) {
-      this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Active Plugins' });
-
-      for (const source of githubSources) {
-        const isActive = this.selectedGithubSource?.id === source.id;
-        const card = this.listEl.createEl('div', {
-          cls: 'ct-skills-card ct-skills-plugin-card' + (isActive ? ' ct-skills-card--active' : ''),
-        });
-
-        const main = card.createEl('div', { cls: 'ct-skills-card-main' });
-        main.createEl('div', { cls: 'ct-skills-card-name', text: source.name });
-        if (source.repoUrl) {
-          main.createEl('div', { cls: 'ct-skills-card-desc', text: source.repoUrl });
-        }
-
-        if (source.behindCount && source.behindCount > 0) {
-          card.createEl('span', {
-            cls: 'ct-skills-badge ct-skills-badge--warn',
-            text: `• ${source.behindCount} update${source.behindCount > 1 ? 's' : ''}`,
-          });
-        } else {
-          card.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--global', text: 'active' });
-        }
-
-        card.addEventListener('click', () => {
-          this.selectedGithubSource = source;
-          this.selectedInstalled = null;
-          this.githubSourceSkills = [];
-          this.renderList();
-          this.renderDetail();
-          void this.loadGithubSourceSkillsForInstalled(source);
-        });
-      }
-
-      // Separator / section label for individual skills
-      if (this.installedSkills.length > 0) {
-        this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Individual Skills' });
-      }
-    }
-
-    // ── Search / filter bar ──────────────────────────────────────────────────
+    // ── Filter bar (TOP) ────────────────────────────────────────────────────
     const searchRow = this.listEl.createEl('div', { cls: 'ct-skills-search-row' });
     const searchIcon = searchRow.createEl('span', { cls: 'ct-skills-search-icon' });
     setIcon(searchIcon, 'search');
     const searchInput = searchRow.createEl('input', {
       cls: 'ct-skills-search',
-      attr: { type: 'text', placeholder: 'Filter skills and agents…', value: this.installedFilter },
+      attr: { type: 'text', placeholder: 'Filter…', value: this.installedFilter },
     });
     searchInput.addEventListener('input', () => {
       this.installedFilter = searchInput.value;
       this.renderList();
-      // Restore focus after re-render
       const next = this.listEl.querySelector<HTMLInputElement>('.ct-skills-search');
-      if (next) {
-        next.focus();
-        const len = next.value.length;
-        next.setSelectionRange(len, len);
-      }
+      if (next) { next.focus(); const len = next.value.length; next.setSelectionRange(len, len); }
     });
 
-    const filtered = this.installedSkills.filter(
-      (s) =>
-        !this.installedFilter ||
-        s.name.toLowerCase().includes(this.installedFilter.toLowerCase()) ||
-        s.description.toLowerCase().includes(this.installedFilter.toLowerCase()),
-    );
-
+    // ── Count line ───────────────────────────────────────────────────────────
     const skillCount = this.installedSkills.length;
-    const filteredSkillCount = filtered.length;
     const agentCount = this.installedAgents.length;
-    const filteredAgentCount = filteredAgents.length;
+    const sourceCount = githubSources.length;
+    const countParts: string[] = [];
+    if (skillCount > 0) countParts.push(`${skillCount} skill${skillCount !== 1 ? 's' : ''}`);
+    if (agentCount > 0) countParts.push(`${agentCount} agent${agentCount !== 1 ? 's' : ''}`);
+    if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
+    this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
 
-    let countText = `${filteredSkillCount} of ${skillCount} skill${skillCount !== 1 ? 's' : ''}`;
-    if (agentCount > 0) {
-      countText += ` · ${filteredAgentCount} of ${agentCount} agent${agentCount !== 1 ? 's' : ''}`;
-    }
-    this.listEl.createEl('div', { cls: 'ct-skills-count', text: countText });
+    const q = this.installedFilter.toLowerCase();
 
-    const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
+    // ── GitHub source tree nodes ─────────────────────────────────────────────
+    for (const source of githubSources) {
+      const isExpanded = this.expandedSources.has(source.id);
+      const isSelected = this.selectedGithubSource?.id === source.id && !this.selectedGithubSourceSkill;
+      const sourceSkills = this.githubSourceSkillsMap.get(source.id) ?? [];
+      const isLoading = this.githubSourceSkillsLoadingSet.has(source.id);
 
-    if (this.installedSkills.length === 0) {
-      inner.createEl('div', { cls: 'ct-skills-empty', text: 'No skills found in ~/.claude/skills/' });
-      return;
-    }
-    if (filtered.length === 0) {
-      inner.createEl('div', { cls: 'ct-skills-empty', text: 'No skills match your filter' });
-      return;
-    }
+      const filteredSourceSkills = q
+        ? sourceSkills.filter(s => s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
+        : sourceSkills;
 
-    for (const skill of filtered) {
-      const isActive = this.selectedInstalled?.name === skill.name;
-      const card = inner.createEl('div', {
-        cls: 'ct-skills-card' + (isActive ? ' ct-skills-card--active' : ''),
+      // Hide collapsed sources with no matching children when filtering
+      if (q && !isLoading && filteredSourceSkills.length === 0 && !source.name.toLowerCase().includes(q)) continue;
+
+      // Source header row
+      const sourceRow = this.listEl.createEl('div', {
+        cls: 'ct-skills-tree-source' + (isSelected ? ' ct-skills-tree-source--active' : ''),
       });
-
-      const main = card.createEl('div', { cls: 'ct-skills-card-main' });
-      main.createEl('div', { cls: 'ct-skills-card-name', text: skill.name });
-      if (skill.description) {
-        main.createEl('div', { cls: 'ct-skills-card-desc', text: skill.description });
+      const toggleEl = sourceRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
+      setIcon(toggleEl, isExpanded ? 'chevron-down' : 'chevron-right');
+      sourceRow.createEl('span', { cls: 'ct-skills-tree-source-name', text: source.name });
+      if (source.behindCount && source.behindCount > 0) {
+        sourceRow.createEl('span', {
+          cls: 'ct-skills-badge ct-skills-badge--warn',
+          text: `•${source.behindCount}`,
+        });
+      } else {
+        sourceRow.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--global', text: 'GitHub' });
       }
 
-      if (skill.sourceName) {
-        card.createEl('span', { cls: 'ct-skills-badge', text: skill.sourceName });
-      } else if (skill.isSymlink) {
-        card.createEl('span', { cls: 'ct-skills-badge', text: 'symlink' });
-      }
-
-      card.addEventListener('click', () => {
-        this.selectedInstalled = skill;
-        this.selectedGithubSource = null;
+      sourceRow.addEventListener('click', () => {
+        const wasExpanded = this.expandedSources.has(source.id);
+        if (wasExpanded) {
+          this.expandedSources.delete(source.id);
+        } else {
+          this.expandedSources.add(source.id);
+          if (!this.githubSourceSkillsMap.has(source.id) && !this.githubSourceSkillsLoadingSet.has(source.id)) {
+            void this.loadGithubSourceSkillsForInstalled(source);
+          }
+        }
+        this.selectedGithubSource = source;
+        this.selectedInstalled = null;
         this.selectedAgent = null;
-        this.editContent = skill.content;
-        this.isDirty = false;
+        this.selectedGithubSourceSkill = null;
         this.renderList();
         this.renderDetail();
       });
+
+      // Children (when expanded)
+      if (isExpanded) {
+        if (isLoading) {
+          const loadRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-child--loading' });
+          loadRow.createEl('span', { cls: 'ct-skills-spinner' });
+          loadRow.createEl('span', { text: ' Loading…' });
+        } else if (filteredSourceSkills.length === 0) {
+          this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-empty', text: q ? 'No matches' : 'No skills found' });
+        } else {
+          for (const skill of filteredSourceSkills) {
+            const isChildActive = this.selectedGithubSourceSkill?.skill.id === skill.id && this.selectedGithubSourceSkill?.source.id === source.id;
+            const childRow = this.listEl.createEl('div', {
+              cls: 'ct-skills-tree-child' + (isChildActive ? ' ct-skills-tree-child--active' : ''),
+            });
+            childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
+            childRow.createEl('span', { cls: 'ct-skills-tree-child-badge', text: 'skill' });
+            childRow.addEventListener('click', () => {
+              this.selectedGithubSourceSkill = { skill, source };
+              this.selectedGithubSource = null;
+              this.selectedInstalled = null;
+              this.selectedAgent = null;
+              this.renderList();
+              this.renderDetail();
+            });
+          }
+        }
+      }
+    }
+
+    // ── Local node ────────────────────────────────────────────────────────────
+    const localSkills = this.installedSkills.filter(s => !s.sourceName);
+    const localAgents = this.installedAgents;
+
+    const filteredLocalSkills = q ? localSkills.filter(s => s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q)) : localSkills;
+    const filteredLocalAgents = q ? localAgents.filter(a => a.name.toLowerCase().includes(q) || a.description?.toLowerCase().includes(q)) : localAgents;
+    const hasLocalItems = localSkills.length > 0 || localAgents.length > 0;
+    const hasLocalMatches = filteredLocalSkills.length > 0 || filteredLocalAgents.length > 0;
+
+    if (hasLocalItems && (!q || hasLocalMatches)) {
+      const localExpanded = this.expandedSources.has('__local__');
+      const localRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-source' });
+      const localToggle = localRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
+      setIcon(localToggle, localExpanded ? 'chevron-down' : 'chevron-right');
+      localRow.createEl('span', { cls: 'ct-skills-tree-source-name', text: 'Local' });
+      localRow.addEventListener('click', () => {
+        if (this.expandedSources.has('__local__')) this.expandedSources.delete('__local__');
+        else this.expandedSources.add('__local__');
+        this.renderList();
+      });
+
+      if (localExpanded) {
+        // Agents first
+        for (const agent of filteredLocalAgents) {
+          const isAgentActive = this.selectedAgent?.name === agent.name;
+          const childRow = this.listEl.createEl('div', {
+            cls: 'ct-skills-tree-child' + (isAgentActive ? ' ct-skills-tree-child--active' : ''),
+          });
+          childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: agent.name });
+          childRow.createEl('span', { cls: 'ct-skills-tree-child-badge ct-skills-tree-child-badge--agent', text: 'agent' });
+          childRow.addEventListener('click', () => {
+            this.selectedAgent = agent;
+            this.selectedInstalled = null;
+            this.selectedGithubSource = null;
+            this.selectedGithubSourceSkill = null;
+            this.agentEditContent = agent.content;
+            this.isAgentDirty = false;
+            this.renderList();
+            this.renderDetail();
+          });
+        }
+        // Then local skills
+        for (const skill of filteredLocalSkills) {
+          const isSkillActive = this.selectedInstalled?.name === skill.name;
+          const childRow = this.listEl.createEl('div', {
+            cls: 'ct-skills-tree-child' + (isSkillActive ? ' ct-skills-tree-child--active' : ''),
+          });
+          childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
+          childRow.createEl('span', { cls: 'ct-skills-tree-child-badge', text: 'skill' });
+          childRow.addEventListener('click', () => {
+            this.selectedInstalled = skill;
+            this.selectedGithubSource = null;
+            this.selectedAgent = null;
+            this.selectedGithubSourceSkill = null;
+            this.editContent = skill.content;
+            this.isDirty = false;
+            this.renderList();
+            this.renderDetail();
+          });
+        }
+      }
     }
   }
 
@@ -652,7 +680,13 @@ export class SkillsManagerView extends ItemView {
       return;
     }
 
-    // If a github source plugin is selected, show its detail
+    // If a child skill from a GitHub source is selected, show its read-only viewer
+    if (this.selectedGithubSourceSkill) {
+      this.renderGithubSourceChildDetail(this.selectedGithubSourceSkill);
+      return;
+    }
+
+    // If a github source plugin header is selected, show its detail
     if (this.selectedGithubSource) {
       this.renderGithubPluginDetail(this.selectedGithubSource);
       return;
@@ -906,15 +940,15 @@ export class SkillsManagerView extends ItemView {
     const skillsSection = this.detailEl.createEl('div', { cls: 'ct-skills-desc-section' });
     skillsSection.createEl('div', { cls: 'ct-skills-section-label', text: 'Skills' });
 
-    if (this.isGithubSourceSkillsLoading) {
+    if (this.githubSourceSkillsLoadingSet.has(source.id)) {
       const loading = skillsSection.createEl('div', { cls: 'ct-skills-desc-loading' });
       loading.createEl('span', { cls: 'ct-skills-spinner' });
       loading.createEl('span', { text: ' Loading…' });
-    } else if (this.githubSourceSkills.length === 0) {
+    } else if ((this.githubSourceSkillsMap.get(source.id) ?? []).length === 0) {
       skillsSection.createEl('div', { cls: 'ct-skills-empty', text: 'No skills found' });
     } else {
       const list = skillsSection.createEl('div', { cls: 'ct-skills-plugin-skill-list' });
-      for (const skill of this.githubSourceSkills) {
+      for (const skill of this.githubSourceSkillsMap.get(source.id) ?? []) {
         const row = list.createEl('div', { cls: 'ct-skills-plugin-skill-row' });
         row.createEl('span', { cls: 'ct-skills-plugin-skill-name', text: skill.name });
         if (skill.description) {
@@ -945,10 +979,47 @@ export class SkillsManagerView extends ItemView {
     });
   }
 
+  private renderGithubSourceChildDetail(item: { skill: LocalSkill; source: import('./types').SkillSource }): void {
+    const { skill, source } = item;
+
+    const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
+    header.createEl('div', { cls: 'ct-skills-detail-name', text: skill.name });
+    header.createEl('div', { cls: 'ct-skills-detail-path', text: `From ${source.name}` });
+    if (skill.description) {
+      header.createEl('div', { cls: 'ct-skills-meta-line', text: skill.description });
+    }
+
+    // Read skill content
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    const skillMdPath = path.join(skill.skillDir, 'SKILL.md');
+    let content = '';
+    try { content = fs.readFileSync(skillMdPath, 'utf-8'); } catch { content = '(Could not read SKILL.md)'; }
+
+    const editorWrap = this.detailEl.createEl('div', { cls: 'ct-skills-editor-wrap' });
+    editorWrap.createEl('div', { cls: 'ct-skills-editor-label', text: 'SKILL.md (read-only)' });
+    const editor = editorWrap.createEl('textarea', {
+      cls: 'ct-skills-textarea',
+      attr: { readonly: 'true' },
+    });
+    editor.value = content;
+
+    const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
+    const revealBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reveal in Finder' });
+    revealBtn.addEventListener('click', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const electron = require('electron') as { shell?: { showItemInFolder: (p: string) => void } };
+      electron.shell?.showItemInFolder(skillMdPath);
+    });
+  }
+
   private async loadGithubSourceSkillsForInstalled(source: import('./types').SkillSource): Promise<void> {
     if (!source.clonePath) return;
-    this.isGithubSourceSkillsLoading = true;
-    this.renderDetail();
+    this.githubSourceSkillsLoadingSet.add(source.id);
+    this.renderList();
+    if (this.selectedGithubSource?.id === source.id) this.renderDetail();
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
@@ -973,12 +1044,10 @@ export class SkillsManagerView extends ItemView {
       }
     } catch { /* ignore */ }
 
-    // Only update if this source is still selected
-    if (this.selectedGithubSource?.id === source.id) {
-      this.githubSourceSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
-      this.isGithubSourceSkillsLoading = false;
-      this.renderDetail();
-    }
+    this.githubSourceSkillsMap.set(source.id, skills.sort((a, b) => a.name.localeCompare(b.name)));
+    this.githubSourceSkillsLoadingSet.delete(source.id);
+    this.renderList();
+    if (this.selectedGithubSource?.id === source.id) this.renderDetail();
   }
 
   private async doRemoveGithubSource(source: import('./types').SkillSource): Promise<void> {
@@ -992,7 +1061,9 @@ export class SkillsManagerView extends ItemView {
     this.plugin.settings.skillSources = this.plugin.settings.skillSources.filter(s => s.id !== source.id);
     await this.plugin.saveSettings();
     this.selectedGithubSource = null;
-    this.githubSourceSkills = [];
+    this.selectedGithubSourceSkill = null;
+    this.githubSourceSkillsMap.delete(source.id);
+    this.githubSourceSkillsLoadingSet.delete(source.id);
     new Notice(`Removed ${source.name}`);
     await this.loadInstalledSkills();
     this.renderList();
@@ -1154,7 +1225,7 @@ export class SkillsManagerView extends ItemView {
       source.lastFetched = Date.now();
       await this.plugin.saveSettings();
       new Notice(`Updated ${source.name}`);
-      this.githubSourceSkills = [];
+      this.githubSourceSkillsMap.delete(source.id);
       void this.loadGithubSourceSkillsForInstalled(source);
       await this.loadInstalledSkills(); // refresh individual skills list too
     } catch (err) {
@@ -1164,8 +1235,8 @@ export class SkillsManagerView extends ItemView {
   }
 
   private async reloadGithubSource(source: import('./types').SkillSource): Promise<void> {
-    this.githubSourceSkills = [];
-    this.isGithubSourceSkillsLoading = true;
+    this.githubSourceSkillsMap.delete(source.id);
+    this.githubSourceSkillsLoadingSet.add(source.id);
     this.renderDetail();
     await this.loadGithubSourceSkillsForInstalled(source);
     new Notice(`Reloaded ${source.name}`);
@@ -1190,7 +1261,7 @@ export class SkillsManagerView extends ItemView {
       await this.plugin.saveSettings();
       new Notice(`Reinstalled ${source.name}`);
       // Reload skills from fresh clone
-      this.githubSourceSkills = [];
+      this.githubSourceSkillsMap.delete(source.id);
       void this.loadGithubSourceSkillsForInstalled(source);
       await this.loadInstalledSkills();
       this.renderList();
