@@ -435,7 +435,7 @@ class AddSkillSourceModal extends Modal {
 
     el.createEl('p', {
       cls: 'ct-modal-desc',
-      text: 'Paste a GitHub repository URL. The repo must have a .claude-plugin/plugin.json manifest. It will be cloned to ~/.claude/skill-sources/ and registered with Claude Code.',
+      text: 'Paste a GitHub repository URL. It will be cloned to ~/.claude/skill-sources/ and skill symlinks will be created in ~/.claude/skills/.',
     });
 
     el.createEl('label', { text: 'GitHub URL', cls: 'ct-modal-label' });
@@ -495,7 +495,6 @@ class AddSkillSourceModal extends Modal {
       const pathNode = require('path') as typeof import('path');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const osNode = require('os') as typeof import('os');
-      const { registerPluginSource, readPluginManifest } = await import('./claudeSettings');
 
       const id = crypto.randomUUID();
       const cloneBase = pathNode.join(osNode.homedir(), '.claude', 'skill-sources');
@@ -510,22 +509,40 @@ class AddSkillSourceModal extends Modal {
 
         showProgress('Reading plugin manifest…');
 
+        const { getSkillsDirForSource, readPluginManifest } = await import('./claudeSettings');
         const manifest = readPluginManifest(clonePath);
-        if (!manifest) {
-          // Clean up
-          fsNode.rmSync(clonePath, { recursive: true, force: true });
-          showError('No .claude-plugin/plugin.json found in this repository. The repo must be a Claude Code plugin-compliant skill source.');
-          return;
+
+        // Derive display name: user input > manifest displayName > manifest name > repo name from URL
+        const repoName = rawUrl.replace(/\.git$/, '').split('/').pop() ?? 'Unknown';
+        const displayName = nameInput.value.trim() || manifest?.displayName || manifest?.name || repoName;
+
+        showProgress('Creating skill links…');
+        const skillsDir = getSkillsDirForSource(clonePath);
+        const claudeSkillsDir = pathNode.join(osNode.homedir(), '.claude', 'skills');
+        fsNode.mkdirSync(claudeSkillsDir, { recursive: true });
+
+        let linked = 0;
+        try {
+          const entries = fsNode.readdirSync(skillsDir);
+          for (const entry of entries) {
+            const entryPath = pathNode.join(skillsDir, entry);
+            try {
+              const stat = fsNode.statSync(entryPath);
+              if (!stat.isDirectory()) continue;
+              if (!fsNode.existsSync(pathNode.join(entryPath, 'SKILL.md'))) continue;
+              const linkPath = pathNode.join(claudeSkillsDir, entry);
+              if (!fsNode.existsSync(linkPath)) {
+                fsNode.symlinkSync(entryPath, linkPath);
+                linked++;
+              }
+            } catch { continue; }
+          }
+        } catch (err) {
+          // skills dir may not exist or be empty — not a fatal error
+          console.warn('[ClaudeThreads] Could not create skill links:', err);
         }
 
-        const displayName = nameInput.value.trim() || manifest.displayName || manifest.name;
-        showProgress('Registering with Claude Code…');
-
-        registerPluginSource({
-          marketplaceId: id,
-          clonePath,
-          pluginName: manifest.name,
-        });
+        void linked; // used only for side-effect count
 
         const source: SkillSource = {
           id,
@@ -1583,21 +1600,27 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
           row.addButton((btn) =>
             btn.setButtonText('Remove').setWarning().onClick(async () => {
-              // For github sources: unregister from settings.json + delete clone
-              if (source.type === 'github') {
-                const { unregisterPluginSource, readPluginManifest } = await import('./claudeSettings');
-                let pluginName: string | undefined;
-                if (source.clonePath) {
-                  pluginName = readPluginManifest(source.clonePath)?.name;
-                }
-                unregisterPluginSource(source.id, pluginName);
-                if (source.clonePath) {
-                  try {
-                    // eslint-disable-next-line @typescript-eslint/no-require-imports
-                    const fsNode = require('fs') as typeof import('fs');
-                    fsNode.rmSync(source.clonePath, { recursive: true, force: true });
-                  } catch { /* ignore */ }
-                }
+              if (source.type === 'github' && source.clonePath) {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const fsNode = require('fs') as typeof import('fs');
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const pathNode = require('path') as typeof import('path');
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const osNode = require('os') as typeof import('os');
+                const claudeSkillsDir = pathNode.join(osNode.homedir(), '.claude', 'skills');
+                try {
+                  const entries = fsNode.readdirSync(claudeSkillsDir);
+                  for (const entry of entries) {
+                    const linkPath = pathNode.join(claudeSkillsDir, entry);
+                    try {
+                      if (fsNode.lstatSync(linkPath).isSymbolicLink()) {
+                        const target = fsNode.readlinkSync(linkPath);
+                        if (target.startsWith(source.clonePath!)) fsNode.unlinkSync(linkPath);
+                      }
+                    } catch { /* skip */ }
+                  }
+                } catch { /* skip */ }
+                try { fsNode.rmSync(source.clonePath, { recursive: true, force: true }); } catch { /* ignore */ }
               }
 
               this.plugin.settings.skillSources =
