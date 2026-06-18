@@ -83,11 +83,28 @@ test.describe('Mobile View', () => {
     await expect(page.locator('.ct-mobile-input-row')).toHaveScreenshot('mobile-input-toolbar.png');
   });
 
+  test('input toolbar focused (accent border ring)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-connected'));
+    await page.waitForSelector('.ct-mobile-input');
+    await page.locator('.ct-mobile-input').focus();
+    await page.waitForTimeout(200);
+    await expect(page.locator('.ct-mobile-input-row')).toHaveScreenshot('mobile-input-toolbar-focused.png');
+  });
+
   test('permission card (deny / allow buttons — 44px tap targets)', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(mobileHarnessUrl('mobile-permission'));
     await page.waitForSelector('.ct-mobile-permission-card');
     await page.waitForTimeout(300);
     await expect(page.locator('.ct-mobile-permission-card')).toHaveScreenshot('mobile-permission-card.png');
+  });
+
+  test('queue banner with cancel button', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-queue'));
+    await page.waitForSelector('.ct-mobile-queue-banner');
+    await page.waitForTimeout(300);
+    await expect(page.locator('.ct-mobile-queue-banner')).toHaveScreenshot('mobile-queue-banner.png');
   });
 });

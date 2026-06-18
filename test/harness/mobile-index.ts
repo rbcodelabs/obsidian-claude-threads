@@ -6,6 +6,7 @@
  *   ?view=mobile-connected    — mock relay + seeded MobileThreadStore, first thread active (conv panel)
  *   ?view=mobile-thread-list  — seeded store, NO active thread (shows thread list panel)
  *   ?view=mobile-permission   — active thread with a pending permission request card
+ *   ?view=mobile-queue        — active streaming thread + a queued message (shows queue banner + cancel ×)
  *
  * Optional query params:
  *   ?width=NNN&height=NNN    — override the #app pixel size for device-specific viewport tests
@@ -117,6 +118,22 @@ if (view === 'mobile-connected') {
     detail: 'npm run deploy --prod',
     requestId: 'perm-fixture-001',
   });
+
+  const mobileView = new MobileView(mockLeaf as any, relay as any, store);
+  app.appendChild(mobileView.containerEl);
+  mobileView.onOpen();
+  (window as any).__mobileView = mobileView;
+  (window as any).__store = store;
+
+} else if (view === 'mobile-queue') {
+  // Active thread with a streaming session AND a queued message — shows the queue banner
+  // with the new cancel (×) button.
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(fixtureThreads[0].id));
+  store.applyFrame({ type: 'streaming_start', threadId: fixtureThreads[0].id });
+  store.applyFrame({ type: 'token', threadId: fixtureThreads[0].id, text: 'Working on it...' });
+  store.applyFrame({ type: 'queued', threadId: fixtureThreads[0].id, text: 'Add error handling to the auth module', count: 1 });
 
   const mobileView = new MobileView(mockLeaf as any, relay as any, store);
   app.appendChild(mobileView.containerEl);
