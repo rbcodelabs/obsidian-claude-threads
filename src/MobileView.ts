@@ -613,11 +613,17 @@ export class MobileView extends ItemView {
   private attachViewportListener(): void {
     const onFocus = () => {
       // Wait for the keyboard animation (~300 ms) before resizing.
-      setTimeout(() => this.applyKeyboardInset(), 350);
+      setTimeout(() => {
+        this.applyKeyboardInset();
+        // Pad the message list so the last message isn't hidden under the input row.
+        this.messagesEl.style.paddingBottom = '90px';
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      }, 350);
     };
     const onBlur = () => {
       this.rootEl.style.height = '';
       this.rootEl.style.bottom = '';
+      this.messagesEl.style.paddingBottom = '';
     };
     this.vpFocusHandler = onFocus;
     this.vpBlurHandler = onBlur;
@@ -643,6 +649,17 @@ export class MobileView extends ItemView {
     }
   }
 
+  // Device-class keyboard inset fractions (portrait, measured on real devices)
+  // SE3 (logical 667px): keyboard+bar ≈ 45% of viewport
+  // iPhone 12-16 (logical 844–932px): keyboard+bar ≈ 40%
+  // iPad mini/Air/Pro (logical 1024px+): keyboard+bar ≈ 36%
+  private getKeyboardFraction(): number {
+    const h = window.screen.height;
+    if (h <= 700) return 0.45;
+    if (h <= 950) return 0.40;
+    return 0.36;
+  }
+
   private applyKeyboardInset(): void {
     // If the vv fallback already handled it, skip.
     const vv = window.visualViewport;
@@ -652,8 +669,8 @@ export class MobileView extends ItemView {
     if (!parent) return;
     const parentRect = parent.getBoundingClientRect();
 
-    // Keyboard ≈ 40% of screen height on modern iPhones (portrait).
-    const keyboardTop = Math.round(window.innerHeight * 0.60);
+    // Available height above the keyboard = (1 - keyboardFraction) * innerHeight.
+    const keyboardTop = Math.round(window.innerHeight * (1 - this.getKeyboardFraction()));
     const newHeight = Math.max(100, Math.min(parentRect.height, keyboardTop - Math.max(0, parentRect.top)));
     this.rootEl.style.height = newHeight + 'px';
     this.rootEl.style.bottom = 'auto';

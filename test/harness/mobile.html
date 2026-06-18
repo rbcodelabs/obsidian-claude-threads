@@ -72,6 +72,20 @@
   </style>
 
   <link rel="stylesheet" href="../../styles.css" />
+  <script>
+    // Allow ?width=NNN&height=NNN to override the #app size for device-specific tests.
+    (function () {
+      var sp = new URLSearchParams(window.location.search);
+      var w = sp.get('width');
+      var h = sp.get('height');
+      if (w && h) {
+        document.addEventListener('DOMContentLoaded', function () {
+          var app = document.getElementById('app');
+          if (app) { app.style.width = w + 'px'; app.style.height = h + 'px'; }
+        });
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="app"></div>
