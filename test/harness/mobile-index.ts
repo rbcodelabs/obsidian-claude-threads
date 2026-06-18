@@ -1,9 +1,14 @@
 /**
  * Mobile harness entry point.
  *
- * Renders MobileView in two states controlled by the ?view= query param:
- *   ?view=mobile-pairing   — no relay/store configured (shows pairing screen)
- *   ?view=mobile-connected — mock relay + seeded MobileThreadStore (shows thread list)
+ * Renders MobileView in one of several states controlled by the ?view= query param:
+ *   ?view=mobile-pairing      — no relay/store configured (shows pairing screen)
+ *   ?view=mobile-connected    — mock relay + seeded MobileThreadStore, first thread active (conv panel)
+ *   ?view=mobile-thread-list  — seeded store, NO active thread (shows thread list panel)
+ *   ?view=mobile-permission   — active thread with a pending permission request card
+ *
+ * Optional query params:
+ *   ?width=NNN&height=NNN    — override the #app pixel size for device-specific viewport tests
  */
 import './obsidian-mock';
 import { MobileView } from '../../src/MobileView';
@@ -45,15 +50,11 @@ const view = params.get('view') ?? 'mobile-pairing';
 
 const app = document.getElementById('app')!;
 
-if (view === 'mobile-connected') {
-  // Build a MobileThreadStore seeded from fixture threads and make the first
-  // thread active with streaming in progress.
-  const store = new MobileThreadStore();
-  const relay = new MockRelayClient();
+// ── Shared helper: serialize fixture threads for applyFrame ───────────────────
 
-  // Hydrate from a snapshot using fixture threads.
-  store.applyFrame({
-    type: 'snapshot',
+function serializedFixtures(activeThreadId: string | null) {
+  return {
+    type: 'snapshot' as const,
     threads: fixtureThreads.map((t) => ({
       id: t.id,
       title: t.title,
@@ -72,25 +73,61 @@ if (view === 'mobile-connected') {
       recap: t.recap,
       lastError: t.lastError,
     })),
-    activeThreadId: fixtureThreads[0].id,
-  });
+    activeThreadId,
+  };
+}
 
-  // Simulate a streaming message on the active thread so the connected view
-  // has visible activity.
+// ── View routing ───────────────────────────────────────────────────────────────
+
+if (view === 'mobile-connected') {
+  // Seeded store with the first thread active and a streaming message in progress.
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(fixtureThreads[0].id));
   store.applyFrame({ type: 'streaming_start', threadId: fixtureThreads[0].id });
   store.applyFrame({ type: 'token', threadId: fixtureThreads[0].id, text: 'Working on it...' });
 
   const mobileView = new MobileView(mockLeaf as any, relay as any, store);
   app.appendChild(mobileView.containerEl);
   mobileView.onOpen();
-
   (window as any).__mobileView = mobileView;
   (window as any).__store = store;
+
+} else if (view === 'mobile-thread-list') {
+  // Seeded store with NO active thread — shows the thread list panel.
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(null));
+
+  const mobileView = new MobileView(mockLeaf as any, relay as any, store);
+  app.appendChild(mobileView.containerEl);
+  mobileView.onOpen();
+  (window as any).__mobileView = mobileView;
+  (window as any).__store = store;
+
+} else if (view === 'mobile-permission') {
+  // Active thread with a pending Bash permission request so the permission card renders.
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(fixtureThreads[0].id));
+  store.applyFrame({
+    type: 'permission_request',
+    threadId: fixtureThreads[0].id,
+    toolName: 'Bash',
+    detail: 'npm run deploy --prod',
+    requestId: 'perm-fixture-001',
+  });
+
+  const mobileView = new MobileView(mockLeaf as any, relay as any, store);
+  app.appendChild(mobileView.containerEl);
+  mobileView.onOpen();
+  (window as any).__mobileView = mobileView;
+  (window as any).__store = store;
+
 } else {
   // Pairing screen: pass null relay + null store
   const mobileView = new MobileView(mockLeaf as any, null, null);
   app.appendChild(mobileView.containerEl);
   mobileView.onOpen();
-
   (window as any).__mobileView = mobileView;
 }
