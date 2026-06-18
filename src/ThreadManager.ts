@@ -976,11 +976,41 @@ export class ThreadManager {
       opts.persistSession = false;
     }
 
-    // GitHub skill source plugins — inject per-session so each vault is independent
-    const githubPlugins = (s.skillSources ?? [])
-      .filter(src => src.type === 'github' && src.clonePath)
-      .map(src => ({ type: 'local' as const, path: src.clonePath! }));
-    if (githubPlugins.length > 0) opts.plugins = githubPlugins;
+    // GitHub skill source plugins — enumerate each skill subdir and pass as individual
+    // local plugins. --plugin-dir / plugins:{type:'local'} requires the path to be an
+    // individual skill directory (containing SKILL.md), not the repo root.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path') as typeof import('path');
+      const plugins: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[] = [];
+      for (const src of (s.skillSources ?? [])) {
+        if (src.type !== 'github' || !src.clonePath) continue;
+        // Resolve skills dir: read plugin.json if present, else fall back to <clone>/skills
+        let skillsDir = path.join(src.clonePath, 'skills');
+        try {
+          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+          if (typeof manifest.skills === 'string') {
+            skillsDir = path.join(src.clonePath, manifest.skills);
+          }
+        } catch { /* no manifest or bad JSON — use default */ }
+
+        try {
+          const entries = fs.readdirSync(skillsDir);
+          for (const entry of entries) {
+            const entryPath = path.join(skillsDir, entry);
+            try {
+              if (!fs.statSync(entryPath).isDirectory()) continue;
+              if (!fs.existsSync(path.join(entryPath, 'SKILL.md'))) continue;
+              plugins.push({ type: 'local', path: entryPath });
+            } catch { continue; }
+          }
+        } catch { /* skills dir missing or unreadable */ }
+      }
+      if (plugins.length > 0) opts.plugins = plugins;
+    }
 
     return opts;
   }
