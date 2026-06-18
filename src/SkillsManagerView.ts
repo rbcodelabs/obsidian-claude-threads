@@ -168,6 +168,15 @@ export class SkillsManagerView extends ItemView {
     void this.checkAllSourceStaleness();
   }
 
+  /** Re-load installed skills and re-render the list/detail panes. Called by
+   *  SettingsTab when a new GitHub source is added so the view stays in sync. */
+  async refresh(): Promise<void> {
+    await this.loadInstalledSkills();
+    this.renderList();
+    this.renderDetail();
+    void this.checkAllSourceStaleness();
+  }
+
   private async checkAllSourceStaleness(): Promise<void> {
     const sources = (this.plugin.settings.skillSources ?? []).filter(
       (s) => s.type === 'github' && s.clonePath,

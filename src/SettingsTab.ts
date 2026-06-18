@@ -1588,6 +1588,14 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
                 this.plugin.settings.skillSources.filter((s) => s.id !== source.id);
               await this.plugin.saveSettings();
               renderSources();
+              // Refresh Skills Manager view if it is currently open
+              const { SKILLS_VIEW_TYPE, SkillsManagerView } =
+                require('./SkillsManagerView') as typeof import('./SkillsManagerView');
+              for (const leaf of this.app.workspace.getLeavesOfType(SKILLS_VIEW_TYPE)) {
+                if (leaf.view instanceof SkillsManagerView) {
+                  void leaf.view.refresh();
+                }
+              }
             }),
           );
         }
@@ -1600,6 +1608,14 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         btn.setButtonText('Add Source').setCta().onClick(() => {
           new AddSkillSourceModal(this.app, this.plugin, () => {
             renderSources();
+            // Refresh Skills Manager view if it is currently open
+            const { SKILLS_VIEW_TYPE, SkillsManagerView } =
+              require('./SkillsManagerView') as typeof import('./SkillsManagerView');
+            for (const leaf of this.app.workspace.getLeavesOfType(SKILLS_VIEW_TYPE)) {
+              if (leaf.view instanceof SkillsManagerView) {
+                void leaf.view.refresh();
+              }
+            }
           }).open();
         }),
       );
