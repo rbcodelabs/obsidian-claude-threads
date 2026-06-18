@@ -4804,7 +4804,7 @@ textarea.ct-settings-wide-input {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   min-width: 0;
 }
 
