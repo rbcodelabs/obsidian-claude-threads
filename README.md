@@ -149,10 +149,10 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 Open the **Skills Manager** panel from the ribbon (puzzle icon) or command palette to browse, install, and edit Claude Code skills.
 
 <p align="center">
-  <img src="docs/screenshot-skills-manager.png" width="800" alt="Skills Manager: installed skills list on the left with skill detail and editor on the right" />
+  <img src="docs/screenshot-skills-manager.png" width="800" alt="Skills Manager: source tree on the left with skill/agent detail and editor on the right" />
 </p>
 
-**Installed tab** — lists every skill in `~/.claude/skills/`. Click a skill to view and edit its `SKILL.md` directly in the panel. The editor shows an unsaved-changes indicator (`●`) and a **Save** button when there are pending edits. **Reload** re-reads the file from disk. **Reveal in Finder** opens the skill's directory. **Uninstall** removes the skill (with a confirmation prompt).
+**Installed tab** — shows everything installed as a collapsible source tree. GitHub plugin sources appear as top-level nodes; clicking one expands it to reveal its skills and opens a detail panel with **Update** (git pull, highlighted when updates are available), **Reload** (re-scan from disk), **Reinstall** (delete and re-clone for broken installs), and **Remove Source**. A **Local** node at the bottom groups your standalone skills and agents — click any item to view and edit it. For skills: **Save**, **Reload**, **Reveal in Finder**, **Uninstall**. For agents: **Save**, **Reload**, **Reveal in Finder**, **Delete**.
 
 **Browse tab** — search the [skills.sh](https://skills.sh) registry. Results show the skill name, GitHub source, and install count. Click a result to see details and an **Install** button that clones the skill from GitHub into `~/.claude/skills/`.
 
