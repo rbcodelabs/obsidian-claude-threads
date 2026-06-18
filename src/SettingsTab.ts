@@ -435,7 +435,7 @@ class AddSkillSourceModal extends Modal {
 
     el.createEl('p', {
       cls: 'ct-modal-desc',
-      text: 'Paste a GitHub repository URL. It will be cloned to ~/.claude/skill-sources/ and its skills will be injected into each Claude session automatically.',
+      text: 'Paste a GitHub repository URL. The repo will be cloned inside this vault\'s plugin folder and its skills will be injected into each Claude session automatically.',
     });
 
     el.createEl('label', { text: 'GitHub URL', cls: 'ct-modal-label' });
@@ -497,7 +497,14 @@ class AddSkillSourceModal extends Modal {
       const osNode = require('os') as typeof import('os');
 
       const id = crypto.randomUUID();
-      const cloneBase = pathNode.join(osNode.homedir(), '.claude', 'skill-sources');
+      // Store clones inside the vault's plugin folder so they are vault-local
+      // and don't bleed across vaults. FileSystemAdapter.getBasePath() gives the
+      // absolute vault root; manifest.dir is the plugin folder relative to it.
+      const { FileSystemAdapter } = require('obsidian') as typeof import('obsidian');
+      const vaultRoot = this.plugin.app.vault.adapter instanceof FileSystemAdapter
+        ? this.plugin.app.vault.adapter.getBasePath()
+        : osNode.homedir();
+      const cloneBase = pathNode.join(vaultRoot, this.plugin.manifest.dir!, 'skill-sources');
       const clonePath = pathNode.join(cloneBase, id);
 
       try {
@@ -1540,7 +1547,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           if (source.type === 'github' && source.repoUrl) {
             row.descEl.createEl('br');
             row.descEl.createEl('span', {
-              text: `Clone: ${source.clonePath ?? '~/.claude/skill-sources/' + source.id}`,
+              text: `Clone: ${source.clonePath ?? source.id}`,
               cls: 'ct-skill-source-repo',
             });
           } else if (source.type === 'local' && source.repoPath) {
