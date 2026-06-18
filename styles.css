@@ -4804,7 +4804,7 @@ textarea.ct-settings-wide-input {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   min-width: 0;
 }
 
@@ -5509,4 +5509,93 @@ textarea.ct-settings-wide-input {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+/* ── Skills Manager: tree view ──────────────────────────────────────── */
+.ct-skills-tree-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.ct-skills-tree-source:hover {
+  background: var(--background-modifier-hover);
+}
+.ct-skills-tree-source--active {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.ct-skills-tree-toggle {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.ct-skills-tree-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+.ct-skills-tree-source-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-skills-tree-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 28px;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.ct-skills-tree-child:hover {
+  background: var(--background-modifier-hover);
+}
+.ct-skills-tree-child--active {
+  background: var(--interactive-accent);
+}
+.ct-skills-tree-child--active .ct-skills-tree-child-name {
+  color: var(--text-on-accent);
+}
+.ct-skills-tree-child--loading {
+  cursor: default;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-skills-tree-empty {
+  cursor: default;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ct-skills-tree-child-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-skills-tree-child-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.ct-skills-tree-child-badge--agent {
+  background: var(--color-accent-1, var(--interactive-accent));
+  color: var(--text-on-accent);
+  opacity: 0.7;
 }
