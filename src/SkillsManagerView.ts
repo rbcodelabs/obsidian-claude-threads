@@ -921,18 +921,22 @@ export class SkillsManagerView extends ItemView {
       });
     }
 
-    // Staleness + Update
+    // Staleness + actions
     const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
-    if (source.behindCount && source.behindCount > 0) {
+    const hasUpdates = source.behindCount != null && source.behindCount > 0;
+    if (hasUpdates) {
       actions.createEl('span', {
         cls: 'ct-skills-badge--updates',
-        text: `• ${source.behindCount} update${source.behindCount > 1 ? 's' : ''} available`,
+        text: `• ${source.behindCount} update${source.behindCount! > 1 ? 's' : ''} available`,
       });
-      const updateBtn = actions.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--primary', text: 'Update' });
-      updateBtn.addEventListener('click', () => void this.updateGithubSource(source));
     } else if (source.behindCount === 0) {
       actions.createEl('span', { cls: 'ct-skills-meta-line', text: 'Up to date' });
     }
+    const updateBtn = actions.createEl('button', {
+      cls: 'ct-skills-btn' + (hasUpdates ? ' ct-skills-btn--primary' : ''),
+      text: 'Update',
+    });
+    updateBtn.addEventListener('click', () => void this.updateGithubSource(source));
     const reloadBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reload' });
     reloadBtn.addEventListener('click', () => void this.reloadGithubSource(source));
 
