@@ -66,6 +66,12 @@ export interface DispatchInputOptions {
    * immediately without re-mounting the component.
    */
   getPttKey?: () => string;
+  /**
+   * Extra directories to scan for skills in addition to ~/.claude/skills/.
+   * Pass the skills directories from GitHub plugin sources so they appear in
+   * the /command autocomplete immediately (before the session fires commands_changed).
+   */
+  extraSkillDirs?: string[];
 }
 
 export class DispatchInput {
@@ -587,28 +593,47 @@ export class DispatchInput {
   // ── /slash autocomplete ──────────────────────────────────────────────────
 
   private loadSkills(): void {
+    const allSkills: { name: string; description: string }[] = [];
+
+    // Scan ~/.claude/skills/ (individual skills and non-plugin symlinks)
     const skillsDir = path.join(os.homedir(), '.claude', 'skills');
     try {
-      this.skills = fs.readdirSync(skillsDir).map(entry => {
+      for (const entry of fs.readdirSync(skillsDir)) {
         const name = entry.replace(/\.md$/, '');
         const entryPath = path.join(skillsDir, entry);
         const isDir = fs.statSync(entryPath).isDirectory();
         let filePath = isDir ? '' : entryPath;
         if (isDir) {
-          const candidates = ['index.md', 'skill.md', name + '.md'];
+          const candidates = ['index.md', 'skill.md', 'SKILL.md', name + '.md'];
           const found = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
-          if (found) {
-            filePath = path.join(entryPath, found);
-          } else {
+          if (found) filePath = path.join(entryPath, found);
+          else {
             const first = fs.readdirSync(entryPath).find(f => f.endsWith('.md'));
             if (first) filePath = path.join(entryPath, first);
           }
         }
-        return { name, description: filePath ? this.readSkillDescription(filePath) : '' };
-      });
-    } catch {
-      this.skills = [];
+        allSkills.push({ name, description: filePath ? this.readSkillDescription(filePath) : '' });
+      }
+    } catch { /* ignore missing dir */ }
+
+    // Also scan extra dirs supplied by the caller (e.g. GitHub plugin source skill dirs)
+    for (const extraDir of (this.options.extraSkillDirs ?? [])) {
+      try {
+        for (const entry of fs.readdirSync(extraDir)) {
+          const entryPath = path.join(extraDir, entry);
+          try {
+            if (!fs.statSync(entryPath).isDirectory()) continue;
+            const candidates = ['SKILL.md', 'skill.md', 'index.md', entry + '.md'];
+            const skillFile = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
+            if (!skillFile) continue;
+            const desc = this.readSkillDescription(path.join(entryPath, skillFile));
+            allSkills.push({ name: entry, description: desc });
+          } catch { continue; }
+        }
+      } catch { /* ignore missing dir */ }
     }
+
+    this.skills = allSkills;
   }
 
   private readSkillDescription(filePath: string): string {
