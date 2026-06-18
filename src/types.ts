@@ -241,6 +241,29 @@ export interface ScheduledItem {
   targetThreadId?: string;
 }
 
+export interface SkillSource {
+  /** Stable ID, generated as `crypto.randomUUID()` at creation time */
+  id: string;
+  /** Human-readable label, e.g. "Agentic PM Playbook" */
+  name: string;
+  /** 'github' = managed clone at ~/.claude/skill-sources/<id>; 'local' = user-provided path */
+  type: 'github' | 'local';
+  // ── github type fields ──────────────────────────────────────────────────────
+  /** GitHub repo URL, e.g. "https://github.com/owner/repo" */
+  repoUrl?: string;
+  /** Absolute path to the managed clone, e.g. "/Users/foo/.claude/skill-sources/<id>" */
+  clonePath?: string;
+  /** ms epoch of the last git fetch (for staleness display) */
+  lastFetched?: number;
+  /** Commits behind remote (0 = up to date, undefined = not yet fetched) */
+  behindCount?: number;
+  // ── local type fields (legacy) ───────────────────────────────────────────────
+  /** Absolute path (may use ~) to the directory containing skill subdirectories */
+  skillsPath?: string;
+  /** Optional: path to the git repo root, enables "Pull Updates" button */
+  repoPath?: string;
+}
+
 export interface RemoteAccessSettings {
   enabled: boolean;
   /** 32-char hex string generated on first enable. Empty string when not yet generated. */
@@ -357,6 +380,8 @@ export interface PluginSettings {
    * Defaults to true so the tool is available out of the box.
    */
   enableWebViewerTool?: boolean;
+  /** Registered local skill collections browsable from the Skills Manager. */
+  skillSources: SkillSource[];
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -403,6 +428,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   scheduledItems: [],
   enableWebViewerTool: true,
   kanbanGroupBy: 'status',
+  skillSources: [],
 };
 
 /**

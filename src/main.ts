@@ -194,6 +194,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
 
     this.detectClaudeBinary();
+    this.migrateGithubSourcesIntoVault();
 
     this.manager = new ThreadManager(this.settings);
     // Use a per-thread factory so the set_working_directory tool can close over the
@@ -980,6 +981,50 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return this.app.vault.adapter.getResourcePath(
       `${this.manifest.dir}/`,
     );
+  }
+
+  /**
+   * One-time migration: move skill-source clones from the old global location
+   * (~/.claude/skill-sources/<id>) into the vault-local plugin folder
+   * (<vault>/.obsidian/plugins/claude-threads/skill-sources/<id>).
+   * Safe to call on every load — skips sources whose clonePath already points
+   * inside the vault, or whose old path no longer exists.
+   */
+  private migrateGithubSourcesIntoVault(): void {
+    const sources = this.settings.skillSources ?? [];
+    const githubSources = sources.filter(s => s.type === 'github' && s.clonePath);
+    if (githubSources.length === 0) return;
+
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return;
+    const vaultRoot = adapter.getBasePath();
+    const vaultLocal = require('path').join(vaultRoot, this.manifest.dir!, 'skill-sources');
+    const fs = require('fs') as typeof import('fs');
+
+    let changed = false;
+    for (const source of githubSources) {
+      const oldPath = source.clonePath!;
+      // Already vault-local — nothing to do
+      if (oldPath.startsWith(vaultLocal)) continue;
+      // Old clone must exist on disk to be moveable
+      if (!fs.existsSync(oldPath)) continue;
+
+      const newPath = require('path').join(vaultLocal, source.id);
+      try {
+        fs.mkdirSync(vaultLocal, { recursive: true });
+        fs.renameSync(oldPath, newPath);
+        source.clonePath = newPath;
+        changed = true;
+      } catch (err) {
+        console.warn('[ClaudeThreads] skill-source migration failed for', source.name, err);
+      }
+    }
+
+    if (changed) {
+      this.saveSettings().catch(err =>
+        console.error('[ClaudeThreads] failed to save settings after skill-source migration', err),
+      );
+    }
   }
 
   getEffectiveCwd(): string {

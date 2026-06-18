@@ -5381,3 +5381,132 @@ textarea.ct-settings-wide-input {
   border-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
 }
+
+/* ── Skill Sources — source switcher in Browse tab ─────────────────────── */
+
+.ct-skills-source-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+/* Pills reuse .ct-skills-tab / .ct-skills-tab--active from the existing tab bar */
+
+/* ── Skill Sources — settings tab ──────────────────────────────────────── */
+
+.ct-skill-sources-list .setting-item-description {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-skill-source-repo {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
+/* ── Modal error text ────────────────────────────────────────────────────── */
+
+.ct-modal-error {
+  color: var(--text-error, #e74c3c);
+  font-size: var(--font-ui-smaller);
+  margin-top: 6px;
+}
+
+/* ── Type toggle in AddSkillSourceModal ─────────────────────────────────── */
+
+.ct-modal-type-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.ct-modal-type-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ct-modal-type-btn--active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.ct-modal-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.ct-modal-progress {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Staleness badge in settings ────────────────────────────────────────── */
+
+.ct-skill-source-updates-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--color-orange);
+  font-weight: normal;
+}
+
+/* ── Global badge for github source skills ──────────────────────────────── */
+
+.ct-skills-badge--global {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-skills-badge--updates {
+  color: var(--color-orange);
+  background: transparent;
+}
+
+/* ── Plugin card in Installed tab ───────────────────────────────────────── */
+
+.ct-skills-plugin-card {
+  border-left: 3px solid var(--interactive-accent);
+}
+
+.ct-skills-badge--warn {
+  background: transparent;
+  color: var(--color-orange);
+  font-weight: 600;
+}
+
+/* ── GitHub plugin detail skill list ────────────────────────────────────── */
+
+.ct-skills-plugin-skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ct-skills-plugin-skill-row {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  background: var(--background-secondary);
+  border-radius: 4px;
+}
+
+.ct-skills-plugin-skill-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ct-skills-plugin-skill-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

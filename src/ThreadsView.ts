@@ -487,6 +487,26 @@ export class ThreadsView extends ItemView {
 
     this.inputRowEl = floatingPanel.createDiv('ct-input-row');
 
+    // Compute skill dirs from GitHub plugin sources so they appear in /command autocomplete
+    // immediately, without waiting for commands_changed from the first session message.
+    const githubSkillDirs: string[] = [];
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fsNode = require('fs') as typeof import('fs');
+      for (const src of (this.plugin.settings.skillSources ?? [])) {
+        if (src.type !== 'github' || !src.clonePath) continue;
+        let skillsDir = path.join(src.clonePath, 'skills');
+        try {
+          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
+          const manifest = JSON.parse(fsNode.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+          if (typeof manifest.skills === 'string') {
+            skillsDir = path.join(src.clonePath, manifest.skills);
+          }
+        } catch { /* use default */ }
+        githubSkillDirs.push(skillsDir);
+      }
+    } catch { /* ignore */ }
+
     this.dispatchInput = new DispatchInput({
       app: this.app,
       placeholder: 'Message Claude',
@@ -500,6 +520,7 @@ export class ThreadsView extends ItemView {
       captureLongPaste: true,
       builtinCommands: ThreadsView.BUILTIN_COMMANDS,
       argCompletions: THREAD_ARG_COMPLETIONS,
+      extraSkillDirs: githubSkillDirs,
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterActions: (container) => {

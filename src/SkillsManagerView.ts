@@ -17,6 +17,8 @@ interface InstalledSkill {
   /** Absolute path to the SKILL.md (or .md file) to read/write */
   skillMdPath: string;
   content: string;
+  /** Name of the configured SkillSource this skill's real path belongs to, if any */
+  sourceName?: string;
 }
 
 interface BrowseSkill {
@@ -28,6 +30,17 @@ interface BrowseSkill {
   source: string;
   installs: number;
   isInstalled: boolean;
+}
+
+interface LocalSkill {
+  id: string;           // subdir name
+  name: string;         // from SKILL.md frontmatter, or subdir name
+  description: string;
+  skillsPath: string;   // expanded skillsPath from source
+  skillDir: string;     // full path to this skill's directory
+  isLinked: boolean;
+  /** True when this skill comes from a github-type source (registered via settings.json, no symlink needed) */
+  isGithubSource?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -114,6 +127,21 @@ export class SkillsManagerView extends ItemView {
   private browseDescriptions: Map<string, string | null> = new Map();
   /** Slugs currently being fetched */
   private browseDescLoading: Set<string> = new Set();
+  /** Active browse source: 'registry' for skills.sh, or a SkillSource ID for a local source */
+  private browseSource: 'registry' | string = 'registry';
+  /** Skills loaded from the active local source */
+  private localSkills: LocalSkill[] = [];
+  /** Selected skill from a local source */
+  private selectedLocalSkill: LocalSkill | null = null;
+  /** Whether local skills are loading */
+  private isLocalSkillsLoading = false;
+
+  /** Selected GitHub source plugin in the Installed tab */
+  private selectedGithubSource: import('./types').SkillSource | null = null;
+  /** Skills loaded for the selected GitHub source (installed tab detail) */
+  private githubSourceSkills: LocalSkill[] = [];
+  /** Whether github source skills are loading */
+  private isGithubSourceSkillsLoading = false;
 
   // Install progress
   private installingSlug: string | null = null;
@@ -136,6 +164,53 @@ export class SkillsManagerView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildShell();
     await this.loadInstalledSkills();
+    // Background staleness check for github sources
+    void this.checkAllSourceStaleness();
+  }
+
+  /** Re-load installed skills and re-render the list/detail panes. Called by
+   *  SettingsTab when a new GitHub source is added so the view stays in sync. */
+  async refresh(): Promise<void> {
+    await this.loadInstalledSkills();
+    this.renderList();
+    this.renderDetail();
+    void this.checkAllSourceStaleness();
+  }
+
+  private async checkAllSourceStaleness(): Promise<void> {
+    const sources = (this.plugin.settings.skillSources ?? []).filter(
+      (s) => s.type === 'github' && s.clonePath,
+    );
+    for (const source of sources) {
+      void this.fetchSourceStaleness(source);
+    }
+  }
+
+  private async fetchSourceStaleness(source: import('./types').SkillSource): Promise<void> {
+    if (!source.clonePath) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execSync } = require('child_process') as typeof import('child_process');
+    try {
+      execSync(`git -C "${source.clonePath}" fetch --quiet --timeout=15`, {
+        stdio: 'pipe',
+        timeout: 20_000,
+      });
+      const countOutput = execSync(
+        `git -C "${source.clonePath}" rev-list HEAD..origin/HEAD --count`,
+        { stdio: 'pipe', timeout: 5_000 },
+      );
+      const count = parseInt(countOutput.toString().trim(), 10);
+      source.behindCount = isNaN(count) ? 0 : count;
+      source.lastFetched = Date.now();
+      await this.plugin.saveSettings();
+      // Re-render to reflect updated staleness badges
+      this.renderList();
+      if (this.selectedGithubSource?.id === source.id) {
+        this.renderDetail();
+      }
+    } catch {
+      // Network unavailable or git error — ignore silently
+    }
   }
 
   async onClose(): Promise<void> {
@@ -181,6 +256,10 @@ export class SkillsManagerView extends ItemView {
       btn.addEventListener('click', () => {
         if (this.activeTab === tab.id) return;
         this.activeTab = tab.id;
+        if (tab.id !== 'installed') {
+          this.selectedGithubSource = null;
+          this.githubSourceSkills = [];
+        }
         this.buildTabs();
         this.renderList();
         this.renderDetail();
@@ -203,7 +282,50 @@ export class SkillsManagerView extends ItemView {
   }
 
   private renderInstalledList(): void {
-    // Search / filter bar
+    const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
+
+    // ── Active Plugins section ───────────────────────────────────────────────
+    if (githubSources.length > 0) {
+      this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Active Plugins' });
+
+      for (const source of githubSources) {
+        const isActive = this.selectedGithubSource?.id === source.id;
+        const card = this.listEl.createEl('div', {
+          cls: 'ct-skills-card ct-skills-plugin-card' + (isActive ? ' ct-skills-card--active' : ''),
+        });
+
+        const main = card.createEl('div', { cls: 'ct-skills-card-main' });
+        main.createEl('div', { cls: 'ct-skills-card-name', text: source.name });
+        if (source.repoUrl) {
+          main.createEl('div', { cls: 'ct-skills-card-desc', text: source.repoUrl });
+        }
+
+        if (source.behindCount && source.behindCount > 0) {
+          card.createEl('span', {
+            cls: 'ct-skills-badge ct-skills-badge--warn',
+            text: `• ${source.behindCount} update${source.behindCount > 1 ? 's' : ''}`,
+          });
+        } else {
+          card.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--global', text: 'active' });
+        }
+
+        card.addEventListener('click', () => {
+          this.selectedGithubSource = source;
+          this.selectedInstalled = null;
+          this.githubSourceSkills = [];
+          this.renderList();
+          this.renderDetail();
+          void this.loadGithubSourceSkillsForInstalled(source);
+        });
+      }
+
+      // Separator / section label for individual skills
+      if (this.installedSkills.length > 0) {
+        this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Individual Skills' });
+      }
+    }
+
+    // ── Search / filter bar ──────────────────────────────────────────────────
     const searchRow = this.listEl.createEl('div', { cls: 'ct-skills-search-row' });
     const searchIcon = searchRow.createEl('span', { cls: 'ct-skills-search-icon' });
     setIcon(searchIcon, 'search');
@@ -258,12 +380,15 @@ export class SkillsManagerView extends ItemView {
         main.createEl('div', { cls: 'ct-skills-card-desc', text: skill.description });
       }
 
-      if (skill.isSymlink) {
+      if (skill.sourceName) {
+        card.createEl('span', { cls: 'ct-skills-badge', text: skill.sourceName });
+      } else if (skill.isSymlink) {
         card.createEl('span', { cls: 'ct-skills-badge', text: 'symlink' });
       }
 
       card.addEventListener('click', () => {
         this.selectedInstalled = skill;
+        this.selectedGithubSource = null;
         this.editContent = skill.content;
         this.isDirty = false;
         this.renderList();
@@ -273,6 +398,48 @@ export class SkillsManagerView extends ItemView {
   }
 
   private renderBrowseList(): void {
+    const sources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'local');
+
+    // Source switcher (only shown when at least one local source is configured)
+    if (sources.length > 0) {
+      const switcher = this.listEl.createEl('div', { cls: 'ct-skills-source-switcher' });
+
+      const registryPill = switcher.createEl('button', {
+        cls: 'ct-skills-tab' + (this.browseSource === 'registry' ? ' ct-skills-tab--active' : ''),
+        text: 'skills.sh',
+      });
+      registryPill.addEventListener('click', () => {
+        if (this.browseSource === 'registry') return;
+        this.browseSource = 'registry';
+        this.selectedLocalSkill = null;
+        this.renderList();
+        this.renderDetail();
+      });
+
+      for (const source of sources) {
+        const pill = switcher.createEl('button', {
+          cls: 'ct-skills-tab' + (this.browseSource === source.id ? ' ct-skills-tab--active' : ''),
+          text: source.name,
+        });
+        pill.addEventListener('click', () => {
+          if (this.browseSource === source.id) return;
+          this.browseSource = source.id;
+          this.selectedLocalSkill = null;
+          this.localSkills = [];
+          this.renderList();
+          this.renderDetail();
+          void this.loadLocalSkills(source.id);
+        });
+      }
+    }
+
+    // ── Local source browsing ────────────────────────────────────────────────
+    if (this.browseSource !== 'registry') {
+      this.renderLocalBrowseList();
+      return;
+    }
+
+    // ── Registry browsing (existing skills.sh behavior) ──────────────────────
     const searchRow = this.listEl.createEl('div', { cls: 'ct-skills-search-row' });
     const searchIcon = searchRow.createEl('span', { cls: 'ct-skills-search-icon' });
     setIcon(searchIcon, 'search');
@@ -339,6 +506,45 @@ export class SkillsManagerView extends ItemView {
     inner.createEl('div', { cls: 'ct-skills-empty', text: 'Type to search skills.sh' });
   }
 
+  private renderLocalBrowseList(): void {
+    const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
+
+    if (this.isLocalSkillsLoading) {
+      const loading = inner.createEl('div', { cls: 'ct-skills-empty' });
+      loading.createEl('span', { cls: 'ct-skills-spinner' });
+      loading.createEl('span', { text: ' Loading skills…' });
+      return;
+    }
+
+    if (this.localSkills.length === 0) {
+      inner.createEl('div', { cls: 'ct-skills-empty', text: 'No skills found in this source' });
+      return;
+    }
+
+    for (const skill of this.localSkills) {
+      const isActive = this.selectedLocalSkill?.id === skill.id;
+      const card = inner.createEl('div', {
+        cls: 'ct-skills-card' + (isActive ? ' ct-skills-card--active' : ''),
+      });
+
+      const main = card.createEl('div', { cls: 'ct-skills-card-main' });
+      main.createEl('div', { cls: 'ct-skills-card-name', text: skill.name });
+      if (skill.description) {
+        main.createEl('div', { cls: 'ct-skills-card-desc', text: skill.description });
+      }
+
+      if (skill.isLinked) {
+        card.createEl('span', { cls: 'ct-skills-badge', text: 'linked' });
+      }
+
+      card.addEventListener('click', () => {
+        this.selectedLocalSkill = skill;
+        this.renderList();
+        this.renderDetail();
+      });
+    }
+  }
+
   /** Render a list of browse skill cards into the given container. */
   private renderSkillCards(container: HTMLElement, skills: BrowseSkill[]): void {
     for (const skill of skills) {
@@ -376,12 +582,20 @@ export class SkillsManagerView extends ItemView {
     this.detailEl.empty();
     if (this.activeTab === 'installed') {
       this.renderInstalledDetail();
+    } else if (this.browseSource !== 'registry') {
+      this.renderLocalDetail();
     } else {
       this.renderBrowseDetail();
     }
   }
 
   private renderInstalledDetail(): void {
+    // If a github source plugin is selected, show its detail
+    if (this.selectedGithubSource) {
+      this.renderGithubPluginDetail(this.selectedGithubSource);
+      return;
+    }
+
     const skill = this.selectedInstalled;
 
     if (!skill) {
@@ -459,6 +673,134 @@ export class SkillsManagerView extends ItemView {
       text: 'Uninstall',
     });
     uninstallBtn.addEventListener('click', () => void this.uninstallSkill(skill));
+  }
+
+  private renderGithubPluginDetail(source: import('./types').SkillSource): void {
+    // Header
+    const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
+    header.createEl('div', { cls: 'ct-skills-detail-name', text: source.name });
+
+    if (source.repoUrl) {
+      const urlRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
+      const link = urlRow.createEl('a', {
+        cls: 'ct-skills-source-link',
+        text: source.repoUrl,
+        href: source.repoUrl,
+      });
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const electron = require('electron') as { shell?: { openExternal: (url: string) => void } };
+        electron.shell?.openExternal(source.repoUrl!);
+      });
+    }
+
+    if (source.lastFetched) {
+      header.createEl('div', {
+        cls: 'ct-skills-meta-line',
+        text: `Last checked: ${new Date(source.lastFetched).toLocaleString()}`,
+      });
+    }
+
+    // Staleness + Update
+    const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
+    if (source.behindCount && source.behindCount > 0) {
+      actions.createEl('span', {
+        cls: 'ct-skills-badge--updates',
+        text: `• ${source.behindCount} update${source.behindCount > 1 ? 's' : ''} available`,
+      });
+      const updateBtn = actions.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--primary', text: 'Update' });
+      updateBtn.addEventListener('click', () => void this.updateGithubSource(source));
+    } else if (source.behindCount === 0) {
+      actions.createEl('span', { cls: 'ct-skills-meta-line', text: 'Up to date' });
+    }
+
+    // Skills list
+    const skillsSection = this.detailEl.createEl('div', { cls: 'ct-skills-desc-section' });
+    skillsSection.createEl('div', { cls: 'ct-skills-section-label', text: 'Skills' });
+
+    if (this.isGithubSourceSkillsLoading) {
+      const loading = skillsSection.createEl('div', { cls: 'ct-skills-desc-loading' });
+      loading.createEl('span', { cls: 'ct-skills-spinner' });
+      loading.createEl('span', { text: ' Loading…' });
+    } else if (this.githubSourceSkills.length === 0) {
+      skillsSection.createEl('div', { cls: 'ct-skills-empty', text: 'No skills found' });
+    } else {
+      const list = skillsSection.createEl('div', { cls: 'ct-skills-plugin-skill-list' });
+      for (const skill of this.githubSourceSkills) {
+        const row = list.createEl('div', { cls: 'ct-skills-plugin-skill-row' });
+        row.createEl('span', { cls: 'ct-skills-plugin-skill-name', text: skill.name });
+        if (skill.description) {
+          row.createEl('span', { cls: 'ct-skills-plugin-skill-desc', text: skill.description });
+        }
+      }
+    }
+
+    // Remove
+    const footer = this.detailEl.createEl('div', { cls: 'ct-skills-browse-footer' });
+    const removeBtn = footer.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--danger', text: 'Remove Source' });
+    removeBtn.addEventListener('click', () => {
+      new ConfirmModal(
+        this.app,
+        `Remove "${source.name}"? This will delete the local clone and unregister it from Claude Code.`,
+        'Remove',
+        (confirmed) => { if (confirmed) void this.doRemoveGithubSource(source); },
+      ).open();
+    });
+  }
+
+  private async loadGithubSourceSkillsForInstalled(source: import('./types').SkillSource): Promise<void> {
+    if (!source.clonePath) return;
+    this.isGithubSourceSkillsLoading = true;
+    this.renderDetail();
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    const { getSkillsDirForSource } = await import('./claudeSettings');
+
+    const skillsDir = getSkillsDirForSource(source.clonePath);
+    const skills: LocalSkill[] = [];
+
+    try {
+      const entries = await fs.promises.readdir(skillsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const skillDir = path.join(skillsDir, entry.name);
+        const skillMdPath = path.join(skillDir, 'SKILL.md');
+        try { await fs.promises.access(skillMdPath); } catch { continue; }
+        let content = '';
+        try { content = await fs.promises.readFile(skillMdPath, 'utf-8'); } catch { /* empty */ }
+        const { name, description } = parseFrontmatter(content);
+        skills.push({ id: entry.name, name: name || entry.name, description, skillsPath: skillsDir, skillDir, isLinked: false, isGithubSource: true });
+      }
+    } catch { /* ignore */ }
+
+    // Only update if this source is still selected
+    if (this.selectedGithubSource?.id === source.id) {
+      this.githubSourceSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
+      this.isGithubSourceSkillsLoading = false;
+      this.renderDetail();
+    }
+  }
+
+  private async doRemoveGithubSource(source: import('./types').SkillSource): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+
+    if (source.clonePath) {
+      try { fs.rmSync(source.clonePath, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+
+    this.plugin.settings.skillSources = this.plugin.settings.skillSources.filter(s => s.id !== source.id);
+    await this.plugin.saveSettings();
+    this.selectedGithubSource = null;
+    this.githubSourceSkills = [];
+    new Notice(`Removed ${source.name}`);
+    await this.loadInstalledSkills();
+    this.renderList();
+    this.renderDetail();
   }
 
   private renderBrowseDetail(): void {
@@ -548,6 +890,208 @@ export class SkillsManagerView extends ItemView {
       const electron = require('electron') as { shell?: { openExternal: (url: string) => void } };
       electron.shell?.openExternal(`https://skills.sh/${skill.slug}`);
     });
+  }
+
+  // ── Local Source Detail ────────────────────────────────────────────────────
+
+  private renderLocalDetail(): void {
+    const skill = this.selectedLocalSkill;
+
+    if (!skill) {
+      const empty = this.detailEl.createEl('div', { cls: 'ct-skills-detail-empty' });
+      const iconEl = empty.createEl('div', { cls: 'ct-skills-detail-empty-icon' });
+      setIcon(iconEl, 'folder-open');
+      empty.createEl('div', { text: 'Select a skill to view' });
+      return;
+    }
+
+    // Find the source so we can check for repoPath
+    const sources = this.plugin.settings.skillSources ?? [];
+    const source = sources.find((s) => s.id === this.browseSource) ?? null;
+
+    // Header
+    const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
+    header.createEl('div', { cls: 'ct-skills-detail-name', text: skill.name });
+    const pathRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
+    pathRow.createEl('span', { text: skill.skillDir, cls: 'ct-skills-detail-path-text' });
+
+    // Description
+    if (skill.description) {
+      const descSection = this.detailEl.createEl('div', { cls: 'ct-skills-desc-section' });
+      descSection.createEl('p', { cls: 'ct-skills-desc-text', text: skill.description });
+    }
+
+    // Install area
+    const installArea = this.detailEl.createEl('div', { cls: 'ct-skills-install-area' });
+
+    if (skill.isLinked) {
+      const badge = installArea.createEl('div', { cls: 'ct-skills-installed-badge' });
+      const iconEl = badge.createEl('span', { cls: 'ct-skills-installed-icon' });
+      setIcon(iconEl, 'check-circle');
+      badge.createEl('span', { text: 'Already linked' });
+    } else {
+      const linkBtn = installArea.createEl('button', {
+        cls: 'ct-skills-btn ct-skills-btn--primary',
+        text: 'Link',
+      });
+      linkBtn.addEventListener('click', () => void this.linkLocalSkill(skill));
+    }
+
+    // Pull Updates button (local sources only, if source has repoPath)
+    if (source?.repoPath) {
+      const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
+      const pullBtn = actions.createEl('button', {
+        cls: 'ct-skills-btn',
+        text: 'Pull Updates',
+      });
+      pullBtn.addEventListener('click', () => this.pullSourceUpdates(source));
+    }
+  }
+
+  private async updateGithubSource(source: import('./types').SkillSource): Promise<void> {
+    if (!source.clonePath) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execSync } = require('child_process') as typeof import('child_process');
+    try {
+      execSync(`git -C "${source.clonePath}" pull`, { stdio: 'pipe', timeout: 60_000 });
+      source.behindCount = 0;
+      source.lastFetched = Date.now();
+      await this.plugin.saveSettings();
+      new Notice(`Updated ${source.name}`);
+      this.githubSourceSkills = [];
+      void this.loadGithubSourceSkillsForInstalled(source);
+      await this.loadInstalledSkills(); // refresh individual skills list too
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Update failed: ${msg}`);
+    }
+  }
+
+  private async linkLocalSkill(skill: LocalSkill): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    const linkPath = path.join(os.homedir(), '.claude', 'skills', skill.id);
+    try {
+      await fs.promises.symlink(skill.skillDir, linkPath);
+      skill.isLinked = true;
+      new Notice(`Linked ${skill.name}`);
+      void this.loadInstalledSkills();
+      this.renderList();
+      this.renderDetail();
+    } catch (err) {
+      new Notice(`Failed to link: ${String(err)}`);
+    }
+  }
+
+  private pullSourceUpdates(source: import('./types').SkillSource): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execSync } = require('child_process') as typeof import('child_process');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    const expandedRepoPath = (source.repoPath ?? '').replace(/^~/, os.homedir());
+    try {
+      const output = execSync(`git -C "${expandedRepoPath}" pull`, {
+        stdio: 'pipe',
+        timeout: 30_000,
+      });
+      const stdout = output.toString().trim();
+      new Notice(`Pull succeeded: ${stdout.slice(0, 100)}`);
+      // Reload local skill list to reflect any new/removed skills
+      void this.loadLocalSkills(source.id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Pull failed: ${msg}`);
+    }
+  }
+
+  /** Scan a local source directory for skills containing SKILL.md. */
+  private async loadLocalSkills(sourceId: string): Promise<void> {
+    const sources = this.plugin.settings.skillSources ?? [];
+    const source = sources.find((s) => s.id === sourceId);
+    if (!source) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    this.isLocalSkillsLoading = true;
+    this.renderList();
+
+    let skillsDir: string;
+    let isGithubSource = false;
+
+    if (source.type === 'github' && source.clonePath) {
+      isGithubSource = true;
+      const { getSkillsDirForSource } = await import('./claudeSettings');
+      skillsDir = getSkillsDirForSource(source.clonePath);
+    } else {
+      // local type
+      const rawPath = source.skillsPath ?? '';
+      skillsDir = rawPath.replace(/^~/, os.homedir());
+    }
+
+    const skills: LocalSkill[] = [];
+
+    try {
+      const entries = await fs.promises.readdir(skillsDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const skillDir = path.join(skillsDir, entry.name);
+
+        // Check if SKILL.md exists
+        const skillMdPath = path.join(skillDir, 'SKILL.md');
+        try {
+          await fs.promises.access(skillMdPath);
+        } catch {
+          continue; // no SKILL.md, skip
+        }
+
+        let content = '';
+        try {
+          content = await fs.promises.readFile(skillMdPath, 'utf-8');
+        } catch { /* keep empty */ }
+
+        const { name, description } = parseFrontmatter(content);
+
+        const isLinked = isGithubSource
+          ? false
+          : fs.existsSync(path.join(os.homedir(), '.claude', 'skills', entry.name));
+
+        skills.push({
+          id: entry.name,
+          name: name || entry.name,
+          description,
+          skillsPath: skillsDir,
+          skillDir,
+          isLinked,
+          isGithubSource,
+        });
+      }
+    } catch (err) {
+      console.warn('[ClaudeThreads] Could not load local skills:', err);
+    }
+
+    this.localSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
+    this.isLocalSkillsLoading = false;
+
+    // Keep selection in sync
+    if (this.selectedLocalSkill) {
+      const refreshed = this.localSkills.find((s) => s.id === this.selectedLocalSkill!.id);
+      this.selectedLocalSkill = refreshed ?? null;
+    }
+
+    this.renderList();
+    this.renderDetail();
   }
 
   // ── Skill Description Fetch ───────────────────────────────────────────────
@@ -684,6 +1228,24 @@ export class SkillsManagerView extends ItemView {
     }
 
     this.installedSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Compute sourceName for symlinked skills by matching against configured SkillSources
+    const skillSources = this.plugin.settings.skillSources ?? [];
+    if (skillSources.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const osModule = require('os') as typeof import('os');
+      for (const skill of this.installedSkills) {
+        if (!skill.isSymlink) continue;
+        for (const source of skillSources) {
+          const sourcePath = source.type === 'github' ? source.clonePath : (source.skillsPath ?? '');
+          const expandedSourcePath = (sourcePath ?? '').replace(/^~/, osModule.homedir());
+          if (expandedSourcePath && skill.realPath.startsWith(expandedSourcePath)) {
+            skill.sourceName = source.name;
+            break;
+          }
+        }
+      }
+    }
 
     // Keep selected skill in sync after reload
     if (this.selectedInstalled) {

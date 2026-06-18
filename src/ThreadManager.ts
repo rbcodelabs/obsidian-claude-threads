@@ -56,6 +56,37 @@ export type ThreadEvent =
   | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
   | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
+/**
+ * Parse an agent definition markdown file (frontmatter + body).
+ * Frontmatter fields: name, description (plain or YAML >- block scalar).
+ * Body (after the closing ---) becomes the system prompt.
+ */
+function parseAgentMarkdown(content: string): { name?: string; description?: string; prompt?: string } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (!match) return {};
+  const fm = match[1];
+  const prompt = match[2].trim();
+
+  const nameMatch = fm.match(/^name:\s*(.+)$/m);
+  const name = nameMatch?.[1]?.trim();
+
+  // Handle both inline (description: text) and block scalar (description: >-\n  line...)
+  let description: string | undefined;
+  const blockMatch = fm.match(/^description:\s*>[-]?\r?\n((?:[ \t]+[^\r\n]*\r?\n?)+)/m);
+  if (blockMatch) {
+    description = blockMatch[1]
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean)
+      .join(' ');
+  } else {
+    const inlineMatch = fm.match(/^description:\s*(.+)$/m);
+    description = inlineMatch?.[1]?.trim();
+  }
+
+  return { name, description, prompt: prompt || undefined };
+}
+
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
@@ -946,6 +977,8 @@ export class ThreadManager {
       agentProgressSummaries?: boolean;
       betas?: SdkBeta[];
       persistSession?: boolean;
+      plugins?: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[];
+      agents?: Record<string, import('@anthropic-ai/claude-agent-sdk').AgentDefinition>;
     } = {};
 
     // Thinking mode
@@ -973,6 +1006,71 @@ export class ThreadManager {
     // Ephemeral session (thread-level flag)
     if (thread.ephemeral) {
       opts.persistSession = false;
+    }
+
+    // GitHub skill source plugins — enumerate each skill subdir and pass as individual
+    // local plugins. --plugin-dir / plugins:{type:'local'} requires the path to be an
+    // individual skill directory (containing SKILL.md), not the repo root.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path') as typeof import('path');
+      const plugins: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[] = [];
+      for (const src of (s.skillSources ?? [])) {
+        if (src.type !== 'github' || !src.clonePath) continue;
+        // Resolve skills dir: read plugin.json if present, else fall back to <clone>/skills
+        let skillsDir = path.join(src.clonePath, 'skills');
+        try {
+          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+          if (typeof manifest.skills === 'string') {
+            skillsDir = path.join(src.clonePath, manifest.skills);
+          }
+        } catch { /* no manifest or bad JSON — use default */ }
+
+        try {
+          const entries = fs.readdirSync(skillsDir);
+          for (const entry of entries) {
+            const entryPath = path.join(skillsDir, entry);
+            try {
+              if (!fs.statSync(entryPath).isDirectory()) continue;
+              if (!fs.existsSync(path.join(entryPath, 'SKILL.md'))) continue;
+              plugins.push({ type: 'local', path: entryPath });
+            } catch { continue; }
+          }
+        } catch { /* skills dir missing or unreadable */ }
+      }
+      if (plugins.length > 0) opts.plugins = plugins;
+    }
+
+    // GitHub agent definitions — read agent .md files listed in plugin.json and
+    // pass them via options.agents so Claude Code can spawn them as subagents.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const path = require('path') as typeof import('path');
+      const agents: Record<string, import('@anthropic-ai/claude-agent-sdk').AgentDefinition> = {};
+      for (const src of (s.skillSources ?? [])) {
+        if (src.type !== 'github' || !src.clonePath) continue;
+        try {
+          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
+          const agentPaths = Array.isArray(manifest.agents) ? manifest.agents as string[] : [];
+          for (const relPath of agentPaths) {
+            try {
+              const absPath = path.join(src.clonePath, relPath);
+              const content = fs.readFileSync(absPath, 'utf-8');
+              const parsed = parseAgentMarkdown(content);
+              if (parsed.name && parsed.description && parsed.prompt) {
+                agents[parsed.name] = { description: parsed.description, prompt: parsed.prompt };
+              }
+            } catch { continue; }
+          }
+        } catch { /* no manifest or no agents list */ }
+      }
+      if (Object.keys(agents).length > 0) opts.agents = agents;
     }
 
     return opts;
