@@ -310,6 +310,12 @@ export class RelayClient {
         this.threadManager.resolvePermissionByRequestId(cmd.requestId, cmd.allow);
         break;
 
+      case 'cancel_queued_message':
+        this.threadManager.removeQueuedMessageAt(cmd.threadId, cmd.index);
+        // Send a dequeued frame so mobile updates its banner immediately.
+        this.sendFrame({ type: 'dequeued', threadId: cmd.threadId });
+        break;
+
       case 'create_thread': {
         const thread = this.threadManager.createThread(cmd.title, cmd.cwd);
         // Snapshot will propagate the new thread; thread_created event also fires

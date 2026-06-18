@@ -363,7 +363,7 @@ export class MobileView extends ItemView {
     this.messagesEl.empty();
 
     if (!activeId || !this.store) {
-      this.messagesEl.createDiv({ cls: 'ct-mobile-empty', text: 'Select a thread to start chatting.' });
+      this.messagesEl.createDiv({ cls: 'ct-mobile-empty', text: 'Send a message to start.' });
       return;
     }
 
@@ -824,6 +824,16 @@ export class MobileView extends ItemView {
     const extra = queued.length > 1 ? ` +${queued.length - 1} more` : '';
     banner.createSpan({ cls: 'ct-mobile-queue-icon', text: '⏳' });
     banner.createSpan({ cls: 'ct-mobile-queue-text', text: `"${preview}"${extra}` });
+
+    // Cancel button — removes the first queued message on the desktop.
+    const cancelBtn = banner.createEl('button', {
+      cls: 'ct-mobile-queue-cancel',
+      text: '×',
+      attr: { title: 'Cancel queued message', 'aria-label': 'Cancel queued message' },
+    });
+    cancelBtn.addEventListener('click', () => {
+      this.relayClient?.sendCommand({ type: 'cancel_queued_message', threadId: activeId, index: 0 });
+    });
 
     // Insert at top of inputRowEl, before the image strip
     this.inputRowEl.insertBefore(banner, this.imageStripEl);
