@@ -3549,12 +3549,12 @@
 .ct-mobile-permission-actions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .ct-mobile-permission-btn {
   flex: 1;
-  height: 36px;
+  min-height: 44px;
   border-radius: 8px;
   font-size: var(--font-ui-small);
   font-weight: 500;
@@ -3617,8 +3617,8 @@
 
 .ct-mobile-send-btn {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  min-width: 44px;
+  min-height: 44px;
   border-radius: 8px;
   background: var(--interactive-accent) !important;
   color: var(--text-on-accent) !important;
@@ -3640,8 +3640,8 @@
 
 .ct-mobile-stop-btn {
   flex-shrink: 0;
-  width: 34px;
-  height: 34px;
+  min-width: 44px;
+  min-height: 44px;
   border-radius: 8px;
   background: var(--color-red, #e03131) !important;
   color: #fff !important;
@@ -3769,7 +3769,15 @@
   font-size: 22px;
   color: var(--text-muted) !important;
   line-height: 1;
-  padding: 0 4px !important;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 !important;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 
 .ct-mobile-attach-btn:active {
