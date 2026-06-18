@@ -133,6 +133,7 @@ export class ClaudeSession {
       betas?: import('@anthropic-ai/claude-agent-sdk').SdkBeta[];
       persistSession?: boolean;
       plugins?: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[];
+      agents?: Record<string, import('@anthropic-ai/claude-agent-sdk').AgentDefinition>;
     },
   ): Promise<void> {
     this.interrupted = false;
@@ -224,6 +225,9 @@ export class ClaudeSession {
     if (sessionOptions?.betas?.length) options.betas = sessionOptions.betas;
     if (sessionOptions?.persistSession === false) options.persistSession = false;
     if (sessionOptions?.plugins?.length) options.plugins = sessionOptions.plugins;
+    if (sessionOptions?.agents && Object.keys(sessionOptions.agents).length > 0) {
+      options.agents = { ...options.agents, ...sessionOptions.agents };
+    }
     if (callbacks.onElicitation) {
       options.onElicitation = (request, opts) => callbacks.onElicitation!(request, opts.signal);
     }
