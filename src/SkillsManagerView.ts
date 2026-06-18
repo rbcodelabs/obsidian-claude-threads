@@ -43,6 +43,14 @@ interface LocalSkill {
   isGithubSource?: boolean;
 }
 
+interface InstalledAgent {
+  name: string;
+  description: string;
+  /** Absolute path to the .md file */
+  agentPath: string;
+  content: string;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function parseFrontmatter(content: string): { name: string; description: string } {
@@ -115,6 +123,12 @@ export class SkillsManagerView extends ItemView {
   private isDirty = false;
   private installedFilter = '';
 
+  // Agents (Installed tab)
+  private installedAgents: InstalledAgent[] = [];
+  private selectedAgent: InstalledAgent | null = null;
+  private agentEditContent = '';
+  private isAgentDirty = false;
+
   // Browse tab
   private browseResults: BrowseSkill[] = [];
   private browsePopularResults: BrowseSkill[] = [];
@@ -163,15 +177,15 @@ export class SkillsManagerView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildShell();
-    await this.loadInstalledSkills();
+    await Promise.all([this.loadInstalledSkills(), this.loadInstalledAgents()]);
     // Background staleness check for github sources
     void this.checkAllSourceStaleness();
   }
 
-  /** Re-load installed skills and re-render the list/detail panes. Called by
+  /** Re-load installed skills and agents, then re-render the list/detail panes. Called by
    *  SettingsTab when a new GitHub source is added so the view stays in sync. */
   async refresh(): Promise<void> {
-    await this.loadInstalledSkills();
+    await Promise.all([this.loadInstalledSkills(), this.loadInstalledAgents()]);
     this.renderList();
     this.renderDetail();
     void this.checkAllSourceStaleness();
@@ -284,6 +298,41 @@ export class SkillsManagerView extends ItemView {
   private renderInstalledList(): void {
     const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
 
+    // ── Agents section ───────────────────────────────────────────────────────
+    const filteredAgents = this.installedAgents.filter(
+      (a) =>
+        !this.installedFilter ||
+        a.name.toLowerCase().includes(this.installedFilter.toLowerCase()) ||
+        a.description.toLowerCase().includes(this.installedFilter.toLowerCase()),
+    );
+
+    if (this.installedAgents.length > 0) {
+      this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Agents' });
+
+      for (const agent of filteredAgents) {
+        const isActive = this.selectedAgent?.name === agent.name;
+        const card = this.listEl.createEl('div', {
+          cls: 'ct-skills-card' + (isActive ? ' ct-skills-card--active' : ''),
+        });
+
+        const main = card.createEl('div', { cls: 'ct-skills-card-main' });
+        main.createEl('div', { cls: 'ct-skills-card-name', text: agent.name });
+        if (agent.description) {
+          main.createEl('div', { cls: 'ct-skills-card-desc', text: agent.description });
+        }
+
+        card.addEventListener('click', () => {
+          this.selectedAgent = agent;
+          this.selectedInstalled = null;
+          this.selectedGithubSource = null;
+          this.agentEditContent = agent.content;
+          this.isAgentDirty = false;
+          this.renderList();
+          this.renderDetail();
+        });
+      }
+    }
+
     // ── Active Plugins section ───────────────────────────────────────────────
     if (githubSources.length > 0) {
       this.listEl.createEl('div', { cls: 'ct-skills-section-label', text: 'Active Plugins' });
@@ -331,7 +380,7 @@ export class SkillsManagerView extends ItemView {
     setIcon(searchIcon, 'search');
     const searchInput = searchRow.createEl('input', {
       cls: 'ct-skills-search',
-      attr: { type: 'text', placeholder: 'Filter skills…', value: this.installedFilter },
+      attr: { type: 'text', placeholder: 'Filter skills and agents…', value: this.installedFilter },
     });
     searchInput.addEventListener('input', () => {
       this.installedFilter = searchInput.value;
@@ -352,10 +401,16 @@ export class SkillsManagerView extends ItemView {
         s.description.toLowerCase().includes(this.installedFilter.toLowerCase()),
     );
 
-    this.listEl.createEl('div', {
-      cls: 'ct-skills-count',
-      text: `${filtered.length} of ${this.installedSkills.length} skill${this.installedSkills.length !== 1 ? 's' : ''}`,
-    });
+    const skillCount = this.installedSkills.length;
+    const filteredSkillCount = filtered.length;
+    const agentCount = this.installedAgents.length;
+    const filteredAgentCount = filteredAgents.length;
+
+    let countText = `${filteredSkillCount} of ${skillCount} skill${skillCount !== 1 ? 's' : ''}`;
+    if (agentCount > 0) {
+      countText += ` · ${filteredAgentCount} of ${agentCount} agent${agentCount !== 1 ? 's' : ''}`;
+    }
+    this.listEl.createEl('div', { cls: 'ct-skills-count', text: countText });
 
     const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
 
@@ -389,6 +444,7 @@ export class SkillsManagerView extends ItemView {
       card.addEventListener('click', () => {
         this.selectedInstalled = skill;
         this.selectedGithubSource = null;
+        this.selectedAgent = null;
         this.editContent = skill.content;
         this.isDirty = false;
         this.renderList();
@@ -590,6 +646,12 @@ export class SkillsManagerView extends ItemView {
   }
 
   private renderInstalledDetail(): void {
+    // If an agent is selected, show its detail
+    if (this.selectedAgent) {
+      this.renderAgentDetail(this.selectedAgent);
+      return;
+    }
+
     // If a github source plugin is selected, show its detail
     if (this.selectedGithubSource) {
       this.renderGithubPluginDetail(this.selectedGithubSource);
@@ -673,6 +735,129 @@ export class SkillsManagerView extends ItemView {
       text: 'Uninstall',
     });
     uninstallBtn.addEventListener('click', () => void this.uninstallSkill(skill));
+  }
+
+  private renderAgentDetail(agent: InstalledAgent): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+
+    // Header
+    const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
+    header.createEl('div', { cls: 'ct-skills-detail-name', text: agent.name });
+
+    const pathRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
+    pathRow.createEl('span', { text: agent.agentPath, cls: 'ct-skills-detail-path-text' });
+
+    // Editor section
+    const editorWrap = this.detailEl.createEl('div', { cls: 'ct-skills-editor-wrap' });
+    const labelRow = editorWrap.createEl('div', { cls: 'ct-skills-editor-label' });
+    labelRow.createEl('span', { text: `agents/${path.basename(agent.agentPath)}` });
+    if (this.isAgentDirty) {
+      labelRow.createEl('span', { cls: 'ct-skills-dirty-dot', text: '●', attr: { title: 'Unsaved changes' } });
+    }
+
+    const textarea = editorWrap.createEl('textarea', { cls: 'ct-skills-textarea' });
+    textarea.value = this.agentEditContent;
+    textarea.addEventListener('input', () => {
+      this.agentEditContent = textarea.value;
+      this.isAgentDirty = this.agentEditContent !== agent.content;
+      // Patch dirty indicator without a full re-render
+      const dot = this.detailEl.querySelector('.ct-skills-dirty-dot');
+      if (this.isAgentDirty && !dot) {
+        const lbl = this.detailEl.querySelector('.ct-skills-editor-label');
+        lbl?.createEl('span', { cls: 'ct-skills-dirty-dot', text: '●', attr: { title: 'Unsaved changes' } });
+      } else if (!this.isAgentDirty && dot) {
+        dot.remove();
+      }
+      const saveBtn = this.detailEl.querySelector<HTMLButtonElement>('.ct-skills-btn-save');
+      if (saveBtn) saveBtn.disabled = !this.isAgentDirty;
+    });
+
+    // Primary actions
+    const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
+
+    const saveBtn = actions.createEl('button', {
+      cls: 'ct-skills-btn ct-skills-btn--primary ct-skills-btn-save',
+      text: 'Save',
+      attr: { disabled: this.isAgentDirty ? null : 'true' },
+    });
+    saveBtn.disabled = !this.isAgentDirty;
+    saveBtn.addEventListener('click', () => void this.saveAgentContent(agent, textarea));
+
+    const reloadBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reload' });
+    reloadBtn.addEventListener('click', () => void this.reloadAgentContent(agent));
+
+    const revealBtn = actions.createEl('button', {
+      cls: 'ct-skills-btn',
+      text: 'Reveal in Finder',
+    });
+    revealBtn.addEventListener('click', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const electron = require('electron') as { shell?: { showItemInFolder: (path: string) => void } };
+      electron.shell?.showItemInFolder(agent.agentPath);
+    });
+
+    // Danger zone
+    const danger = this.detailEl.createEl('div', { cls: 'ct-skills-danger-zone' });
+    const deleteBtn = danger.createEl('button', {
+      cls: 'ct-skills-btn ct-skills-btn--danger',
+      text: 'Delete',
+    });
+    deleteBtn.addEventListener('click', () => {
+      new ConfirmModal(
+        this.app,
+        `Delete "${agent.name}" from ~/.claude/agents/? This cannot be undone.`,
+        'Delete',
+        (confirmed) => { if (confirmed) void this.doDeleteAgent(agent); },
+      ).open();
+    });
+  }
+
+  private async saveAgentContent(agent: InstalledAgent, textarea: HTMLTextAreaElement): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    try {
+      await fs.promises.writeFile(agent.agentPath, this.agentEditContent, 'utf-8');
+      agent.content = this.agentEditContent;
+      this.isAgentDirty = false;
+      new Notice(`Saved ${agent.name}`);
+      this.renderDetail();
+    } catch (err) {
+      new Notice(`Failed to save: ${String(err)}`);
+    }
+  }
+
+  private async reloadAgentContent(agent: InstalledAgent): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    try {
+      const content = await fs.promises.readFile(agent.agentPath, 'utf-8');
+      agent.content = content;
+      this.agentEditContent = content;
+      this.isAgentDirty = false;
+      this.renderDetail();
+    } catch (err) {
+      new Notice(`Failed to reload: ${String(err)}`);
+    }
+  }
+
+  private async doDeleteAgent(agent: InstalledAgent): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    try {
+      await fs.promises.unlink(agent.agentPath);
+      new Notice(`Deleted ${agent.name}`);
+      this.installedAgents = this.installedAgents.filter((a) => a.name !== agent.name);
+      if (this.selectedAgent?.name === agent.name) {
+        this.selectedAgent = null;
+        this.agentEditContent = '';
+        this.isAgentDirty = false;
+      }
+      this.renderList();
+      this.renderDetail();
+    } catch (err) {
+      new Notice(`Failed to delete: ${String(err)}`);
+    }
   }
 
   private renderGithubPluginDetail(source: import('./types').SkillSource): void {
@@ -1260,6 +1445,50 @@ export class SkillsManagerView extends ItemView {
 
     this.renderList();
     this.renderDetail();
+  }
+
+  async loadInstalledAgents(): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    const agentsDir = path.join(os.homedir(), '.claude', 'agents');
+    const agents: InstalledAgent[] = [];
+
+    try {
+      const entries = await fs.promises.readdir(agentsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.name.endsWith('.md')) continue;
+        const agentPath = path.join(agentsDir, entry.name);
+        let content = '';
+        try { content = await fs.promises.readFile(agentPath, 'utf-8'); } catch { /* skip */ }
+        const { name, description } = parseFrontmatter(content);
+        agents.push({
+          name: name || entry.name.replace(/\.md$/, ''),
+          description,
+          agentPath,
+          content,
+        });
+      }
+    } catch {
+      // agents dir may not exist — ignore
+    }
+
+    this.installedAgents = agents.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Keep selection in sync after reload
+    if (this.selectedAgent) {
+      const refreshed = this.installedAgents.find(a => a.name === this.selectedAgent!.name);
+      if (refreshed) {
+        this.selectedAgent = refreshed;
+        if (!this.isAgentDirty) this.agentEditContent = refreshed.content;
+      } else {
+        this.selectedAgent = null;
+      }
+    }
   }
 
   private async fetchBrowseResults(): Promise<void> {
