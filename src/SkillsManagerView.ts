@@ -899,6 +899,8 @@ export class SkillsManagerView extends ItemView {
     } else if (source.behindCount === 0) {
       actions.createEl('span', { cls: 'ct-skills-meta-line', text: 'Up to date' });
     }
+    const reloadBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reload' });
+    reloadBtn.addEventListener('click', () => void this.reloadGithubSource(source));
 
     // Skills list
     const skillsSection = this.detailEl.createEl('div', { cls: 'ct-skills-desc-section' });
@@ -921,8 +923,17 @@ export class SkillsManagerView extends ItemView {
       }
     }
 
-    // Remove
+    // Remove / Reinstall
     const footer = this.detailEl.createEl('div', { cls: 'ct-skills-browse-footer' });
+    const reinstallBtn = footer.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--danger', text: 'Reinstall' });
+    reinstallBtn.addEventListener('click', () => {
+      new ConfirmModal(
+        this.app,
+        `Reinstall "${source.name}"? This will delete and re-clone the repository.`,
+        'Reinstall',
+        (confirmed) => { if (confirmed) void this.reinstallGithubSource(source); },
+      ).open();
+    });
     const removeBtn = footer.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--danger', text: 'Remove Source' });
     removeBtn.addEventListener('click', () => {
       new ConfirmModal(
@@ -1149,6 +1160,42 @@ export class SkillsManagerView extends ItemView {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Update failed: ${msg}`);
+    }
+  }
+
+  private async reloadGithubSource(source: import('./types').SkillSource): Promise<void> {
+    this.githubSourceSkills = [];
+    this.isGithubSourceSkillsLoading = true;
+    this.renderDetail();
+    await this.loadGithubSourceSkillsForInstalled(source);
+    new Notice(`Reloaded ${source.name}`);
+  }
+
+  private async reinstallGithubSource(source: import('./types').SkillSource): Promise<void> {
+    if (!source.clonePath || !source.repoUrl) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execSync } = require('child_process') as typeof import('child_process');
+
+    try {
+      // Remove existing clone
+      fs.rmSync(source.clonePath, { recursive: true, force: true });
+      // Re-clone
+      const cloneUrl = source.repoUrl.endsWith('.git') ? source.repoUrl : `${source.repoUrl}.git`;
+      execSync(`git clone --depth 1 "${cloneUrl}" "${source.clonePath}"`, { stdio: 'pipe', timeout: 60_000 });
+      // Reset staleness state
+      source.behindCount = 0;
+      source.lastFetched = Date.now();
+      await this.plugin.saveSettings();
+      new Notice(`Reinstalled ${source.name}`);
+      // Reload skills from fresh clone
+      this.githubSourceSkills = [];
+      void this.loadGithubSourceSkillsForInstalled(source);
+      await this.loadInstalledSkills();
+      this.renderList();
+    } catch (err) {
+      new Notice(`Reinstall failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
