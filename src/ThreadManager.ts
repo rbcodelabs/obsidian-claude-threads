@@ -403,6 +403,14 @@ export class ThreadManager {
     return this.sessions.has(id);
   }
 
+  /**
+   * Returns all threads that currently have an active Claude session.
+   * Used by the safe-reload guard to enumerate what would be killed.
+   */
+  getRunningThreads(): Thread[] {
+    return this.getThreads().filter((t) => this.sessions.has(t.id));
+  }
+
   hasPendingPermission(threadId: string): boolean {
     return this.pendingPermissions.has(threadId);
   }
@@ -1120,6 +1128,32 @@ export class ThreadManager {
     for (const listener of this.listeners) {
       listener(threadId, event);
     }
+  }
+
+  /**
+   * Gracefully shuts down all active sessions by sending an interrupt signal
+   * to each one, then polling until the sessions map drains or the timeout
+   * elapses.  Falls back to a hard close on whatever remains.
+   *
+   * @param timeoutMs  Maximum milliseconds to wait before forcing close.
+   *                   Defaults to 10 000 (10 seconds).
+   */
+  async gracefulShutdown(timeoutMs = 10_000): Promise<{ timedOut: boolean }> {
+    const running = Array.from(this.sessions.keys());
+    if (running.length === 0) return { timedOut: false };
+
+    // Fire interrupt signals in parallel — errors are non-fatal.
+    await Promise.all(running.map((id) => this.interrupt(id).catch(() => {})));
+
+    // Poll until all sessions have self-removed (their 'done' / 'interrupted'
+    // callbacks call sessions.delete()) or we hit the deadline.
+    const deadline = Date.now() + timeoutMs;
+    while (this.sessions.size > 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+
+    const timedOut = this.sessions.size > 0;
+    return { timedOut };
   }
 
   destroy(): void {
