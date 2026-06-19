@@ -43,6 +43,10 @@ export class KanbanView extends ItemView {
   private timeInterval: ReturnType<typeof setInterval> | null = null;
   private dispatchInput!: DispatchInput;
 
+  /** Tracks which sidebars were collapsed by this view on open, so we can restore them on close. */
+  private _didCollapseLeft = false;
+  private _didCollapseRight = false;
+
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
     this.plugin = plugin;
@@ -61,6 +65,7 @@ export class KanbanView extends ItemView {
       this.handleEvent(threadId, event);
     });
     this.timeInterval = setInterval(() => this.refreshTimes(), 30_000);
+    this._applyPanelCollapse();
   }
 
   async onClose(): Promise<void> {
@@ -68,6 +73,39 @@ export class KanbanView extends ItemView {
     if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.timeInterval) clearInterval(this.timeInterval);
     this.dispatchInput?.destroy();
+    this._restorePanels();
+  }
+
+  /**
+   * Collapse whichever sidebar(s) the user has configured for the kanban board,
+   * but only if they are not already collapsed. We track what we touched so
+   * _restorePanels() can undo exactly the change we made.
+   */
+  private _applyPanelCollapse(): void {
+    const side = this.plugin.settings.kanbanCollapseSide ?? 'none';
+    if (side === 'none') return;
+    const { leftSplit, rightSplit } = this.app.workspace;
+    if ((side === 'left' || side === 'both') && !leftSplit.collapsed) {
+      this._didCollapseLeft = true;
+      leftSplit.collapse();
+    }
+    if ((side === 'right' || side === 'both') && !rightSplit.collapsed) {
+      this._didCollapseRight = true;
+      rightSplit.collapse();
+    }
+  }
+
+  /** Re-expand any sidebar we collapsed in _applyPanelCollapse(). */
+  private _restorePanels(): void {
+    const { leftSplit, rightSplit } = this.app.workspace;
+    if (this._didCollapseLeft) {
+      this._didCollapseLeft = false;
+      leftSplit.expand();
+    }
+    if (this._didCollapseRight) {
+      this._didCollapseRight = false;
+      rightSplit.expand();
+    }
   }
 
   private buildUI(): void {
