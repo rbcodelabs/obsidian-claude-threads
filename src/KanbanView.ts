@@ -471,6 +471,39 @@ export class KanbanView extends ItemView {
       card.createDiv({ cls: 'ct-kanban-card-summary', text: summary });
     }
 
+    // Task list (compact checklist from Claude Code's TodoWrite/TaskCreate)
+    const tasks = thread.tasks;
+    if (tasks && tasks.length > 0) {
+      const completedCount = tasks.filter(t => t.status === 'completed').length;
+      const taskSection = card.createDiv('ct-kanban-tasks');
+
+      taskSection.createDiv({
+        cls: 'ct-kanban-tasks-progress',
+        text: `${completedCount} / ${tasks.length} done`,
+      });
+
+      const STATUS_ICONS: Record<string, string> = {
+        completed: '✔',
+        in_progress: '■',
+        pending: '○',
+      };
+      const MAX_TASKS = 5;
+      const visibleTasks = tasks.slice(0, MAX_TASKS);
+      for (const task of visibleTasks) {
+        const row = taskSection.createDiv(`ct-kanban-task-row ct-task-row-${task.status}`);
+        row.createSpan({ cls: 'ct-kanban-task-icon', text: STATUS_ICONS[task.status] ?? '○' });
+        const label = task.content.length > 60 ? task.content.slice(0, 60) + '…' : task.content;
+        row.createSpan({ cls: 'ct-kanban-task-text', text: label });
+      }
+
+      if (tasks.length > MAX_TASKS) {
+        taskSection.createDiv({
+          cls: 'ct-kanban-tasks-more',
+          text: `+${tasks.length - MAX_TASKS} more`,
+        });
+      }
+    }
+
     if (hasPending) {
       const pendingInfo = this.manager.getPendingPermission(thread.id);
       const permContent = card.createDiv('ct-kanban-card-permission-content');
@@ -645,7 +678,9 @@ export class KanbanView extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
-      event.type === 'status_tags';
+      event.type === 'status_tags' ||
+      event.type === 'tasks_updated' ||
+      event.type === 'task_updated';
     if (isStateChange) {
       this.scheduleRender();
       return;

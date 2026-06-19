@@ -5170,6 +5170,66 @@ textarea.ct-settings-wide-input {
 .ct-task-row-pending .ct-task-row-icon { color: var(--text-faint); }
 .ct-task-row-pending .ct-task-row-text { color: var(--text-muted); }
 
+/* ── Kanban card task list (compact checklist) ───────────────────────────── */
+
+.ct-kanban-tasks {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.78em;
+  line-height: 1.4;
+}
+
+.ct-kanban-tasks-progress {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  margin-bottom: 2px;
+}
+
+.ct-kanban-task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.ct-kanban-task-icon {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+
+.ct-kanban-task-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-kanban-tasks-more {
+  color: var(--text-faint);
+  font-size: 0.9em;
+  margin-top: 1px;
+}
+
+/* Reuse status colors from ct-task-row-* */
+.ct-kanban-task-row.ct-task-row-completed .ct-kanban-task-icon { color: var(--color-green); }
+.ct-kanban-task-row.ct-task-row-completed .ct-kanban-task-text {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+
+.ct-kanban-task-row.ct-task-row-in_progress .ct-kanban-task-icon { color: #d99367; }
+.ct-kanban-task-row.ct-task-row-in_progress .ct-kanban-task-text {
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-kanban-task-row.ct-task-row-pending .ct-kanban-task-icon { color: var(--text-faint); }
+.ct-kanban-task-row.ct-task-row-pending .ct-kanban-task-text { color: var(--text-muted); }
+
 /* request_secret modal */
 .ct-secret-request-name-row {
   display: flex;
