@@ -65,6 +65,18 @@ export function getToolIcon(raw: string): string {
     case 'OpenNewTab':     return 'plus-square';
     case 'TodoWrite':      return 'list-checks';
     case 'AskUserQuestion': return 'message-circle-question';
+    case 'Skill':          return 'puzzle';
+    case 'Workflow':       return 'workflow';
+    case 'ToolSearch':     return 'search-code';
+    // Task tools
+    case 'TaskCreate':     return 'clipboard-plus';
+    case 'TaskUpdate':     return 'clipboard-pen';
+    case 'TaskGet':        return 'clipboard-list';
+    case 'TaskList':       return 'list-todo';
+    case 'TaskStop':       return 'circle-stop';
+    case 'TaskOutput':     return 'scroll-text';
+    case 'Monitor':        return 'activity';
+    case 'RemoteTrigger':  return 'radio-tower';
     // Obsidian MCP
     case 'search_vault':         return 'vault';
     case 'navigate_to_file':     return 'navigation';
