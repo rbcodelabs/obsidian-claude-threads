@@ -1143,7 +1143,13 @@ export class ThreadManager {
     if (running.length === 0) return { timedOut: false };
 
     // Fire interrupt signals in parallel — errors are non-fatal.
-    await Promise.all(running.map((id) => this.interrupt(id).catch(() => {})));
+    // We deliberately do NOT await these: interrupt() may not resolve until the
+    // session's internal turn completes, which could take longer than our timeout.
+    // The poll loop below watches for sessions to self-remove via their
+    // onDone / onInterrupted callbacks, which is the true drain signal.
+    for (const id of running) {
+      this.interrupt(id).catch(() => {});
+    }
 
     // Poll until all sessions have self-removed (their 'done' / 'interrupted'
     // callbacks call sessions.delete()) or we hit the deadline.

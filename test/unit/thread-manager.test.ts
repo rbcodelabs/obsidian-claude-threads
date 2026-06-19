@@ -56,6 +56,55 @@ describe('ThreadManager — thread lifecycle', () => {
     expect(manager.isRunning(t.id)).toBe(false);
   });
 
+  it('getRunningThreads returns only threads with active sessions', () => {
+    const t1 = manager.createThread('Running A');
+    const t2 = manager.createThread('Idle B');
+    const t3 = manager.createThread('Running C');
+    // Inject fake sessions directly to simulate active threads
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+    sessions.set(t1.id, {});
+    sessions.set(t3.id, {});
+    const running = manager.getRunningThreads();
+    expect(running.map(t => t.id).sort()).toEqual([t1.id, t3.id].sort());
+    expect(running.find(t => t.id === t2.id)).toBeUndefined();
+  });
+
+  it('getRunningThreads returns empty array when no sessions active', () => {
+    manager.createThread('Idle A');
+    manager.createThread('Idle B');
+    expect(manager.getRunningThreads()).toHaveLength(0);
+  });
+
+  it('gracefulShutdown resolves immediately with timedOut=false when no sessions active', async () => {
+    manager.createThread('Idle');
+    const result = await manager.gracefulShutdown(5_000);
+    expect(result.timedOut).toBe(false);
+  });
+
+  it('gracefulShutdown returns timedOut=true when sessions do not drain before timeout', async () => {
+    const t = manager.createThread('Stubborn');
+    // Inject a fake session whose interrupt() never resolves (simulates a hung agent)
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+    sessions.set(t.id, { interrupt: () => new Promise(() => {}) });
+    // Use a very short timeout so the test completes quickly
+    const result = await manager.gracefulShutdown(50);
+    expect(result.timedOut).toBe(true);
+  });
+
+  it('gracefulShutdown returns timedOut=false when sessions drain before timeout', async () => {
+    const t = manager.createThread('Quick');
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+    // Interrupt removes itself from the sessions map after a short delay
+    sessions.set(t.id, {
+      interrupt: async () => {
+        await new Promise<void>(resolve => setTimeout(resolve, 10));
+        sessions.delete(t.id);
+      },
+    });
+    const result = await manager.gracefulShutdown(2_000);
+    expect(result.timedOut).toBe(false);
+  });
+
   it('loadThreads populates threads', () => {
     const m = makeManager();
     const thread = {
