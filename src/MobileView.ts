@@ -52,6 +52,7 @@ export class MobileView extends ItemView {
   // Context summary banner (mirrors desktop behaviour)
   private summaryBannerEl: HTMLElement | null = null;
   private summaryBannerTimer: ReturnType<typeof setTimeout> | null = null;
+  private _summaryBannerOutsideTap?: (e: PointerEvent) => void;
   private threadAccessTimes: Map<string, number> = new Map();
   private static readonly BANNER_IDLE_THRESHOLD_MS = 60_000;
   private static readonly BANNER_AUTO_DISMISS_MS = 10_000;
@@ -624,6 +625,7 @@ export class MobileView extends ItemView {
       this.rootEl.style.height = '';
       this.rootEl.style.bottom = '';
       this.messagesEl.style.paddingBottom = '';
+      this.rootEl.removeClass('ct-keyboard-open');
     };
     this.vpFocusHandler = onFocus;
     this.vpBlurHandler = onBlur;
@@ -677,6 +679,9 @@ export class MobileView extends ItemView {
 
     // Scroll so the input row is visible at the bottom of the shrunk root.
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+
+    // Signal to CSS that the keyboard is open.
+    this.rootEl.addClass('ct-keyboard-open');
   }
 
   private detachViewportListener(): void {
@@ -744,12 +749,25 @@ export class MobileView extends ItemView {
       () => this.hideSummaryBanner(false),
       MobileView.BANNER_AUTO_DISMISS_MS,
     );
+
+    // Dismiss when the user taps anywhere outside the banner.
+    const outsideTap = (e: PointerEvent) => {
+      if (!banner.contains(e.target as Node)) {
+        this.hideSummaryBanner(false);
+      }
+    };
+    this.conversationEl.addEventListener('pointerdown', outsideTap);
+    this._summaryBannerOutsideTap = outsideTap;
   }
 
   private hideSummaryBanner(immediate: boolean): void {
     if (this.summaryBannerTimer !== null) {
       clearTimeout(this.summaryBannerTimer);
       this.summaryBannerTimer = null;
+    }
+    if (this._summaryBannerOutsideTap) {
+      this.conversationEl.removeEventListener('pointerdown', this._summaryBannerOutsideTap);
+      this._summaryBannerOutsideTap = undefined;
     }
     if (!this.summaryBannerEl) return;
     const el = this.summaryBannerEl;
