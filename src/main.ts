@@ -965,6 +965,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.saveSettings().catch(console.error);
     };
 
+    // 3.11 — When mobile sends Always Allow, persist the tool name to settings.
+    this.relayClient.onAlwaysAllowTool = (toolName: string) => {
+      if (!this.settings.alwaysAllowedTools.includes(toolName)) {
+        this.settings.alwaysAllowedTools.push(toolName);
+        this.saveSettings().catch(console.error);
+      }
+    };
+
     this.relayClient.connect();
 
     // Keep the relay client informed of the active thread
