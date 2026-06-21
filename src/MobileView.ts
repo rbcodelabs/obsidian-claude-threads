@@ -615,6 +615,9 @@ export class MobileView extends ItemView {
     const onFocus = () => {
       // Wait for the keyboard animation (~300 ms) before resizing.
       setTimeout(() => {
+        // Guard: if the user blurred before the timeout fired, skip the inset.
+        // Without this, ct-keyboard-open would be incorrectly applied post-blur.
+        if (document.activeElement !== this.inputEl) return;
         this.applyKeyboardInset();
         // Pad the message list so the last message isn't hidden under the input row.
         this.messagesEl.style.paddingBottom = '90px';
