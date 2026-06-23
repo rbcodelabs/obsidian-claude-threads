@@ -73,6 +73,20 @@ Checklist when deploying a dev build:
 
 ---
 
+## Reloading the Plugin Safely
+
+Reloading the plugin while agent threads are running kills them immediately.  Use the **"Reload plugin (safe)"** command (command palette) instead of toggling the plugin in Settings:
+
+- **No active threads** → reloads immediately (same as toggling off/on)
+- **Active threads present** → shows a modal listing the running threads with three options:
+  - **Cancel** — dismiss, do nothing
+  - **Interrupt & Reload** — sends interrupt to all threads and waits up to 30 s for clean shutdown before reloading
+  - **Force Reload** — reloads immediately, killing all threads (same as the old behavior)
+
+For unguarded reloads triggered by manifest edits (hot-reload) or toggling in Settings, `onunload()` provides a best-effort 10-second graceful shutdown: it interrupts all sessions and waits for them to drain before proceeding.
+
+---
+
 ## Unit Tests
 
 ```bash

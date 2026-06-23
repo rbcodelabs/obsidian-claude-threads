@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile } from 'obsidian';
+import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile, Modal } from 'obsidian';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -806,9 +806,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: 'safe-reload',
-      name: 'Safe Reload — warn if threads are running',
-      callback: () => { this.safeReloadPlugin().catch(console.error); },
+      id: 'reload-plugin-safely',
+      name: 'Reload plugin (safe)',
+      callback: async () => {
+        if (!this.manager) {
+          await this.safeReloadPlugin();
+          return;
+        }
+        const running = this.manager.getRunningThreads();
+        if (running.length === 0) {
+          await this.safeReloadPlugin();
+          return;
+        }
+        new ActiveThreadsReloadModal(this.app, running, async (action) => {
+          if (action === 'cancel') return;
+          if (action === 'graceful') {
+            new Notice(
+              `Interrupting ${running.length} thread${running.length === 1 ? '' : 's'}… waiting up to 30 s.`,
+              32_000,
+            );
+            await this.manager!.gracefulShutdown(30_000);
+          }
+          await this.safeReloadPlugin();
+        }).open();
+      },
     });
 
     // Initialize relay client if remote access is enabled
@@ -1129,17 +1150,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
-    // Warn if active sessions are being torn down unexpectedly (e.g. via Obsidian's
-    // built-in "Reload plugin" button rather than the safe-reload command).
+    // ── Safe-reload guard ────────────────────────────────────────────────────
+    // If any agent threads are actively running, interrupt them and wait up to
+    // 10 seconds for clean shutdown before forcibly closing sessions.
+    // Note: Obsidian's Component.unload() does not await onunload(), so this
+    // best-effort wait runs on the microtask queue after Obsidian's own cleanup
+    // starts — but sessions receive their interrupt signal synchronously before
+    // that, giving them maximum time to shut down cleanly.
     if (this.manager) {
-      const running = this.manager.getThreads().filter((t) => this.manager.isRunning(t.id));
-      if (running.length > 0) {
-        const names = running.map((t) => t.title || t.id).join(', ');
-        const msg =
-          `⚠️ Claude Threads: ${running.length} active thread${running.length === 1 ? '' : 's'} killed by plugin reload — ${names}. ` +
-          `Use "Claude Threads: Safe Reload" next time to avoid this.`;
-        new Notice(msg, 12_000);
-        console.warn(`[ClaudeThreads] Plugin unloaded with ${running.length} active session(s): ${names}`);
+      const runningThreads = this.manager.getRunningThreads();
+      if (runningThreads.length > 0) {
+        const names = runningThreads.map((t) => `"${t.title}"`).join(', ');
+        const s = runningThreads.length === 1 ? '' : 's';
+        new Notice(
+          `Claude Threads: interrupting ${runningThreads.length} active thread${s} (${names}). Waiting up to 10 s for clean shutdown…`,
+          12_000,
+        );
+        console.warn(`[ClaudeThreads] Plugin unloading with ${runningThreads.length} active thread${s}: ${names}`);
+        const { timedOut } = await this.manager.gracefulShutdown(10_000);
+        if (timedOut) {
+          console.warn('[ClaudeThreads] Graceful shutdown timed out — forcing session close.');
+          new Notice('Claude Threads: some threads did not stop in time and were force-closed.', 6_000);
+        }
       }
     }
 
@@ -1411,6 +1443,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
   }
 
+  /**
+   * Reload this plugin via Obsidian's internal plugin API.
+   * Equivalent to toggling the plugin off and on in Settings › Community Plugins.
+   */
+  private async safeReloadPlugin(): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plugins = (this.app as any).plugins as {
+      disablePlugin: (id: string) => Promise<void>;
+      enablePlugin: (id: string) => Promise<void>;
+    } | undefined;
+    if (!plugins) {
+      new Notice('Unable to reload: Obsidian plugin API not available.', 4_000);
+      return;
+    }
+    const id = this.manifest.id;
+    await plugins.disablePlugin(id);
+    await plugins.enablePlugin(id);
+  }
+
   async saveSettings(): Promise<void> {
     // Persist projects + thread state (without streaming content)
     // manager is null on mobile — skip thread persistence there
@@ -1425,5 +1476,79 @@ export default class ClaudeThreadsPlugin extends Plugin {
       });
     }
     await this.saveData(this.settings);
+  }
+}
+
+// ── Safe-Reload Modal ──────────────────────────────────────────────────────────
+
+type ReloadAction = 'cancel' | 'force' | 'graceful';
+
+/**
+ * Shown when the user invokes "Reload plugin (safe)" while agent threads are
+ * actively running.  Presents the thread list and three choices:
+ *
+ *  • Cancel          — dismiss, do nothing
+ *  • Interrupt & Reload — interrupt all sessions (up to 30 s) then reload
+ *  • Force Reload     — reload immediately, killing active threads
+ */
+class ActiveThreadsReloadModal extends Modal {
+  private threads: import('./types').Thread[];
+  private onAction: (action: ReloadAction) => Promise<void>;
+
+  constructor(
+    app: App,
+    threads: import('./types').Thread[],
+    onAction: (action: ReloadAction) => Promise<void>,
+  ) {
+    super(app);
+    this.threads = threads;
+    this.onAction = onAction;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.addClass('ct-safe-reload-modal');
+
+    contentEl.createEl('h2', { text: 'Active threads detected' });
+
+    const s = this.threads.length === 1 ? '' : 's';
+    contentEl.createEl('p', {
+      text: `${this.threads.length} thread${s} ${this.threads.length === 1 ? 'is' : 'are'} currently running. Reloading the plugin will kill ${this.threads.length === 1 ? 'it' : 'them'} immediately unless you interrupt first.`,
+    });
+
+    const list = contentEl.createEl('ul', { cls: 'ct-safe-reload-thread-list' });
+    for (const t of this.threads) {
+      list.createEl('li', { text: t.title });
+    }
+
+    const btnRow = contentEl.createEl('div', { cls: 'ct-safe-reload-btns' });
+
+    const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => {
+      this.close();
+      this.onAction('cancel').catch(console.error);
+    });
+
+    const gracefulBtn = btnRow.createEl('button', {
+      text: 'Interrupt & Reload',
+      cls: 'mod-cta',
+    });
+    gracefulBtn.addEventListener('click', () => {
+      this.close();
+      this.onAction('graceful').catch(console.error);
+    });
+
+    const forceBtn = btnRow.createEl('button', {
+      text: 'Force Reload',
+      cls: 'mod-warning',
+    });
+    forceBtn.addEventListener('click', () => {
+      this.close();
+      this.onAction('force').catch(console.error);
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
   }
 }
