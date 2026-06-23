@@ -8,13 +8,13 @@
  * VaultPersistence — all state comes through the relay.
  */
 
-import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom } from 'obsidian';
+import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from 'obsidian';
 import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
-import { formatToolName } from './toolNameUtils';
+import { formatToolName, getToolIcon } from './toolNameUtils';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -35,13 +35,23 @@ export class MobileView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private stopBtn!: HTMLButtonElement;
-  private queueBannerEl: HTMLElement | null = null;
   private convTitleEl!: HTMLSpanElement;
+  private convModelEl!: HTMLSpanElement;
+  private convCwdEl!: HTMLElement;
+  private statusRailEl!: HTMLElement;
+  private statusRailCardEl: HTMLElement | null = null;
   private showingList = false; // user pressed back — stay on list even if desktop has active thread
   // Image attachments pending send
   private pendingImages: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> = [];
   private imageStripEl!: HTMLElement;
   private fileInputEl!: HTMLInputElement;
+  // Thread search / filter
+  private _threadFilter = '';
+  private _filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // Queue rows container
+  private queueRowsEl: HTMLElement | null = null;
+  // Dismiss state for error card
+  private _errorDismissed: Set<string> = new Set();
 
   // Incremental render tracking — avoids full re-render on every streaming token
   private lastRenderedActiveId: string | null = null;
@@ -131,6 +141,22 @@ export class MobileView extends ItemView {
       this.showingList = false; // clear back-navigation guard so we switch to the new thread
       this.relayClient?.sendCommand({ type: 'create_thread', title: 'New Thread' });
     });
+
+    // 3.3 — Search input above thread list
+    const searchEl = listPanel.createEl('input', {
+      cls: 'ct-mobile-search-input',
+      attr: { type: 'text', placeholder: 'Search threads…' },
+    }) as HTMLInputElement;
+    searchEl.addEventListener('input', () => {
+      if (this._filterDebounceTimer !== null) clearTimeout(this._filterDebounceTimer);
+      this._filterDebounceTimer = setTimeout(() => {
+        this._threadFilter = searchEl.value;
+        if (this.store) {
+          this.renderThreadList(this.store.getThreads(), this.store.getActiveThreadId());
+        }
+      }, 150);
+    });
+
     this.threadListEl = listPanel.createDiv('ct-mobile-thread-list');
 
     // ── Conversation panel ────────────────────────────────────────────
@@ -144,9 +170,26 @@ export class MobileView extends ItemView {
       this.showPanel('list');
     });
     this.convTitleEl = this.headerEl.createEl('span', { cls: 'ct-mobile-conv-title' });
+    // 3.4 — Model indicator (right-aligned, read-only)
+    this.convModelEl = this.headerEl.createEl('span', { cls: 'ct-mobile-model-indicator' });
+    this.convModelEl.style.display = 'none';
+
+    // 3.7 — cwd chip: lives below the header in the conv panel, above the messages
+    this.convCwdEl = convPanel.createDiv('ct-mobile-cwd-chip-bar');
+    this.convCwdEl.style.display = 'none';
+
     this.conversationEl = convPanel.createDiv('ct-mobile-conversation');
     this.messagesEl = this.conversationEl.createDiv('ct-mobile-messages');
+
+    // 3.2 — Status rail above input
+    this.statusRailEl = convPanel.createDiv('ct-mobile-status-rail');
+
     this.inputRowEl = convPanel.createDiv('ct-mobile-input-row');
+
+    // 3.12 — Queue rows container (inside inputRowEl, above imageStrip)
+    this.queueRowsEl = this.inputRowEl.createDiv('ct-mobile-queue-rows');
+    this.queueRowsEl.style.display = 'none';
+
     this.imageStripEl = this.inputRowEl.createDiv('ct-mobile-image-strip');
     this.imageStripEl.style.display = 'none';
     const inputControls = this.inputRowEl.createDiv('ct-mobile-input-controls');
@@ -226,11 +269,21 @@ export class MobileView extends ItemView {
     // hasn't explicitly navigated back to the list.
     if (activeId && !this.showingList) {
       this.convTitleEl.textContent = thread?.title ?? '';
+      // 3.4 — Model indicator
+      this.updateModelIndicator(thread ?? null);
+      // 3.7 — cwd chip
+      this.updateCwdChip(thread ?? null);
       this.showPanel('conversation');
     } else if (!activeId) {
       this.showingList = false;
       this.showPanel('list');
     }
+
+    // 3.2 — Status rail
+    this.updateStatusRail(activeId);
+
+    // 3.10 — Error card (rendered as part of renderConversation, but we also
+    // need to clear it when the active thread has no error or changes)
   }
 
   private renderPairingScreen(): void {
@@ -254,21 +307,36 @@ export class MobileView extends ItemView {
   private renderThreadList(threads: SerializedThread[], activeId: string | null): void {
     this.threadListEl.empty();
 
-    if (threads.length === 0) {
+    // 3.3 — Apply search filter
+    const filter = this._threadFilter.trim().toLowerCase();
+    let filtered = threads;
+    if (filter) {
+      filtered = threads.filter(t => {
+        if (t.title?.toLowerCase().includes(filter)) return true;
+        const preview = (t.summary ?? t.recap ?? t.messages.filter(m => m.role !== 'compact').at(-1)?.content ?? '').toLowerCase();
+        return preview.includes(filter);
+      });
+    }
+
+    if (filtered.length === 0) {
       const empty = this.threadListEl.createDiv({ cls: 'ct-mobile-no-threads' });
-      empty.createEl('p', { text: 'No threads yet.' });
-      empty.createEl('p', { text: 'Create one on desktop to get started.', cls: 'ct-mobile-hint' });
+      if (filter) {
+        empty.createEl('p', { text: 'No results.' });
+      } else {
+        empty.createEl('p', { text: 'No threads yet.' });
+        empty.createEl('p', { text: 'Create one on desktop to get started.', cls: 'ct-mobile-hint' });
+      }
       return;
     }
 
     // Group threads by status, each group sorted by updatedAt descending.
     // Labels intentionally mirror the desktop Agent Dashboard: Working / New / Reviewed / Failed / Ready.
     const byUpdated = (a: SerializedThread, b: SerializedThread) => b.updatedAt - a.updatedAt;
-    const running    = threads.filter(t => this.store!.isStreaming(t.id)).sort(byUpdated);
-    const failed     = threads.filter(t => !this.store!.isStreaming(t.id) && t.lastError).sort(byUpdated);
-    const unreviewed = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && !t.reviewed).sort(byUpdated);
-    const reviewed   = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && t.reviewed).sort(byUpdated);
-    const empty      = threads.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length === 0).sort(byUpdated);
+    const running    = filtered.filter(t => this.store!.isStreaming(t.id)).sort(byUpdated);
+    const failed     = filtered.filter(t => !this.store!.isStreaming(t.id) && t.lastError).sort(byUpdated);
+    const unreviewed = filtered.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && !t.reviewed).sort(byUpdated);
+    const reviewed   = filtered.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length > 0 && t.reviewed).sort(byUpdated);
+    const empty      = filtered.filter(t => !this.store!.isStreaming(t.id) && !t.lastError && t.messages.length === 0).sort(byUpdated);
 
     const groups: Array<{ label: string; threads: SerializedThread[] }> = [
       { label: 'Working',  threads: running },
@@ -384,6 +452,11 @@ export class MobileView extends ItemView {
       this.renderMessage(msg);
     }
 
+    // 3.10 — Error card (shown when thread has a lastError and not dismissed)
+    if (thread.lastError && !this._errorDismissed.has(activeId)) {
+      this.renderErrorCard(activeId, thread.lastError);
+    }
+
     // Append streaming element if active
     this.updateStreamingEl(activeId);
 
@@ -451,7 +524,10 @@ export class MobileView extends ItemView {
       } catch {
         contentEl.createEl('p', { text: content });
       }
-    } else if (tools.length === 0) {
+    } else {
+      // 3.5 — Show thinking spinner when there is no content yet, regardless of
+      // whether tools have fired. Early tool calls arrive before the first text
+      // token, so we must show the spinner in that case too.
       contentEl.createSpan({ cls: 'ct-thinking-spinner', attr: { 'aria-label': 'Claude is thinking' } });
     }
     contentEl.createSpan({ cls: 'ct-cursor' });
@@ -461,8 +537,17 @@ export class MobileView extends ItemView {
   }
 
   private async renderMessage(msg: SerializedMessage): Promise<void> {
+    // 3.9 — Compact divider with optional token count
     if (msg.role === 'compact') {
-      this.messagesEl.createDiv({ cls: 'ct-mobile-compact-divider', text: 'Context compacted' });
+      const divider = this.messagesEl.createDiv('ct-mobile-compact-divider');
+      let dividerText = 'Context compacted';
+      if (msg.preTokens && msg.preTokens > 0) {
+        const kTokens = msg.preTokens >= 1000
+          ? `${Math.round(msg.preTokens / 1000)}k`
+          : String(msg.preTokens);
+        dividerText += ` · ${kTokens} tokens`;
+      }
+      divider.textContent = dividerText;
       return;
     }
 
@@ -482,6 +567,15 @@ export class MobileView extends ItemView {
       } catch {
         content.createEl('p', { text: msg.content });
       }
+
+      // 3.1 — Copy button for assistant messages
+      const copyBtn = el.createEl('button', { cls: 'ct-mobile-copy-btn', attr: { title: 'Copy response' } });
+      copyBtn.textContent = '⎘';
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(msg.content);
+        copyBtn.textContent = '✓';
+        setTimeout(() => { copyBtn.textContent = '⎘'; }, 1500);
+      });
     } else {
       // Render any attached images above the text
       if (msg.images && msg.images.length > 0) {
@@ -497,8 +591,16 @@ export class MobileView extends ItemView {
       }
     }
 
-    if (msg.cost && msg.cost > 0) {
-      el.createSpan({ cls: 'ct-mobile-cost', text: `$${msg.cost.toFixed(4)}` });
+    // 3.6 — Message footer: cost + timestamp
+    const hasCost = !!msg.cost && msg.cost > 0;
+    if (msg.role === 'user' || msg.role === 'assistant') {
+      const footer = el.createDiv('ct-mobile-message-footer');
+      if (hasCost) {
+        footer.createSpan({ cls: 'ct-mobile-cost', text: `$${msg.cost!.toFixed(4)}` });
+      }
+      if (msg.timestamp) {
+        footer.createSpan({ cls: 'ct-mobile-message-time', text: this.formatShortTime(msg.timestamp) });
+      }
     }
   }
 
@@ -528,6 +630,9 @@ export class MobileView extends ItemView {
     const wrapper = parent.createDiv('ct-tools');
     for (const tool of tools) {
       const pill = wrapper.createDiv(active ? 'ct-tool-pill ct-tool-active' : 'ct-tool-pill');
+      // 3.8 — Tool pill icons (matches desktop renderToolCalls pattern)
+      const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
+      setIcon(iconEl, getToolIcon(tool.name));
       pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
       if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
@@ -569,6 +674,21 @@ export class MobileView extends ItemView {
         threadId: permission.threadId,
         requestId: permission.requestId,
         allow: true,
+      });
+    });
+
+    // 3.11 — Always Allow button
+    const alwaysBtn = actions.createEl('button', {
+      cls: 'ct-mobile-permission-btn ct-mobile-permission-always',
+      text: 'Always Allow',
+    });
+    alwaysBtn.addEventListener('click', () => {
+      this.relayClient!.sendCommand({
+        type: 'resolve_permission',
+        threadId: permission.threadId,
+        requestId: permission.requestId,
+        allow: true,
+        alwaysAllow: true,
       });
     });
   }
@@ -830,34 +950,75 @@ export class MobileView extends ItemView {
   }
 
   private updateQueueBanner(activeId: string | null): void {
-    this.queueBannerEl?.remove();
-    this.queueBannerEl = null;
+    // 3.12 — Replace flat banner with stacked rows
+    if (!this.queueRowsEl) return;
+    this.queueRowsEl.empty();
 
-    if (!activeId || !this.store) return;
+    if (!activeId || !this.store) {
+      this.queueRowsEl.style.display = 'none';
+      return;
+    }
     const queued = this.store.getQueuedMessages(activeId);
-    if (queued.length === 0) return;
+    if (queued.length === 0) {
+      this.queueRowsEl.style.display = 'none';
+      return;
+    }
 
-    const banner = this.inputRowEl.createDiv('ct-mobile-queue-banner');
-    this.queueBannerEl = banner;
+    this.queueRowsEl.style.display = '';
+    const MAX_VISIBLE = 3;
+    const visible = queued.slice(0, MAX_VISIBLE);
 
-    const first = queued[0];
-    const preview = first.length > 48 ? first.slice(0, 48) + '…' : first;
-    const extra = queued.length > 1 ? ` +${queued.length - 1} more` : '';
-    banner.createSpan({ cls: 'ct-mobile-queue-icon', text: '⏳' });
-    banner.createSpan({ cls: 'ct-mobile-queue-text', text: `"${preview}"${extra}` });
+    visible.forEach((text, i) => {
+      const row = this.queueRowsEl!.createDiv('ct-mobile-queue-row');
+      const preview = text.length > 40 ? text.slice(0, 40) + '…' : text;
+      const previewEl = row.createSpan({ cls: 'ct-mobile-queue-preview', text: preview || '(empty)' });
 
-    // Cancel button — removes the first queued message on the desktop.
-    const cancelBtn = banner.createEl('button', {
-      cls: 'ct-mobile-queue-cancel',
-      text: '×',
-      attr: { title: 'Cancel queued message', 'aria-label': 'Cancel queued message' },
+      const cancelBtn = row.createEl('button', {
+        cls: 'ct-mobile-queue-cancel',
+        text: '×',
+        attr: { title: 'Cancel queued message' },
+      });
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.relayClient?.sendCommand({ type: 'cancel_queued_message', threadId: activeId, index: i });
+      });
+
+      // Tap row → pull into composer
+      const doPull = () => {
+        const current = this.inputEl.value.trim();
+        if (!current) {
+          this.inputEl.value = text;
+          this.relayClient?.sendCommand({ type: 'cancel_queued_message', threadId: activeId, index: i });
+          return;
+        }
+        // Replace draft? inline confirm
+        this.queueRowsEl?.querySelector('.ct-mobile-queue-confirm')?.remove();
+        const confirm = this.queueRowsEl!.createDiv('ct-mobile-queue-confirm');
+        confirm.createSpan({ text: 'Replace draft?' });
+        const yes = confirm.createEl('button', { cls: 'ct-mobile-queue-confirm-yes', text: 'Yes' });
+        const no  = confirm.createEl('button', { cls: 'ct-mobile-queue-confirm-no', text: 'Cancel' });
+        yes.addEventListener('click', () => {
+          confirm.remove();
+          this.inputEl.value = text;
+          this.relayClient?.sendCommand({ type: 'cancel_queued_message', threadId: activeId, index: i });
+        });
+        no.addEventListener('click', () => confirm.remove());
+        row.after(confirm);
+      };
+
+      previewEl.addEventListener('click', doPull);
+      row.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.ct-mobile-queue-cancel')) return;
+        doPull();
+      });
     });
-    cancelBtn.addEventListener('click', () => {
-      this.relayClient?.sendCommand({ type: 'cancel_queued_message', threadId: activeId, index: 0 });
-    });
 
-    // Insert at top of inputRowEl, before the image strip
-    this.inputRowEl.insertBefore(banner, this.imageStripEl);
+    // "+N more" label if queue has more than MAX_VISIBLE
+    if (queued.length > MAX_VISIBLE) {
+      const extra = queued.length - MAX_VISIBLE;
+      const more = this.queueRowsEl.createDiv('ct-mobile-queue-more');
+      more.textContent = `+${extra} more`;
+    }
   }
 
   private async handleImageSelect(): Promise<void> {
@@ -890,6 +1051,112 @@ export class MobileView extends ItemView {
         this.renderImageStrip();
       });
     }
+  }
+
+  // ── 3.2 — Status rail helpers ──────────────────────────────────────────
+
+  private showMobileStatusCard(type: 'active' | 'warning' | 'error', text: string): void {
+    this.statusRailCardEl?.remove();
+    const card = this.statusRailEl.createDiv(
+      type === 'active'   ? 'ct-status-card ct-status-card-active'
+      : type === 'warning' ? 'ct-status-card ct-status-card-warning'
+      :                       'ct-status-card ct-status-card-error',
+    );
+    if (type === 'active') {
+      card.createSpan({ cls: 'ct-status-card-spinner' });
+    }
+    card.createSpan({ cls: 'ct-status-card-text', text });
+    this.statusRailCardEl = card;
+  }
+
+  private hideMobileStatusCard(): void {
+    this.statusRailCardEl?.remove();
+    this.statusRailCardEl = null;
+  }
+
+  private updateStatusRail(activeId: string | null): void {
+    if (!activeId || !this.store) {
+      this.hideMobileStatusCard();
+      return;
+    }
+    const status = this.store.getThreadStatus(activeId);
+    if (status === 'compacting') {
+      this.showMobileStatusCard('active', 'Compacting…');
+    } else if (status === 'requesting') {
+      this.showMobileStatusCard('active', 'Requesting…');
+    } else {
+      this.hideMobileStatusCard();
+    }
+  }
+
+  // ── 3.4 — Model indicator helper ───────────────────────────────────────
+
+  private updateModelIndicator(thread: SerializedThread | null): void {
+    if (!thread?.model) {
+      this.convModelEl.style.display = 'none';
+      this.convModelEl.textContent = '';
+      return;
+    }
+    // Show the model name; strip the leading "claude-" vendor prefix for brevity
+    const displayModel = thread.model.replace(/^claude-/, '');
+    this.convModelEl.textContent = displayModel;
+    this.convModelEl.style.display = '';
+  }
+
+  // ── 3.7 — cwd chip helper ──────────────────────────────────────────────
+
+  private shortenCwd(cwd: string): string {
+    if (!cwd) return '';
+    // Replace home dir with ~
+    const home = (typeof process !== 'undefined' && process.env?.HOME) || '/Users';
+    let path = cwd.replace(home, '~');
+    // Show only last 2 segments if longer than ~40 chars
+    if (path.length > 40) {
+      const parts = path.replace(/\/$/, '').split('/');
+      path = '…/' + parts.slice(-2).join('/');
+    }
+    return path;
+  }
+
+  private updateCwdChip(thread: SerializedThread | null): void {
+    if (!thread?.cwd) {
+      this.convCwdEl.style.display = 'none';
+      this.convCwdEl.textContent = '';
+      return;
+    }
+    this.convCwdEl.textContent = this.shortenCwd(thread.cwd);
+    this.convCwdEl.style.display = '';
+  }
+
+  // ── 3.6 — Short time formatter ─────────────────────────────────────────
+
+  private formatShortTime(timestamp: number): string {
+    const d = new Date(timestamp);
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (sameDay) return time;
+    const date = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${date}, ${time}`;
+  }
+
+  // ── 3.10 — Error card renderer ─────────────────────────────────────────
+
+  private renderErrorCard(threadId: string, errorText: string): void {
+    const card = this.messagesEl.createDiv('ct-mobile-error-card');
+    card.createDiv({ cls: 'ct-mobile-error-text', text: errorText });
+    const dismissBtn = card.createEl('button', {
+      cls: 'ct-mobile-error-dismiss',
+      text: '×',
+      attr: { title: 'Dismiss', 'aria-label': 'Dismiss error' },
+    });
+    dismissBtn.addEventListener('click', () => {
+      this._errorDismissed.add(threadId);
+      card.remove();
+    });
   }
 
   private scrollToBottom(): void {

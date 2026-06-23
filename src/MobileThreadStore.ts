@@ -24,6 +24,8 @@ export class MobileThreadStore {
   private streamingTools: Map<string, ToolCallRecord[]> = new Map();
   /** Messages waiting to be processed after the current session, keyed by threadId. */
   private queuedMessages: Map<string, string[]> = new Map();
+  /** Last received status per thread, keyed by threadId. */
+  private threadStatus: Map<string, 'compacting' | 'requesting' | null> = new Map();
 
   // ── Public accessors ──────────────────────────────────────────────────
 
@@ -67,6 +69,10 @@ export class MobileThreadStore {
     return this.queuedMessages.get(threadId) ?? [];
   }
 
+  getThreadStatus(threadId: string): 'compacting' | 'requesting' | null {
+    return this.threadStatus.get(threadId) ?? null;
+  }
+
   /** Subscribe to any store change. Returns an unsubscribe function. */
   subscribe(listener: StoreListener): () => void {
     this.listeners.add(listener);
@@ -92,6 +98,7 @@ export class MobileThreadStore {
         this.streamingContent.delete(frame.threadId);
         this.streamingTools.delete(frame.threadId);
         this.queuedMessages.delete(frame.threadId);
+        this.threadStatus.delete(frame.threadId);
         // Clear permissions for this thread
         for (const [id, p] of this.pendingPermissions) {
           if (p.threadId === frame.threadId) this.pendingPermissions.delete(id);
@@ -151,6 +158,7 @@ export class MobileThreadStore {
       case 'done':
         this.streamingContent.delete(frame.threadId);
         this.streamingTools.delete(frame.threadId);
+        this.threadStatus.delete(frame.threadId);
         this.notify();
         break;
 
@@ -161,13 +169,14 @@ export class MobileThreadStore {
         }
         this.streamingContent.delete(frame.threadId);
         this.streamingTools.delete(frame.threadId);
+        this.threadStatus.delete(frame.threadId);
         this.notify();
         break;
       }
 
       case 'status': {
-        // Status changes don't mutate thread data; view reads streaming state separately
-        // Notify so the view can update status indicators
+        // Store status so the view can show/hide the status rail card
+        this.threadStatus.set(frame.threadId, frame.status);
         this.notify();
         break;
       }
@@ -240,6 +249,7 @@ export class MobileThreadStore {
     this.streamingTools.clear();
     this.pendingPermissions.clear();
     this.queuedMessages.clear();
+    this.threadStatus.clear();
 
     for (const thread of threads) {
       this.threads.set(thread.id, thread);
@@ -260,6 +270,7 @@ export class MobileThreadStore {
     this.streamingTools.clear();
     this.pendingPermissions.clear();
     this.queuedMessages.clear();
+    this.threadStatus.clear();
     this.activeThreadId = null;
   }
 

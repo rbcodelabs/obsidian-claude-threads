@@ -75,7 +75,7 @@ export type RelayFrame =
 export type RemoteCommand =
   | { type: 'send_message'; threadId: string; text: string; images?: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> }
   | { type: 'stop_session'; threadId: string }
-  | { type: 'resolve_permission'; threadId: string; requestId: string; allow: boolean }
+  | { type: 'resolve_permission'; threadId: string; requestId: string; allow: boolean; alwaysAllow?: boolean }
   | { type: 'cancel_queued_message'; threadId: string; index: number }
   | { type: 'create_thread'; title: string; cwd?: string }
   | { type: 'set_active_thread'; threadId: string }

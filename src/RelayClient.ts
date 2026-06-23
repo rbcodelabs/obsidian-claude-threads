@@ -84,6 +84,14 @@ export class RelayClient {
    * complete (clear the expiry so reconnects are always allowed).
    */
   onPairingComplete: (() => void) | null = null;
+  /**
+   * Called in desktop mode when a mobile client sends resolve_permission with
+   * alwaysAllow=true. The plugin injects this to add the tool to alwaysAllowedTools.
+   */
+  onAlwaysAllowTool: ((toolName: string) => void) | null = null;
+
+  /** Maps requestId → toolName so alwaysAllow can be persisted on the desktop. */
+  private permissionToolNames: Map<string, string> = new Map();
 
   // Mobile-mode state
   private frameListeners: Set<FrameListener> = new Set();
@@ -307,6 +315,13 @@ export class RelayClient {
         break;
 
       case 'resolve_permission':
+        // 3.11 — If alwaysAllow, fire the plugin callback before resolving
+        if (cmd.alwaysAllow) {
+          const toolName = this.permissionToolNames.get(cmd.requestId);
+          if (toolName && this.onAlwaysAllowTool) {
+            this.onAlwaysAllowTool(toolName);
+          }
+        }
         this.threadManager.resolvePermissionByRequestId(cmd.requestId, cmd.allow);
         break;
 
@@ -421,7 +436,9 @@ export class RelayClient {
           // Generate a stable requestId for this permission so mobile can reference it.
           // Register a resolver in ThreadManager so resolve_permission commands work.
           const requestId = crypto.randomUUID();
+          this.permissionToolNames.set(requestId, event.toolName);
           this.threadManager!.registerRemotePermissionResolver(requestId, (allow) => {
+            this.permissionToolNames.delete(requestId);
             this.threadManager!.resolvePermission(threadId, allow);
           });
           this.sendFrame({
