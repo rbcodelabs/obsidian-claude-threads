@@ -2101,6 +2101,8 @@
 
 .ct-agents-list {
   flex: 1;
+  min-height: 0; /* required: without this, flex items default to min-height:auto and
+                    grow to fit content instead of scrolling — overflow-y:auto never fires */
   overflow-y: auto;
   padding: 8px 0;
 }
