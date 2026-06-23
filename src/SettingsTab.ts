@@ -1687,6 +1687,22 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         );
     }
 
+    // ── Safe Reload ───────────────────────────────────────────────────────────
+    new Setting(containerEl).setName('Plugin').setHeading();
+
+    new Setting(containerEl)
+      .setName('Reload plugin')
+      .setDesc(
+        'Reload Claude Threads. If any threads are currently running you will be warned before the plugin restarts.',
+      )
+      .addButton((btn) =>
+        btn
+          .setButtonText('Reload…')
+          .onClick(() => {
+            this.plugin.safeReloadPlugin().catch(console.error);
+          }),
+      );
+
     new Setting(containerEl).setName('Advanced').setHeading();
 
     new Setting(containerEl)

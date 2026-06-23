@@ -805,6 +805,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'safe-reload',
+      name: 'Safe Reload — warn if threads are running',
+      callback: () => { this.safeReloadPlugin().catch(console.error); },
+    });
+
     // Initialize relay client if remote access is enabled
     this.initDesktopRelayClient();
 
@@ -1062,7 +1068,81 @@ export default class ClaudeThreadsPlugin extends Plugin {
     debugLog(`[ClaudeThreads] Cancelled ${list.length} pending wake-up(s) for thread ${threadId}`);
   }
 
+  /**
+   * Reload the plugin safely. If any threads are currently running, shows a
+   * confirmation modal before proceeding. The user can cancel and wait for
+   * threads to finish, or force the reload knowing sessions will be killed.
+   */
+  async safeReloadPlugin(): Promise<void> {
+    const runningThreads = this.manager
+      ? this.manager.getThreads().filter((t) => this.manager.isRunning(t.id))
+      : [];
+
+    if (runningThreads.length > 0) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        const { Modal } = require('obsidian') as typeof import('obsidian');
+
+        class SafeReloadModal extends Modal {
+          private result = false;
+
+          onOpen() {
+            this.titleEl.setText('Active threads will be killed');
+
+            this.contentEl.createEl('p', {
+              text: `${runningThreads.length} thread${runningThreads.length === 1 ? ' is' : 's are'} currently running:`,
+            });
+            const pre = this.contentEl.createEl('pre');
+            pre.style.cssText = 'font-size:0.85em;margin:6px 0 12px;white-space:pre-wrap;';
+            pre.setText(runningThreads.map((t) => `• ${t.title || t.id}`).join('\n'));
+            this.contentEl.createEl('p', {
+              text: 'Reloading will terminate them immediately. Wait for them to finish first, or reload anyway.',
+            });
+
+            const btnRow = this.contentEl.createDiv({ cls: 'modal-button-container' });
+
+            const cancelBtn = btnRow.createEl('button', { text: 'Cancel — keep waiting' });
+            cancelBtn.addEventListener('click', () => this.close());
+
+            const reloadBtn = btnRow.createEl('button', { text: 'Reload anyway', cls: 'mod-warning' });
+            reloadBtn.addEventListener('click', () => {
+              this.result = true;
+              this.close();
+            });
+          }
+
+          onClose() {
+            resolve(this.result);
+          }
+        }
+
+        new SafeReloadModal(this.app).open();
+      });
+
+      if (!confirmed) return;
+    }
+
+    // Perform the reload via Obsidian's internal plugin API.
+    type PluginRegistry = { disablePlugin(id: string): Promise<void>; enablePlugin(id: string): Promise<void> };
+    const plugins = (this.app as unknown as { plugins: PluginRegistry }).plugins;
+    await plugins.disablePlugin(this.manifest.id);
+    await plugins.enablePlugin(this.manifest.id);
+  }
+
   async onunload(): Promise<void> {
+    // Warn if active sessions are being torn down unexpectedly (e.g. via Obsidian's
+    // built-in "Reload plugin" button rather than the safe-reload command).
+    if (this.manager) {
+      const running = this.manager.getThreads().filter((t) => this.manager.isRunning(t.id));
+      if (running.length > 0) {
+        const names = running.map((t) => t.title || t.id).join(', ');
+        const msg =
+          `⚠️ Claude Threads: ${running.length} active thread${running.length === 1 ? '' : 's'} killed by plugin reload — ${names}. ` +
+          `Use "Claude Threads: Safe Reload" next time to avoid this.`;
+        new Notice(msg, 12_000);
+        console.warn(`[ClaudeThreads] Plugin unloaded with ${running.length} active session(s): ${names}`);
+      }
+    }
+
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.statusLine?.stop();
