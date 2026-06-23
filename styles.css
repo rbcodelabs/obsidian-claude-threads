@@ -3407,6 +3407,14 @@
   box-sizing: border-box;
   font-size: var(--font-ui-smaller);
   margin: 6px 0;
+  scrollbar-width: thin; /* Firefox: show a thin scrollbar hint */
+}
+.ct-mobile-message-assistant .ct-mobile-message-content pre::-webkit-scrollbar {
+  height: 3px;
+}
+.ct-mobile-message-assistant .ct-mobile-message-content pre::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border-radius: 2px;
 }
 .ct-mobile-message-assistant .ct-mobile-message-content code {
   background: var(--background-primary-alt, var(--background-modifier-hover));
@@ -3417,6 +3425,8 @@
 .ct-mobile-message-assistant .ct-mobile-message-content pre code {
   background: none;
   padding: 0;
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 .ct-mobile-message-assistant .ct-mobile-message-content ul,
 .ct-mobile-message-assistant .ct-mobile-message-content ol {
@@ -3598,6 +3608,12 @@
 
 .ct-mobile-input-controls:focus-within {
   border-color: var(--interactive-accent);
+}
+
+/* Keyboard-open state: keep accent border even when textarea loses focus briefly */
+.ct-keyboard-open .ct-mobile-input-controls {
+  border-color: var(--interactive-accent);
+  opacity: 0.95;
 }
 
 .ct-mobile-input {
