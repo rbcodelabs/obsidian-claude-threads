@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.18.5-blue)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.19.0-blue)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -250,6 +250,8 @@ The block is rendered entirely from the SDK event stream (no extra API calls), s
 
 Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working**, **Awaiting** (permission), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
 
+**Task list on cards.** When a thread has an active `TodoWrite` / `TaskCreate` checklist, its kanban card shows a compact task list: up to 5 items with status icons (✔ completed, ■ in-progress, ○ pending), a "X / Y done" progress line, and "+N more" when there are additional tasks. The list updates live as the agent ticks items off.
+
 <p align="center">
   <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, New, Done, Failed, and Ready columns, each holding thread cards" />
 </p>
@@ -330,6 +332,17 @@ claude-threads://pair?roomId=<ROOM_ID>&relay=<RELAY_URL>
 ```
 
 Opening this URL on any device with Obsidian Mobile + Claude Threads installed will pair it to your desktop.
+
+**What you can do on mobile:**
+
+- Read streaming conversation output and tool calls in real time
+- Send messages, approve or deny permission requests (including **Always Allow**)
+- Switch between threads and search the thread list by title or summary
+- See each thread's **status rail** — spinner cards for active tool calls, error cards for failed threads
+- Copy any assistant message to clipboard with the ⎘ button
+- View the thread's **cwd chip**, **model**, and **message timestamps**
+- See **queue rows** for pending messages (tap to pull back into the composer, × to cancel)
+- View **tool pill icons** matching the desktop view
 
 **Limitations:**
 
@@ -413,6 +426,10 @@ A row of pills below the input area shows live context for each thread — git b
 **Opening links:** clicking a pill with a `url` opens it in Obsidian's in-app **Web Viewer** when that core plugin is enabled (reusing an existing tab); otherwise it opens in your system browser. **Cmd-click** (Ctrl-click on Windows/Linux) always opens in the system browser, even when the Web Viewer is enabled.
 
 A ready-to-use reference script (branch · PR · dev URL · Bedrock-gated AWS) ships at [`docs/statusline-command.example.sh`](docs/statusline-command.example.sh).
+
+### Safe plugin reload
+
+Use **Claude Threads: Reload plugin (safe)** from the command palette instead of Obsidian's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
 
 ## Agent tools reference
 
