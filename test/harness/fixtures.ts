@@ -429,6 +429,26 @@ export const kanbanFixtureThreads: Thread[] = [
 
   // ── acme-api lane (no project → working-directory label) ────────────────────
   {
+    id: 'k-acme-tasks',
+    title: 'Migrate auth tokens to short-lived JWTs',
+    cwd: '/Users/mock/projects/acme-api',
+    messages: [
+      userMsg('k14', 'Migrate legacy API keys to short-lived JWTs.', KT - 2 * 60 * 60_000),
+      asstMsg('k15', 'Working on it — 3 of 5 steps done.', KT - 2 * 60 * 60_000 + 30_000,
+        'Migrating to short-lived JWTs — 3 of 5 steps done.'),
+    ],
+    createdAt: KT - 2 * 60 * 60_000,
+    updatedAt: KT - 2 * 60 * 60_000 + 30_000,
+    summary: 'Migrating to short-lived JWTs — 3 of 5 steps done.',
+    tasks: [
+      { id: 't1', content: 'Add JWT signing key to secrets manager', status: 'completed' },
+      { id: 't2', content: 'Implement token generation in AuthService', status: 'completed' },
+      { id: 't3', content: 'Update middleware to verify JWTs', status: 'completed' },
+      { id: 't4', content: 'Migrate existing API key sessions', status: 'in_progress' },
+      { id: 't5', content: 'Remove legacy API key validation code', status: 'pending' },
+    ],
+  },
+  {
     id: 'k-acme-done',
     title: 'Add rate limiting to /v1/search',
     cwd: '/Users/mock/projects/acme-api',
