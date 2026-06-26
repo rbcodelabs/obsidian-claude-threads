@@ -483,15 +483,16 @@ export class KanbanView extends ItemView {
       });
 
       const STATUS_ICONS: Record<string, string> = {
-        completed: '✔',
-        in_progress: '■',
-        pending: '○',
+        completed: 'circle-check',
+        in_progress: 'loader-circle',
+        pending: 'circle',
       };
       const MAX_TASKS = 5;
       const visibleTasks = tasks.slice(0, MAX_TASKS);
       for (const task of visibleTasks) {
         const row = taskSection.createDiv(`ct-kanban-task-row ct-task-row-${task.status}`);
-        row.createSpan({ cls: 'ct-kanban-task-icon', text: STATUS_ICONS[task.status] ?? '○' });
+        const iconEl = row.createSpan({ cls: 'ct-kanban-task-icon' });
+        setIcon(iconEl, STATUS_ICONS[task.status] ?? 'circle');
         const label = task.content.length > 60 ? task.content.slice(0, 60) + '…' : task.content;
         row.createSpan({ cls: 'ct-kanban-task-text', text: label });
       }
