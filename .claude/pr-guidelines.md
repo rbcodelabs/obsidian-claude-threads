@@ -44,3 +44,15 @@ Run `pnpm test:screenshots:update` after any desktop UI change to regenerate com
 - Playwright screenshot tests must not regress: `pnpm test:screenshots`
 - For mobile-only changes: screenshot tests still run to confirm desktop is unaffected
 - Build must succeed: `pnpm build`
+
+## Final PR Checklist
+
+Present this as a completed checklist before opening any PR. Every item is mandatory — do not open a PR until all are checked:
+
+- [ ] `npx tsc --noEmit` — no errors
+- [ ] `pnpm test` — all passing, new tests written for new logic
+- [ ] `pnpm test:screenshots` — no regressions
+- [ ] `pnpm build` — clean build
+- [ ] **README.md / docs/ updated** — any new user-facing behavior or UI change is documented; if you touched a feature, re-read the relevant README section and update it
+- [ ] Screenshots regenerated (`pnpm test:screenshots:update`) if desktop UI changed
+- [ ] PR title and description explain the *why*, not just the *what*
