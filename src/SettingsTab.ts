@@ -203,6 +203,7 @@ export class RequestSecretModal extends Modal {
     private secretName: string,
     private reason: string,
     private onSave: (saved: boolean) => void,
+    private force?: boolean,
   ) {
     super(app);
   }
@@ -211,7 +212,7 @@ export class RequestSecretModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
 
-    contentEl.createEl('h2', { text: 'Agent is requesting a secret' });
+    contentEl.createEl('h2', { text: this.force ? 'Agent is replacing a secret' : 'Agent is requesting a secret' });
 
     const nameRow = contentEl.createDiv({ cls: 'ct-secret-request-name-row' });
     nameRow.createEl('span', { text: 'Variable: ', cls: 'ct-modal-label' });
@@ -226,6 +227,13 @@ export class RequestSecretModal extends Modal {
       text: 'The value will be stored in your OS keychain and injected into future sessions. It will never appear in the conversation.',
       cls: 'setting-item-description',
     });
+
+    if (this.force) {
+      contentEl.createEl('p', {
+        text: 'Note: an existing value for this secret will be replaced.',
+        cls: 'setting-item-description',
+      });
+    }
 
     contentEl.createEl('label', { text: 'Value', cls: 'ct-modal-label' });
     this.valueInput = contentEl.createEl('input', {

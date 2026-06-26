@@ -213,8 +213,9 @@ export interface ObsidianMcpServerOptions {
    * credential at runtime. Implementations should open a modal, collect the
    * value, write it to the OS keychain under `ct-secret-<secretName>`, and
    * resolve with true if the user saved the value or false if they cancelled.
+   * When `force` is true the modal should clarify that the existing value will be replaced.
    */
-  onRequestSecret?: (secretName: string, reason: string) => Promise<boolean>;
+  onRequestSecret?: (secretName: string, reason: string, force?: boolean) => Promise<boolean>;
   /**
    * When false, the obsidian_open_url tool is excluded from the MCP server.
    * Should be false when the Web Viewer core plugin is disabled or the user
@@ -1780,6 +1781,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       'The secret is stored under the name you provide and injected into future sessions as an environment variable.',
       'Returns {success: true, secretName, alreadyExisted: boolean} on success, or {success: false, reason} if the user cancelled.',
       'IMPORTANT: never ask the user to paste a secret directly into the conversation — always use this tool.',
+      'Use force: true to re-prompt the user even when a secret with this name already exists — useful when a token has been rotated or a stale keychain entry needs replacing.',
     ].join(' '),
     {
       secretName: z.string().describe(
@@ -1788,19 +1790,24 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       reason: z.string().describe(
         'A short, plain-language explanation of why this secret is needed (e.g. "to list your Linear issues"). Shown to the user in the prompt.',
       ),
+      force: z.boolean().optional().describe(
+        'If true, always prompt the user even if a secret with this name already exists. Use when replacing a stale or invalid token.',
+      ),
     },
     async (args, _extra) => {
       const varName = args.secretName.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
 
-      // If the secret is already stored, return immediately without prompting.
-      const existing = app.secretStorage.getSecret(secretStorageKey(varName));
-      if (existing) {
-        return {
-          content: [{
-            type: 'text' as const,
-            text: JSON.stringify({ success: true, secretName: varName, alreadyExisted: true }),
-          }],
-        };
+      // If the secret is already stored and force is not set, return immediately without prompting.
+      if (!args.force) {
+        const existing = app.secretStorage.getSecret(secretStorageKey(varName));
+        if (existing) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({ success: true, secretName: varName, alreadyExisted: true }),
+            }],
+          };
+        }
       }
 
       if (!options.onRequestSecret) {
@@ -1813,7 +1820,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         };
       }
 
-      const saved = await options.onRequestSecret(varName, args.reason);
+      const saved = await options.onRequestSecret(varName, args.reason, !!args.force);
       return {
         content: [{
           type: 'text' as const,
