@@ -1158,7 +1158,8 @@ export class ThreadsView extends ItemView {
     const open = tasks.length - done - inProgress;
 
     const header = this.taskCardEl.createDiv('ct-task-card-header');
-    header.createSpan({ cls: 'ct-task-card-chevron', text: this.taskCardCollapsed ? '▸' : '▾' });
+    const chevronEl = header.createSpan({ cls: 'ct-task-card-chevron' });
+    setIcon(chevronEl, this.taskCardCollapsed ? 'chevron-right' : 'chevron-down');
     header.createSpan({
       cls: 'ct-task-card-title',
       text: `${tasks.length} task${tasks.length === 1 ? '' : 's'}`,
@@ -1176,10 +1177,8 @@ export class ThreadsView extends ItemView {
     const list = this.taskCardEl.createDiv('ct-task-card-list');
     for (const task of tasks) {
       const row = list.createDiv(`ct-task-row ct-task-row-${task.status}`);
-      row.createSpan({
-        cls: 'ct-task-row-icon',
-        text: task.status === 'completed' ? '✔' : task.status === 'in_progress' ? '■' : '○',
-      });
+      const iconEl = row.createSpan({ cls: 'ct-task-row-icon' });
+      setIcon(iconEl, task.status === 'completed' ? 'circle-check' : task.status === 'in_progress' ? 'loader-circle' : 'circle');
       row.createSpan({ cls: 'ct-task-row-text', text: task.content });
     }
   }

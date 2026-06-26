@@ -5362,8 +5362,14 @@ textarea.ct-settings-wide-input {
 }
 
 .ct-task-card-chevron {
-  font-size: 10px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-task-card-chevron svg {
   width: 12px;
+  height: 12px;
 }
 
 .ct-task-card-title {
@@ -5386,15 +5392,20 @@ textarea.ct-settings-wide-input {
 
 .ct-task-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   line-height: 1.5;
 }
 
 .ct-task-row-icon {
-  width: 14px;
   flex-shrink: 0;
-  text-align: center;
+  display: flex;
+  align-items: center;
+}
+
+.ct-task-row-icon svg {
+  width: 12px;
+  height: 12px;
 }
 
 .ct-task-row-completed .ct-task-row-icon { color: var(--color-green); }
@@ -5433,15 +5444,20 @@ textarea.ct-settings-wide-input {
 
 .ct-kanban-task-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 5px;
   overflow: hidden;
 }
 
 .ct-kanban-task-icon {
   flex-shrink: 0;
-  width: 12px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+}
+
+.ct-kanban-task-icon svg {
+  width: 11px;
+  height: 11px;
 }
 
 .ct-kanban-task-text {
