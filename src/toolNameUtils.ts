@@ -64,6 +64,10 @@ export function getToolIcon(raw: string): string {
     case 'Agent':          return 'bot';
     case 'OpenNewTab':     return 'plus-square';
     case 'TodoWrite':      return 'list-checks';
+    // MCP resource tools
+    case 'ListMcpResources':    return 'database';
+    case 'ReadMcpResource':     return 'database';
+    case 'ReadMcpResourceDir':  return 'folder-open';
     case 'AskUserQuestion': return 'message-circle-question';
     case 'Skill':          return 'puzzle';
     case 'Workflow':       return 'workflow';

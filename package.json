@@ -20,7 +20,7 @@
     "version": "node -e \"const fs=require('fs'); const m=JSON.parse(fs.readFileSync('manifest.json','utf8')); m.version=process.env.npm_new_version; fs.writeFileSync('manifest.json',JSON.stringify(m,null,2)+'\\n');\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.165",
+    "@anthropic-ai/claude-agent-sdk": "0.3.190",
     "@anthropic-ai/sdk": "^0.93.0",
     "marked": "^18.0.3",
     "qrcode": "^1.5.4"
