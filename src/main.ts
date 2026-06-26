@@ -348,7 +348,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onCronList: () => this.scheduler.listItems(),
           onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
           onCronDelete: (id) => this.scheduler.deleteItem(id),
-          onRequestSecret: (secretName: string, reason: string) => {
+          onRequestSecret: (secretName: string, reason: string, force?: boolean) => {
             return new Promise<boolean>((resolve) => {
               new RequestSecretModal(this.app, secretName, reason, async (saved) => {
                 if (saved) {
@@ -358,7 +358,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
                   }
                 }
                 resolve(saved);
-              }).open();
+              }, force).open();
             });
           },
         });
