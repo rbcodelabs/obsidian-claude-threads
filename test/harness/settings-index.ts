@@ -1,5 +1,5 @@
 import './obsidian-mock'; // must be first — sets up HTMLElement.prototype
-import { ClaudeThreadsSettingTab } from '../../src/SettingsTab';
+import { ClaudeThreadsSettingTab, RequestSecretModal } from '../../src/SettingsTab';
 import { DEFAULT_SETTINGS, type PluginSettings, type Project, type ScheduledItem } from '../../src/types';
 import { mockApp } from './obsidian-mock';
 
@@ -80,3 +80,19 @@ tab.display();
 
 // Expose for Playwright
 (window as any).__settingsTab = tab;
+
+/**
+ * Opens a RequestSecretModal and resolves when the user saves or cancels.
+ * Used by the request-secret-modal screenshot spec.
+ */
+(window as any).__openRequestSecretModal = (force: boolean): Promise<boolean> =>
+  new Promise<boolean>((resolve) => {
+    const modal = new RequestSecretModal(
+      mockApp as any,
+      'MY_API_KEY',
+      'to authenticate with the My API service',
+      (saved) => resolve(saved),
+      force,
+    );
+    modal.open();
+  });
