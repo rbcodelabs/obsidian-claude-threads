@@ -53,16 +53,48 @@ interface InstalledAgent {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseFrontmatter(content: string): { name: string; description: string } {
+export function parseFrontmatter(content: string): { name: string; description: string } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return { name: '', description: '' };
   const fm = match[1];
+
   const nameMatch = fm.match(/^name:\s*(.+)$/m);
-  const descMatch = fm.match(/^description:\s*(.+)$/m);
-  return {
-    name: nameMatch?.[1]?.trim() ?? '',
-    description: descMatch?.[1]?.trim() ?? '',
-  };
+  const name = nameMatch?.[1]?.trim() ?? '';
+
+  // Parse description, handling YAML block scalar indicators (>- >  |- |)
+  const descLineMatch = fm.match(/^description:(.*)$/m);
+  if (!descLineMatch) return { name, description: '' };
+
+  const afterColon = descLineMatch[1].trim();
+
+  // Block scalar: value on the key line is just the indicator (> >- | |-), content follows on indented lines
+  if (/^[>|]-?$/.test(afterColon)) {
+    const isFolded = afterColon.startsWith('>');
+    const fmLines = fm.split(/\r?\n/);
+    const keyLineIndex = fmLines.findIndex((l) => /^description:/.test(l));
+    const bodyLines: string[] = [];
+    for (let i = keyLineIndex + 1; i < fmLines.length; i++) {
+      const line = fmLines[i];
+      // Indented lines (at least one space) or blank lines belong to the block
+      if (line === '' || /^\s/.test(line)) {
+        bodyLines.push(line.trim());
+      } else {
+        break;
+      }
+    }
+    // Strip trailing empty lines (chomping)
+    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1] === '') {
+      bodyLines.pop();
+    }
+    const description = isFolded
+      ? bodyLines.join(' ').trim()
+      : bodyLines.join('\n').trim();
+    return { name, description };
+  }
+
+  // Inline value: strip surrounding quotes
+  const description = afterColon.replace(/^["']|["']$/g, '');
+  return { name, description };
 }
 
 function formatInstalls(count: number): string {
@@ -165,6 +197,9 @@ export class SkillsManagerView extends ItemView {
   private installingSlug: string | null = null;
   private installOutput = '';
 
+  // Check for updates state
+  private isCheckingUpdates = false;
+
   // DOM refs (stable across re-renders)
   private tabsEl!: HTMLElement;
   private listEl!: HTMLElement;
@@ -210,9 +245,7 @@ export class SkillsManagerView extends ItemView {
     const sources = (this.plugin.settings.skillSources ?? []).filter(
       (s) => s.type === 'github' && s.clonePath,
     );
-    for (const source of sources) {
-      void this.fetchSourceStaleness(source);
-    }
+    await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
   }
 
   private async fetchSourceStaleness(source: import('./types').SkillSource): Promise<void> {
@@ -337,6 +370,45 @@ export class SkillsManagerView extends ItemView {
     if (agentCount > 0) countParts.push(`${agentCount} agent${agentCount !== 1 ? 's' : ''}`);
     if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
     this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
+
+    // ── Check for Updates action row (only when GitHub sources are configured) ─
+    if (githubSources.length > 0) {
+      const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
+      const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn', text: 'Check for updates' });
+      const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
+      setIcon(refreshIcon, 'refresh-cw');
+      checkBtn.prepend(refreshIcon);
+
+      const statusEl = updateRow.createEl('span', { cls: 'ct-skills-update-status' });
+
+      if (this.isCheckingUpdates) {
+        checkBtn.disabled = true;
+        statusEl.createEl('span', { cls: 'ct-skills-spinner' });
+        statusEl.createEl('span', { text: ' Checking…' });
+      } else {
+        // Compute result status from current behindCounts
+        const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+        const anyFetched = githubSources.some((s) => s.lastFetched != null);
+        if (anyFetched) {
+          if (totalBehind === 0) {
+            statusEl.setText('All up to date');
+          } else {
+            const n = githubSources.filter((s) => (s.behindCount ?? 0) > 0).length;
+            statusEl.setText(`${n} plugin${n !== 1 ? 's' : ''} have updates`);
+          }
+        }
+
+        checkBtn.addEventListener('click', () => {
+          void (async () => {
+            this.isCheckingUpdates = true;
+            this.renderList();
+            await this.checkAllSourceStaleness();
+            this.isCheckingUpdates = false;
+            this.renderList();
+          })();
+        });
+      }
+    }
 
     const q = this.installedFilter.toLowerCase();
 
