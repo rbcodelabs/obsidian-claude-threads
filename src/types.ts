@@ -375,6 +375,12 @@ export interface PluginSettings {
    */
   kanbanGroupBy?: 'status' | 'folder';
   /**
+   * Which sidebar panel(s) to auto-collapse when the Kanban board tab is
+   * opened, and restore when it is closed. Defaults to 'none' (no change).
+   * Useful for giving the wide Kanban board more horizontal room.
+   */
+  kanbanCollapseSide?: 'none' | 'left' | 'right' | 'both';
+  /**
    * When true, the obsidian_open_url MCP tool is registered and available to Claude.
    * Only takes effect if the Obsidian Web Viewer core plugin is also enabled.
    * Defaults to true so the tool is available out of the box.
@@ -428,6 +434,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   scheduledItems: [],
   enableWebViewerTool: true,
   kanbanGroupBy: 'status',
+  kanbanCollapseSide: 'none',
   skillSources: [],
 };
 
