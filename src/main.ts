@@ -192,6 +192,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
 
     this.detectClaudeBinary();
     this.migrateGithubSourcesIntoVault();
@@ -368,7 +370,19 @@ export default class ClaudeThreadsPlugin extends Plugin {
           hasInstance: 'instance' in mcpServer,
         };
         debugLog(`[ClaudeThreads] Obsidian MCP server created for thread ${threadId}:`, mcpDebug);
-        return { obsidian: mcpServer };
+
+        // Merge external MCP servers from ~/.claude/settings.json so that
+        // scheduled/looped sessions have the same tools as a normal CLI session.
+        // Secrets stored in the plugin keychain are resolved and used to expand
+        // ${VAR_NAME} placeholders in server configs (e.g. Authorization headers).
+        const resolvedSecrets = this.manager.secretEnvResolver?.() ?? {};
+        const externalMcps = readClaudeSettingsMcp(resolvedSecrets);
+        const externalCount = Object.keys(externalMcps).length;
+        if (externalCount > 0) {
+          debugLog(`[ClaudeThreads] Merging ${externalCount} external MCP server(s) from ~/.claude/settings.json:`, Object.keys(externalMcps));
+        }
+
+        return { obsidian: mcpServer, ...externalMcps };
       } catch (err) {
         console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
         return {} as Record<string, McpServerConfig>;
