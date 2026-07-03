@@ -111,6 +111,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
   relayClient: RelayClient | null = null;
   mobileStore: MobileThreadStore | null = null;
 
+  /**
+   * Models discovered from the Claude Code CLI via the SDK capabilities query.
+   * Populated after the first session starts; used by SettingsTab to build
+   * dynamic model dropdowns. Deduplicated by model value across sessions.
+   */
+  discoveredModels: import('@anthropic-ai/claude-agent-sdk').ModelInfo[] = [];
+
   // Tracks pending ScheduleWakeup timers keyed by threadId. Each entry carries
   // the timer ID (for cleanup/cancel), the wall-clock fire time (for the UI
   // countdown), and the agent-supplied reason (shown in the dashboard + banner).
