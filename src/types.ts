@@ -1,6 +1,6 @@
 export type MessageRole = 'user' | 'assistant' | 'compact';
 
-export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived';
+export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived' | 'reconnecting';
 
 export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 
@@ -183,6 +183,13 @@ export interface Thread {
    * or crash that killed the session mid-turn.
    */
   pendingPlan?: string;
+  /**
+   * Number of consecutive spurious "stream closed" transport errors that have
+   * been auto-retried for this thread without an intervening successful
+   * completion. Reset to 0 on every successful onDone. Bounded by
+   * MAX_TRANSPORT_ERROR_AUTO_RETRIES in transportErrorRecovery.ts.
+   */
+  streamCloseRetryCount?: number;
 }
 
 /**

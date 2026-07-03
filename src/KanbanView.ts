@@ -714,6 +714,7 @@ export class KanbanView extends ItemView {
       event.type === 'streaming_start' ||
       event.type === 'done' ||
       event.type === 'error' ||
+      event.type === 'reconnecting' ||
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||

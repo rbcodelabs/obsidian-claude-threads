@@ -1214,6 +1214,25 @@
   padding: 0;
 }
 
+/* Reconnecting — informational, non-alarming (amber), distinct from a hard .ct-error */
+.ct-reconnecting {
+  background: var(--background-modifier-warning-rgb, rgba(200,140,0,0.08));
+  border: 1px solid var(--color-orange);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.ct-reconnecting-text {
+  margin: 0;
+  color: var(--text-normal);
+}
+
+.ct-reconnecting-detail {
+  margin: 2px 0 0;
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+}
+
 /* Status rail — replaces the old flat status bar */
 .ct-status-rail {
   display: flex;

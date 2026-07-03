@@ -1,6 +1,7 @@
 import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
+import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
 import { derivePrUrl } from './statusLine';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
@@ -15,6 +16,7 @@ export type ThreadEvent =
   | { type: 'recap'; summary: string }
   | { type: 'done' }
   | { type: 'error'; error: Error }
+  | { type: 'reconnecting'; error: string }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
   | { type: 'queued'; text: string; images?: ImageAttachment[] }
@@ -594,6 +596,10 @@ export class ThreadManager {
     const pendingToolCalls: ToolCallRecord[] = [];
     const pendingToolImages: Array<{ mediaType: string; data: string }> = [];
     let completedSuccessfully = false;
+    // Set by onError when a spurious "stream closed" transport error should be
+    // auto-retried. Read after session.run() resolves (so the failed session's
+    // `finally: q.close()` has already run) to fire the continuation turn.
+    let transportRetryPrompt: string | null = null;
     // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
     const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
 
@@ -761,6 +767,10 @@ export class ThreadManager {
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
+          // A clean completion earns the thread a fresh transport-error retry
+          // budget, rather than the single auto-retry being spent once per
+          // thread lifetime.
+          thread.streamCloseRetryCount = 0;
 
           // Safety net: if a pending plan somehow survived to onDone (e.g. the
           // session completed without user action), clear it so a stale card
@@ -805,12 +815,38 @@ export class ThreadManager {
           this.emit(threadId, { type: 'interrupted' });
         },
         onError: (err) => {
-          thread.lastError = err.message;
-          thread.updatedAt = Date.now();
-          thread.status = 'error';
+          // Safety net: mirrors the onDone cleanup above. A session can error out
+          // while a plan card is showing (e.g. the spurious transport-closed
+          // failure below fires mid-ExitPlanMode-wait), which otherwise leaves
+          // the card stuck forever and leaks the resolver entry.
+          if (thread.pendingPlan) {
+            delete thread.pendingPlan;
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
+          // The session is dead either way — always tear it down.
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
+
+          if (shouldAutoRetryTransportError(err.message, thread.streamCloseRetryCount ?? 0)) {
+            // Spurious "stream closed" failure from the CLI binary force-rejecting
+            // pending control requests on stdio idle/EOF — not a real fatal error.
+            // Recover automatically instead of surfacing it as one. Preserve any
+            // messages queued during the interrupted turn; they'll drain after the
+            // continuation prompt completes.
+            thread.streamCloseRetryCount = (thread.streamCloseRetryCount ?? 0) + 1;
+            thread.status = 'reconnecting';
+            thread.updatedAt = Date.now();
+            this.emit(threadId, { type: 'reconnecting', error: err.message });
+            transportRetryPrompt = TRANSPORT_ERROR_CONTINUATION_PROMPT;
+            return;
+          }
+
+          thread.lastError = err.message;
+          thread.status = 'error';
+          thread.updatedAt = Date.now();
           this.queuedMessages.delete(threadId);
+          thread.streamCloseRetryCount = 0;
           this.emit(threadId, { type: 'error', error: err });
         },
         onPermissionRequest: async (toolName, detail) => {
@@ -930,6 +966,15 @@ export class ThreadManager {
       this.settings.disallowedTools,
       this.buildSessionOptions(thread),
     );
+
+    if (transportRetryPrompt) {
+      // Fire the continuation turn now that session.run() has fully returned
+      // (the failed session's `finally: q.close()` has already executed) —
+      // calling sendMessage synchronously from inside the onError closure
+      // would race with that teardown.
+      await this.sendMessage(threadId, transportRetryPrompt);
+      return;
+    }
 
     if (completedSuccessfully) {
       const queue = this.queuedMessages.get(threadId);

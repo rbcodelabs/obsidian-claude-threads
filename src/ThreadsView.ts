@@ -2844,6 +2844,41 @@ export class ThreadsView extends ItemView {
         this.scrollToBottom();
         break;
       }
+
+      case 'reconnecting': {
+        // Spurious transport-closed error from the CLI binary — not a real
+        // failure. Note it in the transcript with muted/informational styling
+        // (not the red .ct-error treatment) since the plugin is about to
+        // auto-retry, not surfacing something the user needs to act on.
+        // Tear down in-flight turn state the same way 'error' does — the
+        // session is dead and a fresh one is about to start.
+        this.clearStreamingState();
+        this.taskPills.clear();
+        this.taskStartTimes.clear();
+        this.toolPillsByUseId.clear();
+        this.subagentWaiting = false;
+        this.activeWorkflowTaskId = null;
+        this.workflowBlockEl = null;
+        this.workflowPhaseEl = null;
+        this.workflowAgentRows.clear();
+        if (this.streamingEl) {
+          this.streamingEl.remove();
+          this.streamingEl = null;
+          this.streamingContentEl = null;
+        }
+        const reconnectEl = this.messagesEl.createDiv('ct-message ct-reconnecting');
+        reconnectEl.createEl('p', {
+          text: 'Connection interrupted — automatically reconnecting…',
+          cls: 'ct-reconnecting-text',
+        });
+        reconnectEl.createEl('p', {
+          text: event.error,
+          cls: 'ct-reconnecting-detail',
+        });
+        this.setRunningState(false);
+        this.scrollToBottom();
+        break;
+      }
     }
   }
 
