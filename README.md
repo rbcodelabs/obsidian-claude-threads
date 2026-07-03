@@ -184,7 +184,7 @@ Type `@this` (no search needed) to instantly reference the currently active file
 /model default  → resets to the plugin's Default model setting (or the CLI default)
 ```
 
-A **Default model** dropdown in settings picks the model for threads that have no `/model` override. The dropdown is populated dynamically at startup by calling `supportedModels()` on the running Claude CLI, so it always reflects whatever the installed CLI version actually supports — no plugin update needed when Anthropic adds a new model.
+A **Default model** dropdown in settings picks the model for threads that have no `/model` override. Family aliases (Fable / Opus / Sonnet / Haiku "latest") are always listed first; pinned model IDs are sourced from the SDK's `capabilities_discovered` event, which fires the first time a thread starts in the current Obsidian session. Before any thread has run, the dropdown falls back to a hardcoded list of current models — start a thread and reopen Settings to see the full CLI-sourced list, so no plugin update is needed when Anthropic adds a new model. The Escalation model dropdown is populated the same way.
 
 You can also switch models without typing: a **model switcher button** (CPU icon) sits in the conversation footer, left of the menu button. Hover it to see the active model; click it to pick Default / Opus / Sonnet / Haiku / Fable from a dropdown. The icon turns accent-colored whenever a per-thread override is active, and it stays in sync with the `/model` command.
 
@@ -260,6 +260,8 @@ Toggle the **Kanban** button in the dashboard toolbar to switch from the default
   <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, New, Done, Failed, and Ready columns, each holding thread cards" />
 </p>
 
+**Auto-collapse side panels.** Set **Settings → Features → Kanban board → Auto-collapse side panel** to `Left sidebar`, `Right sidebar`, or `Both sidebars` to automatically collapse Obsidian's sidebar panel(s) when the Kanban tab opens, giving the board more horizontal room. Only the panel(s) the Kanban view collapsed are restored when you close the tab, so it won't fight a panel you collapsed or expanded manually. Defaults to `None` (opt-in).
+
 **Group by folder.** Use the group-by toggle in the board header (the columns/folder icon, next to search) to switch from status columns to **folder swimlanes** — one horizontal lane per app/project, so you can see every conversation for a given codebase together. Each lane is keyed by the thread's assigned **Project**, falling back to a working-directory label (git repo name) when no project is set, and an **Unassigned** lane catches threads with no folder. Inside each lane the cards are still grouped into the same status columns (empty columns are hidden to keep lanes compact). Lanes are ordered by most-recent activity, with Unassigned pinned last. The choice persists across reloads.
 
 <p align="center">
@@ -283,7 +285,7 @@ When Claude needs to write a file or run a command, a permission card appears in
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
-> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching.
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets.
 
 ### Plan Mode
 
@@ -564,6 +566,7 @@ Edits made directly to vault files are unaffected — they don't match any bridg
 | Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
+| Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |
 | Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
 | Show pairing QR | Display a QR code for one-time mobile pairing (expires in 5 minutes) |
