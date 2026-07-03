@@ -1404,6 +1404,25 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         });
       });
 
+    // — Kanban board —
+    new Setting(containerEl).setName('Kanban board').setHeading();
+
+    new Setting(containerEl)
+      .setName('Auto-collapse side panel')
+      .setDesc('Collapse a sidebar when the Kanban board opens to give it more horizontal room. The panel is restored when you close the Kanban tab.')
+      .addDropdown((drop) =>
+        drop
+          .addOption('none', 'None (default)')
+          .addOption('left', 'Left sidebar')
+          .addOption('right', 'Right sidebar')
+          .addOption('both', 'Both sidebars')
+          .setValue(this.plugin.settings.kanbanCollapseSide ?? 'none')
+          .onChange(async (value) => {
+            this.plugin.settings.kanbanCollapseSide = value as PluginSettings['kanbanCollapseSide'];
+            await this.plugin.saveSettings();
+          }),
+      );
+
     // — Scheduled tasks —
     new Setting(containerEl)
       .setName('Scheduled tasks')
