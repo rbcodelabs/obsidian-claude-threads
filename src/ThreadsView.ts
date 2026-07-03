@@ -2750,6 +2750,17 @@ export class ThreadsView extends ItemView {
         // Store for later so /context can reference agent names too.
         this.discoveredModels = event.models;
         this.discoveredAgents = event.agents;
+        // Merge into the plugin-level list (deduplicated by value) so that
+        // SettingsTab can build dynamic model dropdowns from discovered models.
+        if (event.models.length > 0) {
+          const existing = new Set(this.plugin.discoveredModels.map((m) => m.value));
+          for (const m of event.models) {
+            if (!existing.has(m.value)) {
+              this.plugin.discoveredModels.push(m);
+              existing.add(m.value);
+            }
+          }
+        }
         break;
       }
 

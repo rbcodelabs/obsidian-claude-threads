@@ -658,6 +658,14 @@ const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'skills', label: 'Skills' },
 ];
 
+/** Fallback model list shown before any session has run and populated discoveredModels. */
+const FALLBACK_MODELS: { value: string; displayName: string }[] = [
+  { value: 'claude-fable-5', displayName: 'Claude Fable 5' },
+  { value: 'claude-opus-4-8', displayName: 'Claude Opus 4.8' },
+  { value: 'claude-sonnet-5', displayName: 'Claude Sonnet 5' },
+  { value: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5' },
+];
+
 export class ClaudeThreadsSettingTab extends PluginSettingTab {
   /** Survives re-renders (display() is called after toggles, modals, etc.). */
   private activeTab: SettingsTabId = 'general';
@@ -667,6 +675,32 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     private plugin: ClaudeThreadsPlugin,
   ) {
     super(app, plugin);
+  }
+
+  /**
+   * Adds model options to a dropdown. Family aliases appear first (always
+   * track the latest release), followed by pinned model IDs sourced from the
+   * SDK capabilities query, falling back to a hardcoded list when no session
+   * has run yet.
+   */
+  private addModelOptions(
+    dropdown: import('obsidian').DropdownComponent,
+    opts: { includeCliDefault?: boolean } = {},
+  ): void {
+    if (opts.includeCliDefault) {
+      dropdown.addOption('', 'CLI default');
+    }
+    // Family aliases — always track the latest version of each family
+    dropdown.addOption('fable', 'Fable (latest)');
+    dropdown.addOption('opus', 'Opus (latest)');
+    dropdown.addOption('sonnet', 'Sonnet (latest)');
+    dropdown.addOption('haiku', 'Haiku (latest)');
+    // Pinned model IDs from the SDK, or the hardcoded fallback list
+    const pinned =
+      this.plugin.discoveredModels.length > 0 ? this.plugin.discoveredModels : FALLBACK_MODELS;
+    for (const m of pinned) {
+      dropdown.addOption(m.value, m.displayName);
+    }
   }
 
   display(): void {
@@ -803,21 +837,22 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Default model')
-      .setDesc('Model for new turns unless a thread overrides it with /model. "CLI default" defers to the Claude Code CLI configuration.')
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption('', 'CLI default')
-          .addOption('fable', 'Fable 5')
-          .addOption('opus', 'Opus')
-          .addOption('sonnet', 'Sonnet')
-          .addOption('haiku', 'Haiku')
+      .setDesc(
+        'Model for new turns unless a thread overrides it with /model. ' +
+          '"CLI default" defers to the Claude Code CLI configuration. ' +
+          'Aliases always track the latest version; pinned IDs lock to a specific release. ' +
+          'Start a thread to populate the full model list from the CLI.',
+      )
+      .addDropdown((dropdown) => {
+        this.addModelOptions(dropdown, { includeCliDefault: true });
+        return dropdown
           .setValue(this.plugin.settings.defaultModel ?? '')
           .onChange(async (value) => {
             this.plugin.settings.defaultModel = value;
             this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName('Thinking mode')
@@ -1018,19 +1053,16 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName('Escalation model')
         .setDesc('Model the escalation keyword routes that turn to.')
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption('fable', 'Fable 5')
-            .addOption('opus', 'Opus')
-            .addOption('sonnet', 'Sonnet')
-            .addOption('haiku', 'Haiku')
+        .addDropdown((dropdown) => {
+          this.addModelOptions(dropdown);
+          return dropdown
             .setValue(this.plugin.settings.escalationModel || 'opus')
             .onChange(async (value) => {
               this.plugin.settings.escalationModel = value;
               this.plugin.manager.updateSettings(this.plugin.settings);
               await this.plugin.saveSettings();
-            }),
-        );
+            });
+        });
     }
   }
 
