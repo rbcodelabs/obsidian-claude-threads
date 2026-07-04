@@ -100,6 +100,13 @@ export class ThreadsView extends ItemView {
     cardEl: HTMLElement | null;
   }> = new Map();
 
+  // Inline question cards (AskUserQuestion) waiting for user response (threadId -> card state)
+  private pendingQuestions: Map<string, {
+    questions: AskQuestion[];
+    resolve: (answers: Record<string, string>) => void;
+    cardEl: HTMLElement | null;
+  }> = new Map();
+
   // Context footer (status line below input)
   private contextFooterEl!: HTMLElement;
 
@@ -250,58 +257,29 @@ export class ThreadsView extends ItemView {
       });
     };
 
-    this.manager.questionHandler = (questions: AskQuestion[]) =>
+    this.manager.questionHandler = (threadId, questions: AskQuestion[]) =>
       new Promise((resolve) => {
-        const answers: Record<string, string[]> = {};
-        for (const q of questions) answers[q.question] = [];
+        let resolved = false;
+        const done = (answers: Record<string, string>) => {
+          if (resolved) return;
+          resolved = true;
+          const pending = this.pendingQuestions.get(threadId);
+          if (pending?.cardEl) pending.cardEl.remove();
+          this.pendingQuestions.delete(threadId);
+          resolve(answers);
+        };
 
-        const modal = new Modal(this.app);
-        modal.titleEl.setText('Claude needs your input');
-        modal.contentEl.addClass('ct-question-modal');
+        // Register with ThreadManager so AgentDashboard can also resolve this
+        this.manager.registerQuestionResolver(threadId, done);
 
-        for (const q of questions) {
-          const qEl = modal.contentEl.createDiv({ cls: 'ct-question' });
-          if (q.header) qEl.createEl('h3', { cls: 'ct-question-header', text: q.header });
-          qEl.createEl('p', { cls: 'ct-question-text', text: q.question });
-
-          const optionsEl = qEl.createDiv({ cls: 'ct-question-options' });
-          for (const opt of q.options) {
-            const row = optionsEl.createDiv({ cls: 'ct-question-option' });
-            const inputEl = row.createEl('input', {
-              attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: opt.label },
-            });
-            const labelEl = row.createEl('label', { cls: 'ct-question-option-label' });
-            labelEl.createSpan({ cls: 'ct-question-opt-name', text: opt.label });
-            if (opt.description) {
-              labelEl.createSpan({ cls: 'ct-question-opt-desc', text: opt.description });
-            }
-            inputEl.addEventListener('change', () => {
-              if (q.multiSelect) {
-                if ((inputEl as HTMLInputElement).checked) answers[q.question].push(opt.label);
-                else answers[q.question] = answers[q.question].filter(v => v !== opt.label);
-              } else {
-                answers[q.question] = [opt.label];
-              }
-            });
-          }
+        // Render card immediately if this is the active thread; otherwise store for later
+        if (threadId === this.activeThreadId) {
+          const cardEl = this.renderQuestionCard(questions, done);
+          this.pendingQuestions.set(threadId, { questions, resolve: done, cardEl });
+          this.scrollToBottom();
+        } else {
+          this.pendingQuestions.set(threadId, { questions, resolve: done, cardEl: null });
         }
-
-        const btnRow = modal.contentEl.createDiv({ cls: 'modal-button-container' });
-        const submit = btnRow.createEl('button', { text: 'Submit', cls: 'mod-cta' });
-        submit.onclick = () => {
-          const result: Record<string, string> = {};
-          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
-          resolve(result);
-          modal.close();
-        };
-
-        modal.onClose = () => {
-          const result: Record<string, string> = {};
-          for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
-          resolve(result);
-        };
-
-        modal.open();
       });
 
     this.manager.openNewTabHandler = async (title?: string, initialPrompt?: string) => {
@@ -718,6 +696,7 @@ export class ThreadsView extends ItemView {
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
     this.restorePendingPlanCard();
+    this.restorePendingQuestionCard();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -1689,6 +1668,13 @@ export class ThreadsView extends ItemView {
       pendingPerm.cardEl = cardEl;
     }
 
+    // Re-render any pending question card that was created while viewing another thread
+    const pendingQ = this.pendingQuestions.get(this.activeThreadId!);
+    if (pendingQ && !pendingQ.cardEl?.isConnected) {
+      const cardEl = this.renderQuestionCard(pendingQ.questions, pendingQ.resolve);
+      pendingQ.cardEl = cardEl;
+    }
+
     this.scrollToBottom();
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
@@ -1848,6 +1834,69 @@ export class ThreadsView extends ItemView {
   }
 
   /**
+   * Renders the inline question card shown when Claude calls AskUserQuestion.
+   * The card is anchored to the current streaming element (or messagesEl) so it
+   * sits visually inside the current response turn, mirroring renderPermissionCard
+   * and renderPlanCard. Unlike the old modal, there is no "close" gesture — only
+   * an explicit Submit button resolves the answers.
+   */
+  private renderQuestionCard(
+    questions: AskQuestion[],
+    done: (answers: Record<string, string>) => void,
+  ): HTMLElement {
+    const container = this.streamingEl ?? this.messagesEl;
+    const card = container.createDiv('ct-question-card');
+
+    const header = card.createDiv('ct-question-card-header');
+    const iconEl = header.createSpan('ct-question-card-icon');
+    setIcon(iconEl, 'help-circle');
+    header.createSpan({ cls: 'ct-question-card-label', text: 'Claude needs your input' });
+
+    const body = card.createDiv('ct-question-card-body');
+    const answers: Record<string, string[]> = {};
+    for (const q of questions) answers[q.question] = [];
+
+    for (const q of questions) {
+      const qEl = body.createDiv({ cls: 'ct-question' });
+      if (q.header) qEl.createEl('h3', { cls: 'ct-question-header', text: q.header });
+      qEl.createEl('p', { cls: 'ct-question-text', text: q.question });
+
+      const optionsEl = qEl.createDiv({ cls: 'ct-question-options' });
+      for (const opt of q.options) {
+        const row = optionsEl.createDiv({ cls: 'ct-question-option' });
+        const inputEl = row.createEl('input', {
+          attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: opt.label },
+        });
+        const labelEl = row.createEl('label', { cls: 'ct-question-option-label' });
+        labelEl.createSpan({ cls: 'ct-question-opt-name', text: opt.label });
+        if (opt.description) {
+          labelEl.createSpan({ cls: 'ct-question-opt-desc', text: opt.description });
+        }
+        inputEl.addEventListener('change', () => {
+          if (q.multiSelect) {
+            if ((inputEl as HTMLInputElement).checked) answers[q.question].push(opt.label);
+            else answers[q.question] = answers[q.question].filter(v => v !== opt.label);
+          } else {
+            answers[q.question] = [opt.label];
+          }
+        });
+      }
+    }
+
+    const actions = card.createDiv('ct-question-card-actions');
+    const submitBtn = actions.createEl('button', { text: 'Submit', cls: 'ct-question-card-submit' });
+    submitBtn.addEventListener('click', () => {
+      const result: Record<string, string> = {};
+      for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
+      card.remove();
+      done(result);
+    });
+
+    this.scrollToBottom();
+    return card;
+  }
+
+  /**
    * Renders the plan approval card shown when Claude calls ExitPlanMode.
    * The card is anchored to the current streaming element (or messagesEl) so it
    * sits visually inside the current response turn.
@@ -1983,6 +2032,49 @@ export class ThreadsView extends ItemView {
         clearPlan();
       },
     );
+  }
+
+  /**
+   * Re-renders the question card when focusing a thread that has pendingQuestions.
+   *
+   * Two paths, mirroring restorePendingPlanCard():
+   *  - Live session waiting: the session is still running and blocked on the
+   *    AskUserQuestion promise. We use the stored resolver from ThreadManager so
+   *    the card can still resolve the live callback even though the original
+   *    question_ready event was fired before the user switched threads.
+   *  - Post-crash restore: the session is gone. Submit dispatches a fresh turn
+   *    via sendMessage with the answers formatted as a message.
+   *
+   * Safe to call repeatedly — no-ops if the card is already visible or there is
+   * no pending question for the active thread.
+   */
+  private restorePendingQuestionCard(): void {
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (!thread?.pendingQuestions) return;
+    // Avoid duplicating the card if it's already visible.
+    if (this.messagesEl.querySelector('.ct-question-card')) return;
+
+    const questions = thread.pendingQuestions;
+    const threadId = this.activeThreadId;
+
+    // Check if a live session is still waiting on this question (user switched
+    // threads mid-session). If so, use the stored resolver so the card can
+    // resolve the live promise directly — sendMessage won't work here because
+    // the session is blocked, not done.
+    const liveResolver = this.manager.getPendingQuestionResolver(threadId);
+    if (liveResolver) {
+      this.renderQuestionCard(questions, liveResolver);
+      return;
+    }
+
+    // Post-crash / post-reload path: no live session. Dispatch via sendMessage.
+    this.renderQuestionCard(questions, (result) => {
+      this.manager.setThreadPendingQuestions(threadId, undefined);
+      void this.plugin.saveSettings();
+      const formatted = Object.entries(result).map(([q, a]) => `${q}: ${a}`).join('\n');
+      void this.manager.sendMessage(threadId, formatted);
+    });
   }
 
   /**
