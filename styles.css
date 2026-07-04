@@ -1214,6 +1214,22 @@
   padding: 0;
 }
 
+/* Reconnecting — transient transport-closed auto-retry notice. Distinct from
+   .ct-error: amber/informational, not alarming red, since ThreadManager is
+   about to automatically retry rather than surfacing a terminal failure. */
+.ct-reconnecting {
+  background: var(--background-modifier-warning-rgb, rgba(224, 158, 26, 0.1));
+  border: 1px solid var(--color-orange, var(--text-warning));
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.ct-reconnecting-text {
+  margin: 0;
+  color: var(--color-orange, var(--text-warning));
+  font-size: var(--font-ui-smaller);
+}
+
 /* Status rail — replaces the old flat status bar */
 .ct-status-rail {
   display: flex;

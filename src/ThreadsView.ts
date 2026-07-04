@@ -2787,6 +2787,28 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'reconnecting': {
+        // Transient auto-recovery notice — the closed-source CLI binary
+        // spuriously force-closed the transport mid-tool-call, but the
+        // action may have succeeded server-side. ThreadManager is about to
+        // auto-fire one follow-up turn, so this is not a terminal error:
+        // keep it visually distinct from the red 'error' treatment and skip
+        // the full error-path teardown (task pills, workflow state, etc.)
+        // since the session is retrying, not ending.
+        if (this.streamingEl) {
+          this.streamingEl.remove();
+          this.streamingEl = null;
+          this.streamingContentEl = null;
+        }
+        const noticeEl = this.messagesEl.createDiv('ct-message ct-reconnecting');
+        noticeEl.createEl('div', {
+          text: 'Connection interrupted — automatically reconnecting…',
+          cls: 'ct-reconnecting-text',
+        });
+        this.scrollToBottom();
+        break;
+      }
+
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
