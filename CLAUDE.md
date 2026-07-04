@@ -16,6 +16,8 @@ Full step-by-step guides live in `process/` (also available as an Obsidian vault
 
 **Before any code change:** create a worktree — never edit the main checkout directly.
 
+**Never use `git stash`** (in any worktree) — it's one stack shared across every worktree of this repo, so it can collide with an unrelated stash left by a different session and corrupt your working tree. Blocked by a `.claude/settings.json` hook; use `git worktree add /tmp/scratch <ref>` for temporary/comparison checkouts instead. See "Never Use `git stash` in a Worktree" in `process/development.md`.
+
 **Before every push:** invoke the `pr-checklist` skill (`Skill: "pr-checklist"`). It runs `npx tsc --noEmit && npm test && npm run test:screenshots` and verifies the full definition-of-done before opening a PR or pushing to a branch under review.
 
 **Before deploying a dev build to the live vault:** commit and push the branch first (draft PR is fine). The next BRAT release update overwrites the installed plugin — an uncommitted dev build is the only copy of the work and it silently evaporates. See "Dev Builds in the Live Vault" in `process/development.md`.

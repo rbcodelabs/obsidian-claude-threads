@@ -10,6 +10,13 @@
             "command": "cat >/dev/null; npx tsc --noEmit && npm test && npm run test:screenshots",
             "timeout": 300,
             "statusMessage": "Quality gate: tsc + unit tests + screenshots..."
+          },
+          {
+            "type": "command",
+            "if": "Bash(git stash*)",
+            "command": "jq -n '{hookSpecificOutput:{hookEventName:\"PreToolUse\",permissionDecision:\"deny\",permissionDecisionReason:\"git stash shares ONE stack across every worktree of this repo, not per-worktree. This repo runs many parallel worktrees at once, so a stash here can collide with an unrelated in-progress stash left by a different worktree or session and corrupt this working tree with an unexpected merge conflict on unrelated files. Use git worktree add <path> <ref> for any temporary or comparison checkout instead, then git worktree remove <path> --force when done. Do not use git stash in this repo.\"}}'",
+            "timeout": 5,
+            "statusMessage": "Blocking git stash (repo-global, unsafe across worktrees)..."
           }
         ]
       }

@@ -20,6 +20,36 @@ Branch naming conventions:
 
 ---
 
+## Never Use `git stash` in a Worktree
+
+`git stash` is a **single stack shared by every worktree of a repo** — it is not
+per-worktree, even though it feels like it should be. This repo routinely has
+10+ worktrees checked out at once (one per active thread/branch). Running
+`git stash` in worktree A can `pop`/collide with an unrelated in-progress
+stash left by worktree B's session, corrupting A's working tree with a merge
+conflict on files A never touched.
+
+This has actually happened (see the transport-error-recovery PR #283 follow-up
+work): a session ran `git stash` to A/B-test a change against a prior commit,
+which silently applied a stranger's leftover `stash@{0}` from a different
+feature branch and produced a conflict on `package-lock.json`.
+
+**A `.claude/settings.json` PreToolUse hook now blocks `git stash*` outright**
+in this repo — it fails fast with a pointer to the correct alternative, so this
+should be structurally prevented rather than relying on remembering not to.
+
+**For any temporary/comparison checkout** (diffing behavior against a prior
+commit, checking whether a bug pre-dates your change, etc.), use a scratch
+worktree instead — it's fully isolated and cheap to throw away:
+
+```bash
+git worktree add /tmp/scratch-check <commit-or-branch>
+# ...do the comparison...
+git worktree remove /tmp/scratch-check --force
+```
+
+---
+
 ## Quality Gate (Before Every Push)
 
 Run all three checks before pushing. The PostToolUse hook will remind you if you forget.
