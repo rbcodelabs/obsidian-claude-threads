@@ -114,6 +114,37 @@ test.describe('AskUserQuestion — inline card (pendingQuestions)', () => {
     await expect(page.locator('.ct-question-card')).not.toBeAttached();
   });
 
+  test('no duplicate card when a live resolver is already registered for the backgrounded thread', async ({ page }) => {
+    // Simulates AskUserQuestion firing while the user was viewing a different
+    // thread: ThreadsView's questionHandler already populated its in-memory
+    // pendingQuestions map AND registered a live resolver with ThreadManager
+    // (mirroring what happens for a real inactive-thread question) before the
+    // user ever focuses the thread. restorePendingQuestionCard() must defer to
+    // the renderMessages() tail re-render in this case instead of rendering
+    // its own second card.
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForTimeout(300);
+
+    await page.evaluate((questions) => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const activeId = view['activeThreadId'];
+      const thread = manager.getThread(activeId);
+      thread.pendingQuestions = questions;
+      const resolver = () => {};
+      manager.registerQuestionResolver(activeId, resolver);
+      view['pendingQuestions'].set(activeId, { questions, resolve: resolver, cardEl: null });
+      view.focusThread(activeId);
+    }, SAMPLE_QUESTIONS);
+
+    await page.waitForSelector('.ct-question-card');
+    await page.waitForTimeout(200);
+
+    await expect(page.locator('.ct-question-card')).toHaveCount(1);
+  });
+
   test('no duplicate card when focusThread is called twice', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

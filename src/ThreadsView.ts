@@ -2050,6 +2050,14 @@ export class ThreadsView extends ItemView {
    */
   private restorePendingQuestionCard(): void {
     if (!this.activeThreadId) return;
+    // If ThreadsView already has an in-memory pendingQuestions entry for this
+    // thread, the question was raised while the thread was in the background
+    // and the renderMessages() tail re-render (triggered just before this
+    // method runs, in the same setActiveThread() call) already owns rendering
+    // that card via the live resolve callback. Rendering here too would race
+    // it and produce a duplicate card, since that path doesn't update this
+    // method's view of the world.
+    if (this.pendingQuestions.has(this.activeThreadId)) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread?.pendingQuestions) return;
     // Avoid duplicating the card if it's already visible.
