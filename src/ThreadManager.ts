@@ -683,9 +683,13 @@ export class ThreadManager {
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, cwdAtStart) : this.mcpServers;
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
-    // If there is no session to resume but there IS prior history, the cwd must
-    // have changed mid-conversation (via obsidian_set_working_directory). Inject
-    // the prior turns as a preamble so Claude isn't amnesiac after the switch.
+    // If there is no session to resume but there IS prior history, something
+    // prevented that session from ever being established as resumable — most
+    // commonly the cwd changed mid-conversation (via obsidian_set_working_directory),
+    // but it can also happen when the auto-fired transport-error continuation
+    // (see onError below) lands on a thread whose very first turn errored
+    // before onDone ever ran, so thread.sessionId was never assigned. Inject
+    // the prior turns as a preamble so Claude isn't amnesiac either way.
     const priorMessages = thread.messages.slice(0, -1); // excludes the just-pushed user msg
     const effectivePrompt =
       !thread.sessionId && priorMessages.length > 0
@@ -1228,7 +1232,9 @@ function buildHistoryPreamble(priorMessages: ChatMessage[], newCwd: string): str
 
   const omitted = priorMessages.length - messages.length;
   const lines: string[] = [
-    `[Note: the working directory was changed to ${newCwd} and the Claude Code session could not be resumed. The prior conversation is summarised below to restore context.]`,
+    `[Note: this thread's session could not be resumed (now running from ${newCwd}) — either the working ` +
+    'directory changed or the previous session ended before it could be saved. ' +
+    'The prior conversation is summarised below to restore context.]',
     '',
   ];
 
