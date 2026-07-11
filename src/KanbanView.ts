@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
-import type { Thread } from './types';
+import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { resolveProjectName } from './pathUtils';
@@ -36,6 +36,7 @@ export class KanbanView extends ItemView {
   private activityEls: Map<string, HTMLElement> = new Map();
   private timeEls: Map<string, HTMLElement> = new Map();
   private rowEls: Map<string, HTMLElement> = new Map();
+  private taskEls: Map<string, HTMLElement> = new Map();
   private activeThreadId: string | null = null;
 
   private renderPending = false;
@@ -158,7 +159,7 @@ export class KanbanView extends ItemView {
     this.searchInputEl.addEventListener('input', () => {
       this.searchQuery = this.searchInputEl.value.toLowerCase().trim();
       this.searchClearBtn.toggleClass('ct-hidden', this.searchInputEl.value === '');
-      this.render();
+      this.scheduleRender();
     });
     this.searchInputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.closeSearch();
@@ -280,13 +281,13 @@ export class KanbanView extends ItemView {
   }
 
   render(): void {
-    const scrollLeft = this.boardEl.scrollLeft;
-    const scrollTop = this.boardEl.scrollTop;
+    const scrollState = this.captureScrollState();
 
     this.boardEl.empty();
     this.activityEls.clear();
     this.timeEls.clear();
     this.rowEls.clear();
+    this.taskEls.clear();
 
     const q = this.searchQuery;
     const allThreads = this.manager.getThreads();
@@ -319,8 +320,35 @@ export class KanbanView extends ItemView {
     const runningCount = threads.filter(t => this.manager.isRunning(t.id)).length;
     this.updateHeader(threads.length, runningCount);
 
-    this.boardEl.scrollLeft = scrollLeft;
-    this.boardEl.scrollTop = scrollTop;
+    this.restoreScrollState(scrollState);
+  }
+
+  /**
+   * Captures scroll offsets for every real scrolling container in the board
+   * (tagged with `data-scroll-key`), keyed by a stable identifier so they can
+   * be restored after a full board rebuild. `this.boardEl` itself has
+   * `overflow: hidden` in CSS and never scrolls — the actual scroll surfaces
+   * are `.ct-kanban-board`, `.ct-kanban-lane-board` (folder mode), and each
+   * `.ct-kanban-col-body`.
+   */
+  private captureScrollState(): Map<string, { left: number; top: number }> {
+    const state = new Map<string, { left: number; top: number }>();
+    this.boardEl.querySelectorAll<HTMLElement>('[data-scroll-key]').forEach(el => {
+      state.set(el.dataset.scrollKey!, { left: el.scrollLeft, top: el.scrollTop });
+    });
+    return state;
+  }
+
+  /**
+   * Restores scroll offsets captured by captureScrollState(). Stale keys (a
+   * removed column) are simply unused; new keys (a new column) default to 0 —
+   * both are harmless.
+   */
+  private restoreScrollState(state: Map<string, { left: number; top: number }>): void {
+    this.boardEl.querySelectorAll<HTMLElement>('[data-scroll-key]').forEach(el => {
+      const saved = state.get(el.dataset.scrollKey!);
+      if (saved) { el.scrollLeft = saved.left; el.scrollTop = saved.top; }
+    });
   }
 
   /**
@@ -369,11 +397,12 @@ export class KanbanView extends ItemView {
 
   private renderStatusBoard(threads: Thread[]): void {
     const board = this.boardEl.createDiv('ct-kanban-board');
+    board.dataset.scrollKey = '__board__';
     const cols = this.bucketize(threads);
     for (const col of cols) {
       const alwaysShow = col.label === 'Working' || col.label === 'New';
       if (!alwaysShow && col.threads.length === 0) continue;
-      this.renderColumn(board, col.label, col.threads, col.state, col.accentClass, col.badge);
+      this.renderColumn(board, col.label, col.threads, col.state, col.accentClass, col.badge, col.label);
     }
   }
 
@@ -385,6 +414,7 @@ export class KanbanView extends ItemView {
    */
   private renderFolderBoard(threads: Thread[]): void {
     const board = this.boardEl.createDiv('ct-kanban-board ct-kanban-swimlanes');
+    board.dataset.scrollKey = '__board__';
 
     const groups = new Map<string, Thread[]>();
     for (const t of threads) {
@@ -414,10 +444,11 @@ export class KanbanView extends ItemView {
       header.createSpan({ cls: 'ct-kanban-lane-count', text: String(laneThreads.length) });
 
       const laneBoard = lane.createDiv('ct-kanban-lane-board');
+      laneBoard.dataset.scrollKey = `lane::${label}`;
       const cols = this.bucketize(laneThreads);
       for (const col of cols) {
         if (col.threads.length === 0) continue;
-        this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge);
+        this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge, `${label}::${col.label}`);
       }
     }
   }
@@ -456,6 +487,7 @@ export class KanbanView extends ItemView {
     state: RowState,
     accentClass?: string,
     badge?: number,
+    scrollKey?: string,
   ): void {
     const col = board.createDiv('ct-kanban-col' + (accentClass ? ' ' + accentClass : ''));
 
@@ -468,6 +500,7 @@ export class KanbanView extends ItemView {
     header.createSpan({ cls: 'ct-kanban-col-count', text: String(threads.length) });
 
     const body = col.createDiv('ct-kanban-col-body');
+    if (scrollKey) body.dataset.scrollKey = scrollKey;
     if (threads.length === 0) {
       body.createDiv({ cls: 'ct-kanban-col-empty', text: 'Nothing here' });
     }
@@ -509,39 +542,14 @@ export class KanbanView extends ItemView {
       card.createDiv({ cls: 'ct-kanban-card-summary', text: summary });
     }
 
-    // Task list (compact checklist from Claude Code's TodoWrite/TaskCreate)
-    const tasks = thread.tasks;
-    if (tasks && tasks.length > 0) {
-      const completedCount = tasks.filter(t => t.status === 'completed').length;
-      const taskSection = card.createDiv('ct-kanban-tasks');
-
-      taskSection.createDiv({
-        cls: 'ct-kanban-tasks-progress',
-        text: `${completedCount} / ${tasks.length} done`,
-      });
-
-      const STATUS_ICONS: Record<string, string> = {
-        completed: 'circle-check',
-        in_progress: 'loader-circle',
-        pending: 'circle',
-      };
-      const MAX_TASKS = 5;
-      const visibleTasks = tasks.slice(0, MAX_TASKS);
-      for (const task of visibleTasks) {
-        const row = taskSection.createDiv(`ct-kanban-task-row ct-task-row-${task.status}`);
-        const iconEl = row.createSpan({ cls: 'ct-kanban-task-icon' });
-        setIcon(iconEl, STATUS_ICONS[task.status] ?? 'circle');
-        const label = task.content.length > 60 ? task.content.slice(0, 60) + '…' : task.content;
-        row.createSpan({ cls: 'ct-kanban-task-text', text: label });
-      }
-
-      if (tasks.length > MAX_TASKS) {
-        taskSection.createDiv({
-          cls: 'ct-kanban-tasks-more',
-          text: `+${tasks.length - MAX_TASKS} more`,
-        });
-      }
-    }
+    // Task list (compact checklist from Claude Code's TodoWrite/TaskCreate).
+    // Always created (even when there are no tasks yet) so a later
+    // `tasks_updated` event can patch it in place via taskEls without a full
+    // board rebuild; `.ct-hidden` keeps the empty section invisible and
+    // spacing-free.
+    const taskSection = card.createDiv('ct-kanban-tasks');
+    this.taskEls.set(thread.id, taskSection);
+    this.populateTaskSection(taskSection, thread.tasks);
 
     if (hasPending) {
       const pendingInfo = this.manager.getPendingPermission(thread.id);
@@ -646,6 +654,47 @@ export class KanbanView extends ItemView {
     });
   }
 
+  /**
+   * (Re)populates a card's task-list section from scratch. Shared by initial
+   * render and the targeted `tasks_updated` patch path so both stay in sync.
+   */
+  private populateTaskSection(container: HTMLElement, tasks: TaskItem[] | undefined): void {
+    container.empty();
+    if (!tasks || tasks.length === 0) {
+      container.addClass('ct-hidden');
+      return;
+    }
+    container.removeClass('ct-hidden');
+
+    const completedCount = tasks.filter(t => t.status === 'completed').length;
+    container.createDiv({
+      cls: 'ct-kanban-tasks-progress',
+      text: `${completedCount} / ${tasks.length} done`,
+    });
+
+    const STATUS_ICONS: Record<string, string> = {
+      completed: 'circle-check',
+      in_progress: 'loader-circle',
+      pending: 'circle',
+    };
+    const MAX_TASKS = 5;
+    const visibleTasks = tasks.slice(0, MAX_TASKS);
+    for (const task of visibleTasks) {
+      const row = container.createDiv(`ct-kanban-task-row ct-task-row-${task.status}`);
+      const iconEl = row.createSpan({ cls: 'ct-kanban-task-icon' });
+      setIcon(iconEl, STATUS_ICONS[task.status] ?? 'circle');
+      const label = task.content.length > 60 ? task.content.slice(0, 60) + '…' : task.content;
+      row.createSpan({ cls: 'ct-kanban-task-text', text: label });
+    }
+
+    if (tasks.length > MAX_TASKS) {
+      container.createDiv({
+        cls: 'ct-kanban-tasks-more',
+        text: `+${tasks.length - MAX_TASKS} more`,
+      });
+    }
+  }
+
   private applyStateIcon(el: HTMLElement, state: RowState): void {
     el.className = `ct-kanban-card-icon ct-kanban-icon-${state}`;
     switch (state) {
@@ -662,7 +711,10 @@ export class KanbanView extends ItemView {
     }
     if (state === 'error') return thread.lastError ?? 'Error occurred';
     if (state === 'empty') return 'Ready to start';
-    const lastAssistant = [...thread.messages].reverse().find(m => m.role === 'assistant');
+    let lastAssistant: Thread['messages'][number] | undefined;
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      if (thread.messages[i].role === 'assistant') { lastAssistant = thread.messages[i]; break; }
+    }
     if (lastAssistant) {
       const text = lastAssistant.content.replace(/```[\s\S]*?```/g, '[code]').replace(/\n/g, ' ').trim();
       return text.length > 90 ? text.slice(0, 90) + '…' : text;
@@ -710,6 +762,26 @@ export class KanbanView extends ItemView {
       }
     }
 
+    // `tasks_updated` carries the thread's full task list (thread.tasks) — patch
+    // the card's task section directly instead of rebuilding the whole board.
+    // Task changes never move a thread between columns (bucketing depends only
+    // on running/error/reviewed/message-count state, not tasks), so a targeted
+    // patch is always sufficient when the card is currently rendered. If the
+    // card isn't rendered (e.g. filtered out by search), fall back to a full
+    // render so state still converges.
+    if (event.type === 'tasks_updated') {
+      const el = this.taskEls.get(threadId);
+      if (el) {
+        this.populateTaskSection(el, event.tasks);
+      } else {
+        this.scheduleRender();
+      }
+      return;
+    }
+    // `task_updated` tracks a separate background-subtask (Task tool call),
+    // not `thread.tasks` — it doesn't currently back any rendered card field,
+    // so it intentionally does not trigger a render.
+
     const isStateChange =
       event.type === 'streaming_start' ||
       event.type === 'done' ||
@@ -717,9 +789,7 @@ export class KanbanView extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
-      event.type === 'status_tags' ||
-      event.type === 'tasks_updated' ||
-      event.type === 'task_updated';
+      event.type === 'status_tags';
     if (isStateChange) {
       this.scheduleRender();
       return;
@@ -744,10 +814,13 @@ export class KanbanView extends ItemView {
   private scheduleRender(): void {
     if (this.renderPending) return;
     this.renderPending = true;
+    // 120ms coalesces bursts of events that span multiple macrotasks (a plain
+    // setTimeout(0) only debounces within a single macrotask, so back-to-back
+    // events each on their own tick would still each trigger a full rebuild).
     setTimeout(() => {
       this.renderPending = false;
       this.render();
-    }, 0);
+    }, 120);
   }
 
   private scheduleActivityRefresh(threadId: string): void {
