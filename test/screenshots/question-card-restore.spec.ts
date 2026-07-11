@@ -52,9 +52,45 @@ test.describe('AskUserQuestion — inline card (pendingQuestions)', () => {
     await expect(page.locator('.ct-question-card')).toBeVisible();
     await expect(page.locator('.ct-question-card-submit')).toBeVisible();
     await expect(page.locator('.ct-question-header')).toHaveText('Implementation approach');
-    await expect(page.locator('.ct-question-option')).toHaveCount(2);
+    // 2 fixed options + the always-present "Other" free-text row.
+    await expect(page.locator('.ct-question-option')).toHaveCount(3);
+    await expect(page.locator('.ct-question-option-other')).toHaveCount(1);
 
     await expect(page).toHaveScreenshot('question-card-restored.png', { fullPage: true });
+  });
+
+  test('typing a custom answer in "Other" implicitly selects it and is sent verbatim', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForTimeout(300);
+
+    await page.evaluate((questions) => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const activeId = view['activeThreadId'];
+      const thread = manager.getThread(activeId);
+      thread.pendingQuestions = questions;
+      (window as any).__sendMessageCalls = [];
+      manager.sendMessage = async (threadId: string, text: string) => {
+        (window as any).__sendMessageCalls.push({ threadId, text });
+      };
+      view.focusThread(activeId);
+    }, SAMPLE_QUESTIONS);
+
+    await page.waitForSelector('.ct-question-card');
+
+    // Type directly into the "Other" text field without clicking its radio first —
+    // typing should implicitly select it.
+    await page.locator('.ct-question-other-text').fill('Do neither, ask the user first');
+    await expect(page.locator('.ct-question-option-other input[type="radio"]')).toBeChecked();
+
+    await page.locator('.ct-question-card-submit').click();
+    await expect(page.locator('.ct-question-card')).not.toBeAttached();
+
+    const calls = await page.evaluate(() => (window as any).__sendMessageCalls);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].text).toContain('Do neither, ask the user first');
   });
 
   test('submit sends formatted answers and clears pendingQuestions', async ({ page }) => {

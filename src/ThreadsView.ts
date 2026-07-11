@@ -1853,8 +1853,17 @@ export class ThreadsView extends ItemView {
     header.createSpan({ cls: 'ct-question-card-label', text: 'Claude needs your input' });
 
     const body = card.createDiv('ct-question-card-body');
-    const answers: Record<string, string[]> = {};
-    for (const q of questions) answers[q.question] = [];
+
+    // Track each question's option inputs (plus the always-present "Other" input
+    // and its text field) so Submit can read the final selection straight from the
+    // DOM, rather than juggling incremental change-event bookkeeping across two
+    // input flavors (fixed options vs. free text).
+    const questionInputs: Array<{
+      question: AskQuestion;
+      optionInputs: HTMLInputElement[];
+      otherInput: HTMLInputElement;
+      otherText: HTMLInputElement;
+    }> = [];
 
     for (const q of questions) {
       const qEl = body.createDiv({ cls: 'ct-question' });
@@ -1862,32 +1871,59 @@ export class ThreadsView extends ItemView {
       qEl.createEl('p', { cls: 'ct-question-text', text: q.question });
 
       const optionsEl = qEl.createDiv({ cls: 'ct-question-options' });
+      const optionInputs: HTMLInputElement[] = [];
       for (const opt of q.options) {
         const row = optionsEl.createDiv({ cls: 'ct-question-option' });
         const inputEl = row.createEl('input', {
           attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: opt.label },
-        });
+        }) as HTMLInputElement;
         const labelEl = row.createEl('label', { cls: 'ct-question-option-label' });
         labelEl.createSpan({ cls: 'ct-question-opt-name', text: opt.label });
         if (opt.description) {
           labelEl.createSpan({ cls: 'ct-question-opt-desc', text: opt.description });
         }
-        inputEl.addEventListener('change', () => {
-          if (q.multiSelect) {
-            if ((inputEl as HTMLInputElement).checked) answers[q.question].push(opt.label);
-            else answers[q.question] = answers[q.question].filter(v => v !== opt.label);
-          } else {
-            answers[q.question] = [opt.label];
-          }
-        });
+        optionInputs.push(inputEl);
       }
+
+      // "Other" — every AskUserQuestion prompt always lets the user type a custom
+      // answer in addition to the fixed choices, matching the real tool's behavior.
+      const otherRow = optionsEl.createDiv({ cls: 'ct-question-option ct-question-option-other' });
+      const otherInput = otherRow.createEl('input', {
+        attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
+      }) as HTMLInputElement;
+      const otherLabelEl = otherRow.createEl('label', { cls: 'ct-question-option-label' });
+      otherLabelEl.createSpan({ cls: 'ct-question-opt-name', text: 'Other' });
+      const otherText = otherLabelEl.createEl('input', {
+        cls: 'ct-question-other-text',
+        attr: { type: 'text', placeholder: 'Type your own answer…' },
+      }) as HTMLInputElement;
+      // Typing implicitly selects "Other" — the user shouldn't have to click the
+      // radio/checkbox separately once they start writing a custom answer.
+      otherText.addEventListener('input', () => {
+        if (!otherInput.checked) otherInput.checked = true;
+      });
+      // Prevent a click landing in the text field from also bubbling up and
+      // toggling a sibling control.
+      otherText.addEventListener('click', (e) => e.stopPropagation());
+
+      questionInputs.push({ question: q, optionInputs, otherInput, otherText });
     }
 
     const actions = card.createDiv('ct-question-card-actions');
     const submitBtn = actions.createEl('button', { text: 'Submit', cls: 'ct-question-card-submit' });
     submitBtn.addEventListener('click', () => {
       const result: Record<string, string> = {};
-      for (const [q, vals] of Object.entries(answers)) result[q] = vals.join(',');
+      for (const { question, optionInputs, otherInput, otherText } of questionInputs) {
+        const values: string[] = [];
+        for (const input of optionInputs) {
+          if (input.checked) values.push(input.value);
+        }
+        if (otherInput.checked) {
+          const text = otherText.value.trim();
+          if (text) values.push(text);
+        }
+        result[question.question] = values.join(',');
+      }
       card.remove();
       done(result);
     });

@@ -1974,6 +1974,26 @@
   color: var(--text-muted);
 }
 
+.ct-question-option-other {
+  border-style: dashed;
+}
+
+.ct-question-other-text {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  width: 100%;
+}
+
+.ct-question-other-text:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
 /* ── Agent Dashboard ─────────────────────────────────────────── */
 
 .view-content.ct-agents-root {
