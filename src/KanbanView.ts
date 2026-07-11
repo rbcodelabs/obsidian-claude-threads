@@ -365,7 +365,7 @@ export class KanbanView extends ItemView {
 
     for (const t of threads) {
       if (this.manager.isRunning(t.id)) {
-        if (this.manager.hasPendingPermission(t.id)) permReqs.push(t);
+        if (this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id)) permReqs.push(t);
         else running.push(t);
       } else if (t.lastError) {
         errors.push(t);
@@ -512,7 +512,7 @@ export class KanbanView extends ItemView {
   private renderCard(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
-    const hasPending = state === 'running' && this.manager.hasPendingPermission(thread.id);
+    const hasPending = state === 'running' && (this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id));
 
     const card = parent.createDiv({
       cls: [
@@ -750,7 +750,12 @@ export class KanbanView extends ItemView {
       this.setActiveCard(threadId);
       return;
     }
-    if (event.type === 'permission_request' || event.type === 'permission_resolved') {
+    if (
+      event.type === 'permission_request' ||
+      event.type === 'permission_resolved' ||
+      event.type === 'question_ready' ||
+      event.type === 'pending_question_changed'
+    ) {
       this.scheduleRender();
       return;
     }

@@ -183,6 +183,12 @@ export interface Thread {
    * or crash that killed the session mid-turn.
    */
   pendingPlan?: string;
+  /**
+   * Questions from a pending AskUserQuestion call that hasn't been answered
+   * yet. Persisted so the question card can be restored after a reload or
+   * crash that killed the session mid-turn, exactly like `pendingPlan`.
+   */
+  pendingQuestions?: AskQuestion[];
 }
 
 /**

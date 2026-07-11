@@ -53,6 +53,8 @@ export type ThreadEvent =
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
   | { type: 'pending_plan_changed'; planText: string | undefined }
+  | { type: 'question_ready'; questions: AskQuestion[] }
+  | { type: 'pending_question_changed'; questions: AskQuestion[] | undefined }
   | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
   | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
@@ -95,6 +97,16 @@ export class ThreadManager {
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
+  /**
+   * In-memory store for pending AskUserQuestion answer resolvers, keyed by
+   * thread ID. Mirrors `permissionResolvers` — the *state* (the questions
+   * themselves) is persisted on `thread.pendingQuestions` like `pendingPlan`,
+   * but the live resolver can only exist while the session is actively
+   * awaiting the answer. `hasPendingQuestion` is keyed off this map's
+   * presence rather than a parallel state map, since the question content
+   * itself already lives on `thread.pendingQuestions`.
+   */
+  private pendingQuestionResolvers: Map<string, (answers: Record<string, string>) => void> = new Map();
   /** Remote permission resolvers keyed by requestId (used by RelayClient). */
   private remotePermissionResolvers: Map<string, (allow: boolean) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
@@ -113,7 +125,7 @@ export class ThreadManager {
    */
   secretEnvResolver: (() => Record<string, string>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
-  questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
+  questionHandler: (threadId: string, questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
   /**
@@ -380,6 +392,15 @@ export class ThreadManager {
     return this.pendingPlanResolvers.get(id);
   }
 
+  setThreadPendingQuestions(id: string, questions: AskQuestion[] | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (questions !== undefined) thread.pendingQuestions = questions;
+      else delete thread.pendingQuestions;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   setThreadPermissionMode(id: string, mode: PluginSettings['permissionMode'] | undefined): void {
     const thread = this.threads.get(id);
     if (thread) {
@@ -426,6 +447,25 @@ export class ThreadManager {
   resolvePermission(threadId: string, allow: boolean): void {
     const resolver = this.permissionResolvers.get(threadId);
     if (resolver) resolver(allow);
+  }
+
+  hasPendingQuestion(threadId: string): boolean {
+    return this.pendingQuestionResolvers.has(threadId);
+  }
+
+  registerQuestionResolver(threadId: string, resolver: (answers: Record<string, string>) => void): void {
+    this.pendingQuestionResolvers.set(threadId, resolver);
+  }
+
+  /** Safe no-op if no resolver is currently registered for this thread. */
+  resolveQuestion(threadId: string, answers: Record<string, string>): void {
+    const resolver = this.pendingQuestionResolvers.get(threadId);
+    if (resolver) resolver(answers);
+  }
+
+  /** Returns the live answer resolver if a question is actively awaiting user action. */
+  getPendingQuestionResolver(threadId: string): ((answers: Record<string, string>) => void) | undefined {
+    return this.pendingQuestionResolvers.get(threadId);
   }
 
   /**
@@ -771,6 +811,13 @@ export class ThreadManager {
             this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
           }
 
+          // Same safety net for a dangling pending question.
+          if (thread.pendingQuestions) {
+            delete thread.pendingQuestions;
+            this.pendingQuestionResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_question_changed', questions: undefined });
+          }
+
           // If any background tasks started but never notified, persist them so
           // main.ts can schedule polling resumption after the session closes.
           if (activeBgTasks.size > 0) {
@@ -824,7 +871,23 @@ export class ThreadManager {
             this.emit(threadId, { type: 'permission_resolved' });
           }
         },
-        onAskUserQuestion: (questions) => this.questionHandler(questions),
+        onAskUserQuestion: async (questions) => {
+          // Persist the question set so the card can be restored after a
+          // reload/crash OR after the user switches threads mid-session,
+          // mirroring the pendingPlan pattern.
+          thread.pendingQuestions = questions;
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'pending_question_changed', questions });
+          this.emit(threadId, { type: 'question_ready', questions });
+          try {
+            return await this.questionHandler(threadId, questions);
+          } finally {
+            delete thread.pendingQuestions;
+            thread.updatedAt = Date.now();
+            this.pendingQuestionResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_question_changed', questions: undefined });
+          }
+        },
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
         onCompact: (trigger, preTokens) => {

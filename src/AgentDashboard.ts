@@ -210,7 +210,12 @@ export class AgentDashboard extends ItemView {
       this.setActiveRow(threadId);
       return;
     }
-    if (event.type === 'permission_request' || event.type === 'permission_resolved') {
+    if (
+      event.type === 'permission_request' ||
+      event.type === 'permission_resolved' ||
+      event.type === 'question_ready' ||
+      event.type === 'pending_question_changed'
+    ) {
       this.scheduleRender();
       return;
     }
@@ -359,7 +364,7 @@ export class AgentDashboard extends ItemView {
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
-    const hasPending = state === 'running' && this.manager.hasPendingPermission(thread.id);
+    const hasPending = state === 'running' && (this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id));
     const row = parent.createDiv({
       cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
     });
