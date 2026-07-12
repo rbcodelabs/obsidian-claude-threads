@@ -14,6 +14,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.93.0
         version: 0.93.0(zod@4.4.3)
+      adm-zip:
+        specifier: ^0.6.0
+        version: 0.6.0
       marked:
         specifier: ^18.0.3
         version: 18.0.5
@@ -562,6 +565,10 @@ packages:
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
+
+  adm-zip@0.6.0:
+    resolution: {integrity: sha512-XleryMhbuksdKtofnWZ9Sk+4CUTbms4Mb/EU32SZwToAyZ5RgVos/ki8n+yr0LWHOGKuakbXTuuYNHLQjhddgg==}
+    engines: {node: '>=14.0'}
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -1830,6 +1837,8 @@ snapshots:
     dependencies:
       mime-types: 3.0.2
       negotiator: 1.0.0
+
+  adm-zip@0.6.0: {}
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
