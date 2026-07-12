@@ -721,10 +721,25 @@ export class ThreadManager {
     // have changed mid-conversation (via obsidian_set_working_directory). Inject
     // the prior turns as a preamble so Claude isn't amnesiac after the switch.
     const priorMessages = thread.messages.slice(0, -1); // excludes the just-pushed user msg
-    const effectivePrompt =
-      !thread.sessionId && priorMessages.length > 0
-        ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
-        : promptText;
+    const isFreshUnresumedSession = !thread.sessionId && priorMessages.length > 0;
+    const effectivePrompt = isFreshUnresumedSession
+      ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
+      : promptText;
+
+    // The SDK's Task board IDs are small integers that restart at 1 for every
+    // new session (~/.claude/tasks/<session-uuid>/1.json, 2.json, ...). Once we
+    // start a brand-new session here — rather than resuming the prior one —
+    // any tasks left over on this thread belong to a session that's gone for
+    // good. Leaving them in place means the new session's TaskCreate calls
+    // collide by ID with these stale entries: applyTaskEvent() upserts by raw
+    // ID, so a leftover incomplete task silently gets its content overwritten
+    // and flipped to whatever status the new session's same-ID task reaches.
+    // Clear both so the new session starts with a clean board.
+    if (isFreshUnresumedSession) {
+      delete thread.tasks;
+      delete thread.pendingBackgroundTasks;
+      this.emit(threadId, { type: 'tasks_updated', tasks: [] });
+    }
 
     await session.run(
       effectivePrompt,
