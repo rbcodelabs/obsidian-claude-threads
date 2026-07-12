@@ -2,6 +2,7 @@ import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
+import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -15,6 +16,7 @@ export type ThreadEvent =
   | { type: 'recap'; summary: string }
   | { type: 'done' }
   | { type: 'error'; error: Error }
+  | { type: 'reconnecting'; error: string }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
   | { type: 'queued'; text: string; images?: ImageAttachment[] }
@@ -634,6 +636,7 @@ export class ThreadManager {
     const pendingToolCalls: ToolCallRecord[] = [];
     const pendingToolImages: Array<{ mediaType: string; data: string }> = [];
     let completedSuccessfully = false;
+    let transportRetryPrompt: string | null = null;
     // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
     const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
 
@@ -809,6 +812,9 @@ export class ThreadManager {
           }
           thread.updatedAt = Date.now();
           thread.status = 'waiting';
+          // A completed run resets the transport-error retry budget so a
+          // thread that recovers gets a fresh allowance for any future hiccup.
+          thread.streamCloseRetryCount = 0;
           const lastMsg = thread.messages[thread.messages.length - 1];
           if (lastMsg?.role === 'assistant' && cost > 0) {
             lastMsg.cost = cost;
@@ -867,9 +873,38 @@ export class ThreadManager {
           this.emit(threadId, { type: 'interrupted' });
         },
         onError: (err) => {
-          thread.lastError = err.message;
+          // Safety net: always clean up a pending plan card here, mirroring
+          // the onDone safety net above — otherwise an errored session (e.g.
+          // during a long ExitPlanMode wait) leaves the card stuck forever
+          // and its resolvers leak, since they resolve a promise for a
+          // session that has already exited.
+          if (thread.pendingPlan) {
+            delete thread.pendingPlan;
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
+
           thread.updatedAt = Date.now();
+
+          if (shouldAutoRetryTransportError(err.message, thread.streamCloseRetryCount ?? 0)) {
+            // The closed-source CLI binary force-rejected this control
+            // request on stdio EOF even though the action may have
+            // succeeded server-side. Give the model one automatic follow-up
+            // turn to verify actual state instead of surfacing a hard error.
+            thread.streamCloseRetryCount = (thread.streamCloseRetryCount ?? 0) + 1;
+            thread.status = 'reconnecting';
+            this.sessions.delete(threadId);
+            this.threadActivity.delete(threadId);
+            // Do NOT clear queuedMessages — preserve anything the user
+            // queued during the interrupted turn.
+            this.emit(threadId, { type: 'reconnecting', error: err.message });
+            transportRetryPrompt = TRANSPORT_ERROR_CONTINUATION_PROMPT;
+            return;
+          }
+
+          thread.lastError = err.message;
           thread.status = 'error';
+          thread.streamCloseRetryCount = 0;
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           this.queuedMessages.delete(threadId);
@@ -1008,6 +1043,14 @@ export class ThreadManager {
       this.settings.disallowedTools,
       this.buildSessionOptions(thread),
     );
+
+    if (transportRetryPrompt) {
+      // Mirrors the queue-drain self-recursion below: only fires after the
+      // failed session's run() call (and its finally: q.close()) has fully
+      // unwound, so there's no overlapping session generations.
+      await this.sendMessage(threadId, transportRetryPrompt);
+      return;
+    }
 
     if (completedSuccessfully) {
       const queue = this.queuedMessages.get(threadId);
