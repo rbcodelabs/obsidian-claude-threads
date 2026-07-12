@@ -1214,6 +1214,22 @@
   padding: 0;
 }
 
+/* Reconnecting — transient transport-closed auto-retry notice. Distinct from
+   .ct-error: amber/informational, not alarming red, since ThreadManager is
+   about to automatically retry rather than surfacing a terminal failure. */
+.ct-reconnecting {
+  background: var(--background-modifier-warning-rgb, rgba(224, 158, 26, 0.1));
+  border: 1px solid var(--color-orange, var(--text-warning));
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.ct-reconnecting-text {
+  margin: 0;
+  color: var(--color-orange, var(--text-warning));
+  font-size: var(--font-ui-smaller);
+}
+
 /* Status rail — replaces the old flat status bar */
 .ct-status-rail {
   display: flex;
@@ -1908,8 +1924,8 @@
   display: none !important;
 }
 
-/* AskUserQuestion modal */
-.ct-question-modal .ct-question + .ct-question {
+/* AskUserQuestion inline card — question spacing between multiple questions */
+.ct-question-card .ct-question + .ct-question {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid var(--background-modifier-border);
@@ -1972,6 +1988,26 @@
 .ct-question-opt-desc {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
+}
+
+.ct-question-option-other {
+  border-style: dashed;
+}
+
+.ct-question-other-text {
+  margin-top: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  width: 100%;
+}
+
+.ct-question-other-text:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
 }
 
 /* ── Agent Dashboard ─────────────────────────────────────────── */
@@ -2854,6 +2890,76 @@
   margin-left: auto;
 }
 .ct-plan-approve:hover {
+  opacity: 0.88;
+}
+
+/* -- Inline question card (AskUserQuestion) -------------------------- */
+.ct-streaming .ct-question-card {
+  margin-top: 8px;
+}
+
+.ct-question-card {
+  background: color-mix(in srgb, var(--color-purple, #8c5ce6) 8%, var(--background-primary));
+  border: 1px solid color-mix(in srgb, var(--color-purple, #8c5ce6) 28%, transparent);
+  border-left: 3px solid var(--color-purple, #8c5ce6);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: ct-fade-in 0.15s ease;
+}
+
+.ct-question-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-purple, #8c5ce6);
+}
+
+.ct-question-card-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-question-card-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-question-card-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-question-card-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-question-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ct-question-card-submit {
+  font-size: var(--font-ui-smaller);
+  padding: 4px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--interactive-accent);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.1s, opacity 0.1s;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  margin-left: auto;
+}
+
+.ct-question-card-submit:hover {
   opacity: 0.88;
 }
 

@@ -2,6 +2,7 @@ import { ClaudeSession, type TaskTrackerEvent } from './ClaudeSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
+import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -15,6 +16,7 @@ export type ThreadEvent =
   | { type: 'recap'; summary: string }
   | { type: 'done' }
   | { type: 'error'; error: Error }
+  | { type: 'reconnecting'; error: string }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
   | { type: 'queued'; text: string; images?: ImageAttachment[] }
@@ -53,6 +55,8 @@ export type ThreadEvent =
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
   | { type: 'pending_plan_changed'; planText: string | undefined }
+  | { type: 'question_ready'; questions: AskQuestion[] }
+  | { type: 'pending_question_changed'; questions: AskQuestion[] | undefined }
   | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
   | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
@@ -95,6 +99,16 @@ export class ThreadManager {
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
+  /**
+   * In-memory store for pending AskUserQuestion answer resolvers, keyed by
+   * thread ID. Mirrors `permissionResolvers` — the *state* (the questions
+   * themselves) is persisted on `thread.pendingQuestions` like `pendingPlan`,
+   * but the live resolver can only exist while the session is actively
+   * awaiting the answer. `hasPendingQuestion` is keyed off this map's
+   * presence rather than a parallel state map, since the question content
+   * itself already lives on `thread.pendingQuestions`.
+   */
+  private pendingQuestionResolvers: Map<string, (answers: Record<string, string>) => void> = new Map();
   /** Remote permission resolvers keyed by requestId (used by RelayClient). */
   private remotePermissionResolvers: Map<string, (allow: boolean) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
@@ -113,7 +127,7 @@ export class ThreadManager {
    */
   secretEnvResolver: (() => Record<string, string>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
-  questionHandler: (questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
+  questionHandler: (threadId: string, questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
   /**
@@ -380,6 +394,15 @@ export class ThreadManager {
     return this.pendingPlanResolvers.get(id);
   }
 
+  setThreadPendingQuestions(id: string, questions: AskQuestion[] | undefined): void {
+    const thread = this.threads.get(id);
+    if (thread) {
+      if (questions !== undefined) thread.pendingQuestions = questions;
+      else delete thread.pendingQuestions;
+      thread.updatedAt = Date.now();
+    }
+  }
+
   setThreadPermissionMode(id: string, mode: PluginSettings['permissionMode'] | undefined): void {
     const thread = this.threads.get(id);
     if (thread) {
@@ -426,6 +449,25 @@ export class ThreadManager {
   resolvePermission(threadId: string, allow: boolean): void {
     const resolver = this.permissionResolvers.get(threadId);
     if (resolver) resolver(allow);
+  }
+
+  hasPendingQuestion(threadId: string): boolean {
+    return this.pendingQuestionResolvers.has(threadId);
+  }
+
+  registerQuestionResolver(threadId: string, resolver: (answers: Record<string, string>) => void): void {
+    this.pendingQuestionResolvers.set(threadId, resolver);
+  }
+
+  /** Safe no-op if no resolver is currently registered for this thread. */
+  resolveQuestion(threadId: string, answers: Record<string, string>): void {
+    const resolver = this.pendingQuestionResolvers.get(threadId);
+    if (resolver) resolver(answers);
+  }
+
+  /** Returns the live answer resolver if a question is actively awaiting user action. */
+  getPendingQuestionResolver(threadId: string): ((answers: Record<string, string>) => void) | undefined {
+    return this.pendingQuestionResolvers.get(threadId);
   }
 
   /**
@@ -594,6 +636,7 @@ export class ThreadManager {
     const pendingToolCalls: ToolCallRecord[] = [];
     const pendingToolImages: Array<{ mediaType: string; data: string }> = [];
     let completedSuccessfully = false;
+    let transportRetryPrompt: string | null = null;
     // Track background tasks (skipTranscript tasks) that start but don't notify before session ends.
     const activeBgTasks = new Map<string, { description: string; startedAt: number }>();
 
@@ -681,10 +724,25 @@ export class ThreadManager {
     // have changed mid-conversation (via obsidian_set_working_directory). Inject
     // the prior turns as a preamble so Claude isn't amnesiac after the switch.
     const priorMessages = thread.messages.slice(0, -1); // excludes the just-pushed user msg
-    const effectivePrompt =
-      !thread.sessionId && priorMessages.length > 0
-        ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
-        : promptText;
+    const isFreshUnresumedSession = !thread.sessionId && priorMessages.length > 0;
+    const effectivePrompt = isFreshUnresumedSession
+      ? buildHistoryPreamble(priorMessages, cwdAtStart) + promptText
+      : promptText;
+
+    // The SDK's Task board IDs are small integers that restart at 1 for every
+    // new session (~/.claude/tasks/<session-uuid>/1.json, 2.json, ...). Once we
+    // start a brand-new session here — rather than resuming the prior one —
+    // any tasks left over on this thread belong to a session that's gone for
+    // good. Leaving them in place means the new session's TaskCreate calls
+    // collide by ID with these stale entries: applyTaskEvent() upserts by raw
+    // ID, so a leftover incomplete task silently gets its content overwritten
+    // and flipped to whatever status the new session's same-ID task reaches.
+    // Clear both so the new session starts with a clean board.
+    if (isFreshUnresumedSession) {
+      delete thread.tasks;
+      delete thread.pendingBackgroundTasks;
+      this.emit(threadId, { type: 'tasks_updated', tasks: [] });
+    }
 
     await session.run(
       effectivePrompt,
@@ -754,6 +812,9 @@ export class ThreadManager {
           }
           thread.updatedAt = Date.now();
           thread.status = 'waiting';
+          // A completed run resets the transport-error retry budget so a
+          // thread that recovers gets a fresh allowance for any future hiccup.
+          thread.streamCloseRetryCount = 0;
           const lastMsg = thread.messages[thread.messages.length - 1];
           if (lastMsg?.role === 'assistant' && cost > 0) {
             lastMsg.cost = cost;
@@ -769,6 +830,13 @@ export class ThreadManager {
             delete thread.pendingPlan;
             this.pendingPlanResolvers.delete(threadId);
             this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
+
+          // Same safety net for a dangling pending question.
+          if (thread.pendingQuestions) {
+            delete thread.pendingQuestions;
+            this.pendingQuestionResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_question_changed', questions: undefined });
           }
 
           // If any background tasks started but never notified, persist them so
@@ -805,9 +873,38 @@ export class ThreadManager {
           this.emit(threadId, { type: 'interrupted' });
         },
         onError: (err) => {
-          thread.lastError = err.message;
+          // Safety net: always clean up a pending plan card here, mirroring
+          // the onDone safety net above — otherwise an errored session (e.g.
+          // during a long ExitPlanMode wait) leaves the card stuck forever
+          // and its resolvers leak, since they resolve a promise for a
+          // session that has already exited.
+          if (thread.pendingPlan) {
+            delete thread.pendingPlan;
+            this.pendingPlanResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          }
+
           thread.updatedAt = Date.now();
+
+          if (shouldAutoRetryTransportError(err.message, thread.streamCloseRetryCount ?? 0)) {
+            // The closed-source CLI binary force-rejected this control
+            // request on stdio EOF even though the action may have
+            // succeeded server-side. Give the model one automatic follow-up
+            // turn to verify actual state instead of surfacing a hard error.
+            thread.streamCloseRetryCount = (thread.streamCloseRetryCount ?? 0) + 1;
+            thread.status = 'reconnecting';
+            this.sessions.delete(threadId);
+            this.threadActivity.delete(threadId);
+            // Do NOT clear queuedMessages — preserve anything the user
+            // queued during the interrupted turn.
+            this.emit(threadId, { type: 'reconnecting', error: err.message });
+            transportRetryPrompt = TRANSPORT_ERROR_CONTINUATION_PROMPT;
+            return;
+          }
+
+          thread.lastError = err.message;
           thread.status = 'error';
+          thread.streamCloseRetryCount = 0;
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           this.queuedMessages.delete(threadId);
@@ -824,7 +921,23 @@ export class ThreadManager {
             this.emit(threadId, { type: 'permission_resolved' });
           }
         },
-        onAskUserQuestion: (questions) => this.questionHandler(questions),
+        onAskUserQuestion: async (questions) => {
+          // Persist the question set so the card can be restored after a
+          // reload/crash OR after the user switches threads mid-session,
+          // mirroring the pendingPlan pattern.
+          thread.pendingQuestions = questions;
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'pending_question_changed', questions });
+          this.emit(threadId, { type: 'question_ready', questions });
+          try {
+            return await this.questionHandler(threadId, questions);
+          } finally {
+            delete thread.pendingQuestions;
+            thread.updatedAt = Date.now();
+            this.pendingQuestionResolvers.delete(threadId);
+            this.emit(threadId, { type: 'pending_question_changed', questions: undefined });
+          }
+        },
         onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
         onStatus: (status) => this.emit(threadId, { type: 'status', status }),
         onCompact: (trigger, preTokens) => {
@@ -930,6 +1043,14 @@ export class ThreadManager {
       this.settings.disallowedTools,
       this.buildSessionOptions(thread),
     );
+
+    if (transportRetryPrompt) {
+      // Mirrors the queue-drain self-recursion below: only fires after the
+      // failed session's run() call (and its finally: q.close()) has fully
+      // unwound, so there's no overlapping session generations.
+      await this.sendMessage(threadId, transportRetryPrompt);
+      return;
+    }
 
     if (completedSuccessfully) {
       const queue = this.queuedMessages.get(threadId);

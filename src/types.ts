@@ -1,6 +1,6 @@
 export type MessageRole = 'user' | 'assistant' | 'compact';
 
-export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived';
+export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived' | 'reconnecting';
 
 export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 
@@ -121,6 +121,12 @@ export interface Thread {
   recap?: string;
   summary?: string;
   lastError?: string;
+  /**
+   * Auto-retry budget tracker for the closed-source CLI's spurious
+   * "Stream closed" transport errors (see transportErrorRecovery.ts).
+   * Reset to 0 on a successful onDone; incremented on each auto-retry.
+   */
+  streamCloseRetryCount?: number;
   model?: string;
   projectId?: string;
   reviewed?: boolean;
@@ -183,6 +189,12 @@ export interface Thread {
    * or crash that killed the session mid-turn.
    */
   pendingPlan?: string;
+  /**
+   * Questions from a pending AskUserQuestion call that hasn't been answered
+   * yet. Persisted so the question card can be restored after a reload or
+   * crash that killed the session mid-turn, exactly like `pendingPlan`.
+   */
+  pendingQuestions?: AskQuestion[];
 }
 
 /**
