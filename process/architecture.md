@@ -21,6 +21,24 @@
 
 ---
 
+## Session Input-Stream Lifetime & Lingering Sessions
+
+`ClaudeSession.run()` (`src/ClaudeSession.ts`) always drives the Agent SDK's `query()` with an async-generator prompt, never a plain string. This matters because of an SDK internal: passing a string sets `isSingleUserTurn`, which force-closes stdin — the *only* channel carrying permission responses (`canUseTool`, `AskUserQuestion`, `ExitPlanMode`) — the instant the first `result` event arrives. That's fine for a single-generation turn, but background tasks keep the CLI subprocess alive past the first result to stream further generations (routine now — Bash tasks backgrounded via `run_in_background`, workflow/subagent tasks, etc.), and those generations need a working permission channel too. With a string prompt, every later permission round-trip on such a turn was force-rejected with `Stream closed`, even though the CLI process was still very much running.
+
+The fix: the generator yields its one message, then `await`s an internal release promise before returning. Completing the generator (returning) is what makes the SDK call `transport.endInput()` — so *we* control exactly when stdin closes, instead of the SDK closing it unconditionally at the first result. `ClaudeSession` tracks:
+- **Pending tasks** (`pendingBgTaskIds`): `task_started` → add; a terminal `task_updated` status or `task_notification` → remove. A non-empty set at `result` time means the CLI is still doing work, so the channel stays open.
+- **Notification-in-this-window** (`sawTaskNotificationSinceLastResult`): set by `task_notification`, cleared after every `result`. Verified live against the real CLI: a fast background Bash task can start, finish, *and* notify entirely before the first `result` — so an empty pending set alone is not a sufficient release signal, since the follow-up generation that actually reacts to the notification still streams afterward. Releasing requires one full `result` with **no** new notification since the previous one.
+
+Only when both are clear does the `result` handler release the generator, re-checked on every subsequent `result` the same `run()` call sees. `endInput()` is exposed publicly so a caller can force the release; the `finally` block always releases it too, so no run ever leaks a pending promise. Worst case (a task that never produces a further generation after all) this holds a session open longer than strictly necessary — bounded by `ThreadManager`'s `LINGER_MAX_MS` safety cap below, and invisible to the user since the thread already reads as idle (`onDone` already fired).
+
+Because a turn can now legitimately outlive its first `result` (thread looks idle, `ThreadManager.sessions` no longer has an entry for it), `ThreadManager` tracks **lingering sessions** separately (`lingeringSessions: Map<threadId, ClaudeSession>`), populated in the `onDone` callback and cleared once `session.run()` actually resolves:
+- `sendMessage()` checks for a lingering session before starting a new one and gracefully unwinds it first (`endInput()`, poll briefly for the natural unwind, hard `close()` as a fallback) — otherwise two CLI processes could end up resuming the same session id concurrently.
+- `interrupt()` falls back to `lingeringSessions` so Stop still works during generation 2+.
+- A `LINGER_MAX_MS` (10 min) safety cap force-ends the input stream if a session lingers unreasonably long; the existing `pendingBackgroundTasks` poll remains the fallback for any task that outlives it.
+- `isRunning`, `getRunningThreads`, `deleteThread`, `gracefulShutdown`, and `destroy` all treat a lingering session as still "running" so reload/shutdown guards and cleanup don't leak an orphaned process.
+
+---
+
 ## Thread Type (`src/types.ts`)
 
 Key fields worth knowing:

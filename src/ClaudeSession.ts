@@ -109,8 +109,28 @@ export class ClaudeSession {
   private recapEmitted = false;
   private interrupted = false;
   private resumeSessionId: string | undefined = undefined;
+  private releaseInputResolve: (() => void) | null = null;
+  private inputOpen = false;
 
   constructor(private claudePath: string) {}
+
+  /** Idempotent: resolves the held-open input generator's release promise, if any. */
+  private releaseInput(): void {
+    this.inputOpen = false;
+    this.releaseInputResolve?.();
+    this.releaseInputResolve = null;
+  }
+
+  /**
+   * Explicitly end the current turn's input stream, letting the SDK close
+   * stdin (`transport.endInput()`) and the CLI subprocess exit once it
+   * drains. Used by ThreadManager to unwind a lingering session — one still
+   * alive past its first `result` because background tasks were pending —
+   * before starting the thread's next turn.
+   */
+  endInput(): void {
+    this.releaseInput();
+  }
 
   async run(
     prompt: string,
@@ -138,6 +158,11 @@ export class ClaudeSession {
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
+
+    const inputReleased = new Promise<void>((resolve) => {
+      this.releaseInputResolve = resolve;
+    });
+    this.inputOpen = true;
 
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
       try {
@@ -241,29 +266,42 @@ export class ClaudeSession {
 
     debugLog('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });
 
-    const promptArg: string | AsyncIterable<SDKUserMessage> =
-      images && images.length > 0
-        ? (async function* () {
-            yield {
-              type: 'user' as const,
-              parent_tool_use_id: null,
-              message: {
-                role: 'user' as const,
-                content: [
-                  ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
-                  ...images.map(img => ({
-                    type: 'image' as const,
-                    source: {
-                      type: 'base64' as const,
-                      media_type: img.mediaType,
-                      data: img.base64,
-                    },
-                  })),
-                ],
-              },
-            };
-          })()
-        : prompt;
+    // Always drive the SDK in streaming-input mode via a held-open async
+    // generator, for text-only turns as well as image turns. Passing a plain
+    // string sets the SDK's internal `isSingleUserTurn` flag, which force-
+    // closes stdin — the only channel carrying permission responses
+    // (canUseTool, AskUserQuestion, ExitPlanMode) — the instant the first
+    // `result` event arrives. That's fine for a single-generation turn, but
+    // once a background task keeps the CLI alive past the first result
+    // (routine now — see the pending-task tracking in the event loop below),
+    // every later permission round-trip gets force-rejected with a
+    // "Stream closed" error even though the CLI process is still running.
+    // Completing this generator is instead how *we* trigger
+    // `transport.endInput()` — deliberately, once no background tasks are
+    // pending — so the permission channel survives multi-generation turns.
+    const promptArg: AsyncIterable<SDKUserMessage> = (async function* () {
+      yield {
+        type: 'user' as const,
+        parent_tool_use_id: null,
+        message: {
+          role: 'user' as const,
+          content: images && images.length > 0
+            ? [
+                ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
+                ...images.map(img => ({
+                  type: 'image' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: img.mediaType,
+                    data: img.base64,
+                  },
+                })),
+              ]
+            : prompt,
+        },
+      };
+      await inputReleased;
+    })();
 
     let q: Query;
     try {
@@ -306,6 +344,24 @@ export class ClaudeSession {
     // TaskCreate tool_use ids → subject, awaiting the "Task #N created" result
     // so the create event carries the CLI-assigned task id.
     const pendingTaskCreates = new Map<string, string>();
+    // Task IDs currently running (any task_started — a backgrounded Bash
+    // command's task_type is 'local_bash' and does NOT set skip_transcript,
+    // so gating on that flag misses the common case). The input stream stays
+    // open across a `result` event as long as this is non-empty: the CLI
+    // process is still alive doing work, and whatever generation it streams
+    // next needs a working permission channel just as much as the first one
+    // did.
+    const pendingBgTaskIds = new Set<string>();
+    // A `task_notification` is the CLI's explicit "wake the model" signal for
+    // an out-of-band task completion (verified live: a background Bash task
+    // that finishes fast enough to notify *before* the first `result` still
+    // causes the CLI to stream a distinct follow-up generation afterward —
+    // pendingBgTaskIds is already empty by then, so it alone isn't a
+    // sufficient release signal). Require one full `result` with no new
+    // notification since the previous one before releasing, so a
+    // notification that arrives just ahead of a result gets a chance to
+    // actually produce its reaction before we close the channel it needs.
+    let sawTaskNotificationSinceLastResult = false;
 
     try {
       for await (const msg of q) {
@@ -399,6 +455,16 @@ export class ClaudeSession {
                 new Error(`Claude session ended: ${(msg as { subtype: string }).subtype}`),
               );
             }
+            // Only release the input stream (and let stdin close) once no
+            // background task is still running AND no task_notification
+            // landed in this same result window — re-checked on every
+            // subsequent `result` this loop sees. See the pendingBgTaskIds /
+            // sawTaskNotificationSinceLastResult declarations above for why
+            // both conditions are needed.
+            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult) {
+              this.releaseInput();
+            }
+            sawTaskNotificationSinceLastResult = false;
             break;
           }
 
@@ -414,6 +480,7 @@ export class ClaudeSession {
                 break;
               }
               case 'task_started':
+                pendingBgTaskIds.add(sys.task_id as string);
                 callbacks.onTaskStarted?.(
                   sys.task_id as string,
                   sys.description as string,
@@ -425,6 +492,9 @@ export class ClaudeSession {
                 break;
               case 'task_updated': {
                 const patch = sys.patch as Record<string, unknown>;
+                if (patch.status === 'completed' || patch.status === 'failed' || patch.status === 'killed') {
+                  pendingBgTaskIds.delete(sys.task_id as string);
+                }
                 callbacks.onTaskUpdated?.(
                   sys.task_id as string,
                   {
@@ -446,6 +516,8 @@ export class ClaudeSession {
                 }
                 break;
               case 'task_notification':
+                pendingBgTaskIds.delete(sys.task_id as string);
+                sawTaskNotificationSinceLastResult = true;
                 callbacks.onTaskNotification?.(
                   sys.task_id as string,
                   sys.status as 'completed' | 'failed' | 'stopped',
@@ -619,6 +691,11 @@ export class ClaudeSession {
     } finally {
       this.interrupted = false;
       this.activeQuery = null;
+      // Release the input generator unconditionally — a path that exits the
+      // loop without a `result` (e.g. a stream error before one ever
+      // arrives) would otherwise leave the generator's `await inputReleased`
+      // pending forever, leaking that promise and its resolver.
+      this.releaseInput();
       // Explicitly close the query so the SDK removes the subprocess wrapper from its
       // internal tracking Set (w7) and detaches exit/error listeners. Without this call,
       // every completed query leaks its ChildProcess wrapper and the closure chain it
@@ -637,6 +714,7 @@ export class ClaudeSession {
   }
 
   close(): void {
+    this.releaseInput();
     if (this.activeQuery) {
       this.activeQuery.close();
       this.activeQuery = null;
