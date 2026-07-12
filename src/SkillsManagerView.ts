@@ -51,6 +51,14 @@ interface InstalledAgent {
   content: string;
 }
 
+/**
+ * Electron's renderer `File` objects carry a non-standard absolute `.path`
+ * property (populated because this plugin runs with nodeIntegration on).
+ * Used by the folder/file import pickers to get a filesystem path instead of
+ * file contents.
+ */
+type ElectronFile = File & { path: string };
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 export function parseFrontmatter(content: string): { name: string; description: string } {
@@ -204,6 +212,10 @@ export class SkillsManagerView extends ItemView {
   private tabsEl!: HTMLElement;
   private listEl!: HTMLElement;
   private detailEl!: HTMLElement;
+  /** Hidden input used by the "Import Folder…" button in the Installed tab */
+  private importFolderInputEl!: HTMLInputElement;
+  /** Hidden input used by the "Import File (.skill)…" button in the Installed tab */
+  private importFileInputEl!: HTMLInputElement;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -289,6 +301,33 @@ export class SkillsManagerView extends ItemView {
     // Reset Obsidian's default button box-shadow in our root
     // (ct-skills-root button rule in styles.css handles this)
 
+    // Hidden file inputs backing the "Import Folder…" / "Import File (.skill)…"
+    // buttons in the Installed tab. `webkitdirectory` has no meaningful string
+    // value in HTML, so it's set directly via setAttribute rather than through
+    // createEl's attr map.
+    this.importFolderInputEl = root.createEl('input', { attr: { type: 'file' } });
+    this.importFolderInputEl.setAttribute('webkitdirectory', '');
+    this.importFolderInputEl.style.display = 'none';
+    this.importFolderInputEl.addEventListener('change', () => {
+      const files = this.importFolderInputEl.files;
+      const first = files?.[0] as ElectronFile | undefined;
+      this.importFolderInputEl.value = '';
+      if (!first || !first.path || !first.webkitRelativePath) return;
+      const folderPath = first.path.slice(0, first.path.length - first.webkitRelativePath.length);
+      void this.importSkillFromFolder(folderPath);
+    });
+
+    this.importFileInputEl = root.createEl('input', {
+      attr: { type: 'file', accept: '.skill,.zip' },
+    });
+    this.importFileInputEl.style.display = 'none';
+    this.importFileInputEl.addEventListener('change', () => {
+      const file = this.importFileInputEl.files?.[0] as ElectronFile | undefined;
+      this.importFileInputEl.value = '';
+      if (!file || !file.path) return;
+      void this.importSkillFromFile(file.path);
+    });
+
     // Tab bar
     this.tabsEl = root.createEl('div', { cls: 'ct-skills-tabs' });
     this.buildTabs();
@@ -371,9 +410,24 @@ export class SkillsManagerView extends ItemView {
     if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
     this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
 
+    // ── Import Skill action row (always shown, stable position) ─────────────
+    const importRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
+    const importFolderBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import Folder…' });
+    const importFolderIcon = importFolderBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
+    setIcon(importFolderIcon, 'folder-plus');
+    importFolderBtn.prepend(importFolderIcon);
+    importFolderBtn.addEventListener('click', () => this.importFolderInputEl.click());
+
+    const importFileBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import File (.skill)…' });
+    const importFileIcon = importFileBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
+    setIcon(importFileIcon, 'file-up');
+    importFileBtn.prepend(importFileIcon);
+    importFileBtn.addEventListener('click', () => this.importFileInputEl.click());
+
     // ── Check for Updates action row (only when GitHub sources are configured) ─
     if (githubSources.length > 0) {
       const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
+
       const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn', text: 'Check for updates' });
       const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
       setIcon(refreshIcon, 'refresh-cw');
@@ -1922,6 +1976,73 @@ export class SkillsManagerView extends ItemView {
     }
   }
 
+  /**
+   * Import a skill from a folder already on disk (picked via the folder input).
+   * No tmpdir/extraction needed — `importSkillFromPath` locates and copies
+   * directly from `folderPath`. Follows the same Notice/reload/re-render
+   * pattern as `installSkill`.
+   */
+  private async importSkillFromFolder(folderPath: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+
+    try {
+      const { name } = await importSkillFromPath(folderPath, skillsDir, fs, path);
+      new Notice(`Imported ${name}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Import failed: ${msg}`);
+      console.error('[ClaudeThreads] Skill folder import failed:', err);
+    } finally {
+      void this.loadInstalledSkills();
+      this.renderList();
+    }
+  }
+
+  /**
+   * Import a skill from a packaged `.skill`/`.zip` archive (picked via the file
+   * input). Extracts to a tmpdir with `extractZipToDir`, then reuses the same
+   * `importSkillFromPath` core as the folder import. Follows the same
+   * tmpdir-cleanup/Notice/reload pattern as `installSkill`.
+   */
+  private async importSkillFromFile(filePath: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os');
+
+    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+    const tmpDir = path.join(os.tmpdir(), `ct-skill-${Date.now()}`);
+
+    try {
+      await extractZipToDir(filePath, tmpDir);
+      const { name } = await importSkillFromPath(tmpDir, skillsDir, fs, path);
+      new Notice(`Imported ${name}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Import failed: ${msg}`);
+      console.error('[ClaudeThreads] Skill file import failed:', err);
+    } finally {
+      // Clean up temp dir (best-effort)
+      try {
+        if (fs.existsSync(tmpDir)) {
+          await fs.promises.rm(tmpDir, { recursive: true, force: true });
+        }
+      } catch { /* ignore */ }
+
+      void this.loadInstalledSkills();
+      this.renderList();
+    }
+  }
+
 }
 
 // ── Skill Install Helpers ────────────────────────────────────────────────────
@@ -2005,4 +2126,90 @@ export async function findSkillDir(
 
   // 5. Fallback: first found
   return candidates[0] ?? null;
+}
+
+// ── Skill Import (folder / .skill archive) Helpers ────────────────────────────
+
+/**
+ * Slugify a skill's display name into an install-directory-safe id: lowercase,
+ * runs of non-alphanumeric characters collapsed to a single hyphen, and
+ * leading/trailing hyphens trimmed.
+ *
+ * Used for manually-imported skills (folder or .skill/.zip file), which have no
+ * canonical registry `skillId` the way skills.sh browse results do.
+ */
+export function deriveSkillId(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Extract a zip archive to `destDir` using the pure-JS `adm-zip` library (no
+ * shelling out to `unzip`/`tar`/`ditto`).
+ *
+ * Even though adm-zip sanitizes entry paths internally before writing, this
+ * wrapper adds an explicit zip-slip guard as defense-in-depth for user-supplied
+ * archives: every entry's resolved absolute path is checked to stay under
+ * `destDir` *before* any extraction happens. If any entry would escape, the
+ * whole extraction is aborted (nothing is written).
+ */
+export async function extractZipToDir(zipPath: string, destDir: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const AdmZip = require('adm-zip') as typeof import('adm-zip');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require('path') as typeof import('path');
+
+  const zip = new AdmZip(zipPath);
+  const resolvedDest = path.resolve(destDir);
+
+  for (const entry of zip.getEntries()) {
+    const resolvedEntry = path.resolve(resolvedDest, entry.entryName);
+    if (resolvedEntry !== resolvedDest && !resolvedEntry.startsWith(resolvedDest + path.sep)) {
+      throw new Error(`Zip entry "${entry.entryName}" would extract outside the destination directory`);
+    }
+  }
+
+  await zip.extractAllToAsync(destDir, true, false);
+}
+
+/**
+ * Shared core of both manual-import flows (folder picker and .skill/.zip file
+ * picker). `sourceDir` is a directory already on disk (either the user-picked
+ * folder, or a tmpdir a zip was already extracted into) that is expected to
+ * contain a SKILL.md somewhere inside it.
+ *
+ * Exported so it can be unit-tested without instantiating the full ItemView.
+ */
+export async function importSkillFromPath(
+  sourceDir: string,
+  skillsDir: string,
+  fs: typeof import('fs'),
+  path: typeof import('path'),
+  fallbackName?: string,
+): Promise<{ id: string; name: string; targetDir: string }> {
+  const locatedDir = await findSkillDir(sourceDir, '', '', fs, path);
+  if (!locatedDir) {
+    throw new Error('No SKILL.md found in the selected folder/file');
+  }
+
+  let name = fallbackName ?? path.basename(locatedDir);
+  try {
+    const raw = fs.readFileSync(path.join(locatedDir, 'SKILL.md'), 'utf-8');
+    const { name: frontmatterName } = parseFrontmatter(raw);
+    if (frontmatterName) name = frontmatterName;
+  } catch { /* fall back to fallbackName / dir basename */ }
+
+  const id = deriveSkillId(name);
+  const targetDir = path.join(skillsDir, id);
+
+  if (fs.existsSync(targetDir)) {
+    throw new Error(`A skill named "${id}" is already installed`);
+  }
+
+  await fs.promises.mkdir(skillsDir, { recursive: true });
+  await copySkillFiles(locatedDir, targetDir);
+
+  return { id, name, targetDir };
 }

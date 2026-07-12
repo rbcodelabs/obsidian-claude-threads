@@ -24,6 +24,9 @@ const sharedConfig = {
     // electron is used in dynamic require() calls inside click handlers;
     // inject a no-op so those code paths don't crash when reached in tests.
     'electron':                         resolve('./mocks/electron.ts'),
+    // adm-zip pulls in Node's zlib/crypto internally, which the browser
+    // platform target can't resolve — stub it out (see mocks/adm-zip.ts).
+    'adm-zip':                          resolve('./mocks/adm-zip.ts'),
     '@anthropic-ai/claude-agent-sdk':   resolve('./mocks/claude-sdk.ts'),
   },
   define: {
