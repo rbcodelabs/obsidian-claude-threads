@@ -9,6 +9,16 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
+/**
+ * Safety cap on how long a session may linger past its first `result` while
+ * waiting for background tasks to finish streaming further generations. On
+ * expiry we end the input stream so the CLI can exit; the existing
+ * pendingBackgroundTasks poll remains the fallback for any task that outlives
+ * this window. Strictly better than the pre-fix behavior, where every session
+ * was force-torn-down at the first result regardless of pending tasks.
+ */
+const LINGER_MAX_MS = 10 * 60 * 1000;
+
 export type ThreadEvent =
   | { type: 'token'; text: string }
   | { type: 'tool_use'; record: ToolCallRecord }
@@ -95,6 +105,18 @@ export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
   private projects: Map<string, Project> = new Map();
   private sessions: Map<string, ClaudeSession> = new Map();
+  /**
+   * Sessions whose first `result` has already been handled (onDone fired,
+   * thread.status updated, `sessions` entry removed — the thread UI looks
+   * idle) but whose underlying `run()` call hasn't resolved yet, because a
+   * background task is still keeping the CLI subprocess alive to stream a
+   * further generation. Tracked separately so `sendMessage()` can gracefully
+   * unwind the old process (rather than starting a second one that resumes
+   * the same session id) and so `interrupt()` can still reach it.
+   */
+  private lingeringSessions: Map<string, ClaudeSession> = new Map();
+  /** LINGER_MAX_MS safety-cap timers, keyed by thread id. */
+  private lingerTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private queuedMessages: Map<string, { text: string; images?: ImageAttachment[] }[]> = new Map();
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
@@ -264,6 +286,16 @@ export class ThreadManager {
       session.close();
       this.sessions.delete(id);
     }
+    const lingering = this.lingeringSessions.get(id);
+    if (lingering) {
+      lingering.close();
+      this.lingeringSessions.delete(id);
+    }
+    const lingerTimer = this.lingerTimers.get(id);
+    if (lingerTimer) {
+      clearTimeout(lingerTimer);
+      this.lingerTimers.delete(id);
+    }
     this.queuedMessages.delete(id);
     this.threadActivity.delete(id);
     this.threads.delete(id);
@@ -423,15 +455,15 @@ export class ThreadManager {
   }
 
   isRunning(id: string): boolean {
-    return this.sessions.has(id);
+    return this.sessions.has(id) || this.lingeringSessions.has(id);
   }
 
   /**
-   * Returns all threads that currently have an active Claude session.
-   * Used by the safe-reload guard to enumerate what would be killed.
+   * Returns all threads that currently have an active or lingering Claude
+   * session. Used by the safe-reload guard to enumerate what would be killed.
    */
   getRunningThreads(): Thread[] {
-    return this.getThreads().filter((t) => this.sessions.has(t.id));
+    return this.getThreads().filter((t) => this.sessions.has(t.id) || this.lingeringSessions.has(t.id));
   }
 
   hasPendingPermission(threadId: string): boolean {
@@ -602,6 +634,16 @@ export class ThreadManager {
       this.queuedMessages.set(threadId, queue);
       this.emit(threadId, { type: 'queued', text: userText, images });
       return;
+    }
+
+    // A prior turn's session may still be alive-but-lingering (its first
+    // `result` already landed and the thread looks idle, but a background
+    // task is keeping the CLI process around for a further generation).
+    // Unwind it before spawning a new session so two processes never resume
+    // the same session id concurrently.
+    const lingering = this.lingeringSessions.get(threadId);
+    if (lingering) {
+      await this.unwindLingeringSession(threadId, lingering);
     }
 
     thread.lastError = undefined;
@@ -822,6 +864,24 @@ export class ThreadManager {
           this.sessions.delete(threadId);
           this.threadActivity.delete(threadId);
           completedSuccessfully = true;
+
+          // The thread now looks idle (status 'waiting', no `sessions` entry),
+          // but `run()` hasn't resolved yet — if a background task is still
+          // running, the CLI process stays alive to stream a further
+          // generation, and that generation needs canUseTool/AskUserQuestion/
+          // ExitPlanMode to keep working. Track the session as lingering until
+          // run() actually returns (cleared just after the `await` below) so
+          // sendMessage() and interrupt() can still find it.
+          this.lingeringSessions.set(threadId, session);
+          if (!this.lingerTimers.has(threadId)) {
+            const timer = setTimeout(() => {
+              this.lingerTimers.delete(threadId);
+              if (this.lingeringSessions.get(threadId) === session) {
+                session.endInput();
+              }
+            }, LINGER_MAX_MS);
+            this.lingerTimers.set(threadId, timer);
+          }
 
           // Safety net: if a pending plan somehow survived to onDone (e.g. the
           // session completed without user action), clear it so a stale card
@@ -1044,6 +1104,18 @@ export class ThreadManager {
       this.buildSessionOptions(thread),
     );
 
+    // run() has now fully unwound (loop ended, finally: releaseInput()+q.close()
+    // ran) — this session generation is no longer lingering, regardless of
+    // which path (onDone/onInterrupted/onError) it took to get here.
+    if (this.lingeringSessions.get(threadId) === session) {
+      this.lingeringSessions.delete(threadId);
+    }
+    const lingerTimer = this.lingerTimers.get(threadId);
+    if (lingerTimer) {
+      clearTimeout(lingerTimer);
+      this.lingerTimers.delete(threadId);
+    }
+
     if (transportRetryPrompt) {
       // Mirrors the queue-drain self-recursion below: only fires after the
       // failed session's run() call (and its finally: q.close()) has fully
@@ -1059,6 +1131,30 @@ export class ThreadManager {
         if (queue.length === 0) this.queuedMessages.delete(threadId);
         this.emit(threadId, { type: 'dequeued', text: next.text, images: next.images });
         await this.sendMessage(threadId, next.text, next.images);
+      }
+    }
+  }
+
+  /**
+   * Gracefully ends a lingering session's input stream and waits briefly for
+   * its `run()` call to unwind (which clears it from `lingeringSessions`).
+   * Falls back to a hard `close()` if it hasn't unwound within `timeoutMs` —
+   * better to force-kill a slow-draining process than to let two CLI
+   * processes resume the same session id concurrently.
+   */
+  private async unwindLingeringSession(threadId: string, session: ClaudeSession, timeoutMs = 5_000): Promise<void> {
+    session.endInput();
+    const deadline = Date.now() + timeoutMs;
+    while (this.lingeringSessions.get(threadId) === session && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    if (this.lingeringSessions.get(threadId) === session) {
+      session.close();
+      this.lingeringSessions.delete(threadId);
+      const timer = this.lingerTimers.get(threadId);
+      if (timer) {
+        clearTimeout(timer);
+        this.lingerTimers.delete(threadId);
       }
     }
   }
@@ -1216,7 +1312,10 @@ export class ThreadManager {
   }
 
   async interrupt(threadId: string): Promise<void> {
-    const session = this.sessions.get(threadId);
+    // Fall back to a lingering session (result already landed, `sessions`
+    // entry already removed, but the CLI is still streaming a background-
+    // task-driven generation) so Stop still works during generation 2+.
+    const session = this.sessions.get(threadId) ?? this.lingeringSessions.get(threadId);
     if (session) {
       await session.interrupt();
     }
@@ -1260,8 +1359,8 @@ export class ThreadManager {
    *                   Defaults to 10 000 (10 seconds).
    */
   async gracefulShutdown(timeoutMs = 10_000): Promise<{ timedOut: boolean }> {
-    const running = Array.from(this.sessions.keys());
-    if (running.length === 0) return { timedOut: false };
+    const running = new Set([...this.sessions.keys(), ...this.lingeringSessions.keys()]);
+    if (running.size === 0) return { timedOut: false };
 
     // Fire interrupt signals in parallel — errors are non-fatal.
     // We deliberately do NOT await these: interrupt() may not resolve until the
@@ -1272,14 +1371,15 @@ export class ThreadManager {
       this.interrupt(id).catch(() => {});
     }
 
-    // Poll until all sessions have self-removed (their 'done' / 'interrupted'
-    // callbacks call sessions.delete()) or we hit the deadline.
+    // Poll until all sessions (active and lingering) have self-removed (their
+    // 'done' / 'interrupted' callbacks and post-run() cleanup delete them) or
+    // we hit the deadline.
     const deadline = Date.now() + timeoutMs;
-    while (this.sessions.size > 0 && Date.now() < deadline) {
+    while ((this.sessions.size > 0 || this.lingeringSessions.size > 0) && Date.now() < deadline) {
       await new Promise<void>((resolve) => setTimeout(resolve, 200));
     }
 
-    const timedOut = this.sessions.size > 0;
+    const timedOut = this.sessions.size > 0 || this.lingeringSessions.size > 0;
     return { timedOut };
   }
 
@@ -1288,6 +1388,14 @@ export class ThreadManager {
       session.close();
     }
     this.sessions.clear();
+    for (const session of this.lingeringSessions.values()) {
+      session.close();
+    }
+    this.lingeringSessions.clear();
+    for (const timer of this.lingerTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.lingerTimers.clear();
   }
 }
 

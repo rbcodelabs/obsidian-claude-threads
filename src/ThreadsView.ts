@@ -1800,11 +1800,28 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  /**
+   * Anchor point for inline cards (permission, question, plan, elicitation,
+   * context usage, tool-result images): the active streaming element so the
+   * card sits visually inside the current response turn, falling back to
+   * messagesEl.
+   *
+   * `streamingEl` is cleared to null once a turn finalizes, but a reference
+   * to it can still be held by an async callback (e.g. `onPlanReady` firing
+   * after the assistant message that triggered it has already finalized and
+   * been removed from the DOM). Checking `isConnected` catches that stale-
+   * but-non-null case — without it the card would render into a detached
+   * node and never become visible.
+   */
+  private cardContainer(): HTMLElement {
+    return this.streamingEl?.isConnected ? this.streamingEl : this.messagesEl;
+  }
+
   private renderPermissionCard(toolName: string, detail: string, done: (allow: boolean) => void): HTMLElement {
     // Anchor inside the active streaming element so the card sits visually
     // inside the current response turn rather than floating as a sibling that
     // can overlap the tool-pill list above it.
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-permission-card');
 
     const header = card.createDiv('ct-permission-header');
@@ -1844,7 +1861,7 @@ export class ThreadsView extends ItemView {
     questions: AskQuestion[],
     done: (answers: Record<string, string>) => void,
   ): HTMLElement {
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-question-card');
 
     const header = card.createDiv('ct-question-card-header');
@@ -1944,7 +1961,7 @@ export class ThreadsView extends ItemView {
     approve: (editedPlan?: string) => void,
     reject: () => void,
   ): HTMLElement {
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-plan-card');
 
     const header = card.createDiv('ct-plan-header');
@@ -2028,7 +2045,9 @@ export class ThreadsView extends ItemView {
   private restorePendingPlanCard(): void {
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
-    if (!thread?.pendingPlan) return;
+    // Explicit undefined check — pendingPlan is a string, so a falsy check
+    // here would treat an (unlikely but possible) empty-string plan as absent.
+    if (thread?.pendingPlan === undefined) return;
     // Avoid duplicating the card if it's already visible.
     if (this.messagesEl.querySelector('.ct-plan-card')) return;
 
@@ -2131,7 +2150,7 @@ export class ThreadsView extends ItemView {
     signal: AbortSignal,
     respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
   ): void {
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-elicitation-card');
 
     const header = card.createDiv('ct-elicitation-header');
@@ -2181,7 +2200,7 @@ export class ThreadsView extends ItemView {
     signal: AbortSignal,
     respond: (r: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void,
   ): void {
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-elicitation-card');
 
     const header = card.createDiv('ct-elicitation-header');
@@ -2252,7 +2271,7 @@ export class ThreadsView extends ItemView {
   private renderContextUsageCard(
     usage: import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse,
   ): void {
-    const container = this.streamingEl ?? this.messagesEl;
+    const container = this.cardContainer();
     const card = container.createDiv('ct-context-usage-card');
 
     const header = card.createDiv('ct-context-usage-header');
@@ -2805,7 +2824,7 @@ export class ThreadsView extends ItemView {
 
       case 'tool_result_images': {
         // Render inline images returned by tool results (e.g. Read tool on a PNG).
-        const container = this.streamingEl ?? this.messagesEl;
+        const container = this.cardContainer();
         const imgWrap = container.createDiv('ct-tool-result-images');
         for (const img of event.images) {
           imgWrap.createEl('img', {
