@@ -1496,6 +1496,55 @@
   color: var(--color-red);
 }
 
+/* Active-loop banner (above the input row) */
+.ct-loop-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-purple, #a882ff) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-purple, #a882ff) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-loop-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.ct-loop-banner-icon {
+  margin-right: 2px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ct-loop-banner-stop {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  padding: 2px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-loop-banner-stop:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
 /* Edited-files card */
 .ct-edited-files {
   padding: 4px 8px;

@@ -9,11 +9,36 @@ const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/cla
 const manager = new ThreadManager(settings);
 manager.loadThreads(fixtureThreads);
 
+// Minimal scheduler mock — ThreadsView reads this for the /loop footer pill
+// and banner (renderStatusFooter / refreshLoopBanner). No fixture thread has
+// a loop by default, so listItems() starts empty; tests that need to
+// exercise the loop UI can call __setLoop below.
+const loopItems = new Map<string, { id: string; targetThreadId: string; prompt: string; schedule: { type: 'interval'; intervalSeconds: number }; enabled: boolean; nextRun?: number }>();
+const mockScheduler = {
+  listItems: () => [...loopItems.values()],
+  createItem: (params: any) => {
+    const item = { ...params, id: `loop-${loopItems.size + 1}` };
+    loopItems.set(item.id, item);
+    return item;
+  },
+  deleteItem: (id: string) => {
+    loopItems.delete(id);
+  },
+  updateItem: (id: string, patch: any) => {
+    const existing = loopItems.get(id);
+    if (!existing) throw new Error(`Scheduled item not found: ${id}`);
+    const updated = { ...existing, ...patch };
+    loopItems.set(id, updated);
+    return updated;
+  },
+};
+
 const mockPlugin = {
   app: (mockLeaf as any).app,
   settings,
   manager,
   persistence: null,
+  scheduler: mockScheduler,
   summarizer: { summarize: async () => ({ title: '', summary: '' }) },
   inProcessSummarizer: {
     summarize: async () => ({ title: '', summary: '' }),
@@ -29,6 +54,18 @@ const mockPlugin = {
     pendingWakeups.delete(threadId);
     manager.notifyWakeupChanged(threadId);
   },
+};
+
+// Expose for Playwright — lets screenshot tests seed a loop for a thread.
+(window as any).__setLoop = (threadId: string, prompt: string, intervalSeconds: number) => {
+  mockScheduler.createItem({
+    name: `Loop: ${prompt.slice(0, 40)}`,
+    prompt,
+    schedule: { type: 'interval', intervalSeconds },
+    enabled: true,
+    targetThreadId: threadId,
+    nextRun: Date.now() + intervalSeconds * 1000,
+  });
 };
 
 // Mutable wake-up state so screenshot tests can drive the waiting indicator

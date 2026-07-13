@@ -30,6 +30,13 @@ export interface SchedulerOptions {
    * fall back to creating a new one. Optional for backwards compatibility.
    */
   threadExists?: (threadId: string) => boolean;
+  /**
+   * Returns true when a thread with the given ID is still busy processing a
+   * previous turn. Used to defer firing a loop item into a thread that
+   * hasn't finished its last cycle yet, so ticks don't pile up as queued
+   * duplicates. Optional for backwards compatibility.
+   */
+  isThreadBusy?: (threadId: string) => boolean;
 }
 
 export class Scheduler {
@@ -178,6 +185,19 @@ export class Scheduler {
         (this.options.threadExists?.(current.targetThreadId) ?? false)
           ? current.targetThreadId
           : undefined;
+
+      if (reuseTarget && this.options.isThreadBusy?.(reuseTarget)) {
+        // The thread's previous turn hasn't finished yet. Retry shortly
+        // instead of sending — do not touch lastRun/nextRun or call
+        // armTimer, since this isn't a completed cycle.
+        const retryMs = Math.min(15_000, (current.schedule.intervalSeconds ?? 60) * 1000);
+        const id = window.setTimeout(() => {
+          this.fire(current).catch(console.error);
+        }, retryMs) as unknown as number;
+        this.timers.set(item.id, id);
+        return;
+      }
+
       if (reuseTarget) {
         await this.options.sendMessage(reuseTarget, current.prompt);
         current.lastThreadId = reuseTarget;

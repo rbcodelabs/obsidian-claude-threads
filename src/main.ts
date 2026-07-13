@@ -562,6 +562,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),
+      isThreadBusy: (threadId) => this.manager.isRunning(threadId),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
