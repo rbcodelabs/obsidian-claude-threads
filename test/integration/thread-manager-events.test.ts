@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
@@ -12,6 +12,7 @@ const mock = vi.hoisted(() => ({
   images: null as import('../../src/types').ImageAttachment[] | undefined,
   resolve: null as (() => void) | null,
   resumeSessionId: undefined as string | undefined,
+  runCallCount: 0,
 }));
 
 vi.mock('../../src/ClaudeSession', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../src/ClaudeSession', () => ({
       mock.model = model;
       mock.images = images;
       mock.resumeSessionId = resumeSessionId;
+      mock.runCallCount += 1;
       return new Promise<void>((res) => { mock.resolve = res; });
     }
     close() {}
@@ -45,6 +47,7 @@ vi.mock('../../src/ClaudeSession', () => ({
 
 // Import AFTER vi.mock so the mock is in place
 const { ThreadManager } = await import('../../src/ThreadManager');
+const { Scheduler } = await import('../../src/Scheduler');
 
 function makeManager(overrides = {}) {
   return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
@@ -66,6 +69,7 @@ beforeEach(() => {
   mock.images = null;
   mock.resolve = null;
   mock.resumeSessionId = undefined;
+  mock.runCallCount = 0;
 });
 
 describe('send message → event flow', () => {
@@ -701,5 +705,76 @@ describe('interrupt / stop behavior', () => {
     // Queue cleared, dequeued never fired
     expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
     expect(events.find(e => e.type === 'dequeued')).toBeUndefined();
+  });
+});
+
+describe('Scheduler + ThreadManager: busy-thread dedup on loop tick', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    (globalThis as Record<string, unknown>).window = globalThis;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it('defers a loop tick that arrives while the kickoff turn is still running', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    const scheduler = new Scheduler({
+      getItems: () => [],
+      saveItem: async () => {},
+      removeItem: async () => {},
+      createThread: () => ({ id: 'unused' }),
+      sendMessage: (id, prompt) => manager.sendMessage(id, prompt),
+      getDefaultCwd: () => os.tmpdir(),
+      threadExists: (id) => id === thread.id,
+      isThreadBusy: (id) => manager.isRunning(id),
+    });
+    scheduler.start([]);
+
+    // Simulate Fix 1's immediate kickoff: a message is sent right away and is
+    // still in flight (ClaudeSession.run has not resolved).
+    const kickoff = manager.sendMessage(thread.id, 'kickoff prompt');
+    expect(manager.isRunning(thread.id)).toBe(true);
+    expect(mock.runCallCount).toBe(1);
+
+    scheduler.createItem({
+      name: 'Loop: recurring',
+      prompt: 'loop prompt',
+      schedule: { type: 'interval', intervalSeconds: 10 },
+      enabled: true,
+      targetThreadId: thread.id,
+    });
+
+    // The interval elapses while the kickoff turn is still running. The tick
+    // must be deferred (retried) rather than firing a second sendMessage
+    // that would queue as a duplicate turn.
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(mock.runCallCount).toBe(1);
+    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+
+    // Finish the kickoff turn — the thread becomes free.
+    const cb = mock.callbacks!;
+    cb.onToken('kickoff done');
+    cb.onMessage('kickoff done', []);
+    cb.onDone('sess-1', 0.001, 1);
+    mock.resolve!();
+    await kickoff;
+    expect(manager.isRunning(thread.id)).toBe(false);
+
+    // The scheduler's retry (capped at 15s) should now find the thread free
+    // and send the loop prompt exactly once.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mock.runCallCount).toBe(2);
+    expect(mock.prompt).toBe('loop prompt');
+    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+
+    // Clean up the still-running loop turn so the test doesn't leak a
+    // dangling promise.
+    await manager.interrupt(thread.id);
+    scheduler.destroy();
   });
 });

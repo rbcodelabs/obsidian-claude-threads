@@ -91,6 +91,26 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('wakeup-banner.png', { fullPage: true });
   });
 
+  test('active loop banner and footer pill', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.waitForTimeout(200);
+    // Seed a loop targeting the active thread — mirrors what /loop 5m ... does.
+    await page.evaluate(() => {
+      (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
+      (window as any).__view.renderThreadInfo();
+    });
+    await page.waitForSelector('.ct-loop-banner:not(.ct-hidden)');
+    await expect(page.locator('.ct-loop-banner')).toContainText('Looping every 5m');
+    await expect(page.locator('.ct-loop-banner-stop')).toBeVisible();
+    await expect(page.locator('.ct-footer-pill')).toContainText('Looping every 5m');
+    await expect(page).toHaveScreenshot('loop-banner.png', { fullPage: true });
+  });
+
   test('fork conversation menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

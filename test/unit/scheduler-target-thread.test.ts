@@ -97,3 +97,120 @@ describe('Scheduler targetThreadId (loops)', () => {
     scheduler.destroy();
   });
 });
+
+describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
+  it('skips sending and retries when the target thread is busy', async () => {
+    const { options, sendMessage } = makeOptions({
+      threadExists: (id) => id === 'thread-1',
+      isThreadBusy: () => true,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    const item = scheduler.createItem({
+      name: 'Loop: check build',
+      prompt: 'check the build',
+      schedule: { type: 'interval', intervalSeconds: 60 },
+      enabled: true,
+      targetThreadId: 'thread-1',
+    });
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(scheduler.getItem(item.id)?.lastRun).toBeUndefined();
+    // A retry timer should be registered under the same item id.
+    expect((scheduler as unknown as { timers: Map<string, number> }).timers.size).toBe(1);
+
+    scheduler.destroy();
+  });
+
+  it('retries and sends once the thread frees up', async () => {
+    let busy = true;
+    const { options, sendMessage } = makeOptions({
+      threadExists: (id) => id === 'thread-1',
+      isThreadBusy: () => busy,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    scheduler.createItem({
+      name: 'Loop: check build',
+      prompt: 'check the build',
+      schedule: { type: 'interval', intervalSeconds: 60 },
+      enabled: true,
+      targetThreadId: 'thread-1',
+    });
+
+    // First tick: thread busy, retry armed (retryMs = min(15s, 60s) = 15s).
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Still busy through the first retry window.
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Thread frees up; next retry should succeed.
+    busy = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith('thread-1', 'check the build');
+
+    scheduler.destroy();
+  });
+
+  it('cancels the pending busy-retry when the item is deleted', async () => {
+    const { options, sendMessage } = makeOptions({
+      threadExists: (id) => id === 'thread-1',
+      isThreadBusy: () => true,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    const item = scheduler.createItem({
+      name: 'Loop: check build',
+      prompt: 'check the build',
+      schedule: { type: 'interval', intervalSeconds: 60 },
+      enabled: true,
+      targetThreadId: 'thread-1',
+    });
+
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect((scheduler as unknown as { timers: Map<string, number> }).timers.size).toBe(1);
+
+    scheduler.deleteItem(item.id);
+
+    // deleteItem must clear the pending retry timer, not just the item.
+    expect((scheduler as unknown as { timers: Map<string, number> }).timers.size).toBe(0);
+
+    // Advance well past when the retry (and any subsequent retries) would
+    // have fired if the timer had leaked.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    scheduler.destroy();
+  });
+
+  it('does not consult isThreadBusy for non-loop items (no targetThreadId)', async () => {
+    const { options, sendMessage, createThread } = makeOptions({
+      isThreadBusy: () => true,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    scheduler.createItem({
+      name: 'One-off reminder',
+      prompt: 'do the thing',
+      schedule: { type: 'interval', intervalSeconds: 60 },
+      enabled: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(createThread).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith('new-thread', 'do the thing');
+
+    scheduler.destroy();
+  });
+});

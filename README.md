@@ -137,8 +137,8 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/model` | Show the current model for this thread |
 | `/goal <text>` | Set a persistent goal for this thread — injected into every turn until cleared |
 | `/goal clear` | Clear the thread's goal (`/goal` alone shows the current goal) |
-| `/loop <interval> <prompt>` | Re-run a prompt in this thread on an interval (e.g. `/loop 10m check CI`) |
-| `/loop stop` | Stop the thread's loops (`/loop` alone lists them) |
+| `/loop <interval> <prompt>` | Send a prompt now and re-run it on an interval (e.g. `/loop 10m check CI`); replaces any loop already running on this thread |
+| `/loop stop` | Stop the thread's loop (`/loop` alone shows it) |
 | `/compact` | Summarize conversation history to free up context window |
 | `/clear` | Clear conversation history and start a fresh session |
 | `/cost` | Show token usage and cost for the current session |
@@ -208,7 +208,16 @@ The active model is shown as a badge in the thread info bar. You can also use `/
 /loop 10 check CI                    → bare numbers mean minutes
 ```
 
-Intervals below 30 seconds are clamped to 30s. Loops run on the plugin's built-in scheduler, so they **persist across plugin reloads and Obsidian restarts**. A thread can have multiple loops. `/loop` alone lists the thread's loops with their next run time; `/loop stop` (or `off`/`cancel`/`clear`) stops them.
+Like `/goal`, starting a loop sends the prompt immediately — you don't wait for the
+first interval to elapse. Intervals below 30 seconds are clamped to 30s. Loops run on
+the plugin's built-in scheduler, so they **persist across plugin reloads and Obsidian
+restarts**. If a loop tick arrives before the thread's previous turn has finished, it's
+retried shortly after rather than piling up as a queued duplicate. A thread can only
+have one active loop at a time — starting a new `/loop` replaces whichever loop was
+already running there. `/loop` alone lists the thread's loop with its next run time;
+`/loop stop` (or `off`/`cancel`/`clear`) stops it. While a loop is active, a banner
+above the input shows its status ("Loop running…" or the next run time) with a **Stop**
+button, and a matching pill appears in the thread's status footer.
 
 ### Dispatching with commands
 

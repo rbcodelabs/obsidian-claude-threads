@@ -116,6 +116,10 @@ export class ThreadsView extends ItemView {
   private wakeupCountdownEl: HTMLElement | null = null;
   private wakeupCountdownTimer: ReturnType<typeof setInterval> | null = null;
 
+  // Active-loop banner (shown above the input when the active thread has a
+  // running /loop). No ticking timer — refreshed on explicit state changes.
+  private loopBannerEl!: HTMLElement;
+
   // (status rail state tracked via activeWorkCardEl / rateLimitCardEl / toastEl fields above)
 
   // Project indicator pill (near input)
@@ -458,6 +462,7 @@ export class ThreadsView extends ItemView {
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
     this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
+    this.loopBannerEl = panelContext.createDiv('ct-loop-banner ct-hidden');
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
     this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
@@ -838,7 +843,22 @@ export class ThreadsView extends ItemView {
       this.renderFooterPill(tag, tag.kind === 'pr' ? 'ct-footer-pill-pr' : undefined);
     }
 
-    const empty = !prUrl && tags.length === 0;
+    // Synthesized loop pill: shown whenever the active thread has a running
+    // /loop, independent of statusTags (which are populated by the external
+    // status-line command, not the built-in scheduler).
+    const activeLoops = this.activeThreadId
+      ? this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === this.activeThreadId)
+      : [];
+    if (activeLoops.length > 0) {
+      const secs = activeLoops[0].schedule.intervalSeconds ?? 0;
+      this.renderFooterPill({
+        label: `Looping every ${formatLoopInterval(secs)}`,
+        icon: 'repeat',
+        kind: 'loop',
+      });
+    }
+
+    const empty = !prUrl && tags.length === 0 && activeLoops.length === 0;
     this.contextFooterEl.toggleClass('ct-hidden', empty);
   }
 
@@ -1105,6 +1125,10 @@ export class ThreadsView extends ItemView {
 
     // Re-render queue rows in case the thread changed.
     this.renderQueueRows();
+
+    // Loop banner/pill depend on the active thread — refresh on every switch.
+    this.refreshLoopBanner();
+    this.renderStatusFooter();
   }
 
   /**
@@ -3186,6 +3210,8 @@ export class ThreadsView extends ItemView {
     this.renderQueueRows();
     // A running thread can't simultaneously be waiting on a wake-up.
     this.refreshWakeupBanner();
+    // "Loop running…" vs "next ~HH:MM" depends on run state.
+    this.refreshLoopBanner();
   }
 
   // ── Scheduled wake-up banner ────────────────────────────────────────────
@@ -3225,6 +3251,55 @@ export class ThreadsView extends ItemView {
     });
 
     this.startWakeupCountdown();
+  }
+
+  // ── Loop banner ──────────────────────────────────────────────────────────
+  /**
+   * Show/hide the loop banner for the active thread and (re)build its
+   * contents. Called on thread switch, loop create/stop, and run-state
+   * change. Unlike the wake-up banner, there's no ticking countdown here —
+   * "Loop running…" vs "next ~HH:MM" is only recomputed on explicit refresh.
+   */
+  private refreshLoopBanner(): void {
+    if (!this.loopBannerEl) return;
+    const threadId = this.activeThreadId;
+    const loop = threadId
+      ? this.plugin.scheduler.listItems().find((i) => i.targetThreadId === threadId)
+      : undefined;
+
+    if (!loop) {
+      this.loopBannerEl.addClass('ct-hidden');
+      this.loopBannerEl.empty();
+      return;
+    }
+
+    this.loopBannerEl.empty();
+    this.loopBannerEl.removeClass('ct-hidden');
+
+    const text = this.loopBannerEl.createSpan({ cls: 'ct-loop-banner-text' });
+    const iconEl = text.createSpan({ cls: 'ct-loop-banner-icon' });
+    setIcon(iconEl, 'repeat');
+
+    if (threadId && this.manager.isRunning(threadId)) {
+      text.createSpan({ text: ' Loop running…' });
+    } else {
+      const next = loop.nextRun ? new Date(loop.nextRun) : null;
+      const label = next
+        ? `next ~${next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+        : 'next run pending';
+      text.createSpan({ text: ` Looping every ${formatLoopInterval(loop.schedule.intervalSeconds ?? 0)} — ${label}` });
+    }
+
+    const stop = this.loopBannerEl.createEl('button', { cls: 'ct-loop-banner-stop', text: 'Stop' });
+    stop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!threadId) return;
+      const loops = this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
+      for (const l of loops) this.plugin.scheduler.deleteItem(l.id);
+      this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
+      this.refreshLoopBanner();
+      this.renderStatusFooter();
+    });
   }
 
   private startWakeupCountdown(): void {
@@ -3343,6 +3418,8 @@ export class ThreadsView extends ItemView {
       }
       for (const loop of loops) this.plugin.scheduler.deleteItem(loop.id);
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
+      this.refreshLoopBanner();
+      this.renderStatusFooter();
       return;
     }
 
@@ -3355,6 +3432,11 @@ export class ThreadsView extends ItemView {
       return;
     }
 
+    // Replace, not stack: a thread can only have one active loop. Delete any
+    // existing loop(s) targeting this thread before creating the new one.
+    const existing = loopsForThread();
+    for (const loop of existing) this.plugin.scheduler.deleteItem(loop.id);
+
     const thread = this.manager.getThread(threadId);
     this.plugin.scheduler.createItem({
       name: `Loop: ${parsed.prompt.slice(0, 40)}`,
@@ -3365,9 +3447,19 @@ export class ThreadsView extends ItemView {
       projectId: thread?.projectId,
       targetThreadId: threadId,
     });
+    const replacedNote = existing.length > 0 ? ' (replaced previous loop)' : '';
     this.showCommandDivider(
-      `Loop started: "${parsed.prompt.slice(0, 60)}" every ${formatLoopInterval(parsed.intervalSeconds)}. Stop with /loop stop.`,
+      `Loop started: "${parsed.prompt.slice(0, 60)}" every ${formatLoopInterval(parsed.intervalSeconds)}${replacedNote}. Stop with /loop stop.`,
     );
+    this.refreshLoopBanner();
+    this.renderStatusFooter();
+
+    // Kick off the loop immediately rather than waiting for the first
+    // interval to elapse.
+    this.manager.sendMessage(threadId, parsed.prompt).catch((err) => {
+      this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
+      if (this.activeThreadId === threadId) this.setRunningState(false);
+    });
   }
 
   private async handleSendFromDispatch(
