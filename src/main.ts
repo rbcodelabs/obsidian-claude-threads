@@ -1465,20 +1465,52 @@ export default class ClaudeThreadsPlugin extends Plugin {
     await plugins.enablePlugin(id);
   }
 
+  // Serializes all saveSettings() callers through a single in-flight
+  // data.json write. Without this, concurrent callers (~106 call sites,
+  // many fire-and-forget — autosaves, task notifications, cwd changes,
+  // explicit archives, etc.) can race: whichever disk write finishes LAST
+  // wins, even if it started earlier. A slow background save that began
+  // before a thread was archived can complete AFTER the correct
+  // post-archive write and silently clobber it back to stale state —
+  // resurrecting a "closed" thread. (Log-verified: 18 threads manually
+  // archived on 2026-07-12 were all 18 found back in `waiting` state on
+  // 2026-07-14.) The self-draining loop below guarantees only one write is
+  // ever in flight, and that every write reflects the freshest manager
+  // state at write time, not call time — so a caller that stacks up behind
+  // an in-flight write is never lost, just coalesced into the next pass.
+  private savePromise: Promise<void> | null = null;
+  private saveAgainRequested = false;
+
   async saveSettings(): Promise<void> {
-    // Persist projects + thread state (without streaming content)
-    // manager is null on mobile — skip thread persistence there
-    if (this.manager) {
-      this.settings.projects = this.manager.getProjects();
-      // Strip ephemeral statusTags — they are re-derived each poll and must not
-      // bloat data.json or render as stale pills after a restart.
-      this.settings.threads = this.manager.getThreads().map((t) => {
-        if (!t.statusTags) return t;
-        const { statusTags: _omit, ...rest } = t;
-        return rest as typeof t;
-      });
+    if (this.savePromise) {
+      this.saveAgainRequested = true;
+      return this.savePromise;
     }
-    await this.saveData(this.settings);
+    this.savePromise = this.runSaveLoop();
+    return this.savePromise;
+  }
+
+  private async runSaveLoop(): Promise<void> {
+    try {
+      do {
+        this.saveAgainRequested = false;
+        // Persist projects + thread state (without streaming content)
+        // manager is null on mobile — skip thread persistence there
+        if (this.manager) {
+          this.settings.projects = this.manager.getProjects();
+          // Strip ephemeral statusTags — they are re-derived each poll and must not
+          // bloat data.json or render as stale pills after a restart.
+          this.settings.threads = this.manager.getThreads().map((t) => {
+            if (!t.statusTags) return t;
+            const { statusTags: _omit, ...rest } = t;
+            return rest as typeof t;
+          });
+        }
+        await this.saveData(this.settings);
+      } while (this.saveAgainRequested);
+    } finally {
+      this.savePromise = null;
+    }
   }
 }
 
