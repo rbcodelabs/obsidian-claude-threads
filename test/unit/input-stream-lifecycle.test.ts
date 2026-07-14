@@ -260,6 +260,81 @@ describe('ClaudeSession — held-open input generator lifecycle', () => {
     expect(resolvedEarly).toBe(true);
   });
 
+  it('releases at the result following a notification whose reaction generation already streamed (regression: wedged-on-Working)', async () => {
+    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    const channel = makeChannel();
+    __setIterable(channel);
+
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
+    await tick();
+
+    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    await iter.next(); // consume the initial yield
+
+    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', task_type: 'local_bash', uuid: 'u1', session_id: 's' });
+    channel.push(successResult());
+    await tick();
+
+    // Still open: the background task is pending.
+    let resolvedEarly = false;
+    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
+    await Promise.race([secondNext, tick()]);
+    expect(resolvedEarly).toBe(false);
+
+    // The dominant real-world sequence (log-verified across 14 days of raw
+    // JSONL): the task notifies, the CLI streams the follow-up generation
+    // reacting to it, and that generation's own result is the LAST event of
+    // the turn. The assistant event IS the reaction the notification flag
+    // exists to protect — once it has streamed, the result that follows must
+    // release, because no further result is ever coming.
+    channel.push({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed', summary: 'done', uuid: 'u2', session_id: 's' });
+    channel.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'the task finished; here is my final answer' }] }, session_id: 's' });
+    channel.push(successResult(2));
+    await tick();
+
+    expect(resolvedEarly).toBe(true);
+    const second = await secondNext;
+    expect(second.done).toBe(true);
+
+    channel.close();
+    await runPromise;
+  });
+
+  it('does not release on a result while a background task is still running, even after an assistant event (guard: PR #290 scenario)', async () => {
+    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    const channel = makeChannel();
+    __setIterable(channel);
+
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
+    await tick();
+
+    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    await iter.next(); // consume the initial yield
+
+    // A task starts and the model finishes its generation while the task is
+    // still running — no notification, no terminal task_updated. The result
+    // must NOT release: the CLI process is still alive doing work and the
+    // next generation needs the permission channel (the original #290 bug).
+    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', task_type: 'local_bash', uuid: 'u1', session_id: 's' });
+    channel.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'kicked off the task, waiting' }] }, session_id: 's' });
+    channel.push(successResult());
+    await tick();
+
+    let resolvedEarly = false;
+    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
+    await Promise.race([secondNext, tick()]);
+    expect(resolvedEarly).toBe(false);
+
+    session.endInput();
+    const second = await secondNext;
+    expect(second.done).toBe(true);
+
+    channel.close();
+    await runPromise;
+  });
+
   it('endInput() releases a held-open generator', async () => {
     const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
     const channel = makeChannel();
