@@ -101,6 +101,28 @@ export interface StatusTag {
   kind?: 'pr' | 'branch' | 'dev' | 'aws' | string;
 }
 
+/**
+ * Native git plumbing info for a thread's working directory, populated by
+ * GitDiffService (local `git` only — no `gh`, no network). Powers the git
+ * diff bar + Create PR button shown above the compose box in ThreadsView.
+ */
+export interface GitDiffInfo {
+  /** Whether the thread's cwd is inside a git working tree at all. */
+  isGitRepo: boolean;
+  /** Current branch name. Undefined for detached HEAD or when `isGitRepo` is false. */
+  branch?: string;
+  /** Repo's default/base branch (e.g. "main"), best-effort detected. */
+  baseBranch?: string;
+  /** True when `branch === baseBranch` — nothing to open a PR against, bar is hidden. */
+  isBaseBranch?: boolean;
+  /** Lines added between `baseBranch` and the current working tree (incl. uncommitted). */
+  insertions?: number;
+  /** Lines removed between `baseBranch` and the current working tree (incl. uncommitted). */
+  deletions?: number;
+  /** Parsed from `git remote get-url origin` when it points at GitHub; used to build the "Manually create PR" compare URL. */
+  ownerRepo?: { owner: string; repo: string };
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -151,6 +173,12 @@ export interface Thread {
    * re-derived on the next poll. Undefined on mobile / when no script is set.
    */
   statusTags?: StatusTag[];
+  /**
+   * Native git plumbing info (branch/base/diff-stat) for this thread's cwd,
+   * populated by GitDiffService. Ephemeral — never persisted to data.json,
+   * re-derived on the next poll. Undefined on mobile / non-git cwds.
+   */
+  gitDiff?: GitDiffInfo;
   /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
   lastSummarizedAt?: number;
   /**

@@ -21,6 +21,7 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'loop', description: 'Re-run a prompt on an interval: /loop 5m <prompt> · /loop stop' },
   { name: 'ephemeral', description: 'Mark this thread as ephemeral: sessions will not be persisted to disk' },
   { name: 'context', description: 'Show current context window usage breakdown' },
+  { name: 'create-pr', description: 'Create a pull request for this branch (add --draft for a draft PR)' },
 ];
 
 /**
@@ -108,6 +109,20 @@ export function goalKickoffMessage(goal: string): string {
   return (
     `Work toward the goal that was just set for this thread: "${goal}". ` +
     'Start now and keep going until it is met or you are blocked on input only I can provide.'
+  );
+}
+
+/**
+ * The kickoff message sent when the "Create PR" / "Create draft PR" bar
+ * button (or the /create-pr slash command) is used — used by ThreadsView so
+ * clicking the button and typing the command behave identically.
+ */
+export function createPrKickoffMessage(draft: boolean): string {
+  return (
+    `Create a ${draft ? 'draft ' : ''}pull request for the current branch. ` +
+    'Push the branch to its remote if it has not been pushed yet, then run ' +
+    `\`gh pr create${draft ? ' --draft' : ''}\` with a title and description summarizing ` +
+    'the changes made in this session. Report back the PR URL when done.'
   );
 }
 

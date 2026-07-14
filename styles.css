@@ -3223,6 +3223,122 @@
   color: var(--color-green, #4caf50);
 }
 
+/* ── Git diff bar (branch + diff stat + Create PR split button) ─────────────
+   Deliberately NOT a child of .ct-panel-context, so it does not inherit the
+   hover/focus-only collapse behavior applied to .ct-context-footer et al
+   (see the .ct-panel-collapsible rules further down) — it stays visible at
+   rest, matching the visual weight of the input row itself. ────────────── */
+
+.ct-git-diff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  flex-shrink: 0;
+}
+
+.ct-git-diff-bar.ct-hidden {
+  display: none;
+}
+
+.ct-git-diff-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.ct-git-diff-branch-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.ct-git-diff-branch-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ct-git-diff-repo {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.ct-git-diff-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ct-git-diff-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.ct-git-diff-stat-add {
+  color: var(--color-green, #4caf50);
+}
+
+.ct-git-diff-stat-del {
+  color: var(--color-red, #e05252);
+}
+
+.ct-git-diff-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ct-git-diff-create-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  padding: 4px 12px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.ct-git-diff-create-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ct-git-diff-dropdown-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--text-on-accent) 25%, transparent);
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.ct-git-diff-dropdown-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ct-git-diff-dropdown-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Mobile View (ct-mobile-*)
    Two-panel: list → tap thread → conversation. ct-has-active on root switches

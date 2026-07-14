@@ -2,7 +2,8 @@ import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sani
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
-import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage } from './slashCommands';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage } from './slashCommands';
+import { buildComparePrUrl } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -109,6 +110,13 @@ export class ThreadsView extends ItemView {
 
   // Context footer (status line below input)
   private contextFooterEl!: HTMLElement;
+
+  // Git diff bar (branch + diff stat + Create PR split button), shown above
+  // the compose box whenever the active thread's cwd is a git repo on a
+  // non-base branch. Unlike contextFooterEl, this is NOT nested inside
+  // ct-panel-context, so it does not inherit the hover/focus-only collapse
+  // behavior — it stays visible at rest, like the input row itself.
+  private gitDiffBarEl!: HTMLElement;
 
   // Scheduled wake-up banner (shown above the input when the active thread has
   // a pending ScheduleWakeup). The countdown ticks every second while visible.
@@ -483,6 +491,8 @@ export class ThreadsView extends ItemView {
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
+    this.gitDiffBarEl = floatingPanel.createDiv('ct-git-diff-bar ct-hidden');
+
     this.inputRowEl = floatingPanel.createDiv('ct-input-row');
 
     // Compute skill dirs from GitHub plugin sources so they appear in /command autocomplete
@@ -724,6 +734,8 @@ export class ThreadsView extends ItemView {
     // Re-render the footer for the new thread and kick a fresh poll for its cwd.
     this.renderStatusFooter();
     this.plugin.statusLine?.pokeThread(id);
+    this.renderGitDiffBar();
+    this.plugin.gitDiff?.pokeThread(id);
 
     // Show the context recap banner when switching back to a thread after being away
     this.maybeShowSummaryBanner(id, previousId, undefined);
@@ -875,6 +887,91 @@ export class ThreadsView extends ItemView {
 
     const empty = !prUrl && tags.length === 0 && activeLoops.length === 0;
     this.contextFooterEl.toggleClass('ct-hidden', empty);
+  }
+
+  /**
+   * Render the git diff bar (branch + diff stat + Create PR split button) for
+   * the active thread, populated by GitDiffService. Hidden when the thread has
+   * no gitDiff info yet, its cwd isn't a git repo, its branch can't be resolved
+   * (e.g. detached HEAD), or it's already sitting on the base/default branch
+   * (nothing to open a PR against).
+   */
+  renderGitDiffBar(): void {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const gitDiff = thread?.gitDiff;
+
+    this.gitDiffBarEl.empty();
+
+    if (!gitDiff || !gitDiff.isGitRepo || gitDiff.isBaseBranch || !gitDiff.branch) {
+      this.gitDiffBarEl.addClass('ct-hidden');
+      return;
+    }
+    this.gitDiffBarEl.removeClass('ct-hidden');
+
+    const branchGroup = this.gitDiffBarEl.createDiv('ct-git-diff-branch');
+    const iconEl = branchGroup.createSpan('ct-git-diff-branch-icon');
+    setIcon(iconEl, 'git-branch');
+    const repoName = thread?.cwd ? path.basename(thread.cwd) : '';
+    if (repoName) {
+      branchGroup.createSpan({ cls: 'ct-git-diff-repo', text: repoName });
+    }
+    branchGroup.createSpan({ cls: 'ct-git-diff-branch-name', text: gitDiff.branch, title: gitDiff.branch });
+
+    const insertions = gitDiff.insertions ?? 0;
+    const deletions = gitDiff.deletions ?? 0;
+    if (insertions > 0 || deletions > 0) {
+      const statEl = this.gitDiffBarEl.createDiv('ct-git-diff-stat');
+      if (insertions > 0) {
+        statEl.createSpan({ cls: 'ct-git-diff-stat-add', text: `+${insertions}` });
+      }
+      if (deletions > 0) {
+        statEl.createSpan({ cls: 'ct-git-diff-stat-del', text: `-${deletions}` });
+      }
+    }
+
+    const actions = this.gitDiffBarEl.createDiv('ct-git-diff-actions');
+    const createBtn = actions.createEl('button', { cls: 'ct-git-diff-create-btn', text: 'Create PR' });
+    createBtn.addEventListener('click', () => {
+      void this.handleSendFromDispatch('/create-pr', [], null);
+    });
+    const dropdownBtn = actions.createEl('button', {
+      cls: 'ct-git-diff-dropdown-btn',
+      attr: { title: 'PR options' },
+    });
+    setIcon(dropdownBtn, 'chevron-down');
+    dropdownBtn.addEventListener('click', (e) => this.openCreatePrMenu(e, gitDiff));
+  }
+
+  /** Dropdown for the git diff bar's split button: Create PR / Create draft PR / Manually create PR. */
+  private openCreatePrMenu(event: MouseEvent, gitDiff: import('./types').GitDiffInfo): void {
+    const menu = new Menu();
+    menu.addItem(item =>
+      item
+        .setTitle('Create PR')
+        .setIcon('git-pull-request')
+        .onClick(() => { void this.handleSendFromDispatch('/create-pr', [], null); })
+    );
+    menu.addItem(item =>
+      item
+        .setTitle('Create draft PR')
+        .setIcon('git-pull-request-draft')
+        .onClick(() => { void this.handleSendFromDispatch('/create-pr --draft', [], null); })
+    );
+    menu.addItem(item => {
+      item
+        .setTitle('Manually create PR')
+        .setIcon('external-link')
+        .onClick(() => {
+          if (!gitDiff.ownerRepo || !gitDiff.branch || !gitDiff.baseBranch) {
+            new Notice('Could not determine the GitHub repo for this branch (no GitHub origin remote found).');
+            return;
+          }
+          const url = buildComparePrUrl(gitDiff.ownerRepo.owner, gitDiff.ownerRepo.repo, gitDiff.baseBranch, gitDiff.branch);
+          this.openLink(url);
+        });
+      if (!gitDiff.ownerRepo) item.setDisabled(true);
+    });
+    menu.showAtMouseEvent(event);
   }
 
   /** Render a single status pill (icon + label, link if the tag has a url). */
@@ -2654,6 +2751,11 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'git_diff': {
+        this.renderGitDiffBar();
+        break;
+      }
+
       case 'compact': {
         this.appendMessage(event.message).then(() => this.scrollToBottom());
         this.plugin.saveSettings();
@@ -3421,6 +3523,24 @@ export class ThreadsView extends ItemView {
       });
   }
 
+  /**
+   * /create-pr [--draft] — also invoked directly by the git diff bar's Create
+   * PR / Create draft PR buttons (via handleSendFromDispatch), so button
+   * clicks and typing the command behave identically.
+   */
+  private async handleCreatePrCommand(draft: boolean): Promise<void> {
+    if (!this.activeThreadId) return;
+    this.showCommandDivider(draft ? 'Creating draft PR…' : 'Creating PR…');
+
+    const sendThreadId = this.activeThreadId;
+    this.manager
+      .sendMessage(sendThreadId, createPrKickoffMessage(draft))
+      .catch((err) => {
+        this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
+        if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+      });
+  }
+
   private async handleLoopCommand(arg: string): Promise<void> {
     if (!this.activeThreadId) return;
     const threadId = this.activeThreadId;
@@ -3559,6 +3679,13 @@ export class ThreadsView extends ItemView {
     const loopMatch = typed.match(/^\/loop(?:\s+([\s\S]+))?$/i);
     if (loopMatch) {
       await this.handleLoopCommand((loopMatch[1] ?? '').trim());
+      return;
+    }
+
+    // /create-pr [--draft] — same action as the git diff bar's Create PR / Create draft PR buttons.
+    const createPrMatch = typed.match(/^\/create-pr(?:\s+(--draft|draft))?\s*$/i);
+    if (createPrMatch) {
+      await this.handleCreatePrCommand(!!createPrMatch[1]);
       return;
     }
 

@@ -617,6 +617,67 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('status-line-tags.png', { fullPage: true });
   });
 
+  test('git diff bar — branch, diff stat, and Create PR split button', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+    // Drive the bar the same way GitDiffService would: store git diff info on
+    // the active thread (feature branch, base branch, a real diff, GitHub origin).
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+    await expect(page.locator('.ct-git-diff-branch-name')).toHaveText('feat/social-nudge');
+    await expect(page.locator('.ct-git-diff-repo')).toHaveText('hip-trip');
+    await expect(page.locator('.ct-git-diff-stat-add')).toHaveText('+60');
+    await expect(page.locator('.ct-git-diff-stat-del')).toHaveText('-4');
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('Create PR');
+    await expect(page).toHaveScreenshot('git-diff-bar.png', { fullPage: true });
+
+    // Open the split-button dropdown: 3 actions.
+    await page.click('.ct-git-diff-dropdown-btn');
+    await page.waitForSelector('.menu');
+    const menuItems = await page.locator('.menu .menu-item').allTextContents();
+    expect(menuItems).toEqual(['Create PR', 'Create draft PR', 'Manually create PR']);
+    await expect(page).toHaveScreenshot('git-diff-bar-menu.png', { fullPage: true });
+  });
+
+  test('git diff bar — hidden for a non-git thread and for the base branch', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+
+    // Not a git repo at all — bar stays hidden.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', { isGitRepo: false });
+    });
+    await page.waitForTimeout(50);
+    await expect(page.locator('.ct-git-diff-bar')).toHaveClass(/ct-hidden/);
+
+    // Sitting on the base branch itself — nothing to PR against, bar stays hidden.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'main',
+        baseBranch: 'main',
+        isBaseBranch: true,
+      });
+    });
+    await page.waitForTimeout(50);
+    await expect(page.locator('.ct-git-diff-bar')).toHaveClass(/ct-hidden/);
+  });
+
   // ── Kanban board ──────────────────────────────────────────────────────────
   // Served from a dedicated harness (test/harness/kanban.html) that mounts
   // KanbanView against kanbanFixtureThreads. The wider 1180px board needs its
