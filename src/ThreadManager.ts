@@ -3,7 +3,7 @@ import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
@@ -55,6 +55,7 @@ export type ThreadEvent =
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
   | { type: 'status_tags' }
+  | { type: 'git_diff' }
   | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
   | { type: 'tool_progress'; toolUseId: string; toolName: string; elapsedSeconds: number }
   | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
@@ -565,6 +566,19 @@ export class ThreadManager {
     }
     this.emit(threadId, { type: 'status_tags' });
     return prChanged;
+  }
+
+
+  /**
+   * Store native git plumbing info for a thread (from GitDiffService) and emit
+   * `git_diff` so views re-render the git diff bar. Ephemeral like statusTags —
+   * not persisted, re-derived on the next poll.
+   */
+  applyGitDiff(threadId: string, info: GitDiffInfo): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    thread.gitDiff = info;
+    this.emit(threadId, { type: 'git_diff' });
   }
 
   // ── Background task tracking ─────────────────────────────────────────────────

@@ -106,6 +106,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   wakeLock!: WakeLockService;
   scheduler!: import('./Scheduler').Scheduler;
   statusLine: import('./StatusLineService').StatusLineService | null = null;
+  gitDiff: import('./GitDiffService').GitDiffService | null = null;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -199,6 +200,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { GitDiffService } = require('./GitDiffService') as typeof import('./GitDiffService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
 
@@ -600,6 +603,35 @@ export default class ClaudeThreadsPlugin extends Plugin {
         },
       );
       this.statusLine.start();
+    }
+
+    // Git diff service: computes native git plumbing (branch/base/diff-stat) per
+    // thread cwd so the git diff bar + Create PR button stay fresh (desktop only).
+    // No arbitrary user command here — fixed `git` subcommands via execFile.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const childProcess = require('child_process') as typeof import('child_process');
+      this.gitDiff = new GitDiffService(
+        this.manager,
+        {
+          execFile: childProcess.execFile,
+          now: () => Date.now(),
+          isMobile: Platform.isMobile,
+          getDefaultCwd: () => this.getEffectiveCwd(),
+          // Idle-pause interval polls when no relevant view is open and nothing runs;
+          // event-triggered polls (done/cwd_changed/focus) still fire.
+          shouldPoll: () => {
+            const ws = this.app.workspace;
+            const anyViewOpen =
+              ws.getLeavesOfType(VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(AGENT_VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(KANBAN_VIEW_TYPE).length > 0;
+            const anyRunning = this.manager.getThreads().some((t) => this.manager.isRunning(t.id));
+            return anyViewOpen || anyRunning;
+          },
+        },
+      );
+      this.gitDiff.start();
     }
 
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
@@ -1148,6 +1180,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.statusLine?.stop();
+    this.gitDiff?.stop();
     this.manager?.destroy();
 
     // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
