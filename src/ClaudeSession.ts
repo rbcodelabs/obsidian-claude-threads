@@ -357,10 +357,17 @@ export class ClaudeSession {
     // that finishes fast enough to notify *before* the first `result` still
     // causes the CLI to stream a distinct follow-up generation afterward —
     // pendingBgTaskIds is already empty by then, so it alone isn't a
-    // sufficient release signal). Require one full `result` with no new
-    // notification since the previous one before releasing, so a
-    // notification that arrives just ahead of a result gets a chance to
-    // actually produce its reaction before we close the channel it needs.
+    // sufficient release signal). Set this flag on notification; clear it as
+    // soon as the next `assistant` event streams (that IS the reaction the
+    // flag protects — see the `case 'assistant'` handler). If a `result`
+    // arrives with the flag still true, no reaction has streamed yet, so
+    // skip release and let the next result re-check. Log-verified (14 days
+    // of raw JSONL): clearing only at the *next result* — the pre-fix
+    // behavior — wedges nearly every turn that uses background tasks at all,
+    // because the reaction generation almost always streams and completes
+    // with its own result BEFORE the flag would have been cleared, leaving
+    // the flag true at the turn's final result with no further result ever
+    // coming to release the stream.
     let sawTaskNotificationSinceLastResult = false;
 
     try {
@@ -385,6 +392,14 @@ export class ClaudeSession {
           }
 
           case 'assistant': {
+            // Assistant activity arriving after a task_notification IS the
+            // reaction generation the flag below exists to protect — it has
+            // now streamed, so clear the flag immediately rather than waiting
+            // for the next `result` (which was the wedge: the reaction's own
+            // result was the turn's LAST event, so the flag stayed true there,
+            // release was skipped, and no further result ever came — see the
+            // comment on sawTaskNotificationSinceLastResult).
+            sawTaskNotificationSinceLastResult = false;
             const parts: string[] = [];
             for (const block of msg.message.content) {
               if (block.type === 'text') {
