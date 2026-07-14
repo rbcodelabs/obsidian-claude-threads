@@ -165,6 +165,7 @@ export class ClaudeSession {
     this.inputOpen = true;
 
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
+      pendingInteractiveCallbacks++;
       try {
         if (toolName === 'AskUserQuestion') {
           const questions = (input as { questions: import('./types').AskQuestion[] }).questions;
@@ -217,6 +218,8 @@ export class ClaudeSession {
       } catch (err) {
         console.error('[ClaudeThreads] canUseTool error:', err);
         return { behavior: 'deny' as const, message: 'Permission handler error' };
+      } finally {
+        pendingInteractiveCallbacks--;
       }
     };
 
@@ -369,6 +372,22 @@ export class ClaudeSession {
     // the flag true at the turn's final result with no further result ever
     // coming to release the stream.
     let sawTaskNotificationSinceLastResult = false;
+    // Tracks any in-flight `canUseTool` call — covers ExitPlanMode,
+    // AskUserQuestion, and generic permission prompts uniformly (simpler and
+    // more future-proof than special-casing individual tool names). It ticks
+    // up the instant canUseTool is entered and back down in a `finally`, so
+    // it's harmless for fast-resolving paths like EnterPlanMode/OpenNewTab
+    // (up and back down almost immediately) and only matters for the slow,
+    // human-driven waits this fix targets. One `query()` serves both the
+    // foreground generation and any concurrent background-task generations
+    // over the same stream, so a `result` from a *different*, concurrent
+    // background-task generation can land while THIS generation's
+    // canUseTool call is still awaiting a human click — without this gate,
+    // the release check below would close stdin anyway, and the eventual
+    // human response would be force-rejected with "Stream closed" even
+    // though the CLI process is still running. See the release-gate comment
+    // at the `case 'result':` handler below for how this is used.
+    let pendingInteractiveCallbacks = 0;
 
     try {
       for await (const msg of q) {
@@ -471,12 +490,25 @@ export class ClaudeSession {
               );
             }
             // Only release the input stream (and let stdin close) once no
-            // background task is still running AND no task_notification
-            // landed in this same result window — re-checked on every
+            // background task is still running, no task_notification landed
+            // in this same result window, AND no canUseTool call is
+            // currently awaiting a human response (ExitPlanMode /
+            // AskUserQuestion / a permission prompt) — re-checked on every
             // subsequent `result` this loop sees. See the pendingBgTaskIds /
-            // sawTaskNotificationSinceLastResult declarations above for why
-            // both conditions are needed.
-            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult) {
+            // sawTaskNotificationSinceLastResult / pendingInteractiveCallbacks
+            // declarations above for why all three conditions are needed.
+            // The third exists because a `result` from a *different*,
+            // concurrent background-task generation can land while THIS
+            // generation is still blocked inside canUseTool waiting on the
+            // user — without the check, that result would close stdin out
+            // from under the still-pending human response, which then gets
+            // force-rejected with "Stream closed" once it finally arrives.
+            // Once canUseTool resolves, the counter drops to 0 and the
+            // generation it was blocking resumes and eventually emits its
+            // own `result`, which re-checks this gate and releases
+            // normally — same soundness argument used for the
+            // notification-flag condition above.
+            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult && pendingInteractiveCallbacks === 0) {
               this.releaseInput();
             }
             sawTaskNotificationSinceLastResult = false;
