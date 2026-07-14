@@ -60,10 +60,12 @@ function makeChannel() {
 vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   let _promptArg: unknown = null;
   let _queryIterable: AsyncIterable<Record<string, unknown>> | null = null;
+  let _canUseTool: unknown = null;
 
   return {
     query: (opts: { prompt: unknown; options: Record<string, unknown> }) => {
       _promptArg = opts.prompt;
+      _canUseTool = (opts.options as { canUseTool: unknown }).canUseTool;
       const iter = _queryIterable!;
       return {
         [Symbol.asyncIterator]: () => iter[Symbol.asyncIterator](),
@@ -76,6 +78,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     },
     __setIterable: (it: AsyncIterable<Record<string, unknown>>) => { _queryIterable = it; },
     __getPromptArg: () => _promptArg,
+    // Exposes the canUseTool closure the SDK would normally invoke itself
+    // when the model calls a tool. The mocked SDK never calls it on its
+    // own (we're driving events by hand via the channel), so tests that
+    // need to simulate an in-flight ExitPlanMode/AskUserQuestion/permission
+    // round-trip must invoke it directly.
+    __getCanUseTool: () => _canUseTool,
   };
 });
 
@@ -357,6 +365,138 @@ describe('ClaudeSession — held-open input generator lifecycle', () => {
 
     channel.close();
     await runPromise;
+  });
+
+  it('stays open while an ExitPlanMode canUseTool call is pending, even when an unrelated result lands with no background tasks (regression: premature-release-during-human-wait)', async () => {
+    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    const channel = makeChannel();
+    __setIterable(channel);
+
+    let planApprove: ((editedPlan?: string) => void) | null = null;
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
+      onPlanReady: (_planText, approve, _reject) => { planApprove = approve; },
+    }));
+    await tick();
+
+    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    await iter.next(); // consume the initial yield
+
+    // Simulate the SDK invoking canUseTool for ExitPlanMode — this is what
+    // happens when the model calls the tool mid-generation. Do NOT await it
+    // yet: it stays pending until the human clicks Approve/Reject.
+    const canUseTool = __getCanUseTool();
+    const canUseToolPromise = canUseTool('ExitPlanMode', { plan: 'do the thing' }, { signal: new AbortController().signal });
+
+    // A result from a *different*, concurrent background-task generation
+    // lands while ExitPlanMode is still awaiting the human — no background
+    // tasks pending, no notification flag set. Pre-fix, the gate would
+    // release here anyway, closing stdin out from under the still-pending
+    // plan approval.
+    channel.push(successResult());
+    await tick();
+
+    let resolvedEarly = false;
+    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
+    await Promise.race([secondNext, tick()]);
+    expect(resolvedEarly).toBe(false);
+
+    // The human approves the plan — canUseTool resolves, the counter drops
+    // back to 0, and the foreground generation that was blocked on it
+    // resumes and eventually emits its own result.
+    planApprove!();
+    await canUseToolPromise;
+    channel.push(successResult(2));
+    channel.close();
+    await runPromise;
+
+    const second = await secondNext;
+    expect(second.done).toBe(true);
+    expect(resolvedEarly).toBe(true);
+  });
+
+  it('stays open while an AskUserQuestion canUseTool call is pending, even when an unrelated result lands with no background tasks', async () => {
+    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    const channel = makeChannel();
+    __setIterable(channel);
+
+    let resolveAnswers: ((answers: Record<string, string>) => void) | null = null;
+    const answersPromise = new Promise<Record<string, string>>((resolve) => { resolveAnswers = resolve; });
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
+      onAskUserQuestion: async () => answersPromise,
+    }));
+    await tick();
+
+    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    await iter.next(); // consume the initial yield
+
+    const canUseTool = __getCanUseTool();
+    const canUseToolPromise = canUseTool(
+      'AskUserQuestion',
+      { questions: [{ question: 'Which?', header: 'Choice', options: [], multiSelect: false }] },
+      { signal: new AbortController().signal },
+    );
+
+    channel.push(successResult());
+    await tick();
+
+    let resolvedEarly = false;
+    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
+    await Promise.race([secondNext, tick()]);
+    expect(resolvedEarly).toBe(false);
+
+    resolveAnswers!({});
+    await canUseToolPromise;
+    channel.push(successResult(2));
+    channel.close();
+    await runPromise;
+
+    const second = await secondNext;
+    expect(second.done).toBe(true);
+    expect(resolvedEarly).toBe(true);
+  });
+
+  it('stays open while a generic permission-prompt canUseTool call is pending, even when an unrelated result lands with no background tasks', async () => {
+    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    const channel = makeChannel();
+    __setIterable(channel);
+
+    let resolveAllowed: ((allowed: boolean) => void) | null = null;
+    const allowedPromise = new Promise<boolean>((resolve) => { resolveAllowed = resolve; });
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
+      onPermissionRequest: async () => allowedPromise,
+    }));
+    await tick();
+
+    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    await iter.next(); // consume the initial yield
+
+    const canUseTool = __getCanUseTool();
+    const canUseToolPromise = canUseTool(
+      'Bash',
+      { command: 'ls' },
+      { signal: new AbortController().signal, description: 'list files' },
+    );
+
+    channel.push(successResult());
+    await tick();
+
+    let resolvedEarly = false;
+    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
+    await Promise.race([secondNext, tick()]);
+    expect(resolvedEarly).toBe(false);
+
+    resolveAllowed!(true);
+    await canUseToolPromise;
+    channel.push(successResult(2));
+    channel.close();
+    await runPromise;
+
+    const second = await secondNext;
+    expect(second.done).toBe(true);
+    expect(resolvedEarly).toBe(true);
   });
 
   it('finally releases the input generator on a stream error', async () => {
