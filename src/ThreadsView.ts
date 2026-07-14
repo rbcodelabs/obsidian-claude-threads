@@ -164,6 +164,12 @@ export class ThreadsView extends ItemView {
   // Cleared on 'message' or 'done' for the corresponding thread.
   private streamingBuffers: Map<string, { content: string; tools: ToolCallRecord[]; subagentLabel?: string }> = new Map();
 
+  // Per-thread escalated-turn model. Set when a turn starts with the escalation
+  // keyword and cleared when the turn ends, so the model button can show a
+  // persistent indicator for the whole escalated turn (surviving thread switches
+  // and clearing correctly even when the turn ends on a background thread).
+  private escalatedTurnModels: Map<string, string> = new Map();
+
   private floatingPanelEl!: HTMLElement;
 
   // Task list card (Claude Code's TodoWrite/TaskCreate checklist)
@@ -353,6 +359,15 @@ export class ThreadsView extends ItemView {
         }
       } else if (event.type === 'done') {
         this.streamingBuffers.delete(threadId);
+      }
+      // Track escalated turns for ALL threads (active or background) so the
+      // model button reflects the escalation for the whole turn and clears
+      // even when the turn ends on a non-active thread.
+      if (event.type === 'escalated') {
+        this.escalatedTurnModels.set(threadId, event.model);
+        if (threadId === this.activeThreadId) this.updateModelIndicator();
+      } else if (event.type === 'done' || event.type === 'error' || event.type === 'interrupted') {
+        this.clearEscalatedTurn(threadId);
       }
       // Auto-summarize runs for ALL completing threads, not just the active one.
       // Moving this outside the activeThreadId guard fixes the case where the user
@@ -1222,10 +1237,27 @@ export class ThreadsView extends ItemView {
   /** Refreshes the footer model button's tooltip/state to match the active thread. */
   private updateModelIndicator(): void {
     if (!this.modelBtn) return;
+    const escalated = this.activeThreadId
+      ? this.escalatedTurnModels.get(this.activeThreadId)
+      : undefined;
+    this.modelBtn.toggleClass('ct-model-btn-escalated', !!escalated);
+    if (escalated) {
+      setTooltip(this.modelBtn, `Model: escalated to ${escalated} for this turn`);
+      return;
+    }
     const model = this.currentModel();
     const label = model ?? 'default';
     setTooltip(this.modelBtn, `Model: ${label} — click to switch`);
     this.modelBtn.toggleClass('ct-model-btn-active', !!model);
+  }
+
+  /**
+   * Clears the escalated-turn marker for a thread at turn end and refreshes
+   * the model button when that thread is the active one.
+   */
+  private clearEscalatedTurn(threadId: string): void {
+    if (!this.escalatedTurnModels.delete(threadId)) return;
+    if (threadId === this.activeThreadId) this.updateModelIndicator();
   }
 
   private toggleModelMenu(event: MouseEvent): void {
@@ -3384,6 +3416,7 @@ export class ThreadsView extends ItemView {
       .sendMessage(sendThreadId, goalKickoffMessage(arg))
       .catch((err) => {
         this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
+        this.clearEscalatedTurn(sendThreadId);
         if (this.activeThreadId === sendThreadId) this.setRunningState(false);
       });
   }
@@ -3458,6 +3491,7 @@ export class ThreadsView extends ItemView {
     // interval to elapse.
     this.manager.sendMessage(threadId, parsed.prompt).catch((err) => {
       this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
+      this.clearEscalatedTurn(threadId);
       if (this.activeThreadId === threadId) this.setRunningState(false);
     });
   }
@@ -3629,6 +3663,7 @@ export class ThreadsView extends ItemView {
       .catch(err => {
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
         errEl.createEl('p', { text: `Failed to send: ${(err as Error).message}` });
+        this.clearEscalatedTurn(sendThreadId);
         // Only update running state if we're still looking at the thread that errored
         if (this.activeThreadId === sendThreadId) this.setRunningState(false);
       });

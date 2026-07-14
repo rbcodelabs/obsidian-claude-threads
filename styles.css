@@ -1960,6 +1960,33 @@
   color: var(--interactive-accent);
 }
 
+/* Escalated turn — the model button stays visually hot for the whole turn.
+   Placed after the -active rules so it wins when a per-thread override and
+   an escalation are present at the same time. */
+.ct-model-btn.ct-model-btn-escalated,
+.ct-model-btn.ct-model-btn-escalated:hover {
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  border-radius: var(--radius-s);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-model-btn.ct-model-btn-escalated {
+    animation: ct-escalated-pulse 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes ct-escalated-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+  }
+}
+
 /* Permission mode button — accent-colored when a per-thread override is active */
 .ct-permission-mode-btn.ct-permission-mode-btn-active {
   color: var(--interactive-accent);
