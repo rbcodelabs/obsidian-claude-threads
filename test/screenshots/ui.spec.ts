@@ -738,6 +738,35 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('model-escalation-tip.png', { fullPage: true });
   });
 
+  test('model escalation — button stays highlighted for the whole turn', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Drive the real event path: ThreadManager emits 'escalated' at turn start.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager['emit'](view['activeThreadId'], { type: 'escalated', model: 'opus' });
+    });
+    await page.waitForSelector('.ct-model-btn.ct-model-btn-escalated');
+    // Hide the transient tip and freeze the pulse so the snapshot is deterministic.
+    await page.addStyleTag({
+      content:
+        '.ct-escalation-tip { display: none !important; } .ct-model-btn-escalated { animation: none !important; }',
+    });
+    await page.waitForTimeout(100);
+    await expect(page).toHaveScreenshot('model-escalation-turn-button.png', { fullPage: true });
+    // Turn end clears the indicator.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager['emit'](view['activeThreadId'], { type: 'done' });
+    });
+    await expect(page.locator('.ct-model-btn')).not.toHaveClass(/ct-model-btn-escalated/);
+  });
+
   // ─── SDK alignment gap features (Group 4 + 5) ────────────────────────────
 
   test('plan mode — planning state card', async ({ page }) => {
