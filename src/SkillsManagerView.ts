@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice, Modal, App, requestUrl } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, App, requestUrl } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 
 export const SKILLS_VIEW_TYPE = 'claude-threads:skills';
@@ -211,6 +211,7 @@ export class SkillsManagerView extends ItemView {
   // DOM refs (stable across re-renders)
   private tabsEl!: HTMLElement;
   private listEl!: HTMLElement;
+  private dividerEl!: HTMLElement;
   private detailEl!: HTMLElement;
   /** Hidden input used by the "Import Folder…" button in the Installed tab */
   private importFolderInputEl!: HTMLInputElement;
@@ -332,13 +333,71 @@ export class SkillsManagerView extends ItemView {
     this.tabsEl = root.createEl('div', { cls: 'ct-skills-tabs' });
     this.buildTabs();
 
-    // Body: left list + right detail
+    // Body: left list + draggable divider + right detail
     const body = root.createEl('div', { cls: 'ct-skills-body' });
     this.listEl = body.createEl('div', { cls: 'ct-skills-list' });
+    this.dividerEl = body.createEl('div', { cls: 'ct-skills-divider' });
     this.detailEl = body.createEl('div', { cls: 'ct-skills-detail' });
+
+    this.listEl.style.width = `${this.clampListWidth(this.plugin.settings.skillsListWidth, body)}px`;
+    this.setupListResizer(body);
 
     this.renderList();
     this.renderDetail();
+  }
+
+  /** Minimum/maximum width (px) the left list panel can be dragged to. */
+  private static readonly LIST_MIN_WIDTH = 140;
+  private static readonly LIST_MAX_WIDTH = 480;
+
+  /** Clamps a candidate list-panel width to the allowed range and to whatever room `body` actually has. */
+  private clampListWidth(width: number, body: HTMLElement): number {
+    const bodyWidth = body.getBoundingClientRect().width;
+    // Leave room for the divider itself plus a usable minimum on the detail panel.
+    const roomLimit = bodyWidth > 0 ? bodyWidth - 4 - 160 : SkillsManagerView.LIST_MAX_WIDTH;
+    const max = Math.max(SkillsManagerView.LIST_MIN_WIDTH, Math.min(SkillsManagerView.LIST_MAX_WIDTH, roomLimit));
+    return Math.min(Math.max(width, SkillsManagerView.LIST_MIN_WIDTH), max);
+  }
+
+  /** Wires up drag-to-resize on `this.dividerEl`, persisting the chosen width when the drag ends. */
+  private setupListResizer(body: HTMLElement): void {
+    this.dividerEl.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.preventDefault();
+      this.dividerEl.setPointerCapture(e.pointerId);
+      this.dividerEl.classList.add('ct-skills-divider--dragging');
+      document.body.classList.add('ct-skills-resizing');
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const bodyRect = body.getBoundingClientRect();
+        const raw = moveEvent.clientX - bodyRect.left;
+        this.listEl.style.width = `${this.clampListWidth(raw, body)}px`;
+      };
+
+      const onPointerUp = () => {
+        this.dividerEl.releasePointerCapture(e.pointerId);
+        this.dividerEl.classList.remove('ct-skills-divider--dragging');
+        document.body.classList.remove('ct-skills-resizing');
+        this.dividerEl.removeEventListener('pointermove', onPointerMove);
+        this.dividerEl.removeEventListener('pointerup', onPointerUp);
+
+        const finalWidth = parseInt(this.listEl.style.width, 10);
+        if (!isNaN(finalWidth)) {
+          this.plugin.settings.skillsListWidth = finalWidth;
+          void this.plugin.saveSettings();
+        }
+      };
+
+      this.dividerEl.addEventListener('pointermove', onPointerMove);
+      this.dividerEl.addEventListener('pointerup', onPointerUp);
+    });
+
+    // Double-click resets to the default width.
+    this.dividerEl.addEventListener('dblclick', () => {
+      const defaultWidth = this.clampListWidth(200, body);
+      this.listEl.style.width = `${defaultWidth}px`;
+      this.plugin.settings.skillsListWidth = defaultWidth;
+      void this.plugin.saveSettings();
+    });
   }
 
   private buildTabs(): void {
@@ -428,28 +487,40 @@ export class SkillsManagerView extends ItemView {
     if (githubSources.length > 0) {
       const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
 
-      const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn', text: 'Check for updates' });
-      const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-      setIcon(refreshIcon, 'refresh-cw');
-      checkBtn.prepend(refreshIcon);
-
-      const statusEl = updateRow.createEl('span', { cls: 'ct-skills-update-status' });
+      const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn' });
 
       if (this.isCheckingUpdates) {
         checkBtn.disabled = true;
-        statusEl.createEl('span', { cls: 'ct-skills-spinner' });
-        statusEl.createEl('span', { text: ' Checking…' });
+        checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' }).createEl('span', { cls: 'ct-skills-spinner' });
+        checkBtn.createEl('span', { text: 'Checking…' });
       } else {
-        // Compute result status from current behindCounts
+        const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
+        setIcon(refreshIcon, 'refresh-cw');
+        checkBtn.createEl('span', { text: 'Check for updates' });
+
+        // Compute result status from current behindCounts, surfaced as a tooltip
+        // (plus a small dot when updates are available) rather than inline text —
+        // keeps the row compact instead of wrapping onto its own line.
         const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
         const anyFetched = githubSources.some((s) => s.lastFetched != null);
+        if (totalBehind > 0) {
+          checkBtn.createEl('span', { cls: 'ct-skills-update-dot' });
+        }
+
         if (anyFetched) {
+          const lastChecked = new Date(
+            Math.max(...githubSources.map((s) => s.lastFetched ?? 0))
+          ).toLocaleString();
+          let statusText: string;
           if (totalBehind === 0) {
-            statusEl.setText('All up to date');
+            statusText = 'All up to date';
           } else {
             const n = githubSources.filter((s) => (s.behindCount ?? 0) > 0).length;
-            statusEl.setText(`${n} plugin${n !== 1 ? 's' : ''} have updates`);
+            statusText = `${n} plugin${n !== 1 ? 's' : ''} ${n !== 1 ? 'have' : 'has'} updates`;
           }
+          setTooltip(checkBtn, `${statusText} · Last checked ${lastChecked}`);
+        } else {
+          setTooltip(checkBtn, 'Not checked yet');
         }
 
         checkBtn.addEventListener('click', () => {
@@ -466,6 +537,9 @@ export class SkillsManagerView extends ItemView {
 
     const q = this.installedFilter.toLowerCase();
 
+    // ── Scrollable body (GitHub source tree + Local group) ───────────────────
+    const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
+
     // ── GitHub source tree nodes ─────────────────────────────────────────────
     for (const source of githubSources) {
       const isExpanded = this.expandedSources.has(source.id);
@@ -481,7 +555,7 @@ export class SkillsManagerView extends ItemView {
       if (q && !isLoading && filteredSourceSkills.length === 0 && !source.name.toLowerCase().includes(q)) continue;
 
       // Source header row
-      const sourceRow = this.listEl.createEl('div', {
+      const sourceRow = inner.createEl('div', {
         cls: 'ct-skills-tree-source' + (isSelected ? ' ct-skills-tree-source--active' : ''),
       });
       const toggleEl = sourceRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
@@ -517,15 +591,15 @@ export class SkillsManagerView extends ItemView {
       // Children (when expanded)
       if (isExpanded) {
         if (isLoading) {
-          const loadRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-child--loading' });
+          const loadRow = inner.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-child--loading' });
           loadRow.createEl('span', { cls: 'ct-skills-spinner' });
           loadRow.createEl('span', { text: ' Loading…' });
         } else if (filteredSourceSkills.length === 0) {
-          this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-empty', text: q ? 'No matches' : 'No skills found' });
+          inner.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-empty', text: q ? 'No matches' : 'No skills found' });
         } else {
           for (const skill of filteredSourceSkills) {
             const isChildActive = this.selectedGithubSourceSkill?.skill.id === skill.id && this.selectedGithubSourceSkill?.source.id === source.id;
-            const childRow = this.listEl.createEl('div', {
+            const childRow = inner.createEl('div', {
               cls: 'ct-skills-tree-child' + (isChildActive ? ' ct-skills-tree-child--active' : ''),
             });
             childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
@@ -554,7 +628,7 @@ export class SkillsManagerView extends ItemView {
 
     if (hasLocalItems && (!q || hasLocalMatches)) {
       const localExpanded = this.expandedSources.has('__local__');
-      const localRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-source' });
+      const localRow = inner.createEl('div', { cls: 'ct-skills-tree-source' });
       const localToggle = localRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
       setIcon(localToggle, localExpanded ? 'chevron-down' : 'chevron-right');
       localRow.createEl('span', { cls: 'ct-skills-tree-source-name', text: 'Local' });
@@ -568,7 +642,7 @@ export class SkillsManagerView extends ItemView {
         // Agents first
         for (const agent of filteredLocalAgents) {
           const isAgentActive = this.selectedAgent?.name === agent.name;
-          const childRow = this.listEl.createEl('div', {
+          const childRow = inner.createEl('div', {
             cls: 'ct-skills-tree-child' + (isAgentActive ? ' ct-skills-tree-child--active' : ''),
           });
           childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: agent.name });
@@ -587,7 +661,7 @@ export class SkillsManagerView extends ItemView {
         // Then local skills
         for (const skill of filteredLocalSkills) {
           const isSkillActive = this.selectedInstalled?.name === skill.name;
-          const childRow = this.listEl.createEl('div', {
+          const childRow = inner.createEl('div', {
             cls: 'ct-skills-tree-child' + (isSkillActive ? ' ct-skills-tree-child--active' : ''),
           });
           childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });

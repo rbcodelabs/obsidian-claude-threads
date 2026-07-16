@@ -428,6 +428,8 @@ export interface PluginSettings {
   enableWebViewerTool?: boolean;
   /** Registered local skill collections browsable from the Skills Manager. */
   skillSources: SkillSource[];
+  /** Width in px of the Skills Manager's left list panel, set by dragging the divider. */
+  skillsListWidth: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -476,6 +478,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   kanbanGroupBy: 'status',
   kanbanCollapseSide: 'none',
   skillSources: [],
+  skillsListWidth: 200,
 };
 
 /**

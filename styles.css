@@ -5164,15 +5164,46 @@ textarea.ct-settings-wide-input {
   min-height: 0;
 }
 
-/* Left: skill list */
+/* Left: skill list (width set inline by SkillsManagerView; 200px is a pre-JS fallback) */
 .ct-skills-list {
   width: 200px;
   min-width: 140px;
+  max-width: 480px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--background-modifier-border);
   overflow: hidden;
+}
+
+/* Draggable divider between the list and detail panels */
+.ct-skills-divider {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+}
+
+.ct-skills-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--background-modifier-border);
+}
+
+.ct-skills-divider:hover::after,
+.ct-skills-divider--dragging::after {
+  left: 1px;
+  width: 3px;
+  background: var(--interactive-accent);
+}
+
+/* Prevents text selection / wrong cursor over the rest of the UI while dragging */
+body.ct-skills-resizing {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 /* Search row */
@@ -5216,6 +5247,43 @@ textarea.ct-settings-wide-input {
   font-size: 10px;
   color: var(--text-faint);
   padding: 3px 8px;
+  flex-shrink: 0;
+}
+
+/* Import / check-for-updates action rows (Installed tab header) */
+.ct-skills-update-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.ct-skills-update-row:last-of-type {
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ct-skills-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+}
+
+.ct-skills-btn-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Update-available indicator dot on the "Check for updates" button; full
+   status text (up-to-date / N updates / last checked) lives in its tooltip. */
+.ct-skills-update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-orange);
   flex-shrink: 0;
 }
 
