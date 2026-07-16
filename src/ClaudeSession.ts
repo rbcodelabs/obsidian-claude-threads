@@ -188,14 +188,33 @@ export class ClaudeSession {
           // Instead we show the plan card, then signal approval/rejection via deny messages
           // so Claude's turn continues (approve) or is interrupted (reject) without the
           // CLI ever attempting to run the tool.
+          //
+          // Denying the tool call only changes what THIS Claude instance believes — it does
+          // NOT clear the CLI's own internal permission-mode state, which is what actually
+          // gates the "you are in Plan Mode" system-reminder shown on every turn. Any
+          // subagent spawned via the `agents` option runs inside this same query/session and
+          // reads that same internal state, so without explicitly calling setPermissionMode()
+          // on approval, subagents keep seeing a live plan-mode restriction forever, even
+          // after the parent has "exited" plan mode from the user's point of view. See
+          // Query.setPermissionMode in the SDK types — this is the actual mechanism meant to
+          // clear it, and it was previously never called anywhere in this file.
+          const clearPlanMode = async () => {
+            try {
+              await this.activeQuery?.setPermissionMode('default');
+            } catch (err) {
+              console.error('[ClaudeThreads] failed to clear plan mode via setPermissionMode:', err);
+            }
+          };
           const planText = String((input as { plan?: unknown }).plan ?? '');
           if (callbacks.onPlanReady) {
             const result = await new Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult>((resolve) => {
               callbacks.onPlanReady!(
                 planText,
-                (editedPlan) => {
-                  // Approve: deny the tool call (avoids Zod error) with a message Claude
-                  // can read to understand it should proceed with implementation.
+                async (editedPlan) => {
+                  // Approve: clear the CLI's real plan-mode state first, then deny the tool
+                  // call (avoids Zod error) with a message Claude can read to understand it
+                  // should proceed with implementation.
+                  await clearPlanMode();
                   const approvalNote = editedPlan !== undefined && editedPlan !== planText
                     ? `Plan approved with edits:\n\n${editedPlan}`
                     : 'Plan approved — proceed with implementation.';
@@ -206,7 +225,9 @@ export class ClaudeSession {
             });
             return result;
           }
-          // No handler registered: deny non-interruptingly so Claude can proceed normally.
+          // No handler registered: clear plan mode and deny non-interruptingly so Claude can
+          // proceed normally.
+          await clearPlanMode();
           return { behavior: 'deny' as const, message: 'Plan approved — proceed with implementation.', interrupt: false };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
