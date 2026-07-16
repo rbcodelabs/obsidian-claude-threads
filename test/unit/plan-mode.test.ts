@@ -22,11 +22,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   // Capture the canUseTool function so tests can call it directly.
   let _canUseTool: ((name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>) | null = null;
   let _queryIterable: AsyncIterable<Record<string, unknown>> | null = null;
+  let _setPermissionMode: ((mode: string) => Promise<void>) | null = null;
 
   return {
     query: (opts: { options: { canUseTool?: unknown; prompt: unknown } }) => {
       _canUseTool = opts.options?.canUseTool as typeof _canUseTool;
       const iter = _queryIterable;
+      _setPermissionMode = vi.fn(async () => {});
       return {
         [Symbol.asyncIterator]: () => iter![Symbol.asyncIterator](),
         close: () => {},
@@ -34,10 +36,12 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         supportedModels: async () => [],
         supportedAgents: async () => [],
         getContextUsage: async () => null,
+        setPermissionMode: _setPermissionMode,
       };
     },
     __setIterable: (it: AsyncIterable<Record<string, unknown>>) => { _queryIterable = it; },
     __getCanUseTool: () => _canUseTool,
+    __getSetPermissionMode: () => _setPermissionMode,
   };
 });
 
@@ -45,6 +49,26 @@ const { ClaudeSession } = await import('../../src/ClaudeSession');
 
 async function* makeMessages(msgs: Record<string, unknown>[]): AsyncIterable<Record<string, unknown>> {
   for (const m of msgs) yield m;
+}
+
+/**
+ * Like makeMessages, but withholds the final 'result' message until `release()`
+ * is called. Needed for assertions that must run while ClaudeSession.run()'s
+ * event loop is still alive (e.g. checking `activeQuery` state) — with a plain
+ * makeMessages() iterable the loop drains and tears down `activeQuery` as soon
+ * as the single 'result' message is consumed, which can race ahead of a
+ * pending canUseTool callback in test code (the real CLI holds its stream open
+ * for as long as a control request — like ExitPlanMode approval — is
+ * in flight; this mirrors that by not emitting 'result' until told to).
+ */
+function makeGatedMessages(msgs: Record<string, unknown>[]): { iterable: AsyncIterable<Record<string, unknown>>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  async function* gen() {
+    await gate;
+    for (const m of msgs) yield m;
+  }
+  return { iterable: gen(), release };
 }
 
 function minimalCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallbacks {
@@ -259,6 +283,69 @@ describe('canUseTool ExitPlanMode', () => {
 
     await runPromise;
     expect(receivedPlan).toBe('Step 1: research\nStep 2: implement');
+  });
+
+  it("approve() clears the CLI's real plan-mode state via query.setPermissionMode('default') " +
+    "— without this, subagents sharing the same query keep seeing plan mode as active forever",
+  async () => {
+    const { __setIterable, __getCanUseTool, __getSetPermissionMode } = await import('@anthropic-ai/claude-agent-sdk') as any;
+
+    // Withhold the 'result' message until after we've asserted on activeQuery
+    // state — see makeGatedMessages doc comment for why.
+    const { iterable, release } = makeGatedMessages([
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]);
+    __setIterable(iterable);
+
+    let approveRef: ((edited?: string) => void) | null = null;
+    const callbacks = minimalCallbacks({
+      onPlanReady: (_planText, approve, _reject) => { approveRef = approve; },
+    });
+
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
+    const callPromise = canUseTool('ExitPlanMode', { plan: 'Step 1: do X' }, {});
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+    approveRef!();
+    await callPromise;
+
+    const setPermissionMode = __getSetPermissionMode();
+    expect(setPermissionMode).toHaveBeenCalledWith('default');
+
+    release();
+    await runPromise;
+  });
+
+  it('reject() does NOT call setPermissionMode — rejecting a plan should not clear plan mode', async () => {
+    const { __setIterable, __getCanUseTool, __getSetPermissionMode } = await import('@anthropic-ai/claude-agent-sdk') as any;
+
+    __setIterable(makeMessages([
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]));
+
+    let rejectRef: (() => void) | null = null;
+    const callbacks = minimalCallbacks({
+      onPlanReady: (_planText, _approve, reject) => { rejectRef = reject; },
+    });
+
+    const session = new ClaudeSession('/fake/claude');
+    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    await new Promise<void>((r) => setTimeout(r, 0));
+
+    const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
+    const callPromise = canUseTool('ExitPlanMode', { plan: 'A plan I reject' }, {});
+
+    await new Promise<void>((r) => setTimeout(r, 0));
+    rejectRef!();
+    await callPromise;
+    await runPromise;
+
+    const setPermissionMode = __getSetPermissionMode();
+    expect(setPermissionMode).not.toHaveBeenCalled();
   });
 
   it("no-handler ExitPlanMode resolves with { behavior: 'deny', interrupt: false } to avoid Zod execution error", async () => {

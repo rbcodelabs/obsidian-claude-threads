@@ -689,13 +689,13 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
         // Generate a unique worktree directory under os.tmpdir()
         const worktreeId = crypto.randomUUID().slice(0, 8);
-        const worktreePath = path.join(os.tmpdir(), 'claude-worktrees', worktreeId);
-        fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+        const rawWorktreePath = path.join(os.tmpdir(), 'claude-worktrees', worktreeId);
+        fs.mkdirSync(path.dirname(rawWorktreePath), { recursive: true });
 
         const branchName = args.branch ?? `claude/${Date.now()}`;
 
         // git worktree add <path> -b <branch> [<base>]
-        const gitArgs = ['worktree', 'add', worktreePath, '-b', branchName];
+        const gitArgs = ['worktree', 'add', rawWorktreePath, '-b', branchName];
         if (args.baseBranch) gitArgs.push(args.baseBranch);
 
         try {
@@ -707,6 +707,15 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             isError: true,
           };
         }
+
+        // os.tmpdir() (and therefore rawWorktreePath) resolves under a symlinked path on
+        // macOS (/var/folders/... -> /private/var/folders/...). The Read/Write/Edit tool
+        // sandbox checks the canonical resolved path, while Bash tolerates the symlink form
+        // — so leaving this uncanonicalized causes Edit/Write (but not Bash) to fail with
+        // spurious "Stream closed" / permission errors for the rest of the worktree session.
+        // Resolve to the real path now that `git worktree add` has actually created the
+        // directory (realpathSync requires the path to exist).
+        const worktreePath = fs.realpathSync(rawWorktreePath);
 
         activeWorktrees.set(worktreePath, gitRoot);
         effectiveCwd = worktreePath;
