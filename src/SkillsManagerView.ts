@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, App, requestUrl } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, Menu, App, requestUrl } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 
 export const SKILLS_VIEW_TYPE = 'claude-threads:skills';
@@ -471,17 +471,26 @@ export class SkillsManagerView extends ItemView {
 
     // ── Import Skill action row (always shown, stable position) ─────────────
     const importRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
-    const importFolderBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import Folder…' });
-    const importFolderIcon = importFolderBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-    setIcon(importFolderIcon, 'folder-plus');
-    importFolderBtn.prepend(importFolderIcon);
-    importFolderBtn.addEventListener('click', () => this.importFolderInputEl.click());
-
-    const importFileBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import File (.skill)…' });
-    const importFileIcon = importFileBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-    setIcon(importFileIcon, 'file-up');
-    importFileBtn.prepend(importFileIcon);
-    importFileBtn.addEventListener('click', () => this.importFileInputEl.click());
+    const importBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import…' });
+    const importIcon = importBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
+    setIcon(importIcon, 'plus');
+    importBtn.prepend(importIcon);
+    importBtn.addEventListener('click', (e) => {
+      const menu = new Menu();
+      menu.addItem(item =>
+        item
+          .setTitle('Folder…')
+          .setIcon('folder-plus')
+          .onClick(() => this.importFolderInputEl.click())
+      );
+      menu.addItem(item =>
+        item
+          .setTitle('File (.skill)…')
+          .setIcon('file-up')
+          .onClick(() => this.importFileInputEl.click())
+      );
+      menu.showAtMouseEvent(e);
+    });
 
     // ── Check for Updates action row (only when GitHub sources are configured) ─
     if (githubSources.length > 0) {
