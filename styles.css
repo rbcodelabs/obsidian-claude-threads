@@ -5126,13 +5126,20 @@ textarea.ct-settings-wide-input {
   background: transparent;
 }
 
-/* Tab bar */
+/* Tab bar: tab labels on the left, Import/Check-for-updates icon buttons on the right */
 .ct-skills-tabs {
   display: flex;
-  gap: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   background: var(--tab-container-background, var(--background-secondary));
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
+}
+
+.ct-skills-tabs-list {
+  display: flex;
+  min-width: 0;
 }
 
 .ct-skills-tab {
@@ -5154,6 +5161,33 @@ textarea.ct-settings-wide-input {
 .ct-skills-tab--active {
   color: var(--text-accent);
   border-bottom-color: var(--text-accent);
+}
+
+.ct-skills-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+
+.ct-skills-tab-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-skills-tab-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Spins the "Check for updates" refresh icon in place while a check is running,
+   so clicking the button visibly does something instead of appearing inert. */
+.ct-skills-tab-action--spinning svg {
+  animation: ct-skills-spin 0.8s linear infinite;
+  transform-origin: center;
 }
 
 /* Body: list + detail side-by-side */
@@ -5250,38 +5284,6 @@ body.ct-skills-resizing {
   flex-shrink: 0;
 }
 
-/* Import / check-for-updates action rows (Installed tab header) */
-.ct-skills-update-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-
-.ct-skills-update-row:last-of-type {
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.ct-skills-btn-icon {
-  display: inline-flex;
-  align-items: center;
-  margin-right: 4px;
-}
-
-.ct-skills-btn-icon svg {
-  width: 13px;
-  height: 13px;
-}
-
-/* Spins the "Check for updates" refresh icon in place while a check is running,
-   so clicking the button visibly does something instead of appearing inert. */
-.ct-skills-btn-icon--spinning svg {
-  animation: ct-skills-spin 0.8s linear infinite;
-  transform-origin: center;
-}
-
 /* Update-available indicator dot on the "Check for updates" button; full
    status text (up-to-date / N updates / last checked) lives in its tooltip. */
 .ct-skills-update-dot {
@@ -5292,6 +5294,15 @@ body.ct-skills-resizing {
   border-radius: 50%;
   background: var(--color-orange);
   flex-shrink: 0;
+}
+
+/* Same dot, but pinned as a corner badge on the icon-only tab-bar button
+   instead of trailing inline text. */
+.ct-skills-update-dot--badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
 }
 
 .ct-skills-section-label {

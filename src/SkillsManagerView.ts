@@ -210,6 +210,8 @@ export class SkillsManagerView extends ItemView {
 
   // DOM refs (stable across re-renders)
   private tabsEl!: HTMLElement;
+  private tabsListEl!: HTMLElement;
+  private tabActionsEl!: HTMLElement;
   private listEl!: HTMLElement;
   private dividerEl!: HTMLElement;
   private detailEl!: HTMLElement;
@@ -348,8 +350,10 @@ export class SkillsManagerView extends ItemView {
       void this.importSkillFromFile(file.path);
     });
 
-    // Tab bar
+    // Tab bar: tab labels on the left, Import/Check-for-updates icon buttons on the right
     this.tabsEl = root.createEl('div', { cls: 'ct-skills-tabs' });
+    this.tabsListEl = this.tabsEl.createEl('div', { cls: 'ct-skills-tabs-list' });
+    this.tabActionsEl = this.tabsEl.createEl('div', { cls: 'ct-skills-tabs-actions' });
     this.buildTabs();
 
     // Body: left list + draggable divider + right detail
@@ -419,8 +423,91 @@ export class SkillsManagerView extends ItemView {
     });
   }
 
+  /** Import / Check-for-updates icon buttons, right-aligned in the tab bar. Installed-tab only. */
+  private renderTabActions(): void {
+    this.tabActionsEl.empty();
+    if (this.activeTab !== 'installed') return;
+
+    const importBtn = this.tabActionsEl.createEl('button', { cls: 'clickable-icon ct-skills-tab-action' });
+    setIcon(importBtn, 'plus');
+    setTooltip(importBtn, 'Import skill');
+    importBtn.addEventListener('click', (e) => {
+      const menu = new Menu();
+      menu.addItem(item =>
+        item
+          .setTitle('Folder…')
+          .setIcon('folder-plus')
+          .onClick(() => this.importFolderInputEl.click())
+      );
+      menu.addItem(item =>
+        item
+          .setTitle('File (.skill)…')
+          .setIcon('file-up')
+          .onClick(() => this.importFileInputEl.click())
+      );
+      menu.showAtMouseEvent(e);
+    });
+
+    const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
+    if (githubSources.length === 0) return;
+
+    const checkBtn = this.tabActionsEl.createEl('button', {
+      cls: 'clickable-icon ct-skills-tab-action' + (this.isCheckingUpdates ? ' ct-skills-tab-action--spinning' : ''),
+    });
+    checkBtn.disabled = this.isCheckingUpdates;
+    setIcon(checkBtn, 'refresh-cw');
+
+    if (this.isCheckingUpdates) {
+      setTooltip(checkBtn, 'Checking…');
+      return;
+    }
+
+    // Compute result status from current behindCounts, surfaced as a tooltip
+    // (plus a small dot when updates are available) rather than inline text —
+    // keeps the tab bar compact instead of a wrapping text row.
+    const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+    const anyFetched = githubSources.some((s) => s.lastFetched != null);
+    if (totalBehind > 0) {
+      checkBtn.createEl('span', { cls: 'ct-skills-update-dot ct-skills-update-dot--badge' });
+    }
+
+    if (anyFetched) {
+      const lastChecked = new Date(
+        Math.max(...githubSources.map((s) => s.lastFetched ?? 0))
+      ).toLocaleString();
+      setTooltip(checkBtn, `${this.describeUpdateStatus(totalBehind, githubSources)} · Last checked ${lastChecked}`);
+    } else {
+      setTooltip(checkBtn, 'Check for updates');
+    }
+
+    checkBtn.addEventListener('click', () => {
+      void (async () => {
+        this.isCheckingUpdates = true;
+        this.renderList();
+        const { checked, failed } = await this.checkAllSourceStaleness();
+        this.isCheckingUpdates = false;
+        this.renderList();
+
+        // Always surface a result — previously a git failure (offline, auth
+        // prompt, bad clone path) was swallowed silently and the button
+        // looked like it did nothing at all when clicked.
+        const newTotalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+        if (checked === 0) {
+          new Notice('No GitHub plugin sources to check.');
+        } else if (failed.length === checked) {
+          new Notice(`Could not check for updates: ${failed[0].error}`);
+        } else if (failed.length > 0) {
+          const names = failed.map((f) => f.name).join(', ');
+          new Notice(`${this.describeUpdateStatus(newTotalBehind, githubSources)} (failed to check: ${names})`);
+        } else {
+          new Notice(this.describeUpdateStatus(newTotalBehind, githubSources));
+        }
+      })();
+    });
+  }
+
   private buildTabs(): void {
-    this.tabsEl.empty();
+    this.tabsListEl.empty();
 
     const tabs: Array<{ id: 'installed' | 'browse'; label: string }> = [
       { id: 'installed', label: 'Installed' },
@@ -428,7 +515,7 @@ export class SkillsManagerView extends ItemView {
     ];
 
     for (const tab of tabs) {
-      const btn = this.tabsEl.createEl('button', {
+      const btn = this.tabsListEl.createEl('button', {
         cls: 'ct-skills-tab' + (this.activeTab === tab.id ? ' ct-skills-tab--active' : ''),
         text: tab.label,
       });
@@ -453,6 +540,7 @@ export class SkillsManagerView extends ItemView {
 
   private renderList(): void {
     this.listEl.empty();
+    this.renderTabActions();
     if (this.activeTab === 'installed') {
       this.renderInstalledList();
     } else {
@@ -487,91 +575,6 @@ export class SkillsManagerView extends ItemView {
     if (agentCount > 0) countParts.push(`${agentCount} agent${agentCount !== 1 ? 's' : ''}`);
     if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
     this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
-
-    // ── Import Skill action row (always shown, stable position) ─────────────
-    const importRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
-    const importBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import…' });
-    const importIcon = importBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-    setIcon(importIcon, 'plus');
-    importBtn.prepend(importIcon);
-    importBtn.addEventListener('click', (e) => {
-      const menu = new Menu();
-      menu.addItem(item =>
-        item
-          .setTitle('Folder…')
-          .setIcon('folder-plus')
-          .onClick(() => this.importFolderInputEl.click())
-      );
-      menu.addItem(item =>
-        item
-          .setTitle('File (.skill)…')
-          .setIcon('file-up')
-          .onClick(() => this.importFileInputEl.click())
-      );
-      menu.showAtMouseEvent(e);
-    });
-
-    // ── Check for Updates action row (only when GitHub sources are configured) ─
-    if (githubSources.length > 0) {
-      const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
-
-      const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn' });
-      checkBtn.disabled = this.isCheckingUpdates;
-
-      // Icon stays the refresh-cw icon at all times; it just spins while checking,
-      // rather than swapping to a generic loader — makes the in-progress state
-      // legible at a glance instead of the button appearing to do nothing on click.
-      const iconWrap = checkBtn.createEl('span', {
-        cls: 'ct-skills-btn-icon' + (this.isCheckingUpdates ? ' ct-skills-btn-icon--spinning' : ''),
-      });
-      setIcon(iconWrap, 'refresh-cw');
-      checkBtn.createEl('span', { text: this.isCheckingUpdates ? 'Checking…' : 'Check for updates' });
-
-      if (!this.isCheckingUpdates) {
-        // Compute result status from current behindCounts, surfaced as a tooltip
-        // (plus a small dot when updates are available) rather than inline text —
-        // keeps the row compact instead of wrapping onto its own line.
-        const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
-        const anyFetched = githubSources.some((s) => s.lastFetched != null);
-        if (totalBehind > 0) {
-          checkBtn.createEl('span', { cls: 'ct-skills-update-dot' });
-        }
-
-        if (anyFetched) {
-          const lastChecked = new Date(
-            Math.max(...githubSources.map((s) => s.lastFetched ?? 0))
-          ).toLocaleString();
-          setTooltip(checkBtn, `${this.describeUpdateStatus(totalBehind, githubSources)} · Last checked ${lastChecked}`);
-        } else {
-          setTooltip(checkBtn, 'Not checked yet');
-        }
-
-        checkBtn.addEventListener('click', () => {
-          void (async () => {
-            this.isCheckingUpdates = true;
-            this.renderList();
-            const { checked, failed } = await this.checkAllSourceStaleness();
-            this.isCheckingUpdates = false;
-            this.renderList();
-
-            // Always surface a result — previously a git failure (offline, auth
-            // prompt, bad clone path) was swallowed silently and the button
-            // looked like it did nothing at all when clicked.
-            const newTotalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
-            if (checked === 0) {
-              new Notice('No GitHub plugin sources to check.');
-            } else if (failed.length === checked) {
-              new Notice(`Could not check for updates: ${failed[0].error}`);
-            } else if (failed.length > 0) {
-              const names = failed.map((f) => f.name).join(', ');
-              new Notice(`${this.describeUpdateStatus(newTotalBehind, githubSources)} (failed to check: ${names})`);
-            } else {
-              new Notice(this.describeUpdateStatus(newTotalBehind, githubSources));
-            }
-          })();
-        });
-      }
-    }
 
     const q = this.installedFilter.toLowerCase();
 
