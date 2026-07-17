@@ -5126,13 +5126,20 @@ textarea.ct-settings-wide-input {
   background: transparent;
 }
 
-/* Tab bar */
+/* Tab bar: tab labels on the left, Import/Check-for-updates icon buttons on the right */
 .ct-skills-tabs {
   display: flex;
-  gap: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   background: var(--tab-container-background, var(--background-secondary));
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
+}
+
+.ct-skills-tabs-list {
+  display: flex;
+  min-width: 0;
 }
 
 .ct-skills-tab {
@@ -5156,6 +5163,33 @@ textarea.ct-settings-wide-input {
   border-bottom-color: var(--text-accent);
 }
 
+.ct-skills-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+
+.ct-skills-tab-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-skills-tab-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Spins the "Check for updates" refresh icon in place while a check is running,
+   so clicking the button visibly does something instead of appearing inert. */
+.ct-skills-tab-action--spinning svg {
+  animation: ct-skills-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
 /* Body: list + detail side-by-side */
 .ct-skills-body {
   display: flex;
@@ -5164,15 +5198,46 @@ textarea.ct-settings-wide-input {
   min-height: 0;
 }
 
-/* Left: skill list */
+/* Left: skill list (width set inline by SkillsManagerView; 200px is a pre-JS fallback) */
 .ct-skills-list {
   width: 200px;
   min-width: 140px;
+  max-width: 480px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--background-modifier-border);
   overflow: hidden;
+}
+
+/* Draggable divider between the list and detail panels */
+.ct-skills-divider {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+}
+
+.ct-skills-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--background-modifier-border);
+}
+
+.ct-skills-divider:hover::after,
+.ct-skills-divider--dragging::after {
+  left: 1px;
+  width: 3px;
+  background: var(--interactive-accent);
+}
+
+/* Prevents text selection / wrong cursor over the rest of the UI while dragging */
+body.ct-skills-resizing {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 /* Search row */
@@ -5217,6 +5282,27 @@ textarea.ct-settings-wide-input {
   color: var(--text-faint);
   padding: 3px 8px;
   flex-shrink: 0;
+}
+
+/* Update-available indicator dot on the "Check for updates" button; full
+   status text (up-to-date / N updates / last checked) lives in its tooltip. */
+.ct-skills-update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-orange);
+  flex-shrink: 0;
+}
+
+/* Same dot, but pinned as a corner badge on the icon-only tab-bar button
+   instead of trailing inline text. */
+.ct-skills-update-dot--badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
 }
 
 .ct-skills-section-label {
