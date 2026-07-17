@@ -5275,6 +5275,13 @@ body.ct-skills-resizing {
   height: 13px;
 }
 
+/* Spins the "Check for updates" refresh icon in place while a check is running,
+   so clicking the button visibly does something instead of appearing inert. */
+.ct-skills-btn-icon--spinning svg {
+  animation: ct-skills-spin 0.8s linear infinite;
+  transform-origin: center;
+}
+
 /* Update-available indicator dot on the "Check for updates" button; full
    status text (up-to-date / N updates / last checked) lives in its tooltip. */
 .ct-skills-update-dot {

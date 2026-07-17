@@ -254,15 +254,28 @@ export class SkillsManagerView extends ItemView {
     void this.checkAllSourceStaleness();
   }
 
-  private async checkAllSourceStaleness(): Promise<void> {
+  /** Shared "All up to date" / "N plugins have updates" phrasing for the check-for-updates tooltip and toast. */
+  private describeUpdateStatus(totalBehind: number, sources: import('./types').SkillSource[]): string {
+    if (totalBehind === 0) return 'All up to date';
+    const n = sources.filter((s) => (s.behindCount ?? 0) > 0).length;
+    return `${n} plugin${n !== 1 ? 's' : ''} ${n !== 1 ? 'have' : 'has'} updates`;
+  }
+
+  /** Result of a bulk staleness check: how many sources were attempted and which ones failed (with a reason). */
+  private async checkAllSourceStaleness(): Promise<{ checked: number; failed: { name: string; error: string }[] }> {
     const sources = (this.plugin.settings.skillSources ?? []).filter(
       (s) => s.type === 'github' && s.clonePath,
     );
-    await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
+    const results = await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
+    const failed = results.filter((r): r is { name: string; error: string } => r !== null);
+    return { checked: sources.length, failed };
   }
 
-  private async fetchSourceStaleness(source: import('./types').SkillSource): Promise<void> {
-    if (!source.clonePath) return;
+  /** Fetches + computes behind-count for one source. Returns `{ name, error }` on failure, `null` on success. */
+  private async fetchSourceStaleness(
+    source: import('./types').SkillSource,
+  ): Promise<{ name: string; error: string } | null> {
+    if (!source.clonePath) return null;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { execSync } = require('child_process') as typeof import('child_process');
     try {
@@ -283,8 +296,14 @@ export class SkillsManagerView extends ItemView {
       if (this.selectedGithubSource?.id === source.id) {
         this.renderDetail();
       }
-    } catch {
-      // Network unavailable or git error — ignore silently
+      return null;
+    } catch (err) {
+      // Previously swallowed silently, which made "Check for updates" look like a no-op
+      // whenever git failed (auth prompt, offline, wrong path, etc). Surface it instead.
+      const stderr = (err as { stderr?: Buffer | string } | undefined)?.stderr;
+      const message = stderr && String(stderr).trim() ? String(stderr).trim() : (err instanceof Error ? err.message : String(err));
+      console.error(`[ClaudeThreads] Staleness check failed for "${source.name}":`, message);
+      return { name: source.name, error: message };
     }
   }
 
@@ -497,16 +516,18 @@ export class SkillsManagerView extends ItemView {
       const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
 
       const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn' });
+      checkBtn.disabled = this.isCheckingUpdates;
 
-      if (this.isCheckingUpdates) {
-        checkBtn.disabled = true;
-        checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' }).createEl('span', { cls: 'ct-skills-spinner' });
-        checkBtn.createEl('span', { text: 'Checking…' });
-      } else {
-        const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-        setIcon(refreshIcon, 'refresh-cw');
-        checkBtn.createEl('span', { text: 'Check for updates' });
+      // Icon stays the refresh-cw icon at all times; it just spins while checking,
+      // rather than swapping to a generic loader — makes the in-progress state
+      // legible at a glance instead of the button appearing to do nothing on click.
+      const iconWrap = checkBtn.createEl('span', {
+        cls: 'ct-skills-btn-icon' + (this.isCheckingUpdates ? ' ct-skills-btn-icon--spinning' : ''),
+      });
+      setIcon(iconWrap, 'refresh-cw');
+      checkBtn.createEl('span', { text: this.isCheckingUpdates ? 'Checking…' : 'Check for updates' });
 
+      if (!this.isCheckingUpdates) {
         // Compute result status from current behindCounts, surfaced as a tooltip
         // (plus a small dot when updates are available) rather than inline text —
         // keeps the row compact instead of wrapping onto its own line.
@@ -520,14 +541,7 @@ export class SkillsManagerView extends ItemView {
           const lastChecked = new Date(
             Math.max(...githubSources.map((s) => s.lastFetched ?? 0))
           ).toLocaleString();
-          let statusText: string;
-          if (totalBehind === 0) {
-            statusText = 'All up to date';
-          } else {
-            const n = githubSources.filter((s) => (s.behindCount ?? 0) > 0).length;
-            statusText = `${n} plugin${n !== 1 ? 's' : ''} ${n !== 1 ? 'have' : 'has'} updates`;
-          }
-          setTooltip(checkBtn, `${statusText} · Last checked ${lastChecked}`);
+          setTooltip(checkBtn, `${this.describeUpdateStatus(totalBehind, githubSources)} · Last checked ${lastChecked}`);
         } else {
           setTooltip(checkBtn, 'Not checked yet');
         }
@@ -536,9 +550,24 @@ export class SkillsManagerView extends ItemView {
           void (async () => {
             this.isCheckingUpdates = true;
             this.renderList();
-            await this.checkAllSourceStaleness();
+            const { checked, failed } = await this.checkAllSourceStaleness();
             this.isCheckingUpdates = false;
             this.renderList();
+
+            // Always surface a result — previously a git failure (offline, auth
+            // prompt, bad clone path) was swallowed silently and the button
+            // looked like it did nothing at all when clicked.
+            const newTotalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+            if (checked === 0) {
+              new Notice('No GitHub plugin sources to check.');
+            } else if (failed.length === checked) {
+              new Notice(`Could not check for updates: ${failed[0].error}`);
+            } else if (failed.length > 0) {
+              const names = failed.map((f) => f.name).join(', ');
+              new Notice(`${this.describeUpdateStatus(newTotalBehind, githubSources)} (failed to check: ${names})`);
+            } else {
+              new Notice(this.describeUpdateStatus(newTotalBehind, githubSources));
+            }
           })();
         });
       }
