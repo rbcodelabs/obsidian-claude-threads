@@ -7,7 +7,7 @@
  * No VaultPersistence calls — mobile has no local Claude sessions.
  */
 
-import type { RelayFrame, SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
+import type { RelayFrame, SerializedThread, SerializedMessage, PendingPermission, PendingQuestion } from './relay-protocol';
 import type { ToolCallRecord } from './types';
 
 type StoreListener = () => void;
@@ -18,6 +18,8 @@ export class MobileThreadStore {
   private listeners: Set<StoreListener> = new Set();
   /** Pending permissions keyed by requestId. */
   private pendingPermissions: Map<string, PendingPermission> = new Map();
+  /** Pending questions keyed by requestId. */
+  private pendingQuestions: Map<string, PendingQuestion> = new Map();
   /** Partially accumulated streaming token for the active streaming message. */
   private streamingContent: Map<string, string> = new Map();
   /** Tool calls fired during the current streaming turn, keyed by threadId. */
@@ -51,6 +53,14 @@ export class MobileThreadStore {
 
   getPendingPermissionsForThread(threadId: string): PendingPermission[] {
     return Array.from(this.pendingPermissions.values()).filter(p => p.threadId === threadId);
+  }
+
+  getPendingQuestions(): PendingQuestion[] {
+    return Array.from(this.pendingQuestions.values());
+  }
+
+  getPendingQuestionsForThread(threadId: string): PendingQuestion[] {
+    return Array.from(this.pendingQuestions.values()).filter(q => q.threadId === threadId);
   }
 
   getStreamingContent(threadId: string): string {
@@ -102,6 +112,10 @@ export class MobileThreadStore {
         // Clear permissions for this thread
         for (const [id, p] of this.pendingPermissions) {
           if (p.threadId === frame.threadId) this.pendingPermissions.delete(id);
+        }
+        // Clear questions for this thread
+        for (const [id, q] of this.pendingQuestions) {
+          if (q.threadId === frame.threadId) this.pendingQuestions.delete(id);
         }
         if (this.activeThreadId === frame.threadId) {
           const remaining = this.getThreads();
@@ -207,6 +221,31 @@ export class MobileThreadStore {
         this.notify();
         break;
 
+      case 'question_request':
+        this.pendingQuestions.set(frame.requestId, {
+          threadId: frame.threadId,
+          questions: frame.questions,
+          requestId: frame.requestId,
+        });
+        this.notify();
+        break;
+
+      case 'question_resolved':
+        // Remove the question for the thread (requestId may be empty for legacy path)
+        if (frame.requestId) {
+          this.pendingQuestions.delete(frame.requestId);
+        } else {
+          // Fallback: remove the first pending question for the thread
+          for (const [id, q] of this.pendingQuestions) {
+            if (q.threadId === frame.threadId) {
+              this.pendingQuestions.delete(id);
+              break;
+            }
+          }
+        }
+        this.notify();
+        break;
+
       case 'desktop_reconnected':
         // Desktop reconnected — clear all state; snapshot is coming
         this.clear();
@@ -248,6 +287,7 @@ export class MobileThreadStore {
     this.streamingContent.clear();
     this.streamingTools.clear();
     this.pendingPermissions.clear();
+    this.pendingQuestions.clear();
     this.queuedMessages.clear();
     this.threadStatus.clear();
 
@@ -269,6 +309,7 @@ export class MobileThreadStore {
     this.streamingContent.clear();
     this.streamingTools.clear();
     this.pendingPermissions.clear();
+    this.pendingQuestions.clear();
     this.queuedMessages.clear();
     this.threadStatus.clear();
     this.activeThreadId = null;

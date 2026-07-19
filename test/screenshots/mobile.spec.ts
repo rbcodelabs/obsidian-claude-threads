@@ -18,6 +18,7 @@ import path from 'path';
  * invisible against a full 390×844 canvas):
  *   mobile-input-toolbar       — .ct-mobile-input-row: send, attach, stop buttons + textarea
  *   mobile-permission-card     — .ct-mobile-permission-card: deny/allow/always-allow buttons
+ *   mobile-question-card       — .ct-mobile-question-card: single-select + multiSelect questions, Other, Submit
  *   mobile-queue-rows          — .ct-mobile-queue-rows: stacked queue rows above composer
  *   mobile-status-rail-active  — .ct-mobile-status-rail: compacting status card
  *   mobile-error-card          — .ct-mobile-error-card: error display with dismiss
@@ -102,6 +103,14 @@ test.describe('Mobile View', () => {
     await page.waitForSelector('.ct-mobile-permission-card');
     await page.waitForTimeout(300);
     await expect(page.locator('.ct-mobile-permission-card')).toHaveScreenshot('mobile-permission-card.png');
+  });
+
+  test('question card (single-select + multiSelect, Other, 44px tap targets)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-question'));
+    await page.waitForSelector('.ct-mobile-question-card');
+    await page.waitForTimeout(300);
+    await expect(page.locator('.ct-mobile-question-card')).toHaveScreenshot('mobile-question-card.png');
   });
 
   test('queue rows (stacked above composer, replace flat banner)', async ({ page }) => {

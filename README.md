@@ -325,7 +325,7 @@ Without elicitation support the session would stall indefinitely with no visible
 
 ### Remote access (mobile)
 
-Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
+Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, answer AskUserQuestion prompts, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
 
 **Prerequisites:**
 
@@ -354,6 +354,7 @@ Opening this URL on any device with Obsidian Mobile + Claude Threads installed w
 
 - Read streaming conversation output and tool calls in real time
 - Send messages, approve or deny permission requests (including **Always Allow**)
+- Answer **AskUserQuestion** prompts — single-select and multi-select options plus a free-text "Other" field, same as desktop
 - Switch between threads and search the thread list by title or summary
 - See each thread's **status rail** — spinner cards for active tool calls, error cards for failed threads
 - Copy any assistant message to clipboard with the ⎘ button

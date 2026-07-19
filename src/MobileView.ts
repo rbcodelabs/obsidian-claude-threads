@@ -12,7 +12,7 @@ import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from 'obsidian';
 import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
-import type { SerializedThread, SerializedMessage, PendingPermission } from './relay-protocol';
+import type { SerializedThread, SerializedMessage, PendingPermission, PendingQuestion } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon } from './toolNameUtils';
 
@@ -57,6 +57,7 @@ export class MobileView extends ItemView {
   private lastRenderedActiveId: string | null = null;
   private lastRenderedMessageCount = -1;
   private lastRenderedPermissionCount = -1;
+  private lastRenderedQuestionCount = -1;
   private streamingEl: HTMLElement | null = null;
 
   // Context summary banner (mirrors desktop behaviour)
@@ -245,23 +246,30 @@ export class MobileView extends ItemView {
     const thread = activeId ? this.store.getThread(activeId) : null;
     const msgCount = thread?.messages.length ?? 0;
     const permCount = activeId ? (this.store.getPendingPermissionsForThread(activeId)?.length ?? 0) : 0;
+    const questionCount = activeId ? (this.store.getPendingQuestionsForThread(activeId)?.length ?? 0) : 0;
 
-    if (activeId !== this.lastRenderedActiveId || msgCount !== this.lastRenderedMessageCount || permCount !== this.lastRenderedPermissionCount) {
-      // Thread changed, new messages finalized, or permission state changed — full re-render.
+    if (
+      activeId !== this.lastRenderedActiveId ||
+      msgCount !== this.lastRenderedMessageCount ||
+      permCount !== this.lastRenderedPermissionCount ||
+      questionCount !== this.lastRenderedQuestionCount
+    ) {
+      // Thread changed, new messages finalized, or permission/question state changed — full re-render.
       this.renderConversation(activeId);
       this.lastRenderedActiveId = activeId;
       this.lastRenderedMessageCount = msgCount;
       this.lastRenderedPermissionCount = permCount;
+      this.lastRenderedQuestionCount = questionCount;
     } else {
       // Same thread, same message count — streaming token arrived.
       // Only swap out the streaming element; stable messages stay untouched.
       this.updateStreamingEl(activeId);
     }
 
-    // If there's a pending permission for the active thread and the user is on the
-    // list view, override the back-navigation guard and bring them to the conversation
-    // panel so they don't miss the permission card.
-    if (activeId && permCount > 0 && this.showingList) {
+    // If there's a pending permission or question for the active thread and the user is
+    // on the list view, override the back-navigation guard and bring them to the
+    // conversation panel so they don't miss the card.
+    if (activeId && (permCount > 0 || questionCount > 0) && this.showingList) {
       this.showingList = false;
     }
 
@@ -362,15 +370,18 @@ export class MobileView extends ItemView {
     const isActive = thread.id === activeId;
     const isStreaming = this.store!.isStreaming(thread.id);
     const hasPendingPermission = this.store!.getPendingPermissionsForThread(thread.id).length > 0;
+    const hasPendingQuestion = this.store!.getPendingQuestionsForThread(thread.id).length > 0;
+    const needsInput = hasPendingPermission || hasPendingQuestion;
 
     const item = container.createDiv({
-      cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}${hasPendingPermission ? ' ct-mobile-thread-item-permission' : ''}`,
+      cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}${needsInput ? ' ct-mobile-thread-item-permission' : ''}`,
     });
 
-    // Left: status icon — permission badge takes priority over streaming indicator
+    // Left: status icon — permission/question badge (both mean "Claude needs your
+    // input") takes priority over streaming indicator
     let icon = '›';
     let iconCls = 'ct-mobile-thread-icon';
-    if (hasPendingPermission) {
+    if (needsInput) {
       icon = '?';
       iconCls += ' ct-mobile-thread-icon-permission';
     } else if (isStreaming) {
@@ -445,6 +456,12 @@ export class MobileView extends ItemView {
     const permissions = this.store.getPendingPermissionsForThread(activeId);
     for (const permission of permissions) {
       this.renderPermissionCard(permission);
+    }
+
+    // Render question cards for this thread
+    const questions = this.store.getPendingQuestionsForThread(activeId);
+    for (const question of questions) {
+      this.renderQuestionCard(question);
     }
 
     // Render settled messages
@@ -636,6 +653,101 @@ export class MobileView extends ItemView {
       pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
       if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
     }
+  }
+
+  /**
+   * Renders the mobile question card shown when Claude calls AskUserQuestion.
+   * Mirrors renderPermissionCard's structure and ThreadsView's renderQuestionCard
+   * DOM/answer-building logic — every question gets fixed options (radio for
+   * single-select, checkbox for multiSelect) plus an always-present "Other"
+   * free-text option. Submit builds the answers map and sends resolve_question.
+   */
+  private renderQuestionCard(pending: PendingQuestion): void {
+    const card = this.messagesEl.createDiv('ct-mobile-question-card');
+
+    const header = card.createDiv('ct-mobile-question-header');
+    const iconEl = header.createSpan({ cls: 'ct-mobile-question-icon' });
+    setIcon(iconEl, getToolIcon('AskUserQuestion'));
+    header.createSpan({ cls: 'ct-mobile-question-label', text: 'Claude needs your input' });
+
+    const body = card.createDiv('ct-mobile-question-body');
+
+    const questionInputs: Array<{
+      question: string;
+      optionInputs: HTMLInputElement[];
+      otherInput: HTMLInputElement;
+      otherText: HTMLInputElement;
+    }> = [];
+
+    for (const q of pending.questions) {
+      const qEl = body.createDiv({ cls: 'ct-mobile-question' });
+      if (q.header) qEl.createEl('h3', { cls: 'ct-mobile-question-title', text: q.header });
+      qEl.createEl('p', { cls: 'ct-mobile-question-text', text: q.question });
+
+      const optionsEl = qEl.createDiv({ cls: 'ct-mobile-question-options' });
+      const optionInputs: HTMLInputElement[] = [];
+      for (const opt of q.options) {
+        const row = optionsEl.createDiv({ cls: 'ct-mobile-question-option' });
+        const inputEl = row.createEl('input', {
+          attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: opt.label },
+        }) as HTMLInputElement;
+        const labelEl = row.createEl('label', { cls: 'ct-mobile-question-option-label' });
+        labelEl.createSpan({ cls: 'ct-mobile-question-opt-name', text: opt.label });
+        if (opt.description) {
+          labelEl.createSpan({ cls: 'ct-mobile-question-opt-desc', text: opt.description });
+        }
+        optionInputs.push(inputEl);
+      }
+
+      // "Other" — always available in addition to the fixed choices, matching
+      // the real AskUserQuestion tool's behavior (and desktop's renderQuestionCard).
+      const otherRow = optionsEl.createDiv({ cls: 'ct-mobile-question-option ct-mobile-question-option-other' });
+      const otherInput = otherRow.createEl('input', {
+        attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
+      }) as HTMLInputElement;
+      const otherLabelEl = otherRow.createEl('label', { cls: 'ct-mobile-question-option-label' });
+      otherLabelEl.createSpan({ cls: 'ct-mobile-question-opt-name', text: 'Other' });
+      const otherText = otherLabelEl.createEl('input', {
+        cls: 'ct-mobile-question-other-text',
+        attr: { type: 'text', placeholder: 'Type your own answer…' },
+      }) as HTMLInputElement;
+      // Typing implicitly selects "Other" so the user doesn't have to tap the
+      // radio/checkbox separately before writing a custom answer.
+      otherText.addEventListener('input', () => {
+        if (!otherInput.checked) otherInput.checked = true;
+      });
+      // Prevent a tap landing in the text field from bubbling up and toggling
+      // a sibling control.
+      otherText.addEventListener('click', (e) => e.stopPropagation());
+
+      questionInputs.push({ question: q.question, optionInputs, otherInput, otherText });
+    }
+
+    const actions = card.createDiv('ct-mobile-question-actions');
+    const submitBtn = actions.createEl('button', {
+      cls: 'ct-mobile-question-submit',
+      text: 'Submit',
+    });
+    submitBtn.addEventListener('click', () => {
+      const answers: Record<string, string> = {};
+      for (const { question, optionInputs, otherInput, otherText } of questionInputs) {
+        const values: string[] = [];
+        for (const input of optionInputs) {
+          if (input.checked) values.push(input.value);
+        }
+        if (otherInput.checked) {
+          const text = otherText.value.trim();
+          if (text) values.push(text);
+        }
+        answers[question] = values.join(',');
+      }
+      this.relayClient!.sendCommand({
+        type: 'resolve_question',
+        threadId: pending.threadId,
+        requestId: pending.requestId,
+        answers,
+      });
+    });
   }
 
   private renderPermissionCard(permission: PendingPermission): void {
