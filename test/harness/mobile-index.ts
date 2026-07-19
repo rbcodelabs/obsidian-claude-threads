@@ -6,6 +6,7 @@
  *   ?view=mobile-connected    — mock relay + seeded MobileThreadStore, first thread active (conv panel)
  *   ?view=mobile-thread-list  — seeded store, NO active thread (shows thread list panel)
  *   ?view=mobile-permission   — active thread with a pending permission request card
+ *   ?view=mobile-question     — active thread with a pending AskUserQuestion card (single-select + multiSelect)
  *   ?view=mobile-queue        — active streaming thread + a queued message (shows queue banner + cancel ×)
  *
  * Optional query params:
@@ -117,6 +118,46 @@ if (view === 'mobile-connected') {
     toolName: 'Bash',
     detail: 'npm run deploy --prod',
     requestId: 'perm-fixture-001',
+  });
+
+  const mobileView = new MobileView(mockLeaf as any, relay as any, store);
+  app.appendChild(mobileView.containerEl);
+  mobileView.onOpen();
+  (window as any).__mobileView = mobileView;
+  (window as any).__store = store;
+
+} else if (view === 'mobile-question') {
+  // Active thread with a pending AskUserQuestion card: one single-select question
+  // and one multiSelect question (with an option description) so the card can be
+  // exercised/screenshotted in isolation.
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(fixtureThreads[0].id));
+  store.applyFrame({
+    type: 'question_request',
+    threadId: fixtureThreads[0].id,
+    requestId: 'question-fixture-001',
+    questions: [
+      {
+        header: 'Deployment target',
+        question: 'Which environment should this ship to?',
+        multiSelect: false,
+        options: [
+          { label: 'Staging', description: 'Deploy to the staging environment first' },
+          { label: 'Production', description: 'Deploy directly to production' },
+        ],
+      },
+      {
+        header: 'Test coverage',
+        question: 'Which test suites should run before merging?',
+        multiSelect: true,
+        options: [
+          { label: 'Unit tests', description: 'Fast, run on every commit' },
+          { label: 'Integration tests', description: '' },
+          { label: 'E2E tests', description: 'Slower, full browser automation' },
+        ],
+      },
+    ],
   });
 
   const mobileView = new MobileView(mockLeaf as any, relay as any, store);

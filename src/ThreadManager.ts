@@ -134,6 +134,8 @@ export class ThreadManager {
   private pendingQuestionResolvers: Map<string, (answers: Record<string, string>) => void> = new Map();
   /** Remote permission resolvers keyed by requestId (used by RelayClient). */
   private remotePermissionResolvers: Map<string, (allow: boolean) => void> = new Map();
+  /** Remote question resolvers keyed by requestId (used by RelayClient). */
+  private remoteQuestionResolvers: Map<string, (answers: Record<string, string>) => void> = new Map();
   private listeners: Set<ThreadStateListener> = new Set();
   private settings: PluginSettings;
   mcpServers: Record<string, McpServerConfig> | undefined = undefined;
@@ -521,6 +523,26 @@ export class ThreadManager {
    */
   registerRemotePermissionResolver(requestId: string, resolver: (allow: boolean) => void): void {
     this.remotePermissionResolvers.set(requestId, resolver);
+  }
+
+  /**
+   * Resolve a question that was issued with a specific requestId (used by
+   * RelayClient for remote question resolution from a mobile client).
+   */
+  resolveQuestionByRequestId(requestId: string, answers: Record<string, string>): void {
+    const resolver = this.remoteQuestionResolvers.get(requestId);
+    if (resolver) {
+      this.remoteQuestionResolvers.delete(requestId);
+      resolver(answers);
+    }
+  }
+
+  /**
+   * Register a resolver keyed by a stable requestId so that RelayClient can
+   * bridge remote resolve_question commands to the correct local promise.
+   */
+  registerRemoteQuestionResolver(requestId: string, resolver: (answers: Record<string, string>) => void): void {
+    this.remoteQuestionResolvers.set(requestId, resolver);
   }
 
   getQueuedMessage(id: string): string | undefined {
