@@ -14,7 +14,14 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
-import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type ImageAttachment } from './types';
+import {
+  type PluginSettings,
+  DEFAULT_SETTINGS,
+  effectiveExtraEnv,
+  type Project,
+  type ImageAttachment,
+  type ScheduledItem,
+} from './types';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
 import { RelayClient } from './RelayClient';
@@ -193,7 +200,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Scheduler } = require('./Scheduler') as typeof import('./Scheduler');
+    const { Scheduler, computeNextRun } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -566,6 +573,46 @@ export default class ClaudeThreadsPlugin extends Plugin {
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),
       isThreadBusy: (threadId) => this.manager.isRunning(threadId),
+      // Defense-in-depth fencing guard (see src/Scheduler.ts SchedulerOptions.claimFire
+      // for the full contract). This closes a narrow window that can otherwise
+      // duplicate-fire a cron item: Obsidian's Component.unload() does not await
+      // onunload(), so a plugin reload can construct a fresh Scheduler instance
+      // (with its own freshly-armed timers) while a prior instance's onunload()
+      // is still mid-flight. Reading via this.loadData() here — instead of the
+      // in-memory this.settings cache — is what makes this work even when two
+      // Scheduler instances coexist: each reads the genuinely current on-disk
+      // state rather than its own process's stale snapshot.
+      claimFire: async (item) => {
+        const disk = ((await this.loadData()) ?? {}) as { scheduledItems?: ScheduledItem[] };
+        const diskItems = disk.scheduledItems ?? [];
+        const idx = diskItems.findIndex((i) => i.id === item.id);
+        const diskItem = idx >= 0 ? diskItems[idx] : undefined;
+
+        if (!diskItem || !diskItem.enabled || diskItem.nextRun !== item.nextRun) {
+          // Already claimed by another instance this cycle, or the item was
+          // disabled/removed since this timer was armed.
+          return { claimed: false, fresh: diskItem };
+        }
+
+        const claimed: ScheduledItem = {
+          ...diskItem,
+          lastRun: Date.now(),
+          nextRun: computeNextRun(diskItem, true),
+        };
+        diskItems[idx] = claimed;
+
+        // Write back immediately so a concurrently-firing sibling instance's
+        // claimFire call sees this claim. Write the freshly-loaded disk object
+        // (not this.settings) so we don't clobber fields a sibling instance may
+        // have written since this process's own in-memory settings were cached.
+        await this.saveData({ ...disk, scheduledItems: diskItems });
+        // Keep this instance's own cache in sync so a subsequent saveSettings()
+        // call from elsewhere in this process doesn't overwrite the claim with
+        // stale in-memory state.
+        this.settings.scheduledItems = diskItems;
+
+        return { claimed: true, fresh: claimed };
+      },
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
@@ -1152,6 +1199,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    // Stop scheduler timers FIRST, before anything else — including before the
+    // graceful-shutdown wait below. Obsidian's Component.unload() does not await
+    // onunload(), so a reload can construct a brand-new Scheduler (with its own
+    // armed timers) while this instance is still stuck in the up-to-10s
+    // gracefulShutdown wait. If we destroyed the old scheduler only after that
+    // wait, both instances' timers would be live simultaneously and could each
+    // independently fire the same due item. Destroying synchronously here closes
+    // that race window immediately, regardless of how long thread shutdown takes.
+    this.scheduler?.destroy();
+
     // ── Safe-reload guard ────────────────────────────────────────────────────
     // If any agent threads are actively running, interrupt them and wait up to
     // 10 seconds for clean shutdown before forcibly closing sessions.
@@ -1194,9 +1251,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
       window.clearTimeout(id);
     }
     this.pendingBgTaskTimers.clear();
-
-    // Stop scheduler timers
-    this.scheduler?.destroy();
 
     // Persist thread state to data.json
     await this.saveSettings();
