@@ -156,6 +156,14 @@ export class ThreadManager {
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
   /**
+   * Absolute filesystem path to this plugin's installed directory (vaultRoot +
+   * manifest.dir), set once from main.ts alongside vaultRoot. Used to resolve
+   * the bundled thread-orchestrator skill at <pluginResourceDir>/resources/skills/
+   * so it can be registered as a local SDK plugin without any manual install
+   * into ~/.claude/skills/. Empty until main.ts sets it (e.g. in tests).
+   */
+  pluginResourceDir = '';
+  /**
    * In-memory store for the live approve/reject callbacks from a plan_ready event.
    * Keyed by thread ID. NOT serialized to JSON — only set while the session is
    * actively waiting for the user to act on the plan card.
@@ -792,6 +800,13 @@ export class ThreadManager {
         'Keep working toward this goal across turns. If a reply would leave the goal unmet, ' +
         'state what remains and continue working on it. The goal stays active until the user clears it with /goal clear.'
       : '';
+    // INTENTIONAL: thread.managerNotes and thread.proposedReply are never included
+    // here. They are thread-orchestrator bookkeeping (inferred goal/status/cursor,
+    // a drafted-but-unsent reply) meant to be visible only in the UI. Unlike
+    // `goal` below — which the user explicitly asks to be injected into every
+    // turn — leaking these into the session context would let the model see
+    // its own prior "grading" of the thread and the orchestrator's draft before
+    // Rick has approved it. Do not "fix" this by adding them to the list.
     const appendSystemPrompt = [envContext, projectDesc, goalContext]
       .filter(Boolean)
       .join('\n\n');
@@ -1302,6 +1317,21 @@ export class ThreadManager {
           }
         } catch { /* skills dir missing or unreadable */ }
       }
+
+      // Bundled thread-orchestrator skill — ships inside the plugin's own dist/
+      // (copied there by esbuild.config.mjs from resources/skills/), so it is
+      // discoverable in every session with nothing manually copied into
+      // ~/.claude/skills/. Registered unconditionally (not gated by any
+      // setting) alongside the GitHub-sourced skill plugins above.
+      if (this.pluginResourceDir) {
+        const bundledSkillPath = path.join(this.pluginResourceDir, 'resources', 'skills', 'thread-orchestrator');
+        try {
+          if (fs.existsSync(path.join(bundledSkillPath, 'SKILL.md'))) {
+            plugins.push({ type: 'local', path: bundledSkillPath });
+          }
+        } catch { /* bundled skill missing — plugin dist may be stale, skip silently */ }
+      }
+
       if (plugins.length > 0) opts.plugins = plugins;
     }
 
