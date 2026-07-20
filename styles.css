@@ -1496,6 +1496,130 @@
   color: var(--color-red);
 }
 
+/* Manager Notes panel (collapsible, above the compose box) */
+.ct-manager-notes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-purple, #a882ff) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-purple, #a882ff) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-manager-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-manager-notes-title {
+  font-weight: 600;
+  color: var(--color-purple, #a882ff);
+}
+
+.ct-manager-notes-close {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-manager-notes-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-manager-notes-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+}
+
+/* Proposed-reply banner (above the compose box) */
+.ct-proposed-reply-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-green, #4caf50) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-proposed-reply-header {
+  display: flex;
+  align-items: center;
+}
+
+.ct-proposed-reply-label {
+  font-weight: 600;
+  color: var(--color-green, #4caf50);
+}
+
+.ct-proposed-reply-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-normal);
+}
+
+.ct-proposed-reply-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ct-proposed-reply-approve,
+.ct-proposed-reply-edit,
+.ct-proposed-reply-discard {
+  font-size: var(--font-ui-smaller);
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-proposed-reply-approve {
+  border-color: color-mix(in srgb, var(--color-green, #4caf50) 45%, transparent);
+  color: var(--color-green, #4caf50);
+}
+
+.ct-proposed-reply-approve:hover {
+  background: color-mix(in srgb, var(--color-green, #4caf50) 15%, var(--background-secondary));
+}
+
+.ct-proposed-reply-edit:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-proposed-reply-discard:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
 /* Active-loop banner (above the input row) */
 .ct-loop-banner {
   display: flex;
