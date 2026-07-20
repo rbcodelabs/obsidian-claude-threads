@@ -112,6 +112,14 @@ export interface ThreadSnapshot {
   messageCount: number;
   /** Vault-relative path to the thread's raw JSONL conversation log, if raw logging is enabled. Read it with obsidian_get_thread_log. */
   rawLogPath?: string;
+  /**
+   * Orchestrator tracking notes for this thread (inferred goal, status, last-reviewed
+   * cursor), written via obsidian_set_thread_notes. Never injected into any session's
+   * context — visible here purely so the orchestrator can read back its own prior notes.
+   */
+  managerNotes?: string;
+  /** An AI-proposed reply awaiting human approval, set via obsidian_set_thread_proposed_reply. */
+  proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string };
 }
 
 export interface ThreadMessageSnapshot {
@@ -204,6 +212,12 @@ export interface ObsidianMcpServerOptions {
    * then removes it from memory. Cannot be called on the current thread.
    */
   archiveThread?: (id: string) => Promise<void>;
+  /** Sets (or clears, with an empty string) a thread's orchestrator tracking notes. */
+  setThreadNotes?: (threadId: string, notes: string) => void;
+  /** Sets an AI-proposed reply awaiting human approval on a thread. */
+  setThreadProposedReply?: (threadId: string, text: string) => void;
+  /** Clears a thread's pending proposed reply, if any. */
+  clearThreadProposedReply?: (threadId: string) => void;
   onCronCreate?: (params: CronCreateParams) => ScheduledItem;
   onCronList?: () => ScheduledItem[];
   onCronUpdate?: (id: string, patch: CronUpdatePatch) => ScheduledItem;
@@ -1281,6 +1295,88 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
   );
 
+  // ── Thread-orchestrator tools ────────────────────────────────────────────────
+  // Support the bundled thread-orchestrator skill: tracking notes + a proposed
+  // reply awaiting human approval. No tool here ever sends a message — approval
+  // is always a human clicking Approve & Send in ThreadsView.
+
+  const boundSetThreadNotes = tool(
+    'obsidian_set_thread_notes',
+    [
+      'Sets (overwrites) a thread\'s orchestrator tracking notes — free-form text for',
+      'inferred goal, status, and a last-reviewed cursor. Visible in the UI but never',
+      'injected into any session\'s context. Pass an empty string to clear.',
+    ].join(' '),
+    {
+      threadId: z.string().describe('ID of the thread to annotate'),
+      notes: z.string().describe('Tracking notes text. Pass an empty string to clear existing notes.'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.setThreadNotes) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadNotes is not available in this context.' }) }], isError: true };
+        }
+        options.setThreadNotes(args.threadId, args.notes);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundSetThreadProposedReply = tool(
+    'obsidian_set_thread_proposed_reply',
+    [
+      'Sets an AI-proposed next message for a thread, awaiting human approval. Rendered as a',
+      'banner in ThreadsView with Approve & Send / Edit / Discard actions — nothing is ever sent',
+      'automatically. Distinct from the thread\'s own unsent compose-box draft. Cannot target the',
+      'current thread (an orchestrator should never propose a reply to itself).',
+    ].join(' '),
+    {
+      threadId: z.string().describe('ID of the thread to propose a reply for'),
+      text: z.string().describe('The proposed reply text'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.setThreadProposedReply) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadProposedReply is not available in this context.' }) }], isError: true };
+        }
+        if (args.threadId === options.threadId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot set a proposed reply on the current thread.' }) }], isError: true };
+        }
+        options.setThreadProposedReply(args.threadId, args.text);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundClearThreadProposedReply = tool(
+    'obsidian_clear_thread_proposed_reply',
+    'Clears a thread\'s pending proposed reply, if any, without sending it. Use this when a prior proposal is stale or no longer relevant.',
+    {
+      threadId: z.string().describe('ID of the thread to clear the proposed reply on'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.clearThreadProposedReply) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'clearThreadProposedReply is not available in this context.' }) }], isError: true };
+        }
+        options.clearThreadProposedReply(args.threadId);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
   // ── Obsidian Sync version history tools ──────────────────────────────────
   // These reach into the internal sync plugin to expose file version history
   // and restore capability as MCP tools so Claude can help recover files.
@@ -1870,6 +1966,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundWaitForThread,
       boundSendMessageToThread,
       boundArchiveThread,
+      boundSetThreadNotes,
+      boundSetThreadProposedReply,
+      boundClearThreadProposedReply,
       boundListVaultBridges,
       boundAddVaultBridge,
       boundGetFileHistory,

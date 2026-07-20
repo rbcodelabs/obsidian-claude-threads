@@ -301,6 +301,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
               messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
                 id: m.id,
                 role: m.role,
@@ -309,7 +311,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -331,6 +333,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
             };
           }),
           getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
@@ -362,6 +366,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
             }
             this.manager.deleteThread(id);
             await this.saveSettings();
+          },
+          setThreadNotes: (id: string, notes: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            if (notes) thread.managerNotes = notes;
+            else delete thread.managerNotes;
+            this.manager.notifyManagerNotesChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          setThreadProposedReply: (id: string, text: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            thread.proposedReply = { text, generatedAt: Date.now(), sourceThreadId: this.settings.orchestratorThreadId };
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          clearThreadProposedReply: (id: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            delete thread.proposedReply;
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
           },
           onCronCreate: (params) => this.scheduler.createItem(params),
           onCronList: () => this.scheduler.listItems(),
@@ -406,6 +432,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // Absolute path to this plugin's installed dist/ dir, used to resolve the
+    // bundled thread-orchestrator skill (see ThreadManager.buildSessionOptions()).
+    {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        this.manager.pluginResourceDir = require('path').join(adapter.getBasePath(), this.manifest.dir!);
+      }
+    }
     // Resolve secret env vars from the OS keychain at session start. Values are
     // never stored in settings — only the key names live in data.json.
     this.manager.secretEnvResolver = () => {

@@ -54,6 +54,8 @@ export type ThreadEvent =
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
+  | { type: 'manager_notes_changed' }
+  | { type: 'proposed_reply_changed' }
   | { type: 'status_tags' }
   | { type: 'git_diff' }
   | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
@@ -1408,6 +1410,16 @@ export class ThreadManager {
    */
   notifyWakeupChanged(threadId: string): void {
     this.emit(threadId, { type: 'wakeup_changed' });
+  }
+
+  /** Notify listeners that a thread's orchestrator tracking notes changed. */
+  notifyManagerNotesChanged(threadId: string): void {
+    this.emit(threadId, { type: 'manager_notes_changed' });
+  }
+
+  /** Notify listeners that a thread's proposed reply was set or cleared. */
+  notifyProposedReplyChanged(threadId: string): void {
+    this.emit(threadId, { type: 'proposed_reply_changed' });
   }
 
   private emit(threadId: string, event: ThreadEvent): void {
