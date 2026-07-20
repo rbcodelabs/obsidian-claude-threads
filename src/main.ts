@@ -114,6 +114,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   scheduler!: import('./Scheduler').Scheduler;
   statusLine: import('./StatusLineService').StatusLineService | null = null;
   gitDiff: import('./GitDiffService').GitDiffService | null = null;
+  orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -715,6 +716,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.gitDiff.start();
     }
 
+    // Event-driven wake-up: pings the thread-orchestrator thread shortly after
+    // any other thread finishes a turn, so it feels continuously running
+    // rather than polling on a fixed schedule. The heartbeat CronCreate item
+    // set up in ensureOrchestratorThread() is a backstop for missed events
+    // only — this is the primary trigger. See OrchestratorWakeup.ts.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { OrchestratorWakeup } = require('./OrchestratorWakeup') as typeof import('./OrchestratorWakeup');
+      this.orchestratorWakeup = new OrchestratorWakeup(this.manager, {
+        getOrchestratorThreadId: () => this.settings.orchestratorThreadId,
+        threadExists: (id) => !!this.manager.getThread(id),
+        sendMessage: (id, text) => this.manager.sendMessage(id, text),
+        onWarn: (message) => console.warn(`[ClaudeThreads] ${message}`),
+        onError: (err) => console.error('[ClaudeThreads] Orchestrator wake-up sendMessage failed:', err),
+      });
+      this.orchestratorWakeup.start();
+      this.register(() => this.orchestratorWakeup?.stop());
+    }
+
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
     // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
     // exit_worktree, the worktree-cleanup skill, or the Agent tool's auto-cleanup.
@@ -937,6 +957,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
         } else if (!this.settings.summarizationEnabled) {
           new Notice('Thread summarization is disabled. Enable it in Settings > Claude Threads > Summarization.');
         }
+      },
+    });
+
+    this.addCommand({
+      id: 'open-thread-orchestrator',
+      name: 'Open Thread Orchestrator',
+      callback: async () => {
+        await this.ensureOrchestratorThread();
       },
     });
 
@@ -1434,6 +1462,38 @@ export default class ClaudeThreadsPlugin extends Plugin {
     await this.activateView();
     const view = this.getView();
     view?.focusThread(threadId);
+  }
+
+  /**
+   * Creates the persistent thread-orchestrator thread if none is set yet (or if
+   * the previously stored one no longer exists), then opens it. Also ensures a
+   * 60-minute heartbeat cron item targets it — a resilience backstop for the
+   * event-driven wake-up subscriber below, not the primary trigger.
+   */
+  async ensureOrchestratorThread(): Promise<void> {
+    let threadId = this.settings.orchestratorThreadId;
+    if (!threadId || !this.manager.getThread(threadId)) {
+      const thread = this.manager.createThread('Thread Orchestrator', this.getEffectiveCwd());
+      threadId = thread.id;
+      this.settings.orchestratorThreadId = threadId;
+      await this.saveSettings();
+    }
+
+    // Idempotent: only create the heartbeat once per orchestrator thread.
+    const hasHeartbeat = (this.settings.scheduledItems ?? []).some(
+      (item) => item.targetThreadId === threadId,
+    );
+    if (!hasHeartbeat) {
+      this.scheduler.createItem({
+        name: 'Thread Orchestrator Heartbeat',
+        prompt: 'Heartbeat: run your review pass across all threads.',
+        schedule: { type: 'interval', intervalSeconds: 3600 },
+        enabled: true,
+        targetThreadId: threadId,
+      });
+    }
+
+    await this.openThreadInChatView(threadId);
   }
 
   async dispatchNewThread(
