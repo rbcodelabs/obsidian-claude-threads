@@ -651,6 +651,38 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('git-diff-bar-menu.png', { fullPage: true });
   });
 
+  test('git diff bar — View PR when the thread already has an open PR', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+    // Drive both the diff bar and the sticky prUrl the same way GitDiffService
+    // and the status-line PR tag would: a real diff, plus an existing open PR.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'PR #225', url: 'https://github.com/acme/hip-trip/pull/225', kind: 'pr' },
+      ]);
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('View PR');
+    await expect(page).toHaveScreenshot('git-diff-bar-view-pr.png', { fullPage: true });
+
+    // Open the split-button dropdown: View PR is prepended above the other 3 actions.
+    await page.click('.ct-git-diff-dropdown-btn');
+    await page.waitForSelector('.menu');
+    const menuItems = await page.locator('.menu .menu-item').allTextContents();
+    expect(menuItems).toEqual(['View PR', 'Create PR', 'Create draft PR', 'Manually create PR']);
+  });
+
   test('git diff bar — hidden for a non-git thread and for the base branch', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
