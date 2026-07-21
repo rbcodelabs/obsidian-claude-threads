@@ -4679,6 +4679,14 @@
   color: var(--color-orange);
 }
 
+.ct-kanban-col-waiting {
+  border-color: var(--color-yellow);
+}
+.ct-kanban-col-waiting .ct-kanban-col-header {
+  background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+  color: var(--color-yellow);
+}
+
 .ct-kanban-col-header {
   padding: 8px 10px;
   font-size: var(--font-ui-small);
@@ -4784,6 +4792,10 @@
 .ct-kanban-icon-permission {
   background: color-mix(in srgb, var(--color-orange) 15%, transparent);
   color: var(--color-orange);
+}
+.ct-kanban-icon-waiting {
+  background: color-mix(in srgb, var(--color-yellow) 15%, transparent);
+  color: var(--color-yellow);
 }
 .ct-kanban-card-title {
   font-size: var(--font-ui-small);

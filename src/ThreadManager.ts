@@ -3,6 +3,7 @@ import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
+import { debugLog } from './logger';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -54,6 +55,7 @@ export type ThreadEvent =
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
+  | { type: 'run_state_settled' }
   | { type: 'status_tags' }
   | { type: 'git_diff' }
   | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
@@ -1151,6 +1153,8 @@ export class ThreadManager {
       clearTimeout(lingerTimer);
       this.lingerTimers.delete(threadId);
     }
+    debugLog('[ClaudeThreads] run state settled', threadId, 'isRunning:', this.isRunning(threadId));
+    this.emit(threadId, { type: 'run_state_settled' });
 
     if (transportRetryPrompt) {
       // Mirrors the queue-drain self-recursion below: only fires after the

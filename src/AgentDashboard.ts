@@ -225,6 +225,13 @@ export class AgentDashboard extends ItemView {
       this.scheduleRender();
       return;
     }
+    // The session generation has fully unwound and isRunning() has reached
+    // its final settled value — re-partition so a thread with a pending
+    // wake-up doesn't stay stuck under "Working" until an unrelated re-render.
+    if (event.type === 'run_state_settled') {
+      this.scheduleRender();
+      return;
+    }
     // When a thread finishes a new run, mark it unreviewed so it surfaces in "New"
     if (event.type === 'done') {
       const thread = this.manager.getThread(threadId);
