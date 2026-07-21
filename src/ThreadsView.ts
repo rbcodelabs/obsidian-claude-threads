@@ -2606,6 +2606,15 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'run_state_settled': {
+        // The session generation has fully unwound and isRunning() has reached
+        // its final settled value — re-check banners that gate on isRunning()
+        // so they don't stay stale until an unrelated re-render forces them.
+        this.refreshWakeupBanner();
+        this.refreshLoopBanner();
+        break;
+      }
+
       case 'user_message_added': {
         // Auto-dismiss the task card if all tasks completed on the previous turn.
         // This hides the checklist the moment the user moves on, rather than

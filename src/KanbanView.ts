@@ -3,7 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
-import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
+import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { resolveProjectName } from './pathUtils';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
@@ -11,7 +11,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
-type RowState = 'running' | 'idle' | 'error' | 'empty';
+type RowState = 'running' | 'idle' | 'error' | 'empty' | 'waiting';
 
 type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?: string; badge?: number };
 
@@ -358,6 +358,7 @@ export class KanbanView extends ItemView {
   private bucketize(threads: Thread[]): ColDef[] {
     const running: Thread[] = [];
     const permReqs: Thread[] = [];
+    const waiting: Thread[] = [];
     const unreviewed: Thread[] = [];
     const reviewed: Thread[] = [];
     const errors: Thread[] = [];
@@ -367,6 +368,8 @@ export class KanbanView extends ItemView {
       if (this.manager.isRunning(t.id)) {
         if (this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id)) permReqs.push(t);
         else running.push(t);
+      } else if (this.plugin.hasPendingWakeup(t.id)) {
+        waiting.push(t);
       } else if (t.lastError) {
         errors.push(t);
       } else if (t.messages.length > 0) {
@@ -380,6 +383,7 @@ export class KanbanView extends ItemView {
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
     running.sort(byRecency);
     permReqs.sort(byRecency);
+    waiting.sort(byRecency);
     unreviewed.sort(byRecency);
     reviewed.sort(byRecency);
     errors.sort(byRecency);
@@ -388,6 +392,7 @@ export class KanbanView extends ItemView {
     return [
       { label: 'Working', threads: running, state: 'running' },
       { label: 'Awaiting', threads: permReqs, state: 'running', accentClass: 'ct-kanban-col-permission' },
+      { label: 'Waiting', threads: waiting, state: 'waiting', accentClass: 'ct-kanban-col-waiting' },
       { label: 'New', threads: unreviewed, state: 'idle', badge: unreviewed.length > 0 ? unreviewed.length : undefined },
       { label: 'Done', threads: reviewed, state: 'idle' },
       { label: 'Failed', threads: errors, state: 'error' },
@@ -699,6 +704,7 @@ export class KanbanView extends ItemView {
     el.className = `ct-kanban-card-icon ct-kanban-icon-${state}`;
     switch (state) {
       case 'running': el.setText('✽'); break;
+      case 'waiting': el.setText('⏳'); break;
       case 'idle':    el.setText('✓'); break;
       case 'error':   el.setText('✗'); break;
       default:        el.setText('○'); break;
@@ -708,6 +714,12 @@ export class KanbanView extends ItemView {
   private getActivityText(thread: Thread, state: RowState): string {
     if (state === 'running') {
       return this.manager.getThreadActivity(thread.id) || 'Working...';
+    }
+    if (state === 'waiting') {
+      const next = this.plugin.getPendingWakeups(thread.id)[0];
+      if (!next) return 'Waiting to resume';
+      const when = formatWakeupCountdown(next.fireAt);
+      return next.reason ? `Resumes ${when} — ${next.reason}` : `Resumes ${when}`;
     }
     if (state === 'error') return thread.lastError ?? 'Error occurred';
     if (state === 'empty') return 'Ready to start';
@@ -726,6 +738,13 @@ export class KanbanView extends ItemView {
     for (const [id, el] of this.timeEls) {
       const thread = this.manager.getThread(id);
       if (thread) el.setText(relativeTime(thread.updatedAt));
+    }
+    // Keep waiting-card countdowns roughly current without a full re-render.
+    for (const [id, el] of this.activityEls) {
+      if (!this.manager.isRunning(id) && this.plugin.hasPendingWakeup(id)) {
+        const thread = this.manager.getThread(id);
+        if (thread) el.setText(this.getActivityText(thread, 'waiting'));
+      }
     }
   }
 
@@ -794,7 +813,9 @@ export class KanbanView extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
-      event.type === 'status_tags';
+      event.type === 'status_tags' ||
+      event.type === 'wakeup_changed' ||
+      event.type === 'run_state_settled';
     if (isStateChange) {
       this.scheduleRender();
       return;

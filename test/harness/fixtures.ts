@@ -394,6 +394,12 @@ export const kanbanAwaitingThreadId = 'k-hiptrip-awaiting';
 export const kanbanAwaitingPermission = { toolName: 'Bash', detail: 'npm run deploy --prod' };
 export const kanbanRunningActivity = 'Editing src/itinerary/PlaceCard.tsx';
 
+// Thread with a pending ScheduleWakeup, seeded (not running) — exercises the
+// Kanban "Waiting" column added in fix/scheduled-wakeup-visibility.
+export const kanbanWaitingThreadId = 'k-hiptrip-waiting';
+export const kanbanWaitingFireAt = KT + 4 * 60 * 1000; // 4 minutes from the pinned clock
+export const kanbanWaitingReason = 'check CI status';
+
 export const kanbanFixtureThreads: Thread[] = [
   // ── HipTrip lane (most-recent activity → top lane) ──────────────────────────
   {
@@ -414,6 +420,15 @@ export const kanbanFixtureThreads: Thread[] = [
     messages: [userMsg('k2', 'Ship the curation-quality changes to prod.', KT - 4 * 60_000)],
     createdAt: KT - 4 * 60_000,
     updatedAt: KT - 90_000,
+  },
+  {
+    id: kanbanWaitingThreadId,
+    title: 'Auto-retry flaky preview deploys',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [userMsg('k-wait-1', 'Watch the preview deploy and retry once if it flakes.', KT - 2 * 60_000)],
+    createdAt: KT - 2 * 60_000,
+    updatedAt: KT - 60_000,
   },
   {
     id: 'k-hiptrip-new',

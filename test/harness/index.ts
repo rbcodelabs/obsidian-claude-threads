@@ -76,6 +76,28 @@ const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason
   manager.notifyWakeupChanged(threadId);
 };
 
+// ── fix/scheduled-wakeup-visibility regression helpers ──────────────────────
+// `sessions`/`lingeringSessions` are TS `private` on ThreadManager (compile-time
+// only — erased at runtime), so poking them here is the same technique the
+// Kanban harness already uses to seed Working/Awaiting state. This lets
+// screenshot tests drive the exact real-world sequence that used to leave the
+// wake-up banner stuck: mark the thread running, register a wake-up (banner
+// must stay hidden), mark it no-longer-running (still no event — banner must
+// STILL stay hidden), then fire the real `run_state_settled` event through
+// the real ThreadManager → ThreadsView.handleEvent → refreshWakeupBanner
+// pipeline and confirm the banner appears with no other trigger.
+const mgrInternals = manager as unknown as {
+  sessions: Map<string, unknown>;
+  emit(threadId: string, event: { type: string }): void;
+};
+(window as any).__setThreadRunning = (threadId: string, running: boolean) => {
+  if (running) mgrInternals.sessions.set(threadId, {});
+  else mgrInternals.sessions.delete(threadId);
+};
+(window as any).__fireRunStateSettled = (threadId: string) => {
+  mgrInternals.emit(threadId, { type: 'run_state_settled' });
+};
+
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);
 const container = document.getElementById('app')!;
 container.appendChild(view.containerEl);
