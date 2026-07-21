@@ -191,6 +191,13 @@ export class ThreadsView extends ItemView {
   /** Thread IDs whose task card has been auto-dismissed after all tasks completed. */
   private taskCardDismissed = new Set<string>();
 
+  // Thread-orchestrator UI: proposed-reply banner above the compose box, and a
+  // collapsible Manager Notes panel in the thread header.
+  private proposedReplyBannerEl: HTMLElement | null = null;
+  private managerNotesToggleEl: HTMLElement | null = null;
+  private managerNotesPanelEl: HTMLElement | null = null;
+  private managerNotesCollapsed = true;
+
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
   // Ordered list for the footer permission-mode picker menu.
@@ -472,6 +479,17 @@ export class ThreadsView extends ItemView {
     });
     this.ephemeralBadgeEl = titleRow.createSpan({ cls: 'ct-ephemeral-badge ct-hidden', text: 'ephemeral' });
 
+    this.managerNotesToggleEl = titleRow.createEl('button', {
+      cls: 'ct-manager-notes-toggle ct-hidden',
+      attr: { title: 'Manager notes' },
+    });
+    setIcon(this.managerNotesToggleEl, 'sticky-note');
+    this.managerNotesToggleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.managerNotesCollapsed = !this.managerNotesCollapsed;
+      this.renderManagerNotesPanel();
+    });
+
     this.newThreadBtn = titleRow.createEl('button', { cls: 'ct-tab-new', attr: { title: 'New thread' } });
     setIcon(this.newThreadBtn, 'square-pen');
     this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
@@ -491,6 +509,8 @@ export class ThreadsView extends ItemView {
 
     this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
     this.loopBannerEl = panelContext.createDiv('ct-loop-banner ct-hidden');
+    this.managerNotesPanelEl = panelContext.createDiv('ct-manager-notes-panel ct-hidden');
+    this.proposedReplyBannerEl = panelContext.createDiv('ct-proposed-reply-banner ct-hidden');
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
     this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
@@ -1263,6 +1283,10 @@ export class ThreadsView extends ItemView {
     // Loop banner/pill depend on the active thread — refresh on every switch.
     this.refreshLoopBanner();
     this.renderStatusFooter();
+
+    // Thread-orchestrator UI depends on the active thread — refresh on every switch.
+    this.renderManagerNotesPanel();
+    this.renderProposedReplyBanner();
   }
 
   /**
@@ -1318,6 +1342,111 @@ export class ThreadsView extends ItemView {
       setIcon(iconEl, task.status === 'completed' ? 'circle-check' : task.status === 'in_progress' ? 'loader-circle' : 'circle');
       row.createSpan({ cls: 'ct-task-row-text', text: task.content });
     }
+  }
+
+  /**
+   * Shows/hides the Manager Notes toggle button in the title row and (when
+   * expanded) the collapsible panel below it, driven by the active thread's
+   * managerNotes field. Written by the thread-orchestrator skill via
+   * obsidian_set_thread_notes — read-only display here, never user-editable,
+   * and never injected into any session's context (see ThreadManager.ts).
+   */
+  private renderManagerNotesPanel(): void {
+    if (!this.managerNotesToggleEl || !this.managerNotesPanelEl) return;
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const notes = thread?.managerNotes;
+
+    this.managerNotesToggleEl.toggleClass('ct-hidden', !notes);
+
+    this.managerNotesPanelEl.empty();
+    if (!notes || this.managerNotesCollapsed) {
+      this.managerNotesPanelEl.addClass('ct-hidden');
+      return;
+    }
+    this.managerNotesPanelEl.removeClass('ct-hidden');
+
+    const header = this.managerNotesPanelEl.createDiv('ct-manager-notes-header');
+    header.createSpan({ cls: 'ct-manager-notes-title', text: 'Manager Notes' });
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-manager-notes-close',
+      text: '\u00d7',
+      attr: { title: 'Collapse' },
+    });
+    closeBtn.addEventListener('click', () => {
+      this.managerNotesCollapsed = true;
+      this.renderManagerNotesPanel();
+    });
+
+    this.managerNotesPanelEl.createEl('pre', { cls: 'ct-manager-notes-text', text: notes });
+  }
+
+  /**
+   * Renders the proposed-reply banner above the compose box when the active
+   * thread has an AI-proposed reply awaiting approval (thread.proposedReply,
+   * set by the thread-orchestrator skill via obsidian_set_thread_proposed_reply).
+   * Approve & Send is the ONLY path that ever sends it — nothing in this file
+   * (or anywhere else) sends a proposed reply automatically. The proposedReply
+   * is cleared as soon as the user acts (approve/edit/discard) rather than
+   * waiting for the send to complete, so a long-running turn can't leave a
+   * stale banner where a second click would trigger a duplicate send.
+   */
+  private renderProposedReplyBanner(): void {
+    if (!this.proposedReplyBannerEl) return;
+    const threadId = this.activeThreadId;
+    const thread = threadId ? this.manager.getThread(threadId) : null;
+    const proposed = thread?.proposedReply;
+
+    this.proposedReplyBannerEl.empty();
+    if (!threadId || !thread || !proposed) {
+      this.proposedReplyBannerEl.addClass('ct-hidden');
+      return;
+    }
+    this.proposedReplyBannerEl.removeClass('ct-hidden');
+
+    const header = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-header');
+    header.createSpan({ cls: 'ct-proposed-reply-label', text: 'Proposed reply' });
+
+    this.proposedReplyBannerEl.createEl('p', { cls: 'ct-proposed-reply-text', text: proposed.text });
+
+    const actions = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-actions');
+
+    const clearProposedReply = (id: string) => {
+      const t = this.manager.getThread(id);
+      if (!t) return;
+      delete t.proposedReply;
+      this.manager.notifyProposedReplyChanged(id);
+      void this.plugin.saveSettings();
+    };
+
+    const approveBtn = actions.createEl('button', { cls: 'ct-proposed-reply-approve', text: 'Approve & Send' });
+    approveBtn.addEventListener('click', async () => {
+      const t = this.manager.getThread(threadId);
+      const text = t?.proposedReply?.text;
+      if (!text) return;
+      clearProposedReply(threadId);
+      try {
+        await this.manager.sendMessage(threadId, text);
+      } catch (err) {
+        console.error('[claude-threads] failed to send approved proposed reply:', err);
+        new Notice('Failed to send the approved reply — see console for details.');
+      }
+    });
+
+    const editBtn = actions.createEl('button', { cls: 'ct-proposed-reply-edit', text: 'Edit' });
+    editBtn.addEventListener('click', () => {
+      const t = this.manager.getThread(threadId);
+      const text = t?.proposedReply?.text;
+      if (!text) return;
+      clearProposedReply(threadId);
+      if (threadId === this.activeThreadId) {
+        this.dispatchInput?.setValue(text);
+      }
+    });
+
+    const discardBtn = actions.createEl('button', { cls: 'ct-proposed-reply-discard', text: 'Discard' });
+    discardBtn.addEventListener('click', () => {
+      clearProposedReply(threadId);
+    });
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -2603,6 +2732,16 @@ export class ThreadsView extends ItemView {
       case 'wakeup_changed': {
         // A wake-up was registered, fired, or cancelled on the active thread.
         this.refreshWakeupBanner();
+        break;
+      }
+
+      case 'manager_notes_changed': {
+        this.renderManagerNotesPanel();
+        break;
+      }
+
+      case 'proposed_reply_changed': {
+        this.renderProposedReplyBanner();
         break;
       }
 

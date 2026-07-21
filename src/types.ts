@@ -162,6 +162,22 @@ export interface Thread {
   userModifiedFiles?: string[];
   /** Unsent draft message and attachments for this thread. */
   draft?: ThreadDraft;
+  /**
+   * An AI-proposed reply awaiting Rick's approval — distinct from `draft`
+   * (his own unsent compose-box text). Set by the thread-orchestrator skill
+   * via `obsidian_set_thread_proposed_reply`, rendered as a banner in
+   * ThreadsView with Approve & Send / Edit / Discard actions. Nothing ever
+   * sends this automatically — only a human clicking Approve & Send does.
+   */
+  proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string };
+  /**
+   * Free-form tracking notes written by the thread-orchestrator skill about
+   * this thread (inferred goal, status, last-reviewed cursor). Visible in the
+   * UI but intentionally EXCLUDED from `appendSystemPrompt` in
+   * ThreadManager.ts — unlike `goal` below, this must never be injected into
+   * the underlying Claude session's context.
+   */
+  managerNotes?: string;
   /** Current lifecycle status of the thread. */
   status?: ThreadStatus;
   /**
@@ -411,6 +427,14 @@ export interface PluginSettings {
   orphanArchiveScanComplete?: boolean;
   /** Recurring scheduled tasks that fire prompts into new threads. */
   scheduledItems: ScheduledItem[];
+  /**
+   * ID of the persistent thread running the bundled thread-orchestrator skill,
+   * created by the "Claude Threads: Open Thread Orchestrator" command. Used
+   * both to reopen the same thread on repeat invocations and so the
+   * event-driven wake-up subscriber can skip pinging the orchestrator about
+   * its own completions. Undefined until the command is run once.
+   */
+  orchestratorThreadId?: string;
   /**
    * How the Kanban board groups threads. 'status' (default) renders the six
    * status columns. 'folder' renders one horizontal swimlane per app/project
