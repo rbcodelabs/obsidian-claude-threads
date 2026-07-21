@@ -12,6 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
+import { groupToolCalls, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -160,6 +161,10 @@ export class ThreadsView extends ItemView {
   // Cache for group summaries (consecutive assistant turns between user messages).
   // Key = ':'-joined message IDs of the group. In-memory only; regenerates on reload.
   private groupSummaryCache: Map<string, string> = new Map();
+  // Expand/collapse state for tool-call groups (see renderToolGroup), keyed by
+  // ':'-joined toolUseId/timestamp of the group's tools. In-memory only —
+  // cleared alongside groupSummaryCache so state doesn't leak across threads.
+  private expandedToolGroups: Set<string> = new Set();
   // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
   // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
@@ -716,6 +721,7 @@ export class ThreadsView extends ItemView {
     this.activeThreadId = id;
     this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
     this.groupSummaryCache.clear();
+    this.expandedToolGroups.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -1418,6 +1424,7 @@ export class ThreadsView extends ItemView {
     this.summaryGeneration++; // cancel any queued summary jobs from the previous render
     this.summaryTextEls.clear();
     this.groupSummaryCache.clear();
+    this.expandedToolGroups.clear();
     void this.renderMessages();
   }
 
@@ -1939,18 +1946,87 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  /**
+   * Render a single finalized tool call as a `.ct-tool-pill` into `wrapper`.
+   * Shared by the flat (ungrouped) path and by renderToolGroup's expanded body
+   * so isolated calls and grouped calls look identical.
+   */
+  private renderToolPill(wrapper: HTMLElement, tool: ToolCallRecord): void {
+    const pill = wrapper.createDiv('ct-tool-pill');
+    if (tool.status === 'error') pill.addClass('ct-tool-error');
+    else if (tool.status === 'success') pill.addClass('ct-tool-success');
+    const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tool.name));
+    pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
+    if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+    if (tool.timestamp) {
+      pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
+    }
+  }
+
+  /** Deterministic key for a tool-call group's expand/collapse state. */
+  private toolGroupKey(tools: ToolCallRecord[]): string {
+    return tools.map(t => t.toolUseId ?? t.timestamp ?? '').join(':');
+  }
+
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
     const wrapper = parent.createDiv('ct-tools');
-    for (const tool of tools) {
-      const pill = wrapper.createDiv('ct-tool-pill');
-      const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
-      setIcon(iconEl, getToolIcon(tool.name));
-      pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
-      if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
-      if (tool.timestamp) {
-        pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
+    for (const entry of groupToolCalls(tools)) {
+      if (entry.kind === 'single') {
+        this.renderToolPill(wrapper, entry.tool);
+      } else {
+        this.renderToolGroup(wrapper, entry);
       }
     }
+  }
+
+  /**
+   * Render a run of 2+ consecutive same-activity tool calls as a collapsible
+   * section, mirroring appendAssistantGroup's collapse/expand pattern and CSS
+   * classes. Auto-expands (and visually flags) if any tool in the group errored,
+   * so failures are never hidden behind a collapsed group.
+   */
+  private renderToolGroup(wrapper: HTMLElement, entry: Extract<ToolCallGroup, { kind: 'group' }>): void {
+    const { activityKind, tools } = entry;
+    const hasError = tools.some(t => t.status === 'error');
+    const groupKey = this.toolGroupKey(tools);
+
+    const groupEl = wrapper.createDiv('ct-tool-group');
+    const headerRow = groupEl.createDiv('ct-tool-group-header ct-compressed-row');
+    // Flag on the header (which owns the border-left) so ct-tool-error's
+    // border-left-color override and icon-tint rule both take visible effect.
+    if (hasError) headerRow.addClass('ct-tool-error');
+
+    const iconEl = headerRow.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tools[0].name));
+
+    headerRow.createSpan({
+      cls: 'ct-compressed-summary',
+      text: `${ACTIVITY_LABELS[activityKind]} (${tools.length})`,
+    });
+
+    const expandBtn = headerRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+
+    const fullContent = groupEl.createDiv('ct-full-content');
+    for (const tool of tools) {
+      this.renderToolPill(fullContent, tool);
+    }
+
+    let expanded = hasError || this.expandedToolGroups.has(groupKey);
+    if (!expanded) fullContent.addClass('ct-hidden');
+    setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        fullContent.removeClass('ct-hidden');
+        this.expandedToolGroups.add(groupKey);
+      } else {
+        fullContent.addClass('ct-hidden');
+        this.expandedToolGroups.delete(groupKey);
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
   }
 
   /**
@@ -3055,6 +3131,25 @@ export class ThreadsView extends ItemView {
       case 'file_user_modified': {
         this.userModifiedFilesSet.add(event.filePath);
         this.renderEditedFilesCard();
+        break;
+      }
+
+      case 'tool_result_status': {
+        // Nice-to-have: flag the live pill with a success/fail icon immediately,
+        // ahead of the finalized message render. Reuses the same check-circle/
+        // x-circle convention as task_notification above.
+        const pill = this.toolPillsByUseId.get(event.toolUseId);
+        if (pill) {
+          pill.classList.remove('ct-tool-active');
+          const iconEl = pill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+          if (event.status === 'error') {
+            pill.classList.add('ct-tool-error');
+            if (iconEl) setIcon(iconEl, 'x-circle');
+          } else {
+            pill.classList.add('ct-tool-success');
+            if (iconEl) setIcon(iconEl, 'check-circle');
+          }
+        }
         break;
       }
 
