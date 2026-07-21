@@ -241,13 +241,38 @@
   height: 13px;
 }
 
+/* Pause every infinite spinner/pulse animation while the Obsidian window is
+   hidden (minimized, occluded, or on a background tab) — src/main.ts toggles
+   this class via the document `visibilitychange` event. Keeps WindowServer
+   from compositing frames for animations nobody can see. */
+.ct-app-hidden .ct-summarize-spinning svg,
+.ct-app-hidden .ct-thinking-spinner,
+.ct-app-hidden .ct-status-card-spinner,
+.ct-app-hidden .ct-cursor,
+.ct-app-hidden .ct-tool-active .ct-tool-pill-name::before,
+.ct-app-hidden .ct-workflow-agent-running .ct-workflow-agent-dot,
+.ct-app-hidden .ct-agents-icon-running,
+.ct-app-hidden .ct-agents-icon-permission,
+.ct-app-hidden .ct-agents-icon-waiting,
+.ct-app-hidden .ct-kanban-icon-running,
+.ct-app-hidden .ct-mobile-thread-icon-running,
+.ct-app-hidden .ct-spin,
+.ct-app-hidden .ct-mic-btn.stt-recording,
+.ct-app-hidden .ct-skills-tab-action--spinning svg,
+.ct-app-hidden .ct-skills-spinner,
+.ct-app-hidden .ct-model-btn.ct-model-btn-escalated {
+  animation-play-state: paused !important;
+}
+
 @keyframes ct-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
 
-.ct-summarize-spinning svg {
-  animation: ct-spin 1s linear infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .ct-summarize-spinning svg {
+    animation: ct-spin 1s linear infinite;
+  }
 }
 
 .ct-tab:hover {
@@ -879,7 +904,12 @@
   border: 2px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
   border-top-color: var(--text-muted);
   border-radius: 50%;
-  animation: ct-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-thinking-spinner {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 /* Slim animated cursor — replaces block blink */
@@ -891,7 +921,12 @@
   border-radius: 1px;
   vertical-align: text-bottom;
   margin-left: 2px;
-  animation: ct-cursor-pulse 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-cursor {
+    animation: ct-cursor-pulse 1s ease-in-out infinite;
+  }
 }
 
 @keyframes ct-cursor-pulse {
@@ -981,7 +1016,12 @@
   content: '● ';
   font-size: 0.65em;
   vertical-align: middle;
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-tool-active .ct-tool-pill-name::before {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes ct-dot-pulse {
@@ -1095,7 +1135,12 @@
 /* Running agent: pulsing dot */
 .ct-workflow-agent-running .ct-workflow-agent-dot {
   color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-workflow-agent-running .ct-workflow-agent-dot {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 /* Completed agent */
@@ -1279,7 +1324,12 @@
   border-top-color: var(--color-blue, #4a8fe7);
   border-radius: 50%;
   flex-shrink: 0;
-  animation: ct-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-status-card-spinner {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 .ct-status-card-text {
@@ -2311,7 +2361,12 @@
 
 .ct-agents-icon-running {
   color: var(--text-accent);
-  animation: ct-agents-spin 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-running {
+    animation: ct-agents-spin 1.5s linear infinite;
+  }
 }
 
 .ct-agents-icon-idle {
@@ -3046,7 +3101,12 @@
 
 .ct-agents-icon-permission {
   color: var(--color-orange, #e06c00);
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-permission {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 .ct-agents-permission-tool {
@@ -3089,7 +3149,12 @@
 
 .ct-agents-icon-waiting {
   color: var(--color-blue, #4a8fe7);
-  animation: ct-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-waiting {
+    animation: ct-dot-pulse 1.6s ease-in-out infinite;
+  }
 }
 
 .ct-agents-row-waiting .ct-agents-row-activity {
@@ -3476,7 +3541,12 @@
 
 .ct-mobile-thread-icon-running {
   color: var(--interactive-accent);
-  animation: ct-spin 2s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-mobile-thread-icon-running {
+    animation: ct-spin 2s linear infinite;
+  }
 }
 
 .ct-mobile-thread-icon-done {
@@ -4767,7 +4837,12 @@
 .ct-kanban-icon-running {
   background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
   color: var(--interactive-accent);
-  animation: ct-agents-spin 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-kanban-icon-running {
+    animation: ct-agents-spin 1.5s linear infinite;
+  }
 }
 .ct-kanban-icon-idle {
   background: color-mix(in srgb, var(--color-green) 15%, transparent);
@@ -4921,7 +4996,12 @@
 /* Recording state: pulsing red */
 .ct-mic-btn.stt-recording {
   color: var(--color-red, #e03131);
-  animation: stt-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-mic-btn.stt-recording {
+    animation: stt-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes stt-pulse {
@@ -4941,8 +5021,13 @@
 
 /* Spinner rotation for the processing SVG — reuses the existing ct-spin keyframe */
 .ct-spin {
-  animation: ct-spin 0.8s linear infinite;
   transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-spin {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 /* ─── Compressed view ─────────────────────────────────────────────────── */
@@ -5338,8 +5423,13 @@ textarea.ct-settings-wide-input {
 /* Spins the "Check for updates" refresh icon in place while a check is running,
    so clicking the button visibly does something instead of appearing inert. */
 .ct-skills-tab-action--spinning svg {
-  animation: ct-skills-spin 0.8s linear infinite;
   transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-skills-tab-action--spinning svg {
+    animation: ct-skills-spin 0.8s linear infinite;
+  }
 }
 
 /* Body: list + detail side-by-side */
@@ -5569,8 +5659,13 @@ body.ct-skills-resizing {
   border: 2px solid var(--background-modifier-border);
   border-top-color: var(--text-accent);
   border-radius: 50%;
-  animation: ct-skills-spin 0.7s linear infinite;
   vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-skills-spinner {
+    animation: ct-skills-spin 0.7s linear infinite;
+  }
 }
 
 @keyframes ct-skills-spin {

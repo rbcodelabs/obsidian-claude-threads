@@ -787,6 +787,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.registerView(KANBAN_VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
     this.registerView(SKILLS_VIEW_TYPE, (leaf) => new SkillsManagerView(leaf, this));
 
+    // Pause infinite spinner/pulse CSS animations while the window is hidden
+    // (minimized, occluded, or backgrounded) — see the .ct-app-hidden rule in
+    // styles.css. Prevents WindowServer from compositing frames nobody sees.
+    const handleVisibilityChange = () => {
+      document.body.classList.toggle('ct-app-hidden', document.hidden);
+    };
+    this.registerDomEvent(document, 'visibilitychange', handleVisibilityChange);
+    handleVisibilityChange(); // set initial state on load
+
     // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
       this.activateView();
