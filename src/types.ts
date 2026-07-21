@@ -30,6 +30,10 @@ export interface ToolCallRecord {
   timestamp?: number;
   /** tool_use block id from the SDK, used to correlate tool_progress heartbeats. */
   toolUseId?: string;
+  /** Lifecycle state derived from the matching tool_result. Undefined until the result arrives. */
+  status?: 'pending' | 'success' | 'error';
+  /** Wall-clock time between the tool_use and its tool_result, in milliseconds. */
+  durationMs?: number;
 }
 
 export interface ChatMessage {
@@ -101,6 +105,28 @@ export interface StatusTag {
   kind?: 'pr' | 'branch' | 'dev' | 'aws' | string;
 }
 
+/**
+ * Native git plumbing info for a thread's working directory, populated by
+ * GitDiffService (local `git` only — no `gh`, no network). Powers the git
+ * diff bar + Create PR button shown above the compose box in ThreadsView.
+ */
+export interface GitDiffInfo {
+  /** Whether the thread's cwd is inside a git working tree at all. */
+  isGitRepo: boolean;
+  /** Current branch name. Undefined for detached HEAD or when `isGitRepo` is false. */
+  branch?: string;
+  /** Repo's default/base branch (e.g. "main"), best-effort detected. */
+  baseBranch?: string;
+  /** True when `branch === baseBranch` — nothing to open a PR against, bar is hidden. */
+  isBaseBranch?: boolean;
+  /** Lines added between `baseBranch` and the current working tree (incl. uncommitted). */
+  insertions?: number;
+  /** Lines removed between `baseBranch` and the current working tree (incl. uncommitted). */
+  deletions?: number;
+  /** Parsed from `git remote get-url origin` when it points at GitHub; used to build the "Manually create PR" compare URL. */
+  ownerRepo?: { owner: string; repo: string };
+}
+
 export interface Thread {
   id: string;
   sessionId?: string;
@@ -136,6 +162,22 @@ export interface Thread {
   userModifiedFiles?: string[];
   /** Unsent draft message and attachments for this thread. */
   draft?: ThreadDraft;
+  /**
+   * An AI-proposed reply awaiting Rick's approval — distinct from `draft`
+   * (his own unsent compose-box text). Set by the thread-orchestrator skill
+   * via `obsidian_set_thread_proposed_reply`, rendered as a banner in
+   * ThreadsView with Approve & Send / Edit / Discard actions. Nothing ever
+   * sends this automatically — only a human clicking Approve & Send does.
+   */
+  proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string };
+  /**
+   * Free-form tracking notes written by the thread-orchestrator skill about
+   * this thread (inferred goal, status, last-reviewed cursor). Visible in the
+   * UI but intentionally EXCLUDED from `appendSystemPrompt` in
+   * ThreadManager.ts — unlike `goal` below, this must never be injected into
+   * the underlying Claude session's context.
+   */
+  managerNotes?: string;
   /** Current lifecycle status of the thread. */
   status?: ThreadStatus;
   /**
@@ -151,6 +193,12 @@ export interface Thread {
    * re-derived on the next poll. Undefined on mobile / when no script is set.
    */
   statusTags?: StatusTag[];
+  /**
+   * Native git plumbing info (branch/base/diff-stat) for this thread's cwd,
+   * populated by GitDiffService. Ephemeral — never persisted to data.json,
+   * re-derived on the next poll. Undefined on mobile / non-git cwds.
+   */
+  gitDiff?: GitDiffInfo;
   /** Timestamp (ms epoch) of the last summarize call. Used by incremental summarization to identify messages added since the prior summary. */
   lastSummarizedAt?: number;
   /**
@@ -380,6 +428,14 @@ export interface PluginSettings {
   /** Recurring scheduled tasks that fire prompts into new threads. */
   scheduledItems: ScheduledItem[];
   /**
+   * ID of the persistent thread running the bundled thread-orchestrator skill,
+   * created by the "Claude Threads: Open Thread Orchestrator" command. Used
+   * both to reopen the same thread on repeat invocations and so the
+   * event-driven wake-up subscriber can skip pinging the orchestrator about
+   * its own completions. Undefined until the command is run once.
+   */
+  orchestratorThreadId?: string;
+  /**
    * How the Kanban board groups threads. 'status' (default) renders the six
    * status columns. 'folder' renders one horizontal swimlane per app/project
    * (by assigned Project, falling back to working-directory label), with the
@@ -400,6 +456,8 @@ export interface PluginSettings {
   enableWebViewerTool?: boolean;
   /** Registered local skill collections browsable from the Skills Manager. */
   skillSources: SkillSource[];
+  /** Width in px of the Skills Manager's left list panel, set by dragging the divider. */
+  skillsListWidth: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -448,6 +506,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   kanbanGroupBy: 'status',
   kanbanCollapseSide: 'none',
   skillSources: [],
+  skillsListWidth: 200,
 };
 
 /**

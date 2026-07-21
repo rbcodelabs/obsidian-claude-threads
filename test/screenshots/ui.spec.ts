@@ -91,6 +91,44 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('wakeup-banner.png', { fullPage: true });
   });
 
+  test('regression: wake-up banner appears automatically on run_state_settled — no thread switch needed', async ({ page }) => {
+    // Reproduces the fix/scheduled-wakeup-visibility bug end to end through the
+    // real ThreadManager -> ThreadsView.handleEvent -> refreshWakeupBanner
+    // pipeline (not a direct render() call): a thread whose session moved into
+    // ThreadManager's `lingeringSessions` before 'done' fired used to leave the
+    // banner stuck hidden forever, because isRunning() was still true at that
+    // instant and nothing re-checked it once the session actually settled.
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.waitForTimeout(200);
+
+    await page.evaluate(() => {
+      const w = window as any;
+      const threadId = 'thread-fix-auth';
+      const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
+      // The thread is mid-turn (isRunning() true) when the wake-up is registered.
+      w.__setThreadRunning(threadId, true);
+      w.__setWakeup(threadId, fireAt, 'check CI status');
+    });
+    // Banner must stay hidden — isRunning() is still true.
+    await expect(page.locator('.ct-wakeup-banner')).toHaveClass(/ct-hidden/);
+
+    await page.evaluate(() => (window as any).__setThreadRunning('thread-fix-auth', false));
+    // isRunning() just went false, but no event fired yet — the banner must
+    // NOT flip on its own; only an explicit event triggers a re-check.
+    await expect(page.locator('.ct-wakeup-banner')).toHaveClass(/ct-hidden/);
+
+    await page.evaluate(() => (window as any).__fireRunStateSettled('thread-fix-auth'));
+    // This is the fix under test: the banner appears from the event alone,
+    // with no focusThread()/thread-switch call anywhere in this test.
+    await page.waitForSelector('.ct-wakeup-banner:not(.ct-hidden)');
+    await expect(page.locator('.ct-wakeup-banner')).toContainText('in 4m');
+  });
+
   test('active loop banner and footer pill', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
@@ -617,6 +655,99 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('status-line-tags.png', { fullPage: true });
   });
 
+  test('git diff bar — branch, diff stat, and Create PR split button', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+    // Drive the bar the same way GitDiffService would: store git diff info on
+    // the active thread (feature branch, base branch, a real diff, GitHub origin).
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+    await expect(page.locator('.ct-git-diff-branch-name')).toHaveText('feat/social-nudge');
+    await expect(page.locator('.ct-git-diff-repo')).toHaveText('hip-trip');
+    await expect(page.locator('.ct-git-diff-stat-add')).toHaveText('+60');
+    await expect(page.locator('.ct-git-diff-stat-del')).toHaveText('-4');
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('Create PR');
+    await expect(page).toHaveScreenshot('git-diff-bar.png', { fullPage: true });
+
+    // Open the split-button dropdown: 3 actions.
+    await page.click('.ct-git-diff-dropdown-btn');
+    await page.waitForSelector('.menu');
+    const menuItems = await page.locator('.menu .menu-item').allTextContents();
+    expect(menuItems).toEqual(['Create PR', 'Create draft PR', 'Manually create PR']);
+    await expect(page).toHaveScreenshot('git-diff-bar-menu.png', { fullPage: true });
+  });
+
+  test('git diff bar — View PR when the thread already has an open PR', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+    // Drive both the diff bar and the sticky prUrl the same way GitDiffService
+    // and the status-line PR tag would: a real diff, plus an existing open PR.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'PR #225', url: 'https://github.com/acme/hip-trip/pull/225', kind: 'pr' },
+      ]);
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('View PR');
+    await expect(page).toHaveScreenshot('git-diff-bar-view-pr.png', { fullPage: true });
+
+    // Open the split-button dropdown: View PR is prepended above the other 3 actions.
+    await page.click('.ct-git-diff-dropdown-btn');
+    await page.waitForSelector('.menu');
+    const menuItems = await page.locator('.menu .menu-item').allTextContents();
+    expect(menuItems).toEqual(['View PR', 'Create PR', 'Create draft PR', 'Manually create PR']);
+  });
+
+  test('git diff bar — hidden for a non-git thread and for the base branch', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+
+    // Not a git repo at all — bar stays hidden.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', { isGitRepo: false });
+    });
+    await page.waitForTimeout(50);
+    await expect(page.locator('.ct-git-diff-bar')).toHaveClass(/ct-hidden/);
+
+    // Sitting on the base branch itself — nothing to PR against, bar stays hidden.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'main',
+        baseBranch: 'main',
+        isBaseBranch: true,
+      });
+    });
+    await page.waitForTimeout(50);
+    await expect(page.locator('.ct-git-diff-bar')).toHaveClass(/ct-hidden/);
+  });
+
   // ── Kanban board ──────────────────────────────────────────────────────────
   // Served from a dedicated harness (test/harness/kanban.html) that mounts
   // KanbanView against kanbanFixtureThreads. The wider 1180px board needs its
@@ -628,14 +759,20 @@ test.describe('Claude Threads UI', () => {
     await page.setViewportSize({ width: 1240, height: 820 });
     await page.goto(kanbanUrl);
     await page.waitForSelector('.ct-kanban-board');
-    // Status mode is the default — assert the six status columns are present.
+    // Status mode is the default — assert the seven status columns are present.
     // (CSS text-transform uppercases the labels, so compare case-insensitively.)
     const labels = (await page.locator('.ct-kanban-col-label').allInnerTexts()).map(s => s.toUpperCase());
-    for (const expected of ['Working', 'Awaiting', 'New', 'Done', 'Failed', 'Ready']) {
+    for (const expected of ['Working', 'Awaiting', 'Waiting', 'New', 'Done', 'Failed', 'Ready']) {
       if (!labels.includes(expected.toUpperCase())) {
         throw new Error(`Status board missing the "${expected}" column. Got: ${labels.join(', ')}`);
       }
     }
+    // The seeded waiting-thread card shows the hourglass icon and countdown text.
+    // (Scoped to the accent class, not text — "Awaiting" contains "waiting" as
+    // a substring so a text filter would match the wrong column.)
+    const waitingCol = page.locator('.ct-kanban-col-waiting');
+    await expect(waitingCol.locator('.ct-kanban-icon-waiting')).toHaveCount(1);
+    await expect(waitingCol).toContainText('Resumes');
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('kanban-status.png', { fullPage: true });
   });
@@ -654,6 +791,41 @@ test.describe('Claude Threads UI', () => {
     }
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('kanban-folder-swimlanes.png', { fullPage: true });
+  });
+
+  test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {
+    // Same root-cause bug as the wake-up banner test above, on the dashboard
+    // side: KanbanView.handleEvent's isStateChange didn't include
+    // wakeup_changed/run_state_settled, so a thread that finished with a
+    // pending wake-up stayed bucketed under "Working" until an unrelated
+    // event forced a re-render.
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+
+    const cardTitle = 'Add "why this place" provenance layer'; // kanbanRunningThreadId's card
+    const workingCard = page.locator('.ct-kanban-col', { hasText: 'Working' }).getByText(cardTitle);
+    await expect(workingCard).toBeVisible();
+
+    await page.evaluate(() => {
+      const w = window as any;
+      const threadId = 'k-hiptrip-running'; // kanbanRunningThreadId
+      const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
+      w.__addWakeup(threadId, fireAt, 'check CI status');
+    });
+    // Still running (seeded running at harness load) — must stay in Working.
+    await expect(workingCard).toBeVisible();
+
+    await page.evaluate(() => (window as any).__setThreadRunning('k-hiptrip-running', false));
+    // isRunning() just went false, but no event fired — must NOT move yet.
+    await expect(workingCard).toBeVisible();
+
+    await page.evaluate(() => (window as any).__fireRunStateSettled('k-hiptrip-running'));
+    // This is the fix under test: the card re-buckets into Waiting from the
+    // event alone — no manual render() call, no group-by toggle, no reload.
+    const waitingCard = page.locator('.ct-kanban-col-waiting').getByText(cardTitle);
+    await expect(waitingCard).toBeVisible({ timeout: 2000 });
+    await expect(page.locator('.ct-kanban-col', { hasText: 'Working' }).getByText(cardTitle)).toHaveCount(0);
   });
 
   // ─── Status area redesign ─────────────────────────────────────────────────
@@ -736,6 +908,35 @@ test.describe('Claude Threads UI', () => {
     await page.addStyleTag({ content: '.ct-escalation-tip { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; }' });
     await page.waitForTimeout(100);
     await expect(page).toHaveScreenshot('model-escalation-tip.png', { fullPage: true });
+  });
+
+  test('model escalation — button stays highlighted for the whole turn', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Drive the real event path: ThreadManager emits 'escalated' at turn start.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager['emit'](view['activeThreadId'], { type: 'escalated', model: 'opus' });
+    });
+    await page.waitForSelector('.ct-model-btn.ct-model-btn-escalated');
+    // Hide the transient tip and freeze the pulse so the snapshot is deterministic.
+    await page.addStyleTag({
+      content:
+        '.ct-escalation-tip { display: none !important; } .ct-model-btn-escalated { animation: none !important; }',
+    });
+    await page.waitForTimeout(100);
+    await expect(page).toHaveScreenshot('model-escalation-turn-button.png', { fullPage: true });
+    // Turn end clears the indicator.
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager['emit'](view['activeThreadId'], { type: 'done' });
+    });
+    await expect(page.locator('.ct-model-btn')).not.toHaveClass(/ct-model-btn-escalated/);
   });
 
   // ─── SDK alignment gap features (Group 4 + 5) ────────────────────────────

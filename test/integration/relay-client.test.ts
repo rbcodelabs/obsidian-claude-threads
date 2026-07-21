@@ -111,9 +111,27 @@ function installMockWebSocket(socketFn: () => MockWebSocket): () => void {
 
 // ── ThreadManager mock ─────────────────────────────────────────────────────────
 
+// Captures the SessionCallbacks passed to ClaudeSession.run() so tests can fire
+// onAskUserQuestion (and friends) directly, mirroring question-persistence.test.ts.
+// run() never auto-resolves — tests that need it to finish call claudeMock.resolve().
+const claudeMock = vi.hoisted(() => ({
+  callbacks: null as Record<string, (...args: never[]) => unknown> | null,
+  resolve: null as (() => void) | null,
+}));
+
 vi.mock('../../src/ClaudeSession', () => ({
   ClaudeSession: class {
-    async run(): Promise<void> {}
+    async run(
+      _prompt: string,
+      _resumeSessionId: unknown,
+      _cwd: unknown,
+      _permissionMode: unknown,
+      _env: unknown,
+      callbacks: Record<string, (...args: never[]) => unknown>,
+    ): Promise<void> {
+      claudeMock.callbacks = callbacks;
+      return new Promise<void>((res) => { claudeMock.resolve = res; });
+    }
     close() {}
     async interrupt() {}
   },
@@ -332,6 +350,131 @@ describe('RelayClient — send_message round-trip', () => {
     await drain(10);
 
     expect(sendMessageSpy).toHaveBeenCalledWith('thread-1', 'Hello from mobile', undefined);
+
+    cleanup();
+    desktopClient.disconnect();
+    mobileClient.disconnect();
+  });
+});
+
+describe('RelayClient — question request/resolution bridge', () => {
+  beforeEach(() => {
+    claudeMock.callbacks = null;
+    claudeMock.resolve = null;
+  });
+
+  const SAMPLE_QUESTIONS = [
+    {
+      question: 'Which color?',
+      header: 'Color',
+      options: [
+        { label: 'Red', description: '' },
+        { label: 'Blue', description: '' },
+      ],
+      multiSelect: false,
+    },
+  ];
+
+  it('ThreadManager question_ready event → RelayClient sends a question_request frame with a generated requestId', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('Q-Thread', '/cwd');
+
+    const sentMessages: string[] = [];
+    const cleanup = installMockWebSocket(() => {
+      const mockWs = new MockWebSocket();
+      const originalSend = mockWs.send.bind(mockWs);
+      mockWs.send = (data: string) => { sentMessages.push(data); originalSend(data); };
+      Promise.resolve().then(() => mockWs.triggerOpen());
+      return mockWs;
+    });
+
+    const client = new RelayClient('desktop', 'ws://mock', 'room-1', manager);
+    client.connect();
+    await drain(5);
+
+    // Fire the send so ThreadManager wires session callbacks, then trigger the
+    // question from the (mocked) session — mirrors question-persistence.test.ts.
+    void manager.sendMessage(thread.id, 'Ask me something');
+    await drain(3);
+    void claudeMock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
+    await drain(5);
+
+    cleanup();
+    client.disconnect();
+
+    const questionFrames = sentMessages
+      .map((m) => JSON.parse(m) as RelayFrame)
+      .filter((f): f is Extract<RelayFrame, { type: 'question_request' }> => f.type === 'question_request');
+
+    expect(questionFrames).toHaveLength(1);
+    expect(questionFrames[0].threadId).toBe(thread.id);
+    expect(questionFrames[0].questions).toEqual(SAMPLE_QUESTIONS);
+    expect(questionFrames[0].requestId).toBeTruthy();
+  });
+
+  it('mobile resolve_question command → threadManager.resolveQuestionByRequestId is invoked and unblocks the original promise', async () => {
+    // Full round-trip over a real desktop<->mobile socket pair, mirroring the
+    // 'send_message round-trip' test above.
+    const { desktopWs, mobileWs } = createSocketPair();
+    let desktopWsCreated = false;
+
+    const cleanup = installMockWebSocket(() => {
+      if (!desktopWsCreated) {
+        desktopWsCreated = true;
+        Promise.resolve().then(() => desktopWs.triggerOpen());
+        return desktopWs;
+      }
+      Promise.resolve().then(() => mobileWs.triggerOpen());
+      return mobileWs;
+    });
+
+    const manager = makeManager();
+    const thread = manager.createThread('Q-Thread', '/cwd');
+
+    // Wire questionHandler exactly as ThreadsView does, so the answer returned by
+    // resolveQuestion() actually unblocks the awaited onAskUserQuestion call.
+    manager.questionHandler = (tId, _questions) =>
+      new Promise((resolve) => manager.registerQuestionResolver(tId, resolve));
+
+    const resolveSpy = vi.spyOn(manager, 'resolveQuestionByRequestId');
+
+    const desktopClient = new RelayClient('desktop', 'ws://mock', 'room-1', manager);
+    desktopClient.connect();
+    await drain(5);
+
+    const mobileClient = new RelayClient('mobile', 'ws://mock', 'room-1');
+    const receivedFrames: RelayFrame[] = [];
+    mobileClient.onFrame((frame) => receivedFrames.push(frame));
+    mobileClient.connect();
+    await drain(5);
+
+    void manager.sendMessage(thread.id, 'Ask me something');
+    await drain(3);
+
+    let questionAnswered: Record<string, string> | null = null;
+    const answerPromise = (claudeMock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS) as Promise<Record<string, string>>)
+      .then((a) => { questionAnswered = a; return a; });
+    await drain(10);
+
+    const questionFrame = receivedFrames.find((f): f is Extract<RelayFrame, { type: 'question_request' }> => f.type === 'question_request');
+    expect(questionFrame).toBeDefined();
+    const requestId = questionFrame!.requestId;
+
+    // Mobile resolves the question — sent as a real RemoteCommand over the socket.
+    mobileClient.sendCommand({
+      type: 'resolve_question',
+      threadId: thread.id,
+      requestId,
+      answers: { 'Which color?': 'Blue' },
+    });
+    await drain(10);
+
+    expect(resolveSpy).toHaveBeenCalledWith(requestId, { 'Which color?': 'Blue' });
+
+    await answerPromise;
+    await drain(3);
+
+    expect(questionAnswered).toEqual({ 'Which color?': 'Blue' });
 
     cleanup();
     desktopClient.disconnect();

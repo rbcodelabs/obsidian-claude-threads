@@ -267,6 +267,97 @@ describe('MobileThreadStore — permission request lifecycle', () => {
   });
 });
 
+describe('MobileThreadStore — question request lifecycle', () => {
+  let store: MobileThreadStore;
+
+  beforeEach(() => {
+    store = new MobileThreadStore();
+    store.applyFrame({ type: 'snapshot', threads: [makeThread()], activeThreadId: 'thread-1' });
+  });
+
+  const sampleQuestions = [
+    {
+      header: 'Header',
+      question: 'Which option?',
+      multiSelect: false,
+      options: [{ label: 'A', description: '' }, { label: 'B', description: '' }],
+    },
+  ];
+
+  it('adds a pending question on question_request', () => {
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: sampleQuestions,
+      requestId: 'req-1',
+    });
+
+    const questions = store.getPendingQuestionsForThread('thread-1');
+    expect(questions).toHaveLength(1);
+    expect(questions[0].questions).toEqual(sampleQuestions);
+    expect(questions[0].requestId).toBe('req-1');
+  });
+
+  it('removes question by requestId on question_resolved', () => {
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: sampleQuestions,
+      requestId: 'req-1',
+    });
+    store.applyFrame({ type: 'question_resolved', threadId: 'thread-1', requestId: 'req-1' });
+
+    expect(store.getPendingQuestionsForThread('thread-1')).toHaveLength(0);
+  });
+
+  it('removes first question by threadId when requestId is empty', () => {
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: sampleQuestions,
+      requestId: 'req-1',
+    });
+    // Simulate legacy path where requestId is empty in resolved frame
+    store.applyFrame({ type: 'question_resolved', threadId: 'thread-1', requestId: '' });
+
+    expect(store.getPendingQuestionsForThread('thread-1')).toHaveLength(0);
+  });
+
+  it('can handle multiple simultaneous questions for different threads', () => {
+    const t2 = makeThread({ id: 'thread-2' });
+    store.applyFrame({ type: 'thread_created', thread: t2 });
+
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: sampleQuestions,
+      requestId: 'req-a',
+    });
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-2',
+      questions: sampleQuestions,
+      requestId: 'req-b',
+    });
+
+    expect(store.getPendingQuestions()).toHaveLength(2);
+    expect(store.getPendingQuestionsForThread('thread-1')).toHaveLength(1);
+    expect(store.getPendingQuestionsForThread('thread-2')).toHaveLength(1);
+  });
+
+  it('clears questions for deleted thread', () => {
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: sampleQuestions,
+      requestId: 'req-1',
+    });
+    store.applyFrame({ type: 'thread_deleted', threadId: 'thread-1' });
+
+    expect(store.getPendingQuestions()).toHaveLength(0);
+  });
+});
+
 describe('MobileThreadStore — desktop_reconnected', () => {
   it('clears all state on desktop_reconnected', () => {
     const store = new MobileThreadStore();
@@ -279,12 +370,19 @@ describe('MobileThreadStore — desktop_reconnected', () => {
       detail: '',
       requestId: 'req-1',
     });
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'thread-1',
+      questions: [{ header: '', question: 'Q?', multiSelect: false, options: [] }],
+      requestId: 'q-req-1',
+    });
 
     store.applyFrame({ type: 'desktop_reconnected' });
 
     expect(store.getThreads()).toHaveLength(0);
     expect(store.getActiveThreadId()).toBeNull();
     expect(store.getPendingPermissions()).toHaveLength(0);
+    expect(store.getPendingQuestions()).toHaveLength(0);
     expect(store.isStreaming('thread-1')).toBe(false);
   });
 });

@@ -235,6 +235,55 @@ You can open any of them directly from here.`,
   },
 ];
 
+// ─── Thread 6: Tool-call grouping ────────────────────────────────────────────
+// Used by test/screenshots/tool-call-grouping.spec.ts. A single assistant
+// message carrying 15 tool calls spanning multiple activity kinds (several
+// Reads, several Edits, a Bash, a WebFetch, plus planning/searching calls),
+// with one Edit failing (status: 'error') so the auto-expand-on-error path
+// is exercised. Also includes isolated calls (WebFetch, Write, the trailing
+// Read) between groups so the "isolated pills render unchanged" regression
+// case is covered in the same fixture.
+
+const thread6Messages: ChatMessage[] = [
+  {
+    id: 'msg-t6-1',
+    role: 'user',
+    content: 'Update the API client to retry on 429s, and cover it with tests.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-t6-2',
+    role: 'assistant',
+    content: `Added retry-with-backoff to the API client and updated the tests. One edit failed to apply cleanly on the first pass — see below.`,
+    timestamp: T3 + 30000,
+    toolCalls: [
+      // group(exploring, 5): Read,Read,Read,Grep,Bash
+      { name: 'Read', summary: 'Read: src/api/client.ts', toolUseId: 't6-1', timestamp: T3 + 1000, status: 'success' },
+      { name: 'Read', summary: 'Read: src/api/types.ts', toolUseId: 't6-2', timestamp: T3 + 2000, status: 'success' },
+      { name: 'Read', summary: 'Read: src/api/utils.ts', toolUseId: 't6-3', timestamp: T3 + 3000, status: 'success' },
+      { name: 'Grep', summary: "Grep: 'fetchUser' in src/api", toolUseId: 't6-4', timestamp: T3 + 4000, status: 'success' },
+      { name: 'Bash', summary: 'npm run lint -- src/api', toolUseId: 't6-5', timestamp: T3 + 5000, status: 'success' },
+      // isolated single: researching
+      { name: 'WebFetch', summary: 'https://http.dev/429 — retry-after semantics', toolUseId: 't6-6', timestamp: T3 + 6000, status: 'success' },
+      // group(editing, 3) — includes one error, so this group auto-expands
+      { name: 'Edit', summary: 'Edit: src/api/client.ts — add retry-with-backoff', toolUseId: 't6-7', timestamp: T3 + 7000, status: 'success' },
+      { name: 'Edit', summary: 'Edit: src/api/types.ts — add RetryOptions type', toolUseId: 't6-8', timestamp: T3 + 8000, status: 'success' },
+      { name: 'Edit', summary: 'Edit: src/api/utils.ts — extract backoff helper', toolUseId: 't6-9', timestamp: T3 + 9000, status: 'error' },
+      // group(planning, 2)
+      { name: 'TaskCreate', summary: 'Task: Add tests for retry behavior', toolUseId: 't6-10', timestamp: T3 + 10000, status: 'success' },
+      { name: 'TaskUpdate', summary: 'Task #1 → in_progress', toolUseId: 't6-11', timestamp: T3 + 11000, status: 'success' },
+      // isolated single: editing (Write, no same-kind neighbor)
+      { name: 'Write', summary: 'Write: tests/api/client.retry.test.ts', toolUseId: 't6-12', timestamp: T3 + 12000, status: 'success' },
+      // group(searching, 2)
+      { name: 'ToolSearch', summary: "ToolSearch: 'retry backoff helper'", toolUseId: 't6-13', timestamp: T3 + 13000, status: 'success' },
+      { name: 'Agent', summary: 'Agent: verify retry backoff against flaky network mocks', toolUseId: 't6-14', timestamp: T3 + 14000, status: 'success' },
+      // isolated single: exploring (Read, trailing — no same-kind neighbor)
+      { name: 'Read', summary: 'Read: tests/api/client.retry.test.ts', toolUseId: 't6-15', timestamp: T3 + 15000, status: 'success' },
+    ],
+    summary: 'Added retry-with-backoff to the API client; one edit failed on the first pass.',
+  },
+];
+
 // ─── Exported fixtures ────────────────────────────────────────────────────────
 
 export const fixtureThreads: Thread[] = [
@@ -299,6 +348,14 @@ export const fixtureThreads: Thread[] = [
       { id: '5', content: 'Verify: types, unit tests, build, visual check', status: 'in_progress' },
     ],
   },
+  {
+    id: 'thread-tool-grouping',
+    title: 'API client retry + tests',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread6Messages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 30000,
+  },
 ];
 
 // ─── Kanban board fixtures ────────────────────────────────────────────────────
@@ -337,6 +394,12 @@ export const kanbanAwaitingThreadId = 'k-hiptrip-awaiting';
 export const kanbanAwaitingPermission = { toolName: 'Bash', detail: 'npm run deploy --prod' };
 export const kanbanRunningActivity = 'Editing src/itinerary/PlaceCard.tsx';
 
+// Thread with a pending ScheduleWakeup, seeded (not running) — exercises the
+// Kanban "Waiting" column added in fix/scheduled-wakeup-visibility.
+export const kanbanWaitingThreadId = 'k-hiptrip-waiting';
+export const kanbanWaitingFireAt = KT + 4 * 60 * 1000; // 4 minutes from the pinned clock
+export const kanbanWaitingReason = 'check CI status';
+
 export const kanbanFixtureThreads: Thread[] = [
   // ── HipTrip lane (most-recent activity → top lane) ──────────────────────────
   {
@@ -357,6 +420,15 @@ export const kanbanFixtureThreads: Thread[] = [
     messages: [userMsg('k2', 'Ship the curation-quality changes to prod.', KT - 4 * 60_000)],
     createdAt: KT - 4 * 60_000,
     updatedAt: KT - 90_000,
+  },
+  {
+    id: kanbanWaitingThreadId,
+    title: 'Auto-retry flaky preview deploys',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [userMsg('k-wait-1', 'Watch the preview deploy and retry once if it flakes.', KT - 2 * 60_000)],
+    createdAt: KT - 2 * 60_000,
+    updatedAt: KT - 60_000,
   },
   {
     id: 'k-hiptrip-new',

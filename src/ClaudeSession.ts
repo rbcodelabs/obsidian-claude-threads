@@ -73,6 +73,13 @@ export interface SessionCallbacks {
    */
   onFileUserModified?: (filePath: string) => void;
   /**
+   * Fired when a tool_result arrives for a previously-seen tool_use, carrying
+   * its final success/error status and elapsed duration. Mirrors the
+   * onGitOperation/onFileUserModified side-channel pattern — lets the UI
+   * update a live pill immediately without waiting for the finalized message.
+   */
+  onToolResult?: (toolUseId: string, status: 'success' | 'error', durationMs?: number) => void;
+  /**
    * Fired when Claude calls EnterPlanMode. The session is now in read-only
    * planning mode. Non-blocking: fire and continue.
    */
@@ -165,6 +172,7 @@ export class ClaudeSession {
     this.inputOpen = true;
 
     const canUseTool: CanUseTool = async (toolName, input, opts) => {
+      pendingInteractiveCallbacks++;
       try {
         if (toolName === 'AskUserQuestion') {
           const questions = (input as { questions: import('./types').AskQuestion[] }).questions;
@@ -187,14 +195,33 @@ export class ClaudeSession {
           // Instead we show the plan card, then signal approval/rejection via deny messages
           // so Claude's turn continues (approve) or is interrupted (reject) without the
           // CLI ever attempting to run the tool.
+          //
+          // Denying the tool call only changes what THIS Claude instance believes — it does
+          // NOT clear the CLI's own internal permission-mode state, which is what actually
+          // gates the "you are in Plan Mode" system-reminder shown on every turn. Any
+          // subagent spawned via the `agents` option runs inside this same query/session and
+          // reads that same internal state, so without explicitly calling setPermissionMode()
+          // on approval, subagents keep seeing a live plan-mode restriction forever, even
+          // after the parent has "exited" plan mode from the user's point of view. See
+          // Query.setPermissionMode in the SDK types — this is the actual mechanism meant to
+          // clear it, and it was previously never called anywhere in this file.
+          const clearPlanMode = async () => {
+            try {
+              await this.activeQuery?.setPermissionMode('default');
+            } catch (err) {
+              console.error('[ClaudeThreads] failed to clear plan mode via setPermissionMode:', err);
+            }
+          };
           const planText = String((input as { plan?: unknown }).plan ?? '');
           if (callbacks.onPlanReady) {
             const result = await new Promise<import('@anthropic-ai/claude-agent-sdk').PermissionResult>((resolve) => {
               callbacks.onPlanReady!(
                 planText,
-                (editedPlan) => {
-                  // Approve: deny the tool call (avoids Zod error) with a message Claude
-                  // can read to understand it should proceed with implementation.
+                async (editedPlan) => {
+                  // Approve: clear the CLI's real plan-mode state first, then deny the tool
+                  // call (avoids Zod error) with a message Claude can read to understand it
+                  // should proceed with implementation.
+                  await clearPlanMode();
                   const approvalNote = editedPlan !== undefined && editedPlan !== planText
                     ? `Plan approved with edits:\n\n${editedPlan}`
                     : 'Plan approved — proceed with implementation.';
@@ -205,7 +232,9 @@ export class ClaudeSession {
             });
             return result;
           }
-          // No handler registered: deny non-interruptingly so Claude can proceed normally.
+          // No handler registered: clear plan mode and deny non-interruptingly so Claude can
+          // proceed normally.
+          await clearPlanMode();
           return { behavior: 'deny' as const, message: 'Plan approved — proceed with implementation.', interrupt: false };
         }
         const detail = opts.description ?? opts.decisionReason ?? opts.blockedPath ?? JSON.stringify(input).slice(0, 120);
@@ -217,6 +246,8 @@ export class ClaudeSession {
       } catch (err) {
         console.error('[ClaudeThreads] canUseTool error:', err);
         return { behavior: 'deny' as const, message: 'Permission handler error' };
+      } finally {
+        pendingInteractiveCallbacks--;
       }
     };
 
@@ -341,6 +372,11 @@ export class ClaudeSession {
     let streamingText = '';
 
     const allToolCalls: ToolCallRecord[] = [];
+    // toolUseId -> ToolCallRecord, scoped to this run() call, so the 'user'
+    // case handling tool_result blocks can mutate the SAME record object that
+    // flows into pendingToolCalls/allToolCalls/onMessage's persisted array —
+    // no extra plumbing needed for the finalized view to pick up the status.
+    const toolCallsByUseId = new Map<string, ToolCallRecord>();
     // TaskCreate tool_use ids → subject, awaiting the "Task #N created" result
     // so the create event carries the CLI-assigned task id.
     const pendingTaskCreates = new Map<string, string>();
@@ -357,11 +393,34 @@ export class ClaudeSession {
     // that finishes fast enough to notify *before* the first `result` still
     // causes the CLI to stream a distinct follow-up generation afterward —
     // pendingBgTaskIds is already empty by then, so it alone isn't a
-    // sufficient release signal). Require one full `result` with no new
-    // notification since the previous one before releasing, so a
-    // notification that arrives just ahead of a result gets a chance to
-    // actually produce its reaction before we close the channel it needs.
+    // sufficient release signal). Set this flag on notification; clear it as
+    // soon as the next `assistant` event streams (that IS the reaction the
+    // flag protects — see the `case 'assistant'` handler). If a `result`
+    // arrives with the flag still true, no reaction has streamed yet, so
+    // skip release and let the next result re-check. Log-verified (14 days
+    // of raw JSONL): clearing only at the *next result* — the pre-fix
+    // behavior — wedges nearly every turn that uses background tasks at all,
+    // because the reaction generation almost always streams and completes
+    // with its own result BEFORE the flag would have been cleared, leaving
+    // the flag true at the turn's final result with no further result ever
+    // coming to release the stream.
     let sawTaskNotificationSinceLastResult = false;
+    // Tracks any in-flight `canUseTool` call — covers ExitPlanMode,
+    // AskUserQuestion, and generic permission prompts uniformly (simpler and
+    // more future-proof than special-casing individual tool names). It ticks
+    // up the instant canUseTool is entered and back down in a `finally`, so
+    // it's harmless for fast-resolving paths like EnterPlanMode/OpenNewTab
+    // (up and back down almost immediately) and only matters for the slow,
+    // human-driven waits this fix targets. One `query()` serves both the
+    // foreground generation and any concurrent background-task generations
+    // over the same stream, so a `result` from a *different*, concurrent
+    // background-task generation can land while THIS generation's
+    // canUseTool call is still awaiting a human click — without this gate,
+    // the release check below would close stdin anyway, and the eventual
+    // human response would be force-rejected with "Stream closed" even
+    // though the CLI process is still running. See the release-gate comment
+    // at the `case 'result':` handler below for how this is used.
+    let pendingInteractiveCallbacks = 0;
 
     try {
       for await (const msg of q) {
@@ -385,6 +444,14 @@ export class ClaudeSession {
           }
 
           case 'assistant': {
+            // Assistant activity arriving after a task_notification IS the
+            // reaction generation the flag below exists to protect — it has
+            // now streamed, so clear the flag immediately rather than waiting
+            // for the next `result` (which was the wedge: the reaction's own
+            // result was the turn's LAST event, so the flag stayed true there,
+            // release was skipped, and no further result ever came — see the
+            // comment on sawTaskNotificationSinceLastResult).
+            sawTaskNotificationSinceLastResult = false;
             const parts: string[] = [];
             for (const block of msg.message.content) {
               if (block.type === 'text') {
@@ -394,9 +461,10 @@ export class ClaudeSession {
                   block.name,
                   block.input as Record<string, unknown>,
                 );
-                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id };
+                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id, status: 'pending' };
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
+                toolCallsByUseId.set(block.id, record);
                 callbacks.onToolUse(record);
 
                 // Task-tracking tools — surface as task list updates
@@ -456,12 +524,25 @@ export class ClaudeSession {
               );
             }
             // Only release the input stream (and let stdin close) once no
-            // background task is still running AND no task_notification
-            // landed in this same result window — re-checked on every
+            // background task is still running, no task_notification landed
+            // in this same result window, AND no canUseTool call is
+            // currently awaiting a human response (ExitPlanMode /
+            // AskUserQuestion / a permission prompt) — re-checked on every
             // subsequent `result` this loop sees. See the pendingBgTaskIds /
-            // sawTaskNotificationSinceLastResult declarations above for why
-            // both conditions are needed.
-            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult) {
+            // sawTaskNotificationSinceLastResult / pendingInteractiveCallbacks
+            // declarations above for why all three conditions are needed.
+            // The third exists because a `result` from a *different*,
+            // concurrent background-task generation can land while THIS
+            // generation is still blocked inside canUseTool waiting on the
+            // user — without the check, that result would close stdin out
+            // from under the still-pending human response, which then gets
+            // force-rejected with "Stream closed" once it finally arrives.
+            // Once canUseTool resolves, the counter drops to 0 and the
+            // generation it was blocking resumes and eventually emits its
+            // own `result`, which re-checks this gate and releases
+            // normally — same soundness argument used for the
+            // notification-flag condition above.
+            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult && pendingInteractiveCallbacks === 0) {
               this.releaseInput();
             }
             sawTaskNotificationSinceLastResult = false;
@@ -587,6 +668,24 @@ export class ClaudeSession {
               for (const block of msgContent) {
                 const b = block as Record<string, unknown>;
                 if (b.type !== 'tool_result') continue;
+
+                // Resolve the tool's final status from is_error and stamp duration.
+                // Mutates the SAME ToolCallRecord object referenced by
+                // pendingToolCalls/allToolCalls, so the finalized message's
+                // toolCalls array (and anything already persisted from it via a
+                // shallow copy) sees the update with no further plumbing.
+                {
+                  const toolUseId = b.tool_use_id as string | undefined;
+                  const record = toolUseId ? toolCallsByUseId.get(toolUseId) : undefined;
+                  if (record) {
+                    const status: 'success' | 'error' = b.is_error === true ? 'error' : 'success';
+                    record.status = status;
+                    if (record.timestamp) {
+                      record.durationMs = Date.now() - record.timestamp;
+                    }
+                    callbacks.onToolResult?.(toolUseId!, status, record.durationMs);
+                  }
+                }
 
                 // Inline images returned by tools (e.g. Read on a PNG)
                 if (callbacks.onToolResultImages && Array.isArray(b.content)) {

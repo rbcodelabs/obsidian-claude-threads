@@ -681,6 +681,172 @@ describe('MobileView — permission cards', () => {
   });
 });
 
+describe('MobileView — question cards', () => {
+  const singleSelectQuestion = {
+    header: 'Deployment target',
+    question: 'Which environment?',
+    multiSelect: false,
+    options: [
+      { label: 'Staging', description: 'Deploy to staging' },
+      { label: 'Production', description: 'Deploy to prod' },
+    ],
+  };
+
+  const multiSelectQuestion = {
+    header: 'Test suites',
+    question: 'Which suites should run?',
+    multiSelect: true,
+    options: [
+      { label: 'Unit', description: '' },
+      { label: 'Integration', description: '' },
+    ],
+  };
+
+  it('renders question card for pending question', async () => {
+    const { view, store } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid' })],
+      activeThreadId: 'tid',
+    });
+    (view as never)['lastRenderedMessageCount'] = -1;
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-1',
+      questions: [singleSelectQuestion],
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    expect(messagesEl.querySelector('.ct-mobile-question-card')).not.toBeNull();
+    expect(messagesEl.textContent).toContain('Which environment?');
+    expect(messagesEl.textContent).toContain('Staging');
+
+    await view.onClose();
+  });
+
+  it('single-select radio + submit sends correct resolve_question answers', async () => {
+    const { view, store, relay } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid' })],
+      activeThreadId: 'tid',
+    });
+    (view as never)['lastRenderedMessageCount'] = -1;
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-2',
+      questions: [singleSelectQuestion],
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    const radios = messagesEl.querySelectorAll<HTMLInputElement>('.ct-mobile-question-option input[type="radio"]');
+    // First radio = "Staging", select it
+    radios[0].checked = true;
+
+    const submitBtn = messagesEl.querySelector('.ct-mobile-question-submit') as HTMLButtonElement;
+    submitBtn.click();
+
+    expect(relay.sendCommand).toHaveBeenCalledWith({
+      type: 'resolve_question',
+      threadId: 'tid',
+      requestId: 'q-2',
+      answers: { 'Which environment?': 'Staging' },
+    });
+
+    await view.onClose();
+  });
+
+  it('multiSelect checkbox joins selected labels with commas', async () => {
+    const { view, store, relay } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid' })],
+      activeThreadId: 'tid',
+    });
+    (view as never)['lastRenderedMessageCount'] = -1;
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-3',
+      questions: [multiSelectQuestion],
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    const checkboxes = messagesEl.querySelectorAll<HTMLInputElement>('.ct-mobile-question-option input[type="checkbox"]');
+    // First two checkboxes = "Unit" and "Integration", select both
+    checkboxes[0].checked = true;
+    checkboxes[1].checked = true;
+
+    const submitBtn = messagesEl.querySelector('.ct-mobile-question-submit') as HTMLButtonElement;
+    submitBtn.click();
+
+    expect(relay.sendCommand).toHaveBeenCalledWith({
+      type: 'resolve_question',
+      threadId: 'tid',
+      requestId: 'q-3',
+      answers: { 'Which suites should run?': 'Unit,Integration' },
+    });
+
+    await view.onClose();
+  });
+
+  it('"Other" free-text path sends the typed answer', async () => {
+    const { view, store, relay } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid' })],
+      activeThreadId: 'tid',
+    });
+    (view as never)['lastRenderedMessageCount'] = -1;
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-4',
+      questions: [singleSelectQuestion],
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    const otherText = messagesEl.querySelector('.ct-mobile-question-other-text') as HTMLInputElement;
+    otherText.value = 'Canary environment';
+    otherText.dispatchEvent(new Event('input', { bubbles: true }));
+
+    const submitBtn = messagesEl.querySelector('.ct-mobile-question-submit') as HTMLButtonElement;
+    submitBtn.click();
+
+    expect(relay.sendCommand).toHaveBeenCalledWith({
+      type: 'resolve_question',
+      threadId: 'tid',
+      requestId: 'q-4',
+      answers: { 'Which environment?': 'Canary environment' },
+    });
+
+    await view.onClose();
+  });
+
+  it('shows the pending-question badge in the thread list', async () => {
+    const { view, store } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid', title: 'Needs input' })],
+      activeThreadId: null,
+    });
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-5',
+      questions: [singleSelectQuestion],
+    });
+
+    const threadList = (view as never)['threadListEl'] as HTMLElement;
+    expect(threadList.querySelector('.ct-mobile-thread-item-permission')).not.toBeNull();
+    expect(threadList.querySelector('.ct-mobile-thread-icon-permission')).not.toBeNull();
+
+    await view.onClose();
+  });
+});
+
 describe('MobileView — context summary banner', () => {
   beforeEach(() => {
     vi.useFakeTimers();

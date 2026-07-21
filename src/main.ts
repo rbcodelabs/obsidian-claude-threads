@@ -14,7 +14,14 @@ import type { createObsidianMcpServer } from './ObsidianTools';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
-import { type PluginSettings, DEFAULT_SETTINGS, effectiveExtraEnv, type Project, type ImageAttachment } from './types';
+import {
+  type PluginSettings,
+  DEFAULT_SETTINGS,
+  effectiveExtraEnv,
+  type Project,
+  type ImageAttachment,
+  type ScheduledItem,
+} from './types';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
 import { RelayClient } from './RelayClient';
@@ -106,6 +113,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
   wakeLock!: WakeLockService;
   scheduler!: import('./Scheduler').Scheduler;
   statusLine: import('./StatusLineService').StatusLineService | null = null;
+  gitDiff: import('./GitDiffService').GitDiffService | null = null;
+  orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -192,13 +201,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Scheduler } = require('./Scheduler') as typeof import('./Scheduler');
+    const { Scheduler, computeNextRun } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { GitDiffService } = require('./GitDiffService') as typeof import('./GitDiffService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
 
@@ -291,6 +302,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
               messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
                 id: m.id,
                 role: m.role,
@@ -299,7 +312,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -321,6 +334,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
             };
           }),
           getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
@@ -352,6 +367,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
             }
             this.manager.deleteThread(id);
             await this.saveSettings();
+          },
+          setThreadNotes: (id: string, notes: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            if (notes) thread.managerNotes = notes;
+            else delete thread.managerNotes;
+            this.manager.notifyManagerNotesChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          setThreadProposedReply: (id: string, text: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            thread.proposedReply = { text, generatedAt: Date.now(), sourceThreadId: this.settings.orchestratorThreadId };
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          clearThreadProposedReply: (id: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            delete thread.proposedReply;
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
           },
           onCronCreate: (params) => this.scheduler.createItem(params),
           onCronList: () => this.scheduler.listItems(),
@@ -396,6 +433,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // Absolute path to this plugin's installed dist/ dir, used to resolve the
+    // bundled thread-orchestrator skill (see ThreadManager.buildSessionOptions()).
+    {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        this.manager.pluginResourceDir = require('path').join(adapter.getBasePath(), this.manifest.dir!);
+      }
+    }
     // Resolve secret env vars from the OS keychain at session start. Values are
     // never stored in settings — only the key names live in data.json.
     this.manager.secretEnvResolver = () => {
@@ -563,6 +608,46 @@ export default class ClaudeThreadsPlugin extends Plugin {
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),
       isThreadBusy: (threadId) => this.manager.isRunning(threadId),
+      // Defense-in-depth fencing guard (see src/Scheduler.ts SchedulerOptions.claimFire
+      // for the full contract). This closes a narrow window that can otherwise
+      // duplicate-fire a cron item: Obsidian's Component.unload() does not await
+      // onunload(), so a plugin reload can construct a fresh Scheduler instance
+      // (with its own freshly-armed timers) while a prior instance's onunload()
+      // is still mid-flight. Reading via this.loadData() here — instead of the
+      // in-memory this.settings cache — is what makes this work even when two
+      // Scheduler instances coexist: each reads the genuinely current on-disk
+      // state rather than its own process's stale snapshot.
+      claimFire: async (item) => {
+        const disk = ((await this.loadData()) ?? {}) as { scheduledItems?: ScheduledItem[] };
+        const diskItems = disk.scheduledItems ?? [];
+        const idx = diskItems.findIndex((i) => i.id === item.id);
+        const diskItem = idx >= 0 ? diskItems[idx] : undefined;
+
+        if (!diskItem || !diskItem.enabled || diskItem.nextRun !== item.nextRun) {
+          // Already claimed by another instance this cycle, or the item was
+          // disabled/removed since this timer was armed.
+          return { claimed: false, fresh: diskItem };
+        }
+
+        const claimed: ScheduledItem = {
+          ...diskItem,
+          lastRun: Date.now(),
+          nextRun: computeNextRun(diskItem, true),
+        };
+        diskItems[idx] = claimed;
+
+        // Write back immediately so a concurrently-firing sibling instance's
+        // claimFire call sees this claim. Write the freshly-loaded disk object
+        // (not this.settings) so we don't clobber fields a sibling instance may
+        // have written since this process's own in-memory settings were cached.
+        await this.saveData({ ...disk, scheduledItems: diskItems });
+        // Keep this instance's own cache in sync so a subsequent saveSettings()
+        // call from elsewhere in this process doesn't overwrite the claim with
+        // stale in-memory state.
+        this.settings.scheduledItems = diskItems;
+
+        return { claimed: true, fresh: claimed };
+      },
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
@@ -600,6 +685,54 @@ export default class ClaudeThreadsPlugin extends Plugin {
         },
       );
       this.statusLine.start();
+    }
+
+    // Git diff service: computes native git plumbing (branch/base/diff-stat) per
+    // thread cwd so the git diff bar + Create PR button stay fresh (desktop only).
+    // No arbitrary user command here — fixed `git` subcommands via execFile.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const childProcess = require('child_process') as typeof import('child_process');
+      this.gitDiff = new GitDiffService(
+        this.manager,
+        {
+          execFile: childProcess.execFile,
+          now: () => Date.now(),
+          isMobile: Platform.isMobile,
+          getDefaultCwd: () => this.getEffectiveCwd(),
+          // Idle-pause interval polls when no relevant view is open and nothing runs;
+          // event-triggered polls (done/cwd_changed/focus) still fire.
+          shouldPoll: () => {
+            const ws = this.app.workspace;
+            const anyViewOpen =
+              ws.getLeavesOfType(VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(AGENT_VIEW_TYPE).length > 0 ||
+              ws.getLeavesOfType(KANBAN_VIEW_TYPE).length > 0;
+            const anyRunning = this.manager.getThreads().some((t) => this.manager.isRunning(t.id));
+            return anyViewOpen || anyRunning;
+          },
+        },
+      );
+      this.gitDiff.start();
+    }
+
+    // Event-driven wake-up: pings the thread-orchestrator thread shortly after
+    // any other thread finishes a turn, so it feels continuously running
+    // rather than polling on a fixed schedule. The heartbeat CronCreate item
+    // set up in ensureOrchestratorThread() is a backstop for missed events
+    // only — this is the primary trigger. See OrchestratorWakeup.ts.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { OrchestratorWakeup } = require('./OrchestratorWakeup') as typeof import('./OrchestratorWakeup');
+      this.orchestratorWakeup = new OrchestratorWakeup(this.manager, {
+        getOrchestratorThreadId: () => this.settings.orchestratorThreadId,
+        threadExists: (id) => !!this.manager.getThread(id),
+        sendMessage: (id, text) => this.manager.sendMessage(id, text),
+        onWarn: (message) => console.warn(`[ClaudeThreads] ${message}`),
+        onError: (err) => console.error('[ClaudeThreads] Orchestrator wake-up sendMessage failed:', err),
+      });
+      this.orchestratorWakeup.start();
+      this.register(() => this.orchestratorWakeup?.stop());
     }
 
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
@@ -707,6 +840,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentDashboard(leaf, this));
     this.registerView(KANBAN_VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
     this.registerView(SKILLS_VIEW_TYPE, (leaf) => new SkillsManagerView(leaf, this));
+
+    // Pause infinite spinner/pulse CSS animations while the window is hidden
+    // (minimized, occluded, or backgrounded) — see the .ct-app-hidden rule in
+    // styles.css. Prevents WindowServer from compositing frames nobody sees.
+    const handleVisibilityChange = () => {
+      document.body.classList.toggle('ct-app-hidden', document.hidden);
+    };
+    this.registerDomEvent(document, 'visibilitychange', handleVisibilityChange);
+    handleVisibilityChange(); // set initial state on load
 
     // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
@@ -824,6 +966,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
         } else if (!this.settings.summarizationEnabled) {
           new Notice('Thread summarization is disabled. Enable it in Settings > Claude Threads > Summarization.');
         }
+      },
+    });
+
+    this.addCommand({
+      id: 'open-thread-orchestrator',
+      name: 'Open Thread Orchestrator',
+      callback: async () => {
+        await this.ensureOrchestratorThread();
       },
     });
 
@@ -1120,6 +1270,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    // Stop scheduler timers FIRST, before anything else — including before the
+    // graceful-shutdown wait below. Obsidian's Component.unload() does not await
+    // onunload(), so a reload can construct a brand-new Scheduler (with its own
+    // armed timers) while this instance is still stuck in the up-to-10s
+    // gracefulShutdown wait. If we destroyed the old scheduler only after that
+    // wait, both instances' timers would be live simultaneously and could each
+    // independently fire the same due item. Destroying synchronously here closes
+    // that race window immediately, regardless of how long thread shutdown takes.
+    this.scheduler?.destroy();
+
     // ── Safe-reload guard ────────────────────────────────────────────────────
     // If any agent threads are actively running, interrupt them and wait up to
     // 10 seconds for clean shutdown before forcibly closing sessions.
@@ -1148,6 +1308,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.relayClient?.disconnect();
     this.wakeLock?.destroy();
     this.statusLine?.stop();
+    this.gitDiff?.stop();
     this.manager?.destroy();
 
     // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
@@ -1161,9 +1322,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
       window.clearTimeout(id);
     }
     this.pendingBgTaskTimers.clear();
-
-    // Stop scheduler timers
-    this.scheduler?.destroy();
 
     // Persist thread state to data.json
     await this.saveSettings();
@@ -1315,6 +1473,38 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
+  /**
+   * Creates the persistent thread-orchestrator thread if none is set yet (or if
+   * the previously stored one no longer exists), then opens it. Also ensures a
+   * 60-minute heartbeat cron item targets it — a resilience backstop for the
+   * event-driven wake-up subscriber below, not the primary trigger.
+   */
+  async ensureOrchestratorThread(): Promise<void> {
+    let threadId = this.settings.orchestratorThreadId;
+    if (!threadId || !this.manager.getThread(threadId)) {
+      const thread = this.manager.createThread('Thread Orchestrator', this.getEffectiveCwd());
+      threadId = thread.id;
+      this.settings.orchestratorThreadId = threadId;
+      await this.saveSettings();
+    }
+
+    // Idempotent: only create the heartbeat once per orchestrator thread.
+    const hasHeartbeat = (this.settings.scheduledItems ?? []).some(
+      (item) => item.targetThreadId === threadId,
+    );
+    if (!hasHeartbeat) {
+      this.scheduler.createItem({
+        name: 'Thread Orchestrator Heartbeat',
+        prompt: 'Heartbeat: run your review pass across all threads.',
+        schedule: { type: 'interval', intervalSeconds: 3600 },
+        enabled: true,
+        targetThreadId: threadId,
+      });
+    }
+
+    await this.openThreadInChatView(threadId);
+  }
+
   async dispatchNewThread(
     text: string,
     images?: ImageAttachment[],
@@ -1338,7 +1528,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
     if (opts?.loop) {
-      this.scheduler.createItem({
+      await this.scheduler.createItem({
         name: `Loop: ${text.slice(0, 40)}`,
         prompt: text,
         schedule: { type: 'interval', intervalSeconds: opts.loop.intervalSeconds },
@@ -1432,20 +1622,52 @@ export default class ClaudeThreadsPlugin extends Plugin {
     await plugins.enablePlugin(id);
   }
 
+  // Serializes all saveSettings() callers through a single in-flight
+  // data.json write. Without this, concurrent callers (~106 call sites,
+  // many fire-and-forget — autosaves, task notifications, cwd changes,
+  // explicit archives, etc.) can race: whichever disk write finishes LAST
+  // wins, even if it started earlier. A slow background save that began
+  // before a thread was archived can complete AFTER the correct
+  // post-archive write and silently clobber it back to stale state —
+  // resurrecting a "closed" thread. (Log-verified: 18 threads manually
+  // archived on 2026-07-12 were all 18 found back in `waiting` state on
+  // 2026-07-14.) The self-draining loop below guarantees only one write is
+  // ever in flight, and that every write reflects the freshest manager
+  // state at write time, not call time — so a caller that stacks up behind
+  // an in-flight write is never lost, just coalesced into the next pass.
+  private savePromise: Promise<void> | null = null;
+  private saveAgainRequested = false;
+
   async saveSettings(): Promise<void> {
-    // Persist projects + thread state (without streaming content)
-    // manager is null on mobile — skip thread persistence there
-    if (this.manager) {
-      this.settings.projects = this.manager.getProjects();
-      // Strip ephemeral statusTags — they are re-derived each poll and must not
-      // bloat data.json or render as stale pills after a restart.
-      this.settings.threads = this.manager.getThreads().map((t) => {
-        if (!t.statusTags) return t;
-        const { statusTags: _omit, ...rest } = t;
-        return rest as typeof t;
-      });
+    if (this.savePromise) {
+      this.saveAgainRequested = true;
+      return this.savePromise;
     }
-    await this.saveData(this.settings);
+    this.savePromise = this.runSaveLoop();
+    return this.savePromise;
+  }
+
+  private async runSaveLoop(): Promise<void> {
+    try {
+      do {
+        this.saveAgainRequested = false;
+        // Persist projects + thread state (without streaming content)
+        // manager is null on mobile — skip thread persistence there
+        if (this.manager) {
+          this.settings.projects = this.manager.getProjects();
+          // Strip ephemeral statusTags — they are re-derived each poll and must not
+          // bloat data.json or render as stale pills after a restart.
+          this.settings.threads = this.manager.getThreads().map((t) => {
+            if (!t.statusTags) return t;
+            const { statusTags: _omit, ...rest } = t;
+            return rest as typeof t;
+          });
+        }
+        await this.saveData(this.settings);
+      } while (this.saveAgainRequested);
+    } finally {
+      this.savePromise = null;
+    }
   }
 }
 

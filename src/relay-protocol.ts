@@ -6,7 +6,7 @@
  * these types elsewhere.
  */
 
-import type { MessageRole, ToolCallRecord } from './types';
+import type { MessageRole, ToolCallRecord, AskQuestion } from './types';
 
 // ── Serialized domain objects ──────────────────────────────────────────────
 
@@ -60,6 +60,8 @@ export type RelayFrame =
   | { type: 'thread_renamed'; threadId: string; title: string }
   | { type: 'permission_request'; threadId: string; toolName: string; detail: string; requestId: string }
   | { type: 'permission_resolved'; threadId: string; requestId: string }
+  | { type: 'question_request'; threadId: string; questions: AskQuestion[]; requestId: string }
+  | { type: 'question_resolved'; threadId: string; requestId: string }
   | { type: 'status'; threadId: string; status: 'compacting' | 'requesting' | null }
   | { type: 'queued'; threadId: string; text: string; count: number }
   | { type: 'dequeued'; threadId: string }
@@ -76,6 +78,7 @@ export type RemoteCommand =
   | { type: 'send_message'; threadId: string; text: string; images?: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> }
   | { type: 'stop_session'; threadId: string }
   | { type: 'resolve_permission'; threadId: string; requestId: string; allow: boolean; alwaysAllow?: boolean }
+  | { type: 'resolve_question'; threadId: string; requestId: string; answers: Record<string, string> }
   | { type: 'cancel_queued_message'; threadId: string; index: number }
   | { type: 'create_thread'; title: string; cwd?: string }
   | { type: 'set_active_thread'; threadId: string }
@@ -91,5 +94,13 @@ export interface PendingPermission {
   threadId: string;
   toolName: string;
   detail: string;
+  requestId: string;
+}
+
+// ── Pending question ────────────────────────────────────────────────────────
+
+export interface PendingQuestion {
+  threadId: string;
+  questions: AskQuestion[];
   requestId: string;
 }

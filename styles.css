@@ -241,13 +241,38 @@
   height: 13px;
 }
 
+/* Pause every infinite spinner/pulse animation while the Obsidian window is
+   hidden (minimized, occluded, or on a background tab) — src/main.ts toggles
+   this class via the document `visibilitychange` event. Keeps WindowServer
+   from compositing frames for animations nobody can see. */
+.ct-app-hidden .ct-summarize-spinning svg,
+.ct-app-hidden .ct-thinking-spinner,
+.ct-app-hidden .ct-status-card-spinner,
+.ct-app-hidden .ct-cursor,
+.ct-app-hidden .ct-tool-active .ct-tool-pill-name::before,
+.ct-app-hidden .ct-workflow-agent-running .ct-workflow-agent-dot,
+.ct-app-hidden .ct-agents-icon-running,
+.ct-app-hidden .ct-agents-icon-permission,
+.ct-app-hidden .ct-agents-icon-waiting,
+.ct-app-hidden .ct-kanban-icon-running,
+.ct-app-hidden .ct-mobile-thread-icon-running,
+.ct-app-hidden .ct-spin,
+.ct-app-hidden .ct-mic-btn.stt-recording,
+.ct-app-hidden .ct-skills-tab-action--spinning svg,
+.ct-app-hidden .ct-skills-spinner,
+.ct-app-hidden .ct-model-btn.ct-model-btn-escalated {
+  animation-play-state: paused !important;
+}
+
 @keyframes ct-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
 
-.ct-summarize-spinning svg {
-  animation: ct-spin 1s linear infinite;
+@media (prefers-reduced-motion: no-preference) {
+  .ct-summarize-spinning svg {
+    animation: ct-spin 1s linear infinite;
+  }
 }
 
 .ct-tab:hover {
@@ -838,6 +863,14 @@
   top: 6px;
   right: 6px;
   opacity: 0;
+  /* Invisible-but-clickable is a latent trap: this button sits at the exact
+     top-right corner of every assistant message, which is also where a tool
+     call's rightmost content (e.g. a tool-group's expand chevron) can land
+     when tool calls are the first thing rendered in the message. Disable
+     hit-testing until the button is actually visible (paired with the
+     opacity toggle below) so it can never silently steal a click meant for
+     something underneath it. */
+  pointer-events: none;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 5px;
@@ -857,6 +890,7 @@
 
 .ct-message:hover .ct-copy-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .ct-copy-btn:hover {
@@ -879,7 +913,12 @@
   border: 2px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
   border-top-color: var(--text-muted);
   border-radius: 50%;
-  animation: ct-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-thinking-spinner {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 /* Slim animated cursor — replaces block blink */
@@ -891,7 +930,12 @@
   border-radius: 1px;
   vertical-align: text-bottom;
   margin-left: 2px;
-  animation: ct-cursor-pulse 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-cursor {
+    animation: ct-cursor-pulse 1s ease-in-out infinite;
+  }
 }
 
 @keyframes ct-cursor-pulse {
@@ -981,7 +1025,12 @@
   content: '● ';
   font-size: 0.65em;
   vertical-align: middle;
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-tool-active .ct-tool-pill-name::before {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes ct-dot-pulse {
@@ -1017,6 +1066,47 @@
 .ct-task-failed .ct-tool-pill-name {
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
   color: var(--color-red);
+}
+
+/* Tool-call groups (finalized view) — collapsible run of consecutive
+   same-activity-kind tool calls. Reuses .ct-compressed-row/.ct-expand-btn/
+   .ct-full-content/.ct-hidden from the compressed-view assistant grouping so
+   this reads as "one more row in the list," not a new visual language. */
+.ct-tool-group {
+  margin-bottom: 2px;
+}
+
+.ct-tool-group-header {
+  padding: 3px 8px 3px 6px;
+  border-left: 2px solid var(--background-modifier-border);
+  cursor: default;
+  /* When a tool group is the first thing rendered in a message (the common
+     case -- tool calls render before the response text), this header sits
+     directly under the message's absolutely-positioned .ct-copy-btn
+     (top:6px/right:6px). Reserve clearance so the group's own expand
+     chevron -- pushed flush-right by .ct-compressed-summary's flex:1 --
+     never shares a hit-testable pixel with the copy button, in either its
+     resting or hovered-visible state. */
+  margin-right: 36px;
+}
+
+.ct-tool-group .ct-full-content {
+  margin-top: 2px;
+  margin-left: 8px;
+}
+
+/* Per-pill and group-header status tint. Reused across both the finalized
+   .ct-tool-pill status styling and the grouped-header error flag. */
+.ct-tool-error {
+  border-left-color: var(--color-red);
+}
+
+.ct-tool-error .ct-tool-pill-icon {
+  color: var(--color-red);
+}
+
+.ct-tool-success .ct-tool-pill-icon {
+  color: var(--color-green);
 }
 
 /* ── Workflow progress block ─────────────────────────────────────────────── */
@@ -1095,7 +1185,12 @@
 /* Running agent: pulsing dot */
 .ct-workflow-agent-running .ct-workflow-agent-dot {
   color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-workflow-agent-running .ct-workflow-agent-dot {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 /* Completed agent */
@@ -1279,7 +1374,12 @@
   border-top-color: var(--color-blue, #4a8fe7);
   border-radius: 50%;
   flex-shrink: 0;
-  animation: ct-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-status-card-spinner {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 .ct-status-card-text {
@@ -1491,6 +1591,130 @@
 }
 
 .ct-wakeup-banner-cancel:hover {
+  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
+  border-color: var(--color-red);
+  color: var(--color-red);
+}
+
+/* Manager Notes panel (collapsible, above the compose box) */
+.ct-manager-notes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-purple, #a882ff) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-purple, #a882ff) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-manager-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-manager-notes-title {
+  font-weight: 600;
+  color: var(--color-purple, #a882ff);
+}
+
+.ct-manager-notes-close {
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-manager-notes-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-manager-notes-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+}
+
+/* Proposed-reply banner (above the compose box) */
+.ct-proposed-reply-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin: 2px 6px 4px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--color-green, #4caf50) 10%, var(--background-secondary));
+  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 35%, transparent);
+  border-radius: 6px;
+}
+
+.ct-proposed-reply-header {
+  display: flex;
+  align-items: center;
+}
+
+.ct-proposed-reply-label {
+  font-weight: 600;
+  color: var(--color-green, #4caf50);
+}
+
+.ct-proposed-reply-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-normal);
+}
+
+.ct-proposed-reply-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ct-proposed-reply-approve,
+.ct-proposed-reply-edit,
+.ct-proposed-reply-discard {
+  font-size: var(--font-ui-smaller);
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-proposed-reply-approve {
+  border-color: color-mix(in srgb, var(--color-green, #4caf50) 45%, transparent);
+  color: var(--color-green, #4caf50);
+}
+
+.ct-proposed-reply-approve:hover {
+  background: color-mix(in srgb, var(--color-green, #4caf50) 15%, var(--background-secondary));
+}
+
+.ct-proposed-reply-edit:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-proposed-reply-discard:hover {
   background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
   border-color: var(--color-red);
   color: var(--color-red);
@@ -1960,6 +2184,33 @@
   color: var(--interactive-accent);
 }
 
+/* Escalated turn — the model button stays visually hot for the whole turn.
+   Placed after the -active rules so it wins when a per-thread override and
+   an escalation are present at the same time. */
+.ct-model-btn.ct-model-btn-escalated,
+.ct-model-btn.ct-model-btn-escalated:hover {
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  border-radius: var(--radius-s);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-model-btn.ct-model-btn-escalated {
+    animation: ct-escalated-pulse 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes ct-escalated-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 6px 2px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+  }
+}
+
 /* Permission mode button — accent-colored when a per-thread override is active */
 .ct-permission-mode-btn.ct-permission-mode-btn-active {
   color: var(--interactive-accent);
@@ -2284,7 +2535,12 @@
 
 .ct-agents-icon-running {
   color: var(--text-accent);
-  animation: ct-agents-spin 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-running {
+    animation: ct-agents-spin 1.5s linear infinite;
+  }
 }
 
 .ct-agents-icon-idle {
@@ -3019,7 +3275,12 @@
 
 .ct-agents-icon-permission {
   color: var(--color-orange, #e06c00);
-  animation: ct-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-permission {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 .ct-agents-permission-tool {
@@ -3062,7 +3323,12 @@
 
 .ct-agents-icon-waiting {
   color: var(--color-blue, #4a8fe7);
-  animation: ct-dot-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-agents-icon-waiting {
+    animation: ct-dot-pulse 1.6s ease-in-out infinite;
+  }
 }
 
 .ct-agents-row-waiting .ct-agents-row-activity {
@@ -3194,6 +3460,122 @@
 
 .ct-footer-pill-pr .ct-footer-link {
   color: var(--color-green, #4caf50);
+}
+
+/* ── Git diff bar (branch + diff stat + Create PR split button) ─────────────
+   Deliberately NOT a child of .ct-panel-context, so it does not inherit the
+   hover/focus-only collapse behavior applied to .ct-context-footer et al
+   (see the .ct-panel-collapsible rules further down) — it stays visible at
+   rest, matching the visual weight of the input row itself. ────────────── */
+
+.ct-git-diff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  flex-shrink: 0;
+}
+
+.ct-git-diff-bar.ct-hidden {
+  display: none;
+}
+
+.ct-git-diff-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+}
+
+.ct-git-diff-branch-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.ct-git-diff-branch-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ct-git-diff-repo {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.ct-git-diff-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ct-git-diff-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.ct-git-diff-stat-add {
+  color: var(--color-green, #4caf50);
+}
+
+.ct-git-diff-stat-del {
+  color: var(--color-red, #e05252);
+}
+
+.ct-git-diff-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ct-git-diff-create-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  padding: 4px 12px;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.ct-git-diff-create-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ct-git-diff-dropdown-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--text-on-accent) 25%, transparent);
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.ct-git-diff-dropdown-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.ct-git-diff-dropdown-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3333,7 +3715,12 @@
 
 .ct-mobile-thread-icon-running {
   color: var(--interactive-accent);
-  animation: ct-spin 2s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-mobile-thread-icon-running {
+    animation: ct-spin 2s linear infinite;
+  }
 }
 
 .ct-mobile-thread-icon-done {
@@ -3737,6 +4124,158 @@
 .ct-mobile-permission-allow {
   background: var(--interactive-accent) !important;
   color: var(--text-on-accent) !important;
+}
+
+/* ── Question card (AskUserQuestion) ───────────────────────────────────── */
+
+.ct-mobile-question-card {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--color-purple, #8c5ce6);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 4px 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ct-mobile-question-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-purple, #8c5ce6);
+}
+
+.ct-mobile-question-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-mobile-question-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-mobile-question-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ct-mobile-question-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-mobile-question-card .ct-mobile-question + .ct-mobile-question {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ct-mobile-question-title {
+  margin: 0 0 6px;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-mobile-question-text {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ct-mobile-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ct-mobile-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  cursor: pointer;
+}
+
+.ct-mobile-question-option:active {
+  background: var(--background-modifier-hover);
+}
+
+.ct-mobile-question-option input[type="radio"],
+.ct-mobile-question-option input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.ct-mobile-question-option-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.ct-mobile-question-opt-name {
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.ct-mobile-question-opt-desc {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ct-mobile-question-option-other {
+  border-style: dashed;
+}
+
+.ct-mobile-question-other-text {
+  margin-top: 4px;
+  padding: 8px 10px;
+  min-height: 36px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  width: 100%;
+}
+
+.ct-mobile-question-other-text:focus {
+  border-color: var(--interactive-accent);
+  outline: none;
+}
+
+.ct-mobile-question-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ct-mobile-question-submit {
+  min-height: 44px;
+  min-width: 96px;
+  padding: 0 20px;
+  border-radius: 8px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  cursor: pointer !important;
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  border: none !important;
 }
 
 /* ── Input row ──────────────────────────────────────────────────────────── */
@@ -4384,6 +4923,14 @@
   color: var(--color-orange);
 }
 
+.ct-kanban-col-waiting {
+  border-color: var(--color-yellow);
+}
+.ct-kanban-col-waiting .ct-kanban-col-header {
+  background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+  color: var(--color-yellow);
+}
+
 .ct-kanban-col-header {
   padding: 8px 10px;
   font-size: var(--font-ui-small);
@@ -4472,7 +5019,12 @@
 .ct-kanban-icon-running {
   background: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
   color: var(--interactive-accent);
-  animation: ct-agents-spin 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-kanban-icon-running {
+    animation: ct-agents-spin 1.5s linear infinite;
+  }
 }
 .ct-kanban-icon-idle {
   background: color-mix(in srgb, var(--color-green) 15%, transparent);
@@ -4489,6 +5041,10 @@
 .ct-kanban-icon-permission {
   background: color-mix(in srgb, var(--color-orange) 15%, transparent);
   color: var(--color-orange);
+}
+.ct-kanban-icon-waiting {
+  background: color-mix(in srgb, var(--color-yellow) 15%, transparent);
+  color: var(--color-yellow);
 }
 .ct-kanban-card-title {
   font-size: var(--font-ui-small);
@@ -4626,7 +5182,12 @@
 /* Recording state: pulsing red */
 .ct-mic-btn.stt-recording {
   color: var(--color-red, #e03131);
-  animation: stt-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-mic-btn.stt-recording {
+    animation: stt-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes stt-pulse {
@@ -4646,8 +5207,13 @@
 
 /* Spinner rotation for the processing SVG — reuses the existing ct-spin keyframe */
 .ct-spin {
-  animation: ct-spin 0.8s linear infinite;
   transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-spin {
+    animation: ct-spin 0.8s linear infinite;
+  }
 }
 
 /* ─── Compressed view ─────────────────────────────────────────────────── */
@@ -4983,13 +5549,20 @@ textarea.ct-settings-wide-input {
   background: transparent;
 }
 
-/* Tab bar */
+/* Tab bar: tab labels on the left, Import/Check-for-updates icon buttons on the right */
 .ct-skills-tabs {
   display: flex;
-  gap: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   background: var(--tab-container-background, var(--background-secondary));
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
+}
+
+.ct-skills-tabs-list {
+  display: flex;
+  min-width: 0;
 }
 
 .ct-skills-tab {
@@ -5013,6 +5586,38 @@ textarea.ct-settings-wide-input {
   border-bottom-color: var(--text-accent);
 }
 
+.ct-skills-tabs-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  flex-shrink: 0;
+}
+
+.ct-skills-tab-action {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ct-skills-tab-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Spins the "Check for updates" refresh icon in place while a check is running,
+   so clicking the button visibly does something instead of appearing inert. */
+.ct-skills-tab-action--spinning svg {
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-skills-tab-action--spinning svg {
+    animation: ct-skills-spin 0.8s linear infinite;
+  }
+}
+
 /* Body: list + detail side-by-side */
 .ct-skills-body {
   display: flex;
@@ -5021,15 +5626,46 @@ textarea.ct-settings-wide-input {
   min-height: 0;
 }
 
-/* Left: skill list */
+/* Left: skill list (width set inline by SkillsManagerView; 200px is a pre-JS fallback) */
 .ct-skills-list {
   width: 200px;
   min-width: 140px;
+  max-width: 480px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--background-modifier-border);
   overflow: hidden;
+}
+
+/* Draggable divider between the list and detail panels */
+.ct-skills-divider {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+}
+
+.ct-skills-divider::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: var(--background-modifier-border);
+}
+
+.ct-skills-divider:hover::after,
+.ct-skills-divider--dragging::after {
+  left: 1px;
+  width: 3px;
+  background: var(--interactive-accent);
+}
+
+/* Prevents text selection / wrong cursor over the rest of the UI while dragging */
+body.ct-skills-resizing {
+  cursor: col-resize !important;
+  user-select: none;
 }
 
 /* Search row */
@@ -5074,6 +5710,27 @@ textarea.ct-settings-wide-input {
   color: var(--text-faint);
   padding: 3px 8px;
   flex-shrink: 0;
+}
+
+/* Update-available indicator dot on the "Check for updates" button; full
+   status text (up-to-date / N updates / last checked) lives in its tooltip. */
+.ct-skills-update-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--color-orange);
+  flex-shrink: 0;
+}
+
+/* Same dot, but pinned as a corner badge on the icon-only tab-bar button
+   instead of trailing inline text. */
+.ct-skills-update-dot--badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  margin-left: 0;
 }
 
 .ct-skills-section-label {
@@ -5188,8 +5845,13 @@ textarea.ct-settings-wide-input {
   border: 2px solid var(--background-modifier-border);
   border-top-color: var(--text-accent);
   border-radius: 50%;
-  animation: ct-skills-spin 0.7s linear infinite;
   vertical-align: middle;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-skills-spinner {
+    animation: ct-skills-spin 0.7s linear infinite;
+  }
 }
 
 @keyframes ct-skills-spin {

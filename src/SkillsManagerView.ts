@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice, Modal, App, requestUrl } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, Menu, App, requestUrl } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 
 export const SKILLS_VIEW_TYPE = 'claude-threads:skills';
@@ -210,7 +210,10 @@ export class SkillsManagerView extends ItemView {
 
   // DOM refs (stable across re-renders)
   private tabsEl!: HTMLElement;
+  private tabsListEl!: HTMLElement;
+  private tabActionsEl!: HTMLElement;
   private listEl!: HTMLElement;
+  private dividerEl!: HTMLElement;
   private detailEl!: HTMLElement;
   /** Hidden input used by the "Import Folder…" button in the Installed tab */
   private importFolderInputEl!: HTMLInputElement;
@@ -253,15 +256,28 @@ export class SkillsManagerView extends ItemView {
     void this.checkAllSourceStaleness();
   }
 
-  private async checkAllSourceStaleness(): Promise<void> {
+  /** Shared "All up to date" / "N plugins have updates" phrasing for the check-for-updates tooltip and toast. */
+  private describeUpdateStatus(totalBehind: number, sources: import('./types').SkillSource[]): string {
+    if (totalBehind === 0) return 'All up to date';
+    const n = sources.filter((s) => (s.behindCount ?? 0) > 0).length;
+    return `${n} plugin${n !== 1 ? 's' : ''} ${n !== 1 ? 'have' : 'has'} updates`;
+  }
+
+  /** Result of a bulk staleness check: how many sources were attempted and which ones failed (with a reason). */
+  private async checkAllSourceStaleness(): Promise<{ checked: number; failed: { name: string; error: string }[] }> {
     const sources = (this.plugin.settings.skillSources ?? []).filter(
       (s) => s.type === 'github' && s.clonePath,
     );
-    await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
+    const results = await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
+    const failed = results.filter((r): r is { name: string; error: string } => r !== null);
+    return { checked: sources.length, failed };
   }
 
-  private async fetchSourceStaleness(source: import('./types').SkillSource): Promise<void> {
-    if (!source.clonePath) return;
+  /** Fetches + computes behind-count for one source. Returns `{ name, error }` on failure, `null` on success. */
+  private async fetchSourceStaleness(
+    source: import('./types').SkillSource,
+  ): Promise<{ name: string; error: string } | null> {
+    if (!source.clonePath) return null;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { execSync } = require('child_process') as typeof import('child_process');
     try {
@@ -282,8 +298,14 @@ export class SkillsManagerView extends ItemView {
       if (this.selectedGithubSource?.id === source.id) {
         this.renderDetail();
       }
-    } catch {
-      // Network unavailable or git error — ignore silently
+      return null;
+    } catch (err) {
+      // Previously swallowed silently, which made "Check for updates" look like a no-op
+      // whenever git failed (auth prompt, offline, wrong path, etc). Surface it instead.
+      const stderr = (err as { stderr?: Buffer | string } | undefined)?.stderr;
+      const message = stderr && String(stderr).trim() ? String(stderr).trim() : (err instanceof Error ? err.message : String(err));
+      console.error(`[ClaudeThreads] Staleness check failed for "${source.name}":`, message);
+      return { name: source.name, error: message };
     }
   }
 
@@ -328,21 +350,164 @@ export class SkillsManagerView extends ItemView {
       void this.importSkillFromFile(file.path);
     });
 
-    // Tab bar
+    // Tab bar: tab labels on the left, Import/Check-for-updates icon buttons on the right
     this.tabsEl = root.createEl('div', { cls: 'ct-skills-tabs' });
+    this.tabsListEl = this.tabsEl.createEl('div', { cls: 'ct-skills-tabs-list' });
+    this.tabActionsEl = this.tabsEl.createEl('div', { cls: 'ct-skills-tabs-actions' });
     this.buildTabs();
 
-    // Body: left list + right detail
+    // Body: left list + draggable divider + right detail
     const body = root.createEl('div', { cls: 'ct-skills-body' });
     this.listEl = body.createEl('div', { cls: 'ct-skills-list' });
+    this.dividerEl = body.createEl('div', { cls: 'ct-skills-divider' });
     this.detailEl = body.createEl('div', { cls: 'ct-skills-detail' });
+
+    this.listEl.style.width = `${this.clampListWidth(this.plugin.settings.skillsListWidth, body)}px`;
+    this.setupListResizer(body);
 
     this.renderList();
     this.renderDetail();
   }
 
+  /** Minimum/maximum width (px) the left list panel can be dragged to. */
+  private static readonly LIST_MIN_WIDTH = 140;
+  private static readonly LIST_MAX_WIDTH = 480;
+
+  /** Clamps a candidate list-panel width to the allowed range and to whatever room `body` actually has. */
+  private clampListWidth(width: number, body: HTMLElement): number {
+    const bodyWidth = body.getBoundingClientRect().width;
+    // Leave room for the divider itself plus a usable minimum on the detail panel.
+    const roomLimit = bodyWidth > 0 ? bodyWidth - 4 - 160 : SkillsManagerView.LIST_MAX_WIDTH;
+    const max = Math.max(SkillsManagerView.LIST_MIN_WIDTH, Math.min(SkillsManagerView.LIST_MAX_WIDTH, roomLimit));
+    return Math.min(Math.max(width, SkillsManagerView.LIST_MIN_WIDTH), max);
+  }
+
+  /** Wires up drag-to-resize on `this.dividerEl`, persisting the chosen width when the drag ends. */
+  private setupListResizer(body: HTMLElement): void {
+    this.dividerEl.addEventListener('pointerdown', (e: PointerEvent) => {
+      e.preventDefault();
+      this.dividerEl.setPointerCapture(e.pointerId);
+      this.dividerEl.classList.add('ct-skills-divider--dragging');
+      document.body.classList.add('ct-skills-resizing');
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const bodyRect = body.getBoundingClientRect();
+        const raw = moveEvent.clientX - bodyRect.left;
+        this.listEl.style.width = `${this.clampListWidth(raw, body)}px`;
+      };
+
+      const onPointerUp = () => {
+        this.dividerEl.releasePointerCapture(e.pointerId);
+        this.dividerEl.classList.remove('ct-skills-divider--dragging');
+        document.body.classList.remove('ct-skills-resizing');
+        this.dividerEl.removeEventListener('pointermove', onPointerMove);
+        this.dividerEl.removeEventListener('pointerup', onPointerUp);
+
+        const finalWidth = parseInt(this.listEl.style.width, 10);
+        if (!isNaN(finalWidth)) {
+          this.plugin.settings.skillsListWidth = finalWidth;
+          void this.plugin.saveSettings();
+        }
+      };
+
+      this.dividerEl.addEventListener('pointermove', onPointerMove);
+      this.dividerEl.addEventListener('pointerup', onPointerUp);
+    });
+
+    // Double-click resets to the default width.
+    this.dividerEl.addEventListener('dblclick', () => {
+      const defaultWidth = this.clampListWidth(200, body);
+      this.listEl.style.width = `${defaultWidth}px`;
+      this.plugin.settings.skillsListWidth = defaultWidth;
+      void this.plugin.saveSettings();
+    });
+  }
+
+  /** Import / Check-for-updates icon buttons, right-aligned in the tab bar. Installed-tab only. */
+  private renderTabActions(): void {
+    this.tabActionsEl.empty();
+    if (this.activeTab !== 'installed') return;
+
+    const importBtn = this.tabActionsEl.createEl('button', { cls: 'clickable-icon ct-skills-tab-action' });
+    setIcon(importBtn, 'plus');
+    setTooltip(importBtn, 'Import skill');
+    importBtn.addEventListener('click', (e) => {
+      const menu = new Menu();
+      menu.addItem(item =>
+        item
+          .setTitle('Folder…')
+          .setIcon('folder-plus')
+          .onClick(() => this.importFolderInputEl.click())
+      );
+      menu.addItem(item =>
+        item
+          .setTitle('File (.skill)…')
+          .setIcon('file-up')
+          .onClick(() => this.importFileInputEl.click())
+      );
+      menu.showAtMouseEvent(e);
+    });
+
+    const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
+    if (githubSources.length === 0) return;
+
+    const checkBtn = this.tabActionsEl.createEl('button', {
+      cls: 'clickable-icon ct-skills-tab-action' + (this.isCheckingUpdates ? ' ct-skills-tab-action--spinning' : ''),
+    });
+    checkBtn.disabled = this.isCheckingUpdates;
+    setIcon(checkBtn, 'refresh-cw');
+
+    if (this.isCheckingUpdates) {
+      setTooltip(checkBtn, 'Checking…');
+      return;
+    }
+
+    // Compute result status from current behindCounts, surfaced as a tooltip
+    // (plus a small dot when updates are available) rather than inline text —
+    // keeps the tab bar compact instead of a wrapping text row.
+    const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+    const anyFetched = githubSources.some((s) => s.lastFetched != null);
+    if (totalBehind > 0) {
+      checkBtn.createEl('span', { cls: 'ct-skills-update-dot ct-skills-update-dot--badge' });
+    }
+
+    if (anyFetched) {
+      const lastChecked = new Date(
+        Math.max(...githubSources.map((s) => s.lastFetched ?? 0))
+      ).toLocaleString();
+      setTooltip(checkBtn, `${this.describeUpdateStatus(totalBehind, githubSources)} · Last checked ${lastChecked}`);
+    } else {
+      setTooltip(checkBtn, 'Check for updates');
+    }
+
+    checkBtn.addEventListener('click', () => {
+      void (async () => {
+        this.isCheckingUpdates = true;
+        this.renderList();
+        const { checked, failed } = await this.checkAllSourceStaleness();
+        this.isCheckingUpdates = false;
+        this.renderList();
+
+        // Always surface a result — previously a git failure (offline, auth
+        // prompt, bad clone path) was swallowed silently and the button
+        // looked like it did nothing at all when clicked.
+        const newTotalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
+        if (checked === 0) {
+          new Notice('No GitHub plugin sources to check.');
+        } else if (failed.length === checked) {
+          new Notice(`Could not check for updates: ${failed[0].error}`);
+        } else if (failed.length > 0) {
+          const names = failed.map((f) => f.name).join(', ');
+          new Notice(`${this.describeUpdateStatus(newTotalBehind, githubSources)} (failed to check: ${names})`);
+        } else {
+          new Notice(this.describeUpdateStatus(newTotalBehind, githubSources));
+        }
+      })();
+    });
+  }
+
   private buildTabs(): void {
-    this.tabsEl.empty();
+    this.tabsListEl.empty();
 
     const tabs: Array<{ id: 'installed' | 'browse'; label: string }> = [
       { id: 'installed', label: 'Installed' },
@@ -350,7 +515,7 @@ export class SkillsManagerView extends ItemView {
     ];
 
     for (const tab of tabs) {
-      const btn = this.tabsEl.createEl('button', {
+      const btn = this.tabsListEl.createEl('button', {
         cls: 'ct-skills-tab' + (this.activeTab === tab.id ? ' ct-skills-tab--active' : ''),
         text: tab.label,
       });
@@ -375,6 +540,7 @@ export class SkillsManagerView extends ItemView {
 
   private renderList(): void {
     this.listEl.empty();
+    this.renderTabActions();
     if (this.activeTab === 'installed') {
       this.renderInstalledList();
     } else {
@@ -410,61 +576,10 @@ export class SkillsManagerView extends ItemView {
     if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
     this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
 
-    // ── Import Skill action row (always shown, stable position) ─────────────
-    const importRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
-    const importFolderBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import Folder…' });
-    const importFolderIcon = importFolderBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-    setIcon(importFolderIcon, 'folder-plus');
-    importFolderBtn.prepend(importFolderIcon);
-    importFolderBtn.addEventListener('click', () => this.importFolderInputEl.click());
-
-    const importFileBtn = importRow.createEl('button', { cls: 'ct-skills-btn', text: 'Import File (.skill)…' });
-    const importFileIcon = importFileBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-    setIcon(importFileIcon, 'file-up');
-    importFileBtn.prepend(importFileIcon);
-    importFileBtn.addEventListener('click', () => this.importFileInputEl.click());
-
-    // ── Check for Updates action row (only when GitHub sources are configured) ─
-    if (githubSources.length > 0) {
-      const updateRow = this.listEl.createEl('div', { cls: 'ct-skills-update-row' });
-
-      const checkBtn = updateRow.createEl('button', { cls: 'ct-skills-btn', text: 'Check for updates' });
-      const refreshIcon = checkBtn.createEl('span', { cls: 'ct-skills-btn-icon' });
-      setIcon(refreshIcon, 'refresh-cw');
-      checkBtn.prepend(refreshIcon);
-
-      const statusEl = updateRow.createEl('span', { cls: 'ct-skills-update-status' });
-
-      if (this.isCheckingUpdates) {
-        checkBtn.disabled = true;
-        statusEl.createEl('span', { cls: 'ct-skills-spinner' });
-        statusEl.createEl('span', { text: ' Checking…' });
-      } else {
-        // Compute result status from current behindCounts
-        const totalBehind = githubSources.reduce((sum, s) => sum + (s.behindCount ?? 0), 0);
-        const anyFetched = githubSources.some((s) => s.lastFetched != null);
-        if (anyFetched) {
-          if (totalBehind === 0) {
-            statusEl.setText('All up to date');
-          } else {
-            const n = githubSources.filter((s) => (s.behindCount ?? 0) > 0).length;
-            statusEl.setText(`${n} plugin${n !== 1 ? 's' : ''} have updates`);
-          }
-        }
-
-        checkBtn.addEventListener('click', () => {
-          void (async () => {
-            this.isCheckingUpdates = true;
-            this.renderList();
-            await this.checkAllSourceStaleness();
-            this.isCheckingUpdates = false;
-            this.renderList();
-          })();
-        });
-      }
-    }
-
     const q = this.installedFilter.toLowerCase();
+
+    // ── Scrollable body (GitHub source tree + Local group) ───────────────────
+    const inner = this.listEl.createEl('div', { cls: 'ct-skills-list-inner' });
 
     // ── GitHub source tree nodes ─────────────────────────────────────────────
     for (const source of githubSources) {
@@ -481,7 +596,7 @@ export class SkillsManagerView extends ItemView {
       if (q && !isLoading && filteredSourceSkills.length === 0 && !source.name.toLowerCase().includes(q)) continue;
 
       // Source header row
-      const sourceRow = this.listEl.createEl('div', {
+      const sourceRow = inner.createEl('div', {
         cls: 'ct-skills-tree-source' + (isSelected ? ' ct-skills-tree-source--active' : ''),
       });
       const toggleEl = sourceRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
@@ -517,15 +632,15 @@ export class SkillsManagerView extends ItemView {
       // Children (when expanded)
       if (isExpanded) {
         if (isLoading) {
-          const loadRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-child--loading' });
+          const loadRow = inner.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-child--loading' });
           loadRow.createEl('span', { cls: 'ct-skills-spinner' });
           loadRow.createEl('span', { text: ' Loading…' });
         } else if (filteredSourceSkills.length === 0) {
-          this.listEl.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-empty', text: q ? 'No matches' : 'No skills found' });
+          inner.createEl('div', { cls: 'ct-skills-tree-child ct-skills-tree-empty', text: q ? 'No matches' : 'No skills found' });
         } else {
           for (const skill of filteredSourceSkills) {
             const isChildActive = this.selectedGithubSourceSkill?.skill.id === skill.id && this.selectedGithubSourceSkill?.source.id === source.id;
-            const childRow = this.listEl.createEl('div', {
+            const childRow = inner.createEl('div', {
               cls: 'ct-skills-tree-child' + (isChildActive ? ' ct-skills-tree-child--active' : ''),
             });
             childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
@@ -554,7 +669,7 @@ export class SkillsManagerView extends ItemView {
 
     if (hasLocalItems && (!q || hasLocalMatches)) {
       const localExpanded = this.expandedSources.has('__local__');
-      const localRow = this.listEl.createEl('div', { cls: 'ct-skills-tree-source' });
+      const localRow = inner.createEl('div', { cls: 'ct-skills-tree-source' });
       const localToggle = localRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
       setIcon(localToggle, localExpanded ? 'chevron-down' : 'chevron-right');
       localRow.createEl('span', { cls: 'ct-skills-tree-source-name', text: 'Local' });
@@ -568,7 +683,7 @@ export class SkillsManagerView extends ItemView {
         // Agents first
         for (const agent of filteredLocalAgents) {
           const isAgentActive = this.selectedAgent?.name === agent.name;
-          const childRow = this.listEl.createEl('div', {
+          const childRow = inner.createEl('div', {
             cls: 'ct-skills-tree-child' + (isAgentActive ? ' ct-skills-tree-child--active' : ''),
           });
           childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: agent.name });
@@ -587,7 +702,7 @@ export class SkillsManagerView extends ItemView {
         // Then local skills
         for (const skill of filteredLocalSkills) {
           const isSkillActive = this.selectedInstalled?.name === skill.name;
-          const childRow = this.listEl.createEl('div', {
+          const childRow = inner.createEl('div', {
             cls: 'ct-skills-tree-child' + (isSkillActive ? ' ct-skills-tree-child--active' : ''),
           });
           childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });

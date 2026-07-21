@@ -325,6 +325,10 @@ export class RelayClient {
         this.threadManager.resolvePermissionByRequestId(cmd.requestId, cmd.allow);
         break;
 
+      case 'resolve_question':
+        this.threadManager.resolveQuestionByRequestId(cmd.requestId, cmd.answers);
+        break;
+
       case 'cancel_queued_message':
         this.threadManager.removeQueuedMessageAt(cmd.threadId, cmd.index);
         // Send a dequeued frame so mobile updates its banner immediately.
@@ -456,6 +460,32 @@ export class RelayClient {
           // We don't have a requestId here so we emit a generic resolved signal
           // keyed by threadId; mobile clears the first pending permission for the thread.
           this.sendFrame({ type: 'permission_resolved', threadId, requestId: '' });
+          break;
+
+        case 'question_ready': {
+          // Generate a stable requestId for this question set so mobile can reference it.
+          // Register a resolver in ThreadManager so resolve_question commands work.
+          const requestId = crypto.randomUUID();
+          this.threadManager!.registerRemoteQuestionResolver(requestId, (answers) => {
+            this.threadManager!.resolveQuestion(threadId, answers);
+          });
+          this.sendFrame({
+            type: 'question_request',
+            threadId,
+            questions: event.questions,
+            requestId,
+          });
+          break;
+        }
+
+        case 'pending_question_changed':
+          // Only forward the "resolved" side — question_ready already covers the
+          // "arrived" side, so forwarding both here would double-fire the card.
+          if (event.questions === undefined) {
+            // No requestId here (mirrors permission_resolved); mobile clears the
+            // first pending question for the thread as a fallback.
+            this.sendFrame({ type: 'question_resolved', threadId, requestId: '' });
+          }
           break;
 
         case 'active_thread_changed':
