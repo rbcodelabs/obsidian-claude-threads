@@ -172,6 +172,18 @@ export interface Thread {
    */
   prUrl?: string;
   /**
+   * ID of the scheduled item (cron) whose fire() created this thread, if any.
+   * Set once at creation time and never cleared. Undefined for threads created
+   * any other way (manual, dispatched, etc).
+   */
+  scheduledItemId?: string;
+  /**
+   * Name of the scheduled item at the time this thread was created, captured
+   * alongside `scheduledItemId` for display (e.g. the "Scheduled: <name>" footer pill).
+   * Not kept in sync with later renames of the scheduled item.
+   */
+  scheduledItemName?: string;
+  /**
    * Status-line pills for this thread, populated by StatusLineService from the
    * configured statusLineCommand. Ephemeral — never persisted to data.json,
    * re-derived on the next poll. Undefined on mobile / when no script is set.

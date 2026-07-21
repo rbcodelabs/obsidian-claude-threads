@@ -297,7 +297,7 @@ When Claude needs to write a file or run a command, a permission card appears in
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
-> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets.
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets. Such threads also carry the originating scheduled item's id and name (`scheduledItemId`/`scheduledItemName`), captured once at creation time and surfaced as a "Scheduled: `<name>`" footer pill and in the `obsidian_get_current_thread`/`obsidian_list_threads` tool output.
 
 ### Plan Mode
 
