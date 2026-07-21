@@ -130,6 +130,14 @@ function nextWeeklyRun(timeOfDay: string, daysOfWeek: number[], fromMs: number):
   return best === Infinity ? fromMs + 7 * 86400 * 1000 : best;
 }
 
+// Base delay before firing an item whose nextRun was already in the past when
+// the timer was armed (e.g. plugin just started/reloaded). Additional items
+// caught up in the same boot are staggered further out (see armTimer) so a
+// batch of overdue items doesn't all fire in the same instant.
+const CATCHUP_BASE_DELAY_MS = 5_000;
+const CATCHUP_STAGGER_STEP_MS = 2_000;
+const CATCHUP_STAGGER_MAX_MS = 30_000;
+
 export class Scheduler {
   private timers = new Map<string, number>();
   private items: ScheduledItem[] = [];
@@ -137,6 +145,9 @@ export class Scheduler {
   // item (e.g. two timer callbacks racing within the same instance) from both
   // reaching thread creation. Cleared in a finally so it never gets stuck.
   private firing = new Set<string>();
+  // Counts catch-up (missed-run) fires armed during the current boot, used to
+  // stagger their delays so a batch of overdue items doesn't all fire at once.
+  private catchUpCount = 0;
 
   constructor(private options: SchedulerOptions) {}
 
@@ -144,6 +155,7 @@ export class Scheduler {
   start(items: ScheduledItem[]): void {
     // Take an internal copy — do not mutate the passed-in array reference
     this.items = items.map((i) => ({ ...i }));
+    this.catchUpCount = 0;
     for (const item of this.items) {
       if (item.enabled) {
         this.armTimer(item);
@@ -173,9 +185,20 @@ export class Scheduler {
     const now = Date.now();
     let delayMs: number;
 
-    // Missed run detection: if nextRun is in the past, fire after a short delay
+    // Missed run detection: if nextRun is in the past, fire after a short delay.
+    // Successive catch-up items in the same boot are staggered further out so
+    // a batch of overdue items (e.g. after a stale-data reload) doesn't all
+    // fire in the same instant.
     if (item.nextRun && item.nextRun < now) {
-      delayMs = 5_000; // 5-second delay to allow full plugin initialization
+      const stagger = Math.min(this.catchUpCount * CATCHUP_STAGGER_STEP_MS, CATCHUP_STAGGER_MAX_MS);
+      delayMs = CATCHUP_BASE_DELAY_MS + stagger;
+      if (this.catchUpCount > 0) {
+        console.warn(
+          `[Scheduler] Catch-up fire #${this.catchUpCount + 1} for "${item.name}" (${item.id}): ` +
+            `overdue by ${now - item.nextRun}ms, staggered to fire in ${delayMs}ms`
+        );
+      }
+      this.catchUpCount++;
     } else if (item.nextRun && item.nextRun >= now) {
       delayMs = item.nextRun - now;
     } else {
@@ -274,7 +297,15 @@ export class Scheduler {
       current.lastRun = Date.now();
       current.nextRun = computeNextRun(current, true);
 
-      this.options.saveItem({ ...current }).catch(console.error);
+      // Await the save so failures are visible, but this method is only ever
+      // invoked fire-and-forget from a setTimeout callback (already
+      // .catch(console.error)'d there) — do not rethrow, just log and
+      // continue to armTimer regardless of save outcome.
+      try {
+        await this.options.saveItem({ ...current });
+      } catch (err) {
+        console.error(`[Scheduler] Failed to persist post-fire state for "${current.name}" (${current.id}):`, err);
+      }
 
       // Rearm for the next run
       this.armTimer(current);
@@ -285,7 +316,7 @@ export class Scheduler {
 
   // CRUD used by the Cron tools
 
-  createItem(params: Omit<ScheduledItem, 'id' | 'lastRun' | 'nextRun'>): ScheduledItem {
+  async createItem(params: Omit<ScheduledItem, 'id' | 'lastRun' | 'nextRun'>): Promise<ScheduledItem> {
     const item: ScheduledItem = {
       ...params,
       id: crypto.randomUUID(),
@@ -294,17 +325,25 @@ export class Scheduler {
     // Compute the initial nextRun
     item.nextRun = computeNextRun(item);
 
+    // Synchronous mutation happens before the first await, so non-awaiting
+    // callers still observe the immediate in-memory/UI effects.
     this.items.push(item);
-    this.options.saveItem({ ...item }).catch(console.error);
 
     if (item.enabled) {
       this.armTimer(item);
     }
 
+    try {
+      await this.options.saveItem({ ...item });
+    } catch (err) {
+      console.error(`[Scheduler] Failed to persist new item "${item.name}" (${item.id}):`, err);
+      throw err;
+    }
+
     return { ...item };
   }
 
-  updateItem(id: string, patch: SchedulerItemPatch): ScheduledItem {
+  async updateItem(id: string, patch: SchedulerItemPatch): Promise<ScheduledItem> {
     const idx = this.items.findIndex((i) => i.id === id);
     if (idx < 0) {
       throw new Error(`Scheduled item not found: ${id}`);
@@ -330,16 +369,24 @@ export class Scheduler {
       updated.nextRun = computeNextRun(updated, true);
     }
 
+    // Synchronous mutation + rearm happens before the first await, so
+    // non-awaiting callers still observe the immediate in-memory/UI effects.
     this.items[idx] = updated;
-    this.options.saveItem({ ...updated }).catch(console.error);
 
     // Rearm (armTimer handles cancelling existing and skipping if disabled)
     this.armTimer(updated);
 
+    try {
+      await this.options.saveItem({ ...updated });
+    } catch (err) {
+      console.error(`[Scheduler] Failed to persist update to "${updated.name}" (${updated.id}):`, err);
+      throw err;
+    }
+
     return { ...updated };
   }
 
-  deleteItem(id: string): void {
+  async deleteItem(id: string): Promise<void> {
     const idx = this.items.findIndex((i) => i.id === id);
     if (idx < 0) return;
 
@@ -350,8 +397,15 @@ export class Scheduler {
       this.timers.delete(id);
     }
 
+    // Synchronous mutation happens before the first await.
     this.items.splice(idx, 1);
-    this.options.removeItem(id).catch(console.error);
+
+    try {
+      await this.options.removeItem(id);
+    } catch (err) {
+      console.error(`[Scheduler] Failed to persist deletion of item ${id}:`, err);
+      throw err;
+    }
   }
 
   listItems(): ScheduledItem[] {

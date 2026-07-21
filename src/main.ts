@@ -1434,7 +1434,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
     if (opts?.loop) {
-      this.scheduler.createItem({
+      await this.scheduler.createItem({
         name: `Loop: ${text.slice(0, 40)}`,
         prompt: text,
         schedule: { type: 'interval', intervalSeconds: opts.loop.intervalSeconds },

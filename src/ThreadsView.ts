@@ -3425,11 +3425,11 @@ export class ThreadsView extends ItemView {
     }
 
     const stop = this.loopBannerEl.createEl('button', { cls: 'ct-loop-banner-stop', text: 'Stop' });
-    stop.addEventListener('click', (e) => {
+    stop.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!threadId) return;
       const loops = this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
-      for (const l of loops) this.plugin.scheduler.deleteItem(l.id);
+      await Promise.all(loops.map((l) => this.plugin.scheduler.deleteItem(l.id)));
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
       this.refreshLoopBanner();
       this.renderStatusFooter();
@@ -3569,7 +3569,7 @@ export class ThreadsView extends ItemView {
         this.showCommandDivider('No loop to stop.');
         return;
       }
-      for (const loop of loops) this.plugin.scheduler.deleteItem(loop.id);
+      await Promise.all(loops.map((loop) => this.plugin.scheduler.deleteItem(loop.id)));
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
       this.refreshLoopBanner();
       this.renderStatusFooter();
@@ -3588,10 +3588,10 @@ export class ThreadsView extends ItemView {
     // Replace, not stack: a thread can only have one active loop. Delete any
     // existing loop(s) targeting this thread before creating the new one.
     const existing = loopsForThread();
-    for (const loop of existing) this.plugin.scheduler.deleteItem(loop.id);
+    await Promise.all(existing.map((loop) => this.plugin.scheduler.deleteItem(loop.id)));
 
     const thread = this.manager.getThread(threadId);
-    this.plugin.scheduler.createItem({
+    await this.plugin.scheduler.createItem({
       name: `Loop: ${parsed.prompt.slice(0, 40)}`,
       prompt: parsed.prompt,
       schedule: { type: 'interval', intervalSeconds: parsed.intervalSeconds },

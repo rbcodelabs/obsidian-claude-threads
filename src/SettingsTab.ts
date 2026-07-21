@@ -1478,13 +1478,13 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           .setDesc(`${desc} - ${lastRunStr}${nextRunStr ? ' - ' + nextRunStr : ''}`)
           .addToggle((toggle) =>
             toggle.setValue(item.enabled).onChange(async (val) => {
-              this.plugin.scheduler.updateItem(item.id, { enabled: val });
+              await this.plugin.scheduler.updateItem(item.id, { enabled: val });
               renderScheduledItems();
             }),
           )
           .addButton((btn) =>
             btn.setIcon('trash').setWarning().setTooltip('Delete').onClick(async () => {
-              this.plugin.scheduler.deleteItem(item.id);
+              await this.plugin.scheduler.deleteItem(item.id);
               renderScheduledItems();
             }),
           );
