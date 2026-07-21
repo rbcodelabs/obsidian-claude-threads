@@ -863,6 +863,14 @@
   top: 6px;
   right: 6px;
   opacity: 0;
+  /* Invisible-but-clickable is a latent trap: this button sits at the exact
+     top-right corner of every assistant message, which is also where a tool
+     call's rightmost content (e.g. a tool-group's expand chevron) can land
+     when tool calls are the first thing rendered in the message. Disable
+     hit-testing until the button is actually visible (paired with the
+     opacity toggle below) so it can never silently steal a click meant for
+     something underneath it. */
+  pointer-events: none;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 5px;
@@ -882,6 +890,7 @@
 
 .ct-message:hover .ct-copy-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .ct-copy-btn:hover {
@@ -1057,6 +1066,47 @@
 .ct-task-failed .ct-tool-pill-name {
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
   color: var(--color-red);
+}
+
+/* Tool-call groups (finalized view) — collapsible run of consecutive
+   same-activity-kind tool calls. Reuses .ct-compressed-row/.ct-expand-btn/
+   .ct-full-content/.ct-hidden from the compressed-view assistant grouping so
+   this reads as "one more row in the list," not a new visual language. */
+.ct-tool-group {
+  margin-bottom: 2px;
+}
+
+.ct-tool-group-header {
+  padding: 3px 8px 3px 6px;
+  border-left: 2px solid var(--background-modifier-border);
+  cursor: default;
+  /* When a tool group is the first thing rendered in a message (the common
+     case -- tool calls render before the response text), this header sits
+     directly under the message's absolutely-positioned .ct-copy-btn
+     (top:6px/right:6px). Reserve clearance so the group's own expand
+     chevron -- pushed flush-right by .ct-compressed-summary's flex:1 --
+     never shares a hit-testable pixel with the copy button, in either its
+     resting or hovered-visible state. */
+  margin-right: 36px;
+}
+
+.ct-tool-group .ct-full-content {
+  margin-top: 2px;
+  margin-left: 8px;
+}
+
+/* Per-pill and group-header status tint. Reused across both the finalized
+   .ct-tool-pill status styling and the grouped-header error flag. */
+.ct-tool-error {
+  border-left-color: var(--color-red);
+}
+
+.ct-tool-error .ct-tool-pill-icon {
+  color: var(--color-red);
+}
+
+.ct-tool-success .ct-tool-pill-icon {
+  color: var(--color-green);
 }
 
 /* ── Workflow progress block ─────────────────────────────────────────────── */

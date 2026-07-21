@@ -73,6 +73,13 @@ export interface SessionCallbacks {
    */
   onFileUserModified?: (filePath: string) => void;
   /**
+   * Fired when a tool_result arrives for a previously-seen tool_use, carrying
+   * its final success/error status and elapsed duration. Mirrors the
+   * onGitOperation/onFileUserModified side-channel pattern — lets the UI
+   * update a live pill immediately without waiting for the finalized message.
+   */
+  onToolResult?: (toolUseId: string, status: 'success' | 'error', durationMs?: number) => void;
+  /**
    * Fired when Claude calls EnterPlanMode. The session is now in read-only
    * planning mode. Non-blocking: fire and continue.
    */
@@ -365,6 +372,11 @@ export class ClaudeSession {
     let streamingText = '';
 
     const allToolCalls: ToolCallRecord[] = [];
+    // toolUseId -> ToolCallRecord, scoped to this run() call, so the 'user'
+    // case handling tool_result blocks can mutate the SAME record object that
+    // flows into pendingToolCalls/allToolCalls/onMessage's persisted array —
+    // no extra plumbing needed for the finalized view to pick up the status.
+    const toolCallsByUseId = new Map<string, ToolCallRecord>();
     // TaskCreate tool_use ids → subject, awaiting the "Task #N created" result
     // so the create event carries the CLI-assigned task id.
     const pendingTaskCreates = new Map<string, string>();
@@ -449,9 +461,10 @@ export class ClaudeSession {
                   block.name,
                   block.input as Record<string, unknown>,
                 );
-                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id };
+                const record: ToolCallRecord = { name: block.name, summary, timestamp: Date.now(), toolUseId: block.id, status: 'pending' };
                 pendingToolCalls.push(record);
                 allToolCalls.push(record);
+                toolCallsByUseId.set(block.id, record);
                 callbacks.onToolUse(record);
 
                 // Task-tracking tools — surface as task list updates
@@ -655,6 +668,24 @@ export class ClaudeSession {
               for (const block of msgContent) {
                 const b = block as Record<string, unknown>;
                 if (b.type !== 'tool_result') continue;
+
+                // Resolve the tool's final status from is_error and stamp duration.
+                // Mutates the SAME ToolCallRecord object referenced by
+                // pendingToolCalls/allToolCalls, so the finalized message's
+                // toolCalls array (and anything already persisted from it via a
+                // shallow copy) sees the update with no further plumbing.
+                {
+                  const toolUseId = b.tool_use_id as string | undefined;
+                  const record = toolUseId ? toolCallsByUseId.get(toolUseId) : undefined;
+                  if (record) {
+                    const status: 'success' | 'error' = b.is_error === true ? 'error' : 'success';
+                    record.status = status;
+                    if (record.timestamp) {
+                      record.durationMs = Date.now() - record.timestamp;
+                    }
+                    callbacks.onToolResult?.(toolUseId!, status, record.durationMs);
+                  }
+                }
 
                 // Inline images returned by tools (e.g. Read on a PNG)
                 if (callbacks.onToolResultImages && Array.isArray(b.content)) {

@@ -54,6 +54,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
 - **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Obsidian
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files Claude edited that you subsequently modified show a "Modified by user" badge
+- **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills; a group containing a failed call auto-expands and stays flagged so errors are never hidden
 - **Cancel and restore** — press Escape (or click Stop) while Claude is running to cancel; the sent message pops back into the input box ready to edit and re-send
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
 
