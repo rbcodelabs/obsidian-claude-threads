@@ -264,12 +264,12 @@ The block is rendered entirely from the SDK event stream (no extra API calls), s
 
 ### Kanban board
 
-Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working**, **Awaiting** (permission), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
+Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working**, **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
 
 **Task list on cards.** When a thread has an active `TodoWrite` / `TaskCreate` checklist, its kanban card shows a compact task list: up to 5 items with status icons (✔ completed, ■ in-progress, ○ pending), a "X / Y done" progress line, and "+N more" when there are additional tasks. The list updates live as the agent ticks items off.
 
 <p align="center">
-  <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, New, Done, Failed, and Ready columns, each holding thread cards" />
+  <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, Waiting, New, Done, Failed, and Ready columns, each holding thread cards" />
 </p>
 
 **Auto-collapse side panels.** Set **Settings → Features → Kanban board → Auto-collapse side panel** to `Left sidebar`, `Right sidebar`, or `Both sidebars` to automatically collapse Obsidian's sidebar panel(s) when the Kanban tab opens, giving the board more horizontal room. Only the panel(s) the Kanban view collapsed are restored when you close the tab, so it won't fight a panel you collapsed or expanded manually. Defaults to `None` (opt-in).
@@ -458,6 +458,8 @@ A **Create PR** split button sits on the right:
 
 The bar is hidden when the cwd isn't a git repo, when the branch can't be resolved (e.g. detached HEAD), or when you're already sitting on the base/default branch (nothing to open a PR against).
 
+Once a PR exists for the thread (tracked via the same sticky `prUrl` used by the [status-line PR pill](#status-line-context-footer)), the primary button switches to **View PR**, opening it the same way pill links do, and a **View PR** item is prepended to the dropdown — the other three actions stay available in case you want to open another PR later.
+
 ### Safe plugin reload
 
 Use **Claude Threads: Reload plugin (safe)** from the command palette instead of Obsidian's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
@@ -497,7 +499,7 @@ Control the current thread's session state.
 | Tool | Parameters | Description |
 |---|---|---|
 | `set_working_directory` | `path` | Changes the working directory for this session. Accepts an absolute path; `~` is expanded. Takes effect on the next turn. |
-| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agent Dashboard, and a banner above the chat input — each with a one-click Cancel. |
+| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agent Dashboard and the [Kanban board](#kanban-board), and a banner above the chat input — each with a one-click Cancel. |
 | `EnterWorktree` | `branch?`, `baseBranch?`, `repoPath?` | Creates a git worktree for the current repo and switches the session cwd to it. Automatically routed to the plugin's MCP implementation, which tracks the in-session cwd correctly after `set_working_directory`. |
 | `ExitWorktree` | `worktreePath?`, `force?` | Removes the worktree and restores the session cwd to the original repo root. Defaults to the current effective cwd. Pass `force: true` to remove even if there are uncommitted changes. |
 | `fork_conversation` | `focus_area?` | Forks the current conversation into a new independent thread. A lightweight Claude call distills the history into a focused starting prompt. The current thread continues unaffected. |

@@ -925,6 +925,7 @@ export class ThreadsView extends ItemView {
   renderGitDiffBar(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const gitDiff = thread?.gitDiff;
+    const prUrl = thread?.prUrl;
 
     this.gitDiffBarEl.empty();
 
@@ -956,21 +957,36 @@ export class ThreadsView extends ItemView {
     }
 
     const actions = this.gitDiffBarEl.createDiv('ct-git-diff-actions');
-    const createBtn = actions.createEl('button', { cls: 'ct-git-diff-create-btn', text: 'Create PR' });
+    const createBtn = actions.createEl('button', {
+      cls: 'ct-git-diff-create-btn',
+      text: prUrl ? 'View PR' : 'Create PR',
+    });
     createBtn.addEventListener('click', () => {
-      void this.handleSendFromDispatch('/create-pr', [], null);
+      if (prUrl) {
+        this.openLink(prUrl);
+      } else {
+        void this.handleSendFromDispatch('/create-pr', [], null);
+      }
     });
     const dropdownBtn = actions.createEl('button', {
       cls: 'ct-git-diff-dropdown-btn',
       attr: { title: 'PR options' },
     });
     setIcon(dropdownBtn, 'chevron-down');
-    dropdownBtn.addEventListener('click', (e) => this.openCreatePrMenu(e, gitDiff));
+    dropdownBtn.addEventListener('click', (e) => this.openCreatePrMenu(e, gitDiff, prUrl));
   }
 
-  /** Dropdown for the git diff bar's split button: Create PR / Create draft PR / Manually create PR. */
-  private openCreatePrMenu(event: MouseEvent, gitDiff: import('./types').GitDiffInfo): void {
+  /** Dropdown for the git diff bar's split button: [View PR /] Create PR / Create draft PR / Manually create PR. */
+  private openCreatePrMenu(event: MouseEvent, gitDiff: import('./types').GitDiffInfo, prUrl?: string): void {
     const menu = new Menu();
+    if (prUrl) {
+      menu.addItem(item =>
+        item
+          .setTitle('View PR')
+          .setIcon('git-pull-request')
+          .onClick(() => { this.openLink(prUrl); })
+      );
+    }
     menu.addItem(item =>
       item
         .setTitle('Create PR')
@@ -2729,6 +2745,15 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'run_state_settled': {
+        // The session generation has fully unwound and isRunning() has reached
+        // its final settled value — re-check banners that gate on isRunning()
+        // so they don't stay stale until an unrelated re-render forces them.
+        this.refreshWakeupBanner();
+        this.refreshLoopBanner();
+        break;
+      }
+
       case 'user_message_added': {
         // Auto-dismiss the task card if all tasks completed on the previous turn.
         // This hides the checklist the moment the user moves on, rather than
@@ -2963,6 +2988,9 @@ export class ThreadsView extends ItemView {
 
       case 'status_tags': {
         this.renderStatusFooter();
+        // A status-tag update can change the thread's sticky prUrl, which the
+        // git diff bar's primary button also reflects (Create PR → View PR).
+        this.renderGitDiffBar();
         break;
       }
 
