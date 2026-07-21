@@ -2656,7 +2656,8 @@ export class ThreadsView extends ItemView {
         // All other tool calls (including ones bubbled up from sub-agents)
         // are shown so the user can see what the agent is actually doing.
         const isAgentCall = event.record.name === 'Agent';
-        if (this.streamingEl && !isAgentCall) {
+        if (!isAgentCall) {
+          if (!this.streamingEl) this.createStreamingEl();
           const pill = document.createElement('div');
           pill.className = 'ct-tool-pill ct-tool-active';
           if (event.record.toolUseId) {
@@ -2676,7 +2677,7 @@ export class ThreadsView extends ItemView {
             label.textContent = event.record.summary;
             pill.append(label);
           }
-          this.streamingEl.prepend(pill);
+          this.streamingEl!.prepend(pill);
           this.scrollToBottom();
         }
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
