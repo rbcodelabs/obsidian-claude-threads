@@ -65,6 +65,7 @@ export type ThreadEvent =
   | { type: 'task_progress_summary'; taskId: string; summary: string }
   | { type: 'git_operation'; summary: string }
   | { type: 'file_user_modified'; filePath: string }
+  | { type: 'tool_result_status'; toolUseId: string; status: 'success' | 'error'; durationMs?: number }
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
   | { type: 'pending_plan_changed'; planText: string | undefined }
@@ -1100,6 +1101,7 @@ export class ThreadManager {
         onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
         onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
+        onToolResult: (toolUseId, status, durationMs) => this.emit(threadId, { type: 'tool_result_status', toolUseId, status, durationMs }),
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
         onPlanReady: (planText, approve, reject) => {
           // Persist the plan text so the card can be restored after a reload/crash

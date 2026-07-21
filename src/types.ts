@@ -30,6 +30,10 @@ export interface ToolCallRecord {
   timestamp?: number;
   /** tool_use block id from the SDK, used to correlate tool_progress heartbeats. */
   toolUseId?: string;
+  /** Lifecycle state derived from the matching tool_result. Undefined until the result arrives. */
+  status?: 'pending' | 'success' | 'error';
+  /** Wall-clock time between the tool_use and its tool_result, in milliseconds. */
+  durationMs?: number;
 }
 
 export interface ChatMessage {

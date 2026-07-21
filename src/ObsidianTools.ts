@@ -218,10 +218,10 @@ export interface ObsidianMcpServerOptions {
   setThreadProposedReply?: (threadId: string, text: string) => void;
   /** Clears a thread's pending proposed reply, if any. */
   clearThreadProposedReply?: (threadId: string) => void;
-  onCronCreate?: (params: CronCreateParams) => ScheduledItem;
+  onCronCreate?: (params: CronCreateParams) => Promise<ScheduledItem>;
   onCronList?: () => ScheduledItem[];
-  onCronUpdate?: (id: string, patch: CronUpdatePatch) => ScheduledItem;
-  onCronDelete?: (id: string) => void;
+  onCronUpdate?: (id: string, patch: CronUpdatePatch) => Promise<ScheduledItem>;
+  onCronDelete?: (id: string) => Promise<void>;
   /**
    * Called when the agent uses the `request_secret` tool to ask the user for a
    * credential at runtime. Implementations should open a modal, collect the
@@ -1769,7 +1769,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         if (!options.onCronCreate) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronCreate is not available in this context.' }) }], isError: true };
         }
-        const item = options.onCronCreate({
+        const item = await options.onCronCreate({
           name: args.name,
           prompt: args.prompt,
           schedule: {
@@ -1842,7 +1842,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         }
         if (cwd !== undefined) patch.cwd = cwd;
         if (projectId !== undefined) patch.projectId = projectId;
-        const item = options.onCronUpdate(id, patch);
+        const item = await options.onCronUpdate(id, patch);
         return { content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1863,7 +1863,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         if (!options.onCronDelete) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronDelete is not available in this context.' }) }], isError: true };
         }
-        options.onCronDelete(args.id);
+        await options.onCronDelete(args.id);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, deletedId: args.id }) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

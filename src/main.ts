@@ -841,6 +841,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.registerView(KANBAN_VIEW_TYPE, (leaf) => new KanbanView(leaf, this));
     this.registerView(SKILLS_VIEW_TYPE, (leaf) => new SkillsManagerView(leaf, this));
 
+    // Pause infinite spinner/pulse CSS animations while the window is hidden
+    // (minimized, occluded, or backgrounded) — see the .ct-app-hidden rule in
+    // styles.css. Prevents WindowServer from compositing frames nobody sees.
+    const handleVisibilityChange = () => {
+      document.body.classList.toggle('ct-app-hidden', document.hidden);
+    };
+    this.registerDomEvent(document, 'visibilitychange', handleVisibilityChange);
+    handleVisibilityChange(); // set initial state on load
+
     // Ribbon icons
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
       this.activateView();
@@ -1519,7 +1528,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
     if (opts?.loop) {
-      this.scheduler.createItem({
+      await this.scheduler.createItem({
         name: `Loop: ${text.slice(0, 40)}`,
         prompt: text,
         schedule: { type: 'interval', intervalSeconds: opts.loop.intervalSeconds },

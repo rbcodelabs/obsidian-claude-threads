@@ -40,7 +40,7 @@ describe('Scheduler targetThreadId (loops)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -62,7 +62,7 @@ describe('Scheduler targetThreadId (loops)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -82,7 +82,7 @@ describe('Scheduler targetThreadId (loops)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -107,7 +107,7 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    const item = scheduler.createItem({
+    const item = await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -134,7 +134,7 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -167,7 +167,7 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    const item = scheduler.createItem({
+    const item = await scheduler.createItem({
       name: 'Loop: check build',
       prompt: 'check the build',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -179,7 +179,7 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect((scheduler as unknown as { timers: Map<string, number> }).timers.size).toBe(1);
 
-    scheduler.deleteItem(item.id);
+    await scheduler.deleteItem(item.id);
 
     // deleteItem must clear the pending retry timer, not just the item.
     expect((scheduler as unknown as { timers: Map<string, number> }).timers.size).toBe(0);
@@ -199,7 +199,7 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'One-off reminder',
       prompt: 'do the thing',
       schedule: { type: 'interval', intervalSeconds: 60 },
