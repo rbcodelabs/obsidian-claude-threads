@@ -33,6 +33,22 @@ For each viewport, confirm:
 
 User-facing docs live in `docs/` and `README.md`. Update any doc page related to changed features.
 
+### Public Docs Site (claude-threads-site) — Maintenance Gate
+
+The plugin also has a public docs site in a separate repo, `claude-threads-site`
+(`src/content/docs/**`). **Any PR that changes user-facing plugin
+behavior** — a new feature, a changed flow, a renamed setting, an
+added/removed command, or any UI surface a user would notice — **must update
+or create the corresponding page(s)** in `claude-threads-site/src/content/docs/`
+before the PR here is considered done. It doesn't have to land in the same
+commit or even the same PR, but it must happen in the same work session — do
+not merge a behavior-changing PR and leave the public docs describing the old
+behavior.
+
+If the change has no user-visible effect (internal refactor, test-only
+change, etc.), note that explicitly in the PR description instead of skipping
+this silently.
+
 ## Screenshot Tooling
 
 Run `pnpm test:screenshots:update` after any desktop UI change to regenerate committed screenshots. Do NOT update screenshots for mobile-only CSS changes (the Playwright tests run against the desktop view).
@@ -45,6 +61,41 @@ Run `pnpm test:screenshots:update` after any desktop UI change to regenerate com
 - For mobile-only changes: screenshot tests still run to confirm desktop is unaffected
 - Build must succeed: `pnpm build`
 
+### Cross-Repo CSS Gotcha: Tailwind v4 `@layer components` (Astro docs site)
+
+This plugin repo doesn't ship Tailwind CSS itself, but its docs live in the
+`claude-threads-site` Astro repo, which does — and a Tailwind v4 + Astro
+pattern has bitten that repo twice, so it's worth knowing if you ever touch
+CSS there while syncing docs for a plugin change:
+
+**The gotcha:** in Tailwind v4, custom/plain CSS rules placed *outside*
+`@layer components` can silently beat Tailwind utility classes (e.g.
+`hidden`) **regardless of source order**. Cascade layers give unlayered CSS
+higher priority than any `@layer`-wrapped CSS, so a plain selector written
+*after* a utility class in the file can still lose if the utility is itself
+inside a layer — and just as often, a plain selector written *before* a
+`@layer components` rule will still win over it. Source order intuition from
+plain CSS doesn't apply once layers are involved.
+
+**Where this bit us:**
+1. A nav CTA button using `hidden sm:inline-flex` stayed visible on mobile
+   because a custom component rule for the button lived outside
+   `@layer components` in `global.css`.
+2. The mobile table-scroll rule for rendered docs content
+   (`.docs-content table { display: block; overflow-x: auto; ... }` inside a
+   `@media (max-width: 640px)` block in `src/styles/global.css`) had the same
+   problem during the claude-threads-site PR #2 docs build-out — it needed to
+   be moved inside `@layer components` for the mobile overflow fix to
+   actually apply.
+
+**Fix / rule going forward:** always put custom component CSS classes inside
+`@layer components` in `global.css`. This is already documented as the
+authoritative pattern in `claude-threads-site`'s own guidelines — see
+`claude-threads-site/.claude/pr-guidelines.md` (Visual Verification section)
+for the canonical writeup. This section exists here only so contributors
+working across both repos (plugin + docs site) don't rediscover the same bug
+a third time.
+
 ## Final PR Checklist
 
 Present this as a completed checklist before opening any PR. Every item is mandatory — do not open a PR until all are checked:
@@ -54,5 +105,6 @@ Present this as a completed checklist before opening any PR. Every item is manda
 - [ ] `pnpm test:screenshots` — no regressions
 - [ ] `pnpm build` — clean build
 - [ ] **README.md / docs/ updated** — any new user-facing behavior or UI change is documented; if you touched a feature, re-read the relevant README section and update it
+- [ ] **claude-threads-site docs updated** — if this PR changes user-facing plugin behavior, the corresponding page(s) in `claude-threads-site/src/content/docs/` are updated or created (or the PR description explicitly states no public doc page is affected)
 - [ ] Screenshots regenerated (`pnpm test:screenshots:update`) if desktop UI changed
 - [ ] PR title and description explain the *why*, not just the *what*
