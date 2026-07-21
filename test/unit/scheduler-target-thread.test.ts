@@ -214,3 +214,24 @@ describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
     scheduler.destroy();
   });
 });
+
+describe('Scheduler createThread scheduledItemId', () => {
+  it('passes the scheduled item id as the 4th argument to createThread when firing', async () => {
+    const { options, createThread } = makeOptions();
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    const item = scheduler.createItem({
+      name: 'One-off reminder',
+      prompt: 'do the thing',
+      schedule: { type: 'interval', intervalSeconds: 60 },
+      enabled: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(createThread).toHaveBeenCalledWith('One-off reminder', '/tmp', undefined, item.id);
+
+    scheduler.destroy();
+  });
+});

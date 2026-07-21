@@ -885,7 +885,19 @@ export class ThreadsView extends ItemView {
       });
     }
 
-    const empty = !prUrl && tags.length === 0 && activeLoops.length === 0;
+    // Synthesized "Scheduled: <name>" pill: shown when this thread was
+    // created by a cron fire (Scheduler.createThread), independent of
+    // statusTags/activeLoops — this is origin metadata, not a live loop.
+    const hasScheduledOrigin = !!(thread?.scheduledItemId && thread.scheduledItemName);
+    if (hasScheduledOrigin) {
+      this.renderFooterPill({
+        label: `Scheduled: ${thread!.scheduledItemName}`,
+        icon: 'clock',
+        kind: 'scheduled',
+      });
+    }
+
+    const empty = !prUrl && tags.length === 0 && activeLoops.length === 0 && !hasScheduledOrigin;
     this.contextFooterEl.toggleClass('ct-hidden', empty);
   }
 

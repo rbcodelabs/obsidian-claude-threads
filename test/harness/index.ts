@@ -68,6 +68,15 @@ const mockPlugin = {
   });
 };
 
+// Lets screenshot tests seed the "Scheduled: <name>" footer pill, mirroring
+// what Scheduler.createThread records on a thread created by a cron fire.
+(window as any).__setScheduledOrigin = (threadId: string, scheduledItemId: string, scheduledItemName: string) => {
+  const thread = manager.getThread(threadId);
+  if (!thread) throw new Error(`Thread not found: ${threadId}`);
+  thread.scheduledItemId = scheduledItemId;
+  thread.scheduledItemName = scheduledItemName;
+};
+
 // Mutable wake-up state so screenshot tests can drive the waiting indicator
 // through the real notifyWakeupChanged → handleEvent → refreshWakeupBanner path.
 const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();

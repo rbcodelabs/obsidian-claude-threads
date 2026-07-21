@@ -111,6 +111,25 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('loop-banner.png', { fullPage: true });
   });
 
+  test('scheduled origin footer pill', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.waitForTimeout(200);
+    // Seed the thread's origin metadata the same way Scheduler.createThread
+    // does when a cron item fires and creates a new thread.
+    await page.evaluate(() => {
+      (window as any).__setScheduledOrigin('thread-fix-auth', 'sched-1', 'Nightly build check');
+      (window as any).__view.renderThreadInfo();
+    });
+    await page.waitForSelector('.ct-footer-pill');
+    await expect(page.locator('.ct-footer-pill')).toContainText('Scheduled: Nightly build check');
+    await expect(page).toHaveScreenshot('scheduled-origin-pill.png', { fullPage: true });
+  });
+
   test('fork conversation menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
