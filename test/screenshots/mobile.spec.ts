@@ -34,6 +34,13 @@ const mobileHarnessUrl = (view: string, opts?: { width?: number; height?: number
 };
 
 test.describe('Mobile View', () => {
+  // Pin Date.now()/new Date() to the fixture epoch (test/harness/fixtures.ts)
+  // so relative labels ("Last active …") are deterministic — without this,
+  // baselines with "Xd ago" text drift every day the suite is run.
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+  });
+
   // ── Full-page snapshots ────────────────────────────────────────────────────
 
   test('mobile pairing screen', async ({ page }) => {

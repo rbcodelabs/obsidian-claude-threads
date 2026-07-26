@@ -47,6 +47,13 @@ async function installBridgeMocks(page: Page): Promise<void> {
 }
 
 test.describe('Bridge-aware edits', () => {
+  // Pin Date.now()/new Date() to the fixture epoch (test/harness/fixtures.ts)
+  // so relative labels ("Last active …") are deterministic — without this,
+  // baselines with "Xd ago" text drift every day the suite is run.
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+  });
+
   test('edited-file chip for a bridge-repo file sorts first with vault tooltip', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

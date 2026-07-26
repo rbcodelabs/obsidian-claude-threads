@@ -144,7 +144,7 @@ describe('Scheduler claimFire fencing guard', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    const item = scheduler.createItem({
+    const item = await scheduler.createItem({
       name: 'Amazon S&S Delivery Monitor',
       prompt: 'check delivery status',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -184,7 +184,7 @@ describe('Scheduler claimFire fencing guard', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    scheduler.createItem({
+    await scheduler.createItem({
       name: 'One-off reminder',
       prompt: 'do the thing',
       schedule: { type: 'interval', intervalSeconds: 60 },
@@ -206,7 +206,7 @@ describe('Scheduler in-process reentrancy guard', () => {
     const scheduler = new Scheduler(options);
     scheduler.start([]);
 
-    const item = scheduler.createItem({
+    const item = await scheduler.createItem({
       name: 'Reentrancy test',
       prompt: 'do the thing',
       schedule: { type: 'interval', intervalSeconds: 60 },

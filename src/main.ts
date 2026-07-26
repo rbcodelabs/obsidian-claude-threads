@@ -114,6 +114,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   scheduler!: import('./Scheduler').Scheduler;
   statusLine: import('./StatusLineService').StatusLineService | null = null;
   gitDiff: import('./GitDiffService').GitDiffService | null = null;
+  orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
 
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
@@ -303,6 +304,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
               messages: nonCompact.map((m: { id: string; role: string; content: string; timestamp: number }) => ({
                 id: m.id,
                 role: m.role,
@@ -311,7 +314,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -335,6 +338,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               updatedAt: t.updatedAt,
               messageCount,
               rawLogPath: t.rawLogPath,
+              managerNotes: t.managerNotes,
+              proposedReply: t.proposedReply,
             };
           }),
           getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
@@ -366,6 +371,28 @@ export default class ClaudeThreadsPlugin extends Plugin {
             }
             this.manager.deleteThread(id);
             await this.saveSettings();
+          },
+          setThreadNotes: (id: string, notes: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            if (notes) thread.managerNotes = notes;
+            else delete thread.managerNotes;
+            this.manager.notifyManagerNotesChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          setThreadProposedReply: (id: string, text: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            thread.proposedReply = { text, generatedAt: Date.now(), sourceThreadId: this.settings.orchestratorThreadId };
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
+          },
+          clearThreadProposedReply: (id: string) => {
+            const thread = this.manager.getThread(id);
+            if (!thread) throw new Error(`Thread not found: ${id}`);
+            delete thread.proposedReply;
+            this.manager.notifyProposedReplyChanged(id);
+            this.saveSettings().catch(console.error);
           },
           onCronCreate: (params) => this.scheduler.createItem(params),
           onCronList: () => this.scheduler.listItems(),
@@ -410,6 +437,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // Absolute path to this plugin's installed dist/ dir, used to resolve the
+    // bundled thread-orchestrator skill (see ThreadManager.buildSessionOptions()).
+    {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        this.manager.pluginResourceDir = require('path').join(adapter.getBasePath(), this.manifest.dir!);
+      }
+    }
     // Resolve secret env vars from the OS keychain at session start. Values are
     // never stored in settings — only the key names live in data.json.
     this.manager.secretEnvResolver = () => {
@@ -694,6 +729,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.gitDiff.start();
     }
 
+    // Event-driven wake-up: pings the thread-orchestrator thread shortly after
+    // any other thread finishes a turn, so it feels continuously running
+    // rather than polling on a fixed schedule. The heartbeat CronCreate item
+    // set up in ensureOrchestratorThread() is a backstop for missed events
+    // only — this is the primary trigger. See OrchestratorWakeup.ts.
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { OrchestratorWakeup } = require('./OrchestratorWakeup') as typeof import('./OrchestratorWakeup');
+      this.orchestratorWakeup = new OrchestratorWakeup(this.manager, {
+        getOrchestratorThreadId: () => this.settings.orchestratorThreadId,
+        threadExists: (id) => !!this.manager.getThread(id),
+        sendMessage: (id, text) => this.manager.sendMessage(id, text),
+        onWarn: (message) => console.warn(`[ClaudeThreads] ${message}`),
+        onError: (err) => console.error('[ClaudeThreads] Orchestrator wake-up sendMessage failed:', err),
+      });
+      this.orchestratorWakeup.start();
+      this.register(() => this.orchestratorWakeup?.stop());
+    }
+
     // Repair any threads whose cwd points to a deleted worktree. Worktrees created
     // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
     // exit_worktree, the worktree-cleanup skill, or the Agent tool's auto-cleanup.
@@ -925,6 +979,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
         } else if (!this.settings.summarizationEnabled) {
           new Notice('Thread summarization is disabled. Enable it in Settings > Claude Threads > Summarization.');
         }
+      },
+    });
+
+    this.addCommand({
+      id: 'open-thread-orchestrator',
+      name: 'Open Thread Orchestrator',
+      callback: async () => {
+        await this.ensureOrchestratorThread();
       },
     });
 
@@ -1424,6 +1486,38 @@ export default class ClaudeThreadsPlugin extends Plugin {
     view?.focusThread(threadId);
   }
 
+  /**
+   * Creates the persistent thread-orchestrator thread if none is set yet (or if
+   * the previously stored one no longer exists), then opens it. Also ensures a
+   * 60-minute heartbeat cron item targets it — a resilience backstop for the
+   * event-driven wake-up subscriber below, not the primary trigger.
+   */
+  async ensureOrchestratorThread(): Promise<void> {
+    let threadId = this.settings.orchestratorThreadId;
+    if (!threadId || !this.manager.getThread(threadId)) {
+      const thread = this.manager.createThread('Thread Orchestrator', this.getEffectiveCwd());
+      threadId = thread.id;
+      this.settings.orchestratorThreadId = threadId;
+      await this.saveSettings();
+    }
+
+    // Idempotent: only create the heartbeat once per orchestrator thread.
+    const hasHeartbeat = (this.settings.scheduledItems ?? []).some(
+      (item) => item.targetThreadId === threadId,
+    );
+    if (!hasHeartbeat) {
+      this.scheduler.createItem({
+        name: 'Thread Orchestrator Heartbeat',
+        prompt: 'Heartbeat: run your review pass across all threads.',
+        schedule: { type: 'interval', intervalSeconds: 3600 },
+        enabled: true,
+        targetThreadId: threadId,
+      });
+    }
+
+    await this.openThreadInChatView(threadId);
+  }
+
   async dispatchNewThread(
     text: string,
     images?: ImageAttachment[],
@@ -1447,7 +1541,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
     if (opts?.loop) {
-      this.scheduler.createItem({
+      await this.scheduler.createItem({
         name: `Loop: ${text.slice(0, 40)}`,
         prompt: text,
         schedule: { type: 'interval', intervalSeconds: opts.loop.intervalSeconds },

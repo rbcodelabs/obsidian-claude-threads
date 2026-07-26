@@ -12,6 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
+import { groupToolCalls, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -160,6 +161,10 @@ export class ThreadsView extends ItemView {
   // Cache for group summaries (consecutive assistant turns between user messages).
   // Key = ':'-joined message IDs of the group. In-memory only; regenerates on reload.
   private groupSummaryCache: Map<string, string> = new Map();
+  // Expand/collapse state for tool-call groups (see renderToolGroup), keyed by
+  // ':'-joined toolUseId/timestamp of the group's tools. In-memory only —
+  // cleared alongside groupSummaryCache so state doesn't leak across threads.
+  private expandedToolGroups: Set<string> = new Set();
   // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
   // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
@@ -185,6 +190,13 @@ export class ThreadsView extends ItemView {
   private taskCardCollapsed = false;
   /** Thread IDs whose task card has been auto-dismissed after all tasks completed. */
   private taskCardDismissed = new Set<string>();
+
+  // Thread-orchestrator UI: proposed-reply banner above the compose box, and a
+  // collapsible Manager Notes panel in the thread header.
+  private proposedReplyBannerEl: HTMLElement | null = null;
+  private managerNotesToggleEl: HTMLElement | null = null;
+  private managerNotesPanelEl: HTMLElement | null = null;
+  private managerNotesCollapsed = true;
 
   private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
@@ -467,6 +479,17 @@ export class ThreadsView extends ItemView {
     });
     this.ephemeralBadgeEl = titleRow.createSpan({ cls: 'ct-ephemeral-badge ct-hidden', text: 'ephemeral' });
 
+    this.managerNotesToggleEl = titleRow.createEl('button', {
+      cls: 'ct-manager-notes-toggle ct-hidden',
+      attr: { title: 'Manager notes' },
+    });
+    setIcon(this.managerNotesToggleEl, 'sticky-note');
+    this.managerNotesToggleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.managerNotesCollapsed = !this.managerNotesCollapsed;
+      this.renderManagerNotesPanel();
+    });
+
     this.newThreadBtn = titleRow.createEl('button', { cls: 'ct-tab-new', attr: { title: 'New thread' } });
     setIcon(this.newThreadBtn, 'square-pen');
     this.newThreadBtn.addEventListener('click', (e) => this.openNewThread(e));
@@ -486,6 +509,8 @@ export class ThreadsView extends ItemView {
 
     this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
     this.loopBannerEl = panelContext.createDiv('ct-loop-banner ct-hidden');
+    this.managerNotesPanelEl = panelContext.createDiv('ct-manager-notes-panel ct-hidden');
+    this.proposedReplyBannerEl = panelContext.createDiv('ct-proposed-reply-banner ct-hidden');
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
     this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
@@ -716,6 +741,7 @@ export class ThreadsView extends ItemView {
     this.activeThreadId = id;
     this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
     this.groupSummaryCache.clear();
+    this.expandedToolGroups.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -911,6 +937,7 @@ export class ThreadsView extends ItemView {
   renderGitDiffBar(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const gitDiff = thread?.gitDiff;
+    const prUrl = thread?.prUrl;
 
     this.gitDiffBarEl.empty();
 
@@ -942,21 +969,36 @@ export class ThreadsView extends ItemView {
     }
 
     const actions = this.gitDiffBarEl.createDiv('ct-git-diff-actions');
-    const createBtn = actions.createEl('button', { cls: 'ct-git-diff-create-btn', text: 'Create PR' });
+    const createBtn = actions.createEl('button', {
+      cls: 'ct-git-diff-create-btn',
+      text: prUrl ? 'View PR' : 'Create PR',
+    });
     createBtn.addEventListener('click', () => {
-      void this.handleSendFromDispatch('/create-pr', [], null);
+      if (prUrl) {
+        this.openLink(prUrl);
+      } else {
+        void this.handleSendFromDispatch('/create-pr', [], null);
+      }
     });
     const dropdownBtn = actions.createEl('button', {
       cls: 'ct-git-diff-dropdown-btn',
       attr: { title: 'PR options' },
     });
     setIcon(dropdownBtn, 'chevron-down');
-    dropdownBtn.addEventListener('click', (e) => this.openCreatePrMenu(e, gitDiff));
+    dropdownBtn.addEventListener('click', (e) => this.openCreatePrMenu(e, gitDiff, prUrl));
   }
 
-  /** Dropdown for the git diff bar's split button: Create PR / Create draft PR / Manually create PR. */
-  private openCreatePrMenu(event: MouseEvent, gitDiff: import('./types').GitDiffInfo): void {
+  /** Dropdown for the git diff bar's split button: [View PR /] Create PR / Create draft PR / Manually create PR. */
+  private openCreatePrMenu(event: MouseEvent, gitDiff: import('./types').GitDiffInfo, prUrl?: string): void {
     const menu = new Menu();
+    if (prUrl) {
+      menu.addItem(item =>
+        item
+          .setTitle('View PR')
+          .setIcon('git-pull-request')
+          .onClick(() => { this.openLink(prUrl); })
+      );
+    }
     menu.addItem(item =>
       item
         .setTitle('Create PR')
@@ -1253,6 +1295,10 @@ export class ThreadsView extends ItemView {
     // Loop banner/pill depend on the active thread — refresh on every switch.
     this.refreshLoopBanner();
     this.renderStatusFooter();
+
+    // Thread-orchestrator UI depends on the active thread — refresh on every switch.
+    this.renderManagerNotesPanel();
+    this.renderProposedReplyBanner();
   }
 
   /**
@@ -1308,6 +1354,111 @@ export class ThreadsView extends ItemView {
       setIcon(iconEl, task.status === 'completed' ? 'circle-check' : task.status === 'in_progress' ? 'loader-circle' : 'circle');
       row.createSpan({ cls: 'ct-task-row-text', text: task.content });
     }
+  }
+
+  /**
+   * Shows/hides the Manager Notes toggle button in the title row and (when
+   * expanded) the collapsible panel below it, driven by the active thread's
+   * managerNotes field. Written by the thread-orchestrator skill via
+   * obsidian_set_thread_notes — read-only display here, never user-editable,
+   * and never injected into any session's context (see ThreadManager.ts).
+   */
+  private renderManagerNotesPanel(): void {
+    if (!this.managerNotesToggleEl || !this.managerNotesPanelEl) return;
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const notes = thread?.managerNotes;
+
+    this.managerNotesToggleEl.toggleClass('ct-hidden', !notes);
+
+    this.managerNotesPanelEl.empty();
+    if (!notes || this.managerNotesCollapsed) {
+      this.managerNotesPanelEl.addClass('ct-hidden');
+      return;
+    }
+    this.managerNotesPanelEl.removeClass('ct-hidden');
+
+    const header = this.managerNotesPanelEl.createDiv('ct-manager-notes-header');
+    header.createSpan({ cls: 'ct-manager-notes-title', text: 'Manager Notes' });
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-manager-notes-close',
+      text: '\u00d7',
+      attr: { title: 'Collapse' },
+    });
+    closeBtn.addEventListener('click', () => {
+      this.managerNotesCollapsed = true;
+      this.renderManagerNotesPanel();
+    });
+
+    this.managerNotesPanelEl.createEl('pre', { cls: 'ct-manager-notes-text', text: notes });
+  }
+
+  /**
+   * Renders the proposed-reply banner above the compose box when the active
+   * thread has an AI-proposed reply awaiting approval (thread.proposedReply,
+   * set by the thread-orchestrator skill via obsidian_set_thread_proposed_reply).
+   * Approve & Send is the ONLY path that ever sends it — nothing in this file
+   * (or anywhere else) sends a proposed reply automatically. The proposedReply
+   * is cleared as soon as the user acts (approve/edit/discard) rather than
+   * waiting for the send to complete, so a long-running turn can't leave a
+   * stale banner where a second click would trigger a duplicate send.
+   */
+  private renderProposedReplyBanner(): void {
+    if (!this.proposedReplyBannerEl) return;
+    const threadId = this.activeThreadId;
+    const thread = threadId ? this.manager.getThread(threadId) : null;
+    const proposed = thread?.proposedReply;
+
+    this.proposedReplyBannerEl.empty();
+    if (!threadId || !thread || !proposed) {
+      this.proposedReplyBannerEl.addClass('ct-hidden');
+      return;
+    }
+    this.proposedReplyBannerEl.removeClass('ct-hidden');
+
+    const header = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-header');
+    header.createSpan({ cls: 'ct-proposed-reply-label', text: 'Proposed reply' });
+
+    this.proposedReplyBannerEl.createEl('p', { cls: 'ct-proposed-reply-text', text: proposed.text });
+
+    const actions = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-actions');
+
+    const clearProposedReply = (id: string) => {
+      const t = this.manager.getThread(id);
+      if (!t) return;
+      delete t.proposedReply;
+      this.manager.notifyProposedReplyChanged(id);
+      void this.plugin.saveSettings();
+    };
+
+    const approveBtn = actions.createEl('button', { cls: 'ct-proposed-reply-approve', text: 'Approve & Send' });
+    approveBtn.addEventListener('click', async () => {
+      const t = this.manager.getThread(threadId);
+      const text = t?.proposedReply?.text;
+      if (!text) return;
+      clearProposedReply(threadId);
+      try {
+        await this.manager.sendMessage(threadId, text);
+      } catch (err) {
+        console.error('[claude-threads] failed to send approved proposed reply:', err);
+        new Notice('Failed to send the approved reply — see console for details.');
+      }
+    });
+
+    const editBtn = actions.createEl('button', { cls: 'ct-proposed-reply-edit', text: 'Edit' });
+    editBtn.addEventListener('click', () => {
+      const t = this.manager.getThread(threadId);
+      const text = t?.proposedReply?.text;
+      if (!text) return;
+      clearProposedReply(threadId);
+      if (threadId === this.activeThreadId) {
+        this.dispatchInput?.setValue(text);
+      }
+    });
+
+    const discardBtn = actions.createEl('button', { cls: 'ct-proposed-reply-discard', text: 'Discard' });
+    discardBtn.addEventListener('click', () => {
+      clearProposedReply(threadId);
+    });
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -1430,6 +1581,7 @@ export class ThreadsView extends ItemView {
     this.summaryGeneration++; // cancel any queued summary jobs from the previous render
     this.summaryTextEls.clear();
     this.groupSummaryCache.clear();
+    this.expandedToolGroups.clear();
     void this.renderMessages();
   }
 
@@ -1951,18 +2103,87 @@ export class ThreadsView extends ItemView {
     }
   }
 
+  /**
+   * Render a single finalized tool call as a `.ct-tool-pill` into `wrapper`.
+   * Shared by the flat (ungrouped) path and by renderToolGroup's expanded body
+   * so isolated calls and grouped calls look identical.
+   */
+  private renderToolPill(wrapper: HTMLElement, tool: ToolCallRecord): void {
+    const pill = wrapper.createDiv('ct-tool-pill');
+    if (tool.status === 'error') pill.addClass('ct-tool-error');
+    else if (tool.status === 'success') pill.addClass('ct-tool-success');
+    const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tool.name));
+    pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
+    if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+    if (tool.timestamp) {
+      pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
+    }
+  }
+
+  /** Deterministic key for a tool-call group's expand/collapse state. */
+  private toolGroupKey(tools: ToolCallRecord[]): string {
+    return tools.map(t => t.toolUseId ?? t.timestamp ?? '').join(':');
+  }
+
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
     const wrapper = parent.createDiv('ct-tools');
-    for (const tool of tools) {
-      const pill = wrapper.createDiv('ct-tool-pill');
-      const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
-      setIcon(iconEl, getToolIcon(tool.name));
-      pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
-      if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
-      if (tool.timestamp) {
-        pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
+    for (const entry of groupToolCalls(tools)) {
+      if (entry.kind === 'single') {
+        this.renderToolPill(wrapper, entry.tool);
+      } else {
+        this.renderToolGroup(wrapper, entry);
       }
     }
+  }
+
+  /**
+   * Render a run of 2+ consecutive same-activity tool calls as a collapsible
+   * section, mirroring appendAssistantGroup's collapse/expand pattern and CSS
+   * classes. Auto-expands (and visually flags) if any tool in the group errored,
+   * so failures are never hidden behind a collapsed group.
+   */
+  private renderToolGroup(wrapper: HTMLElement, entry: Extract<ToolCallGroup, { kind: 'group' }>): void {
+    const { activityKind, tools } = entry;
+    const hasError = tools.some(t => t.status === 'error');
+    const groupKey = this.toolGroupKey(tools);
+
+    const groupEl = wrapper.createDiv('ct-tool-group');
+    const headerRow = groupEl.createDiv('ct-tool-group-header ct-compressed-row');
+    // Flag on the header (which owns the border-left) so ct-tool-error's
+    // border-left-color override and icon-tint rule both take visible effect.
+    if (hasError) headerRow.addClass('ct-tool-error');
+
+    const iconEl = headerRow.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tools[0].name));
+
+    headerRow.createSpan({
+      cls: 'ct-compressed-summary',
+      text: `${ACTIVITY_LABELS[activityKind]} (${tools.length})`,
+    });
+
+    const expandBtn = headerRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+
+    const fullContent = groupEl.createDiv('ct-full-content');
+    for (const tool of tools) {
+      this.renderToolPill(fullContent, tool);
+    }
+
+    let expanded = hasError || this.expandedToolGroups.has(groupKey);
+    if (!expanded) fullContent.addClass('ct-hidden');
+    setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        fullContent.removeClass('ct-hidden');
+        this.expandedToolGroups.add(groupKey);
+      } else {
+        fullContent.addClass('ct-hidden');
+        this.expandedToolGroups.delete(groupKey);
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
   }
 
   /**
@@ -2526,6 +2747,25 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'manager_notes_changed': {
+        this.renderManagerNotesPanel();
+        break;
+      }
+
+      case 'proposed_reply_changed': {
+        this.renderProposedReplyBanner();
+        break;
+      }
+
+      case 'run_state_settled': {
+        // The session generation has fully unwound and isRunning() has reached
+        // its final settled value — re-check banners that gate on isRunning()
+        // so they don't stay stale until an unrelated re-render forces them.
+        this.refreshWakeupBanner();
+        this.refreshLoopBanner();
+        break;
+      }
+
       case 'user_message_added': {
         // Auto-dismiss the task card if all tasks completed on the previous turn.
         // This hides the checklist the moment the user moves on, rather than
@@ -2760,6 +3000,9 @@ export class ThreadsView extends ItemView {
 
       case 'status_tags': {
         this.renderStatusFooter();
+        // A status-tag update can change the thread's sticky prUrl, which the
+        // git diff bar's primary button also reflects (Create PR → View PR).
+        this.renderGitDiffBar();
         break;
       }
 
@@ -3067,6 +3310,25 @@ export class ThreadsView extends ItemView {
       case 'file_user_modified': {
         this.userModifiedFilesSet.add(event.filePath);
         this.renderEditedFilesCard();
+        break;
+      }
+
+      case 'tool_result_status': {
+        // Nice-to-have: flag the live pill with a success/fail icon immediately,
+        // ahead of the finalized message render. Reuses the same check-circle/
+        // x-circle convention as task_notification above.
+        const pill = this.toolPillsByUseId.get(event.toolUseId);
+        if (pill) {
+          pill.classList.remove('ct-tool-active');
+          const iconEl = pill.querySelector<HTMLElement>('.ct-tool-pill-icon');
+          if (event.status === 'error') {
+            pill.classList.add('ct-tool-error');
+            if (iconEl) setIcon(iconEl, 'x-circle');
+          } else {
+            pill.classList.add('ct-tool-success');
+            if (iconEl) setIcon(iconEl, 'check-circle');
+          }
+        }
         break;
       }
 
@@ -3437,11 +3699,11 @@ export class ThreadsView extends ItemView {
     }
 
     const stop = this.loopBannerEl.createEl('button', { cls: 'ct-loop-banner-stop', text: 'Stop' });
-    stop.addEventListener('click', (e) => {
+    stop.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!threadId) return;
       const loops = this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
-      for (const l of loops) this.plugin.scheduler.deleteItem(l.id);
+      await Promise.all(loops.map((l) => this.plugin.scheduler.deleteItem(l.id)));
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
       this.refreshLoopBanner();
       this.renderStatusFooter();
@@ -3581,7 +3843,7 @@ export class ThreadsView extends ItemView {
         this.showCommandDivider('No loop to stop.');
         return;
       }
-      for (const loop of loops) this.plugin.scheduler.deleteItem(loop.id);
+      await Promise.all(loops.map((loop) => this.plugin.scheduler.deleteItem(loop.id)));
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
       this.refreshLoopBanner();
       this.renderStatusFooter();
@@ -3600,10 +3862,10 @@ export class ThreadsView extends ItemView {
     // Replace, not stack: a thread can only have one active loop. Delete any
     // existing loop(s) targeting this thread before creating the new one.
     const existing = loopsForThread();
-    for (const loop of existing) this.plugin.scheduler.deleteItem(loop.id);
+    await Promise.all(existing.map((loop) => this.plugin.scheduler.deleteItem(loop.id)));
 
     const thread = this.manager.getThread(threadId);
-    this.plugin.scheduler.createItem({
+    await this.plugin.scheduler.createItem({
       name: `Loop: ${parsed.prompt.slice(0, 40)}`,
       prompt: parsed.prompt,
       schedule: { type: 'interval', intervalSeconds: parsed.intervalSeconds },

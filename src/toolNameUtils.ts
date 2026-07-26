@@ -97,3 +97,89 @@ export function getToolIcon(raw: string): string {
     default:               return 'wrench';
   }
 }
+
+/**
+ * Buckets a tool name into a coarse "activity" category so consecutive
+ * same-kind tool calls can be visually grouped in the finalized message view
+ * (see groupToolCalls below). Reuses the same MCP-prefix-stripping logic as
+ * getToolIcon so `mcp__server__Bash`-shaped names classify the same as bare
+ * `Bash`.
+ */
+export type ActivityKind = 'exploring' | 'editing' | 'planning' | 'researching' | 'searching' | 'working';
+
+export const ACTIVITY_LABELS: Record<ActivityKind, string> = {
+  exploring: 'Exploring',
+  editing: 'Editing',
+  planning: 'Planning',
+  researching: 'Researching',
+  searching: 'Searching',
+  working: 'Working',
+};
+
+export function getActivityKind(raw: string): ActivityKind {
+  // Normalize the same way getToolIcon does so MCP-prefixed tool names
+  // (e.g. mcp__obsidian__Bash) classify identically to bare names.
+  const mcpMatch = raw.match(/^mcp__[^_]+__(.+)$/);
+  const bare = mcpMatch ? mcpMatch[1] : raw;
+  const server = mcpMatch ? raw.match(/^mcp__([^_]+)__/)![1] : null;
+  const key = (server && bare.startsWith(server + '_'))
+    ? bare.slice(server.length + 1)
+    : bare;
+
+  switch (key) {
+    case 'Bash':
+    case 'Read':
+    case 'Grep':
+    case 'Glob':
+      return 'exploring';
+    case 'Edit':
+    case 'Write':
+    case 'NotebookEdit':
+      return 'editing';
+    case 'TaskCreate':
+    case 'TaskUpdate':
+    case 'ExitPlanMode':
+    case 'EnterPlanMode':
+      return 'planning';
+    case 'WebFetch':
+    case 'WebSearch':
+      return 'researching';
+    case 'ToolSearch':
+    case 'Agent':
+      return 'searching';
+    default:
+      return 'working';
+  }
+}
+
+/** One entry in the finalized-message tool-call rendering list. */
+export type ToolCallGroup =
+  | { kind: 'single'; tool: import('./types').ToolCallRecord }
+  | { kind: 'group'; activityKind: ActivityKind; tools: import('./types').ToolCallRecord[] };
+
+/**
+ * Chunks a flat list of tool calls into runs of consecutive same-activity-kind
+ * calls. Runs of length >= 2 become a single collapsible 'group' entry;
+ * isolated calls (no same-kind neighbor immediately before/after) stay as
+ * 'single' entries so they render exactly as they always have — no pointless
+ * one-item collapsibles. Pure function, no DOM access.
+ */
+export function groupToolCalls(tools: import('./types').ToolCallRecord[]): ToolCallGroup[] {
+  const result: ToolCallGroup[] = [];
+  let i = 0;
+  while (i < tools.length) {
+    const kind = getActivityKind(tools[i].name);
+    let j = i + 1;
+    while (j < tools.length && getActivityKind(tools[j].name) === kind) {
+      j++;
+    }
+    const run = tools.slice(i, j);
+    if (run.length >= 2) {
+      result.push({ kind: 'group', activityKind: kind, tools: run });
+    } else {
+      result.push({ kind: 'single', tool: run[0] });
+    }
+    i = j;
+  }
+  return result;
+}

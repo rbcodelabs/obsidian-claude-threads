@@ -361,3 +361,140 @@ describe('FileEditOutput.userModified → onFileUserModified / thread.userModifi
     expect(modifiedFiles[0]).toBe('src/components/Button.tsx');
   });
 });
+
+// ─── tool_result -> ToolCallRecord.status / durationMs ────────────────────────
+
+describe('tool_result -> status/durationMs on the ToolCallRecord', () => {
+  it('sets status "success" for a tool_result with no is_error field', async () => {
+    const { __setIterable } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    __setIterable(makeSDKMessages([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'read-1', name: 'Read', input: { file_path: 'src/foo.ts' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'read-1', content: 'file contents' },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]));
+
+    const session = new ClaudeSession('/fake/claude');
+    const { callbacks, toolRecords } = captureCallbacks();
+    await session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+
+    expect(toolRecords).toHaveLength(1);
+    expect(toolRecords[0].status).toBe('success');
+  });
+
+  it('sets status "error" for a tool_result with is_error: true', async () => {
+    const { __setIterable } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    __setIterable(makeSDKMessages([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'bash-err-1', name: 'Bash', input: { command: 'false' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'bash-err-1', content: 'command failed', is_error: true },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]));
+
+    const session = new ClaudeSession('/fake/claude');
+    const { callbacks, toolRecords } = captureCallbacks();
+    await session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+
+    expect(toolRecords).toHaveLength(1);
+    expect(toolRecords[0].status).toBe('error');
+  });
+
+  it('sets a non-negative durationMs once the tool_result arrives', async () => {
+    const { __setIterable } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    __setIterable(makeSDKMessages([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'read-2', name: 'Read', input: { file_path: 'src/bar.ts' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'read-2', content: 'file contents' },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]));
+
+    const session = new ClaudeSession('/fake/claude');
+    const { callbacks, toolRecords } = captureCallbacks();
+    await session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+
+    expect(toolRecords).toHaveLength(1);
+    expect(toolRecords[0].durationMs).toBeDefined();
+    expect(toolRecords[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('fires onToolResult with toolUseId, status, and durationMs', async () => {
+    const { __setIterable } = await import('@anthropic-ai/claude-agent-sdk') as any;
+    __setIterable(makeSDKMessages([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 'edit-4', name: 'Edit', input: { file_path: 'src/baz.ts' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'edit-4', content: 'ok' },
+          ],
+        },
+      },
+      { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 },
+    ]));
+
+    const session = new ClaudeSession('/fake/claude');
+    const results: Array<{ toolUseId: string; status: string; durationMs?: number }> = [];
+    const { callbacks } = captureCallbacks();
+    callbacks.onToolResult = (toolUseId, status, durationMs) => results.push({ toolUseId, status, durationMs });
+    await session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].toolUseId).toBe('edit-4');
+    expect(results[0].status).toBe('success');
+    expect(results[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+});

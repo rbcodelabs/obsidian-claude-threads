@@ -15,29 +15,34 @@ interface ThreadWithFlags {
   thread: Thread;
   isRunning: boolean;
   hasPendingPermission: boolean;
+  hasPendingWakeup: boolean;
 }
 
 interface BucketedResult {
   working: Thread[];    // running, no pending permission
   awaiting: Thread[];   // running + pending permission
+  waiting: Thread[];    // not running, has a pending ScheduleWakeup
   newThreads: Thread[]; // idle, messages.length > 0, !reviewed
   done: Thread[];       // idle, messages.length > 0, reviewed
-  failed: Thread[];     // lastError set (and not running)
-  ready: Thread[];      // no messages (and not running, no lastError)
+  failed: Thread[];     // lastError set (and not running, no pending wakeup)
+  ready: Thread[];      // no messages (and not running, no lastError, no pending wakeup)
 }
 
 function bucketThreads(items: ThreadWithFlags[]): BucketedResult {
   const running: Thread[] = [];
   const permReqs: Thread[] = [];
+  const waiting: Thread[] = [];
   const unreviewed: Thread[] = [];
   const reviewed: Thread[] = [];
   const errors: Thread[] = [];
   const empty: Thread[] = [];
 
-  for (const { thread: t, isRunning, hasPendingPermission } of items) {
+  for (const { thread: t, isRunning, hasPendingPermission, hasPendingWakeup } of items) {
     if (isRunning) {
       if (hasPendingPermission) permReqs.push(t);
       else running.push(t);
+    } else if (hasPendingWakeup) {
+      waiting.push(t);
     } else if (t.lastError) {
       errors.push(t);
     } else if (t.messages.length > 0) {
@@ -51,6 +56,7 @@ function bucketThreads(items: ThreadWithFlags[]): BucketedResult {
   const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
   running.sort(byRecency);
   permReqs.sort(byRecency);
+  waiting.sort(byRecency);
   unreviewed.sort(byRecency);
   reviewed.sort(byRecency);
   errors.sort(byRecency);
@@ -59,6 +65,7 @@ function bucketThreads(items: ThreadWithFlags[]): BucketedResult {
   return {
     working: running,
     awaiting: permReqs,
+    waiting,
     newThreads: unreviewed,
     done: reviewed,
     failed: errors,
@@ -88,8 +95,9 @@ function withFlags(
   thread: Thread,
   isRunning: boolean,
   hasPendingPermission = false,
+  hasPendingWakeup = false,
 ): ThreadWithFlags {
-  return { thread, isRunning, hasPendingPermission };
+  return { thread, isRunning, hasPendingPermission, hasPendingWakeup };
 }
 
 // ── single-thread bucket assignment ───────────────────────────────────────────
@@ -151,6 +159,33 @@ describe('KanbanView bucketing — single-thread placement', () => {
     expect(failed).toContain(t);
   });
 
+  it('idle thread with a pending ScheduleWakeup → Waiting', () => {
+    const t = makeThread('t6b', 1_000);
+    const { waiting, working, ready } = bucketThreads([withFlags(t, false, false, true)]);
+    expect(waiting).toContain(t);
+    expect(working).not.toContain(t);
+    expect(ready).not.toContain(t);
+  });
+
+  // The root-cause bug this bucket exists to fix: a session that just
+  // finished a generation with a wake-up armed must land in Waiting the
+  // instant isRunning() goes false — not stay stuck in Working (see
+  // run-state-settled.test.ts for the ThreadManager-level regression test
+  // that isRunning() itself settles promptly).
+  it('pending wakeup takes priority over lastError (Waiting, not Failed)', () => {
+    const t = makeThread('t6c', 1_000, { lastError: 'stale error from a prior run' });
+    const { waiting, failed } = bucketThreads([withFlags(t, false, false, true)]);
+    expect(waiting).toContain(t);
+    expect(failed).not.toContain(t);
+  });
+
+  it('a running thread with a pending wakeup stays in Working, not Waiting (isRunning wins)', () => {
+    const t = makeThread('t6d', 1_000);
+    const { working, waiting } = bucketThreads([withFlags(t, true, false, true)]);
+    expect(working).toContain(t);
+    expect(waiting).not.toContain(t);
+  });
+
   it('idle thread with no messages and no lastError → Ready', () => {
     const t = makeThread('t7', 1_000);
     const { ready } = bucketThreads([withFlags(t, false)]);
@@ -201,6 +236,18 @@ describe('KanbanView bucketing — recency sort within buckets', () => {
     ]);
     expect(awaiting[0].id).toBe('late');
     expect(awaiting[1].id).toBe('early');
+  });
+
+  it('Waiting: threads sorted by updatedAt descending', () => {
+    const early = makeThread('early-w', 2_000);
+    const late  = makeThread('late-w',  8_000);
+
+    const { waiting } = bucketThreads([
+      withFlags(early, false, false, true),
+      withFlags(late,  false, false, true),
+    ]);
+    expect(waiting[0].id).toBe('late-w');
+    expect(waiting[1].id).toBe('early-w');
   });
 
   it('New: threads sorted by updatedAt descending', () => {
@@ -268,6 +315,7 @@ describe('KanbanView bucketing — threads split across buckets correctly', () =
     const msg = [{ id: 'm', role: 'assistant' as const, content: 'x', timestamp: 1_000 }];
     const working  = makeThread('working',  1_000);
     const awaiting = makeThread('awaiting', 2_000);
+    const waitingT = makeThread('waiting',  2_500);
     const newT     = makeThread('new',      3_000, { messages: msg });
     const doneT    = makeThread('done',     4_000, { messages: msg, reviewed: true });
     const failed   = makeThread('failed',   5_000, { lastError: 'boom' });
@@ -276,6 +324,7 @@ describe('KanbanView bucketing — threads split across buckets correctly', () =
     const result = bucketThreads([
       withFlags(working,  true,  false),
       withFlags(awaiting, true,  true),
+      withFlags(waitingT, false, false, true),
       withFlags(newT,     false, false),
       withFlags(doneT,    false, false),
       withFlags(failed,   false, false),
@@ -284,16 +333,18 @@ describe('KanbanView bucketing — threads split across buckets correctly', () =
 
     expect(result.working).toEqual([working]);
     expect(result.awaiting).toEqual([awaiting]);
+    expect(result.waiting).toEqual([waitingT]);
     expect(result.newThreads).toEqual([newT]);
     expect(result.done).toEqual([doneT]);
     expect(result.failed).toEqual([failed]);
     expect(result.ready).toEqual([ready]);
   });
 
-  it('empty input produces six empty buckets', () => {
+  it('empty input produces seven empty buckets', () => {
     const result = bucketThreads([]);
     expect(result.working).toHaveLength(0);
     expect(result.awaiting).toHaveLength(0);
+    expect(result.waiting).toHaveLength(0);
     expect(result.newThreads).toHaveLength(0);
     expect(result.done).toHaveLength(0);
     expect(result.failed).toHaveLength(0);

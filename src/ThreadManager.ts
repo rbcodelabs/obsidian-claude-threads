@@ -3,6 +3,7 @@ import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { shouldAutoRetryTransportError, TRANSPORT_ERROR_CONTINUATION_PROMPT } from './transportErrorRecovery';
+import { debugLog } from './logger';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -54,6 +55,9 @@ export type ThreadEvent =
   | { type: 'tool_result_images'; images: Array<{ mediaType: string; data: string }> }
   | { type: 'tasks_updated'; tasks: TaskItem[] }
   | { type: 'wakeup_changed' }
+  | { type: 'manager_notes_changed' }
+  | { type: 'proposed_reply_changed' }
+  | { type: 'run_state_settled' }
   | { type: 'status_tags' }
   | { type: 'git_diff' }
   | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
@@ -63,6 +67,7 @@ export type ThreadEvent =
   | { type: 'task_progress_summary'; taskId: string; summary: string }
   | { type: 'git_operation'; summary: string }
   | { type: 'file_user_modified'; filePath: string }
+  | { type: 'tool_result_status'; toolUseId: string; status: 'success' | 'error'; durationMs?: number }
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
   | { type: 'pending_plan_changed'; planText: string | undefined }
@@ -155,6 +160,14 @@ export class ThreadManager {
   questionHandler: (threadId: string, questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
+  /**
+   * Absolute filesystem path to this plugin's installed directory (vaultRoot +
+   * manifest.dir), set once from main.ts alongside vaultRoot. Used to resolve
+   * the bundled thread-orchestrator skill at <pluginResourceDir>/resources/skills/
+   * so it can be registered as a local SDK plugin without any manual install
+   * into ~/.claude/skills/. Empty until main.ts sets it (e.g. in tests).
+   */
+  pluginResourceDir = '';
   /**
    * In-memory store for the live approve/reject callbacks from a plan_ready event.
    * Keyed by thread ID. NOT serialized to JSON — only set while the session is
@@ -792,6 +805,13 @@ export class ThreadManager {
         'Keep working toward this goal across turns. If a reply would leave the goal unmet, ' +
         'state what remains and continue working on it. The goal stays active until the user clears it with /goal clear.'
       : '';
+    // INTENTIONAL: thread.managerNotes and thread.proposedReply are never included
+    // here. They are thread-orchestrator bookkeeping (inferred goal/status/cursor,
+    // a drafted-but-unsent reply) meant to be visible only in the UI. Unlike
+    // `goal` below — which the user explicitly asks to be injected into every
+    // turn — leaking these into the session context would let the model see
+    // its own prior "grading" of the thread and the orchestrator's draft before
+    // Rick has approved it. Do not "fix" this by adding them to the list.
     const appendSystemPrompt = [envContext, projectDesc, goalContext]
       .filter(Boolean)
       .join('\n\n');
@@ -1083,6 +1103,7 @@ export class ThreadManager {
         onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
         onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
         onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
+        onToolResult: (toolUseId, status, durationMs) => this.emit(threadId, { type: 'tool_result_status', toolUseId, status, durationMs }),
         onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
         onPlanReady: (planText, approve, reject) => {
           // Persist the plan text so the card can be restored after a reload/crash
@@ -1151,6 +1172,8 @@ export class ThreadManager {
       clearTimeout(lingerTimer);
       this.lingerTimers.delete(threadId);
     }
+    debugLog('[ClaudeThreads] run state settled', threadId, 'isRunning:', this.isRunning(threadId));
+    this.emit(threadId, { type: 'run_state_settled' });
 
     if (transportRetryPrompt) {
       // Mirrors the queue-drain self-recursion below: only fires after the
@@ -1302,6 +1325,21 @@ export class ThreadManager {
           }
         } catch { /* skills dir missing or unreadable */ }
       }
+
+      // Bundled thread-orchestrator skill — ships inside the plugin's own dist/
+      // (copied there by esbuild.config.mjs from resources/skills/), so it is
+      // discoverable in every session with nothing manually copied into
+      // ~/.claude/skills/. Registered unconditionally (not gated by any
+      // setting) alongside the GitHub-sourced skill plugins above.
+      if (this.pluginResourceDir) {
+        const bundledSkillPath = path.join(this.pluginResourceDir, 'resources', 'skills', 'thread-orchestrator');
+        try {
+          if (fs.existsSync(path.join(bundledSkillPath, 'SKILL.md'))) {
+            plugins.push({ type: 'local', path: bundledSkillPath });
+          }
+        } catch { /* bundled skill missing — plugin dist may be stale, skip silently */ }
+      }
+
       if (plugins.length > 0) opts.plugins = plugins;
     }
 
@@ -1378,6 +1416,16 @@ export class ThreadManager {
    */
   notifyWakeupChanged(threadId: string): void {
     this.emit(threadId, { type: 'wakeup_changed' });
+  }
+
+  /** Notify listeners that a thread's orchestrator tracking notes changed. */
+  notifyManagerNotesChanged(threadId: string): void {
+    this.emit(threadId, { type: 'manager_notes_changed' });
+  }
+
+  /** Notify listeners that a thread's proposed reply was set or cleared. */
+  notifyProposedReplyChanged(threadId: string): void {
+    this.emit(threadId, { type: 'proposed_reply_changed' });
   }
 
   private emit(threadId: string, event: ThreadEvent): void {

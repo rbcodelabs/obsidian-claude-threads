@@ -83,7 +83,10 @@ describe('send message → event flow', () => {
     await driveResponse('Hi there');
     await sendPromise;
 
-    expect(events.map(e => e.type)).toEqual(['user_message_added', 'streaming_start', 'token', 'message', 'done']);
+    // 'run_state_settled' fires once run() has fully unwound (right after
+    // 'done' in the fast path where there's no lingering background task) —
+    // see run-state-settled.test.ts for the fix this event exists to support.
+    expect(events.map(e => e.type)).toEqual(['user_message_added', 'streaming_start', 'token', 'message', 'done', 'run_state_settled']);
   });
 
   it('appends user and assistant messages to the thread', async () => {
