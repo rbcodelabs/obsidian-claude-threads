@@ -511,8 +511,8 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `isRunning`, `projectId`, `cwd`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. |
-| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag. |
+| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `uiStatus`, `isRunning`, `projectId`, `cwd`, `prUrl`, `scheduledItemId`, `scheduledItemName`, `rawLogPath`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. `uiStatus` matches the Agent Dashboard UI labels (`working` \| `new` \| `reviewed` \| `failed` \| `ready`). `prUrl` is the URL of the most recent GitHub PR opened in this thread, if any. `scheduledItemId`/`scheduledItemName` identify the cron item that created this thread, if it was created by one. |
+| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag — useful for matching threads to PRs or scheduled items without reading message history. |
 | `obsidian_list_projects` | — | Returns all configured projects: `id`, `name`, `description`, `vaultFolder`. Useful for deciding which project context a new thread should use. |
 | `obsidian_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates a new project and persists it. Returns the created project snapshot including its `id` — capture this for use with `CronCreate`, `obsidian_set_thread_project`, and other project-aware APIs. |
 | `obsidian_set_thread_project` | `threadId`, `projectId` | Assigns a thread to a project. Pass `projectId: null` to detach the thread from its current project. Call `obsidian_list_projects` first to get a valid `projectId`. |
