@@ -2867,6 +2867,17 @@
   margin: 8px 0 16px;
 }
 
+/* Settings: warning notice block (e.g. broken orchestrator thread correlation) */
+.ct-settings-warning {
+  font-size: var(--font-ui-small);
+  color: var(--color-orange, #e67700);
+  background: color-mix(in srgb, var(--color-orange, #e67700) 8%, transparent);
+  border-left: 3px solid var(--color-orange, #e67700);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0 16px;
+}
+
 .ct-projects-list {
   margin-bottom: 8px;
 }
