@@ -280,6 +280,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             return { threadTitle: forkedThread.title };
           },
           threadId,
+          getOrchestratorThreadId: () => this.settings.orchestratorThreadId,
           getThreadDetail: (id: string) => {
             const t = this.manager.getThread(id);
             if (!t) return undefined;
@@ -663,6 +664,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
         return { claimed: true, fresh: claimed };
       },
+      onOrchestratorHeartbeatStale: () => console.warn('[ClaudeThreads] Orchestrator heartbeat target missing — run "Open Thread Orchestrator" to recreate it.'),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
 
@@ -1510,12 +1512,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
    * event-driven wake-up subscriber below, not the primary trigger.
    */
   async ensureOrchestratorThread(): Promise<void> {
-    let threadId = this.settings.orchestratorThreadId;
+    const staleThreadId = this.settings.orchestratorThreadId;
+    let threadId = staleThreadId;
     if (!threadId || !this.manager.getThread(threadId)) {
       const thread = this.manager.createThread('Thread Orchestrator', this.getEffectiveCwd());
       threadId = thread.id;
       this.settings.orchestratorThreadId = threadId;
       await this.saveSettings();
+
+      // Clean up any heartbeat items still targeting the stale/orphaned
+      // orchestrator thread (e.g. it was deleted/archived out from under us)
+      // so they don't keep firing into a thread that no longer exists.
+      if (staleThreadId) {
+        const stale = (this.settings.scheduledItems ?? [])
+          .filter((item) => item.isOrchestratorHeartbeat && item.targetThreadId === staleThreadId);
+        for (const item of stale) await this.scheduler.deleteItem(item.id);
+      }
     }
 
     // Idempotent: only create the heartbeat once per orchestrator thread.
@@ -1529,6 +1541,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         schedule: { type: 'interval', intervalSeconds: 3600 },
         enabled: true,
         targetThreadId: threadId,
+        isOrchestratorHeartbeat: true,
       });
     }
 

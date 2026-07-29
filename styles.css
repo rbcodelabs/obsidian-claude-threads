@@ -2511,6 +2511,24 @@
   vertical-align: middle;
 }
 
+/* Marks the thread running the bundled orchestrator skill — shown inline next
+   to the title in Agent Dashboard rows, Kanban cards, and the thread switcher. */
+.ct-orchestrator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 6px;
+  color: var(--interactive-accent);
+  vertical-align: middle;
+}
+.ct-orchestrator-badge svg {
+  width: 12px;
+  height: 12px;
+}
+
 .ct-agents-row-unreviewed {
   border-left: 2px solid var(--interactive-accent);
   padding-left: 6px;

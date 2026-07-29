@@ -9,6 +9,7 @@ import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
+import { appendOrchestratorBadge } from './orchestrator-badge';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -621,7 +622,8 @@ export class KanbanView extends ItemView {
     } else {
       this.applyStateIcon(iconEl, state);
     }
-    cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
+    const cardTitleEl = cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
+    appendOrchestratorBadge(cardTitleEl, thread.id, this.plugin.settings.orchestratorThreadId);
 
     // Summary (idle threads only)
     const summary = thread.summary || thread.recap;

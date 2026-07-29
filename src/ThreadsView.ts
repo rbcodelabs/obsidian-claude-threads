@@ -20,6 +20,8 @@ import { resolveTagIcon } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
 import { openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
+import { appendOrchestratorBadge } from './orchestrator-badge';
+import { ConfirmModal } from './SkillsManagerView';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -4240,7 +4242,8 @@ export class ThreadsView extends ItemView {
         }
 
         const body = row.createDiv('ct-agents-row-body');
-        body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+        const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+        appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId);
 
         // Summary for idle threads (same as AgentDashboard)
         const summary = thread.summary || thread.recap;
@@ -4392,6 +4395,18 @@ export class ThreadsView extends ItemView {
   private async closeThread(id: string): Promise<void> {
     const threads = this.manager.getThreads();
     if (threads.length <= 1) return;
+
+    if (id === this.plugin.settings.orchestratorThreadId) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        new ConfirmModal(
+          this.app,
+          'This is your Thread Orchestrator. Deleting it stops automatic thread review until you run "Open Thread Orchestrator" again to create a new one.',
+          'Delete anyway',
+          resolve,
+        ).open();
+      });
+      if (!confirmed) return;
+    }
 
     const thread = this.manager.getThread(id);
     const hasMessages = thread && thread.messages.some((m) => m.role !== 'compact');

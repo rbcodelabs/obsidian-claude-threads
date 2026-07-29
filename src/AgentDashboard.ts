@@ -8,6 +8,7 @@ import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveA
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
+import { appendOrchestratorBadge } from './orchestrator-badge';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -455,7 +456,8 @@ export class AgentDashboard extends ItemView {
     }
 
     const body = row.createDiv('ct-agents-row-body');
-    body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+    const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+    appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId);
 
     // Show full summary for completed threads — this is the canonical home for summaries
     const summary = thread.summary || thread.recap;

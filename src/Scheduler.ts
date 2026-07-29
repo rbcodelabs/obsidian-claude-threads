@@ -55,6 +55,15 @@ export interface SchedulerOptions {
    * exactly as it did before this guard existed.
    */
   claimFire?: (item: ScheduledItem) => Promise<{ claimed: boolean; fresh?: ScheduledItem }>;
+  /**
+   * Called instead of creating a stray replacement thread when an
+   * `isOrchestratorHeartbeat: true` item's `targetThreadId` no longer
+   * resolves (the orchestrator thread was deleted/archived out from under
+   * it). `lastRun`/`nextRun` still advance normally afterward so the item
+   * doesn't spin retrying every cycle — this hook is purely a notification
+   * point, e.g. for logging a warning to run "Open Thread Orchestrator" again.
+   */
+  onOrchestratorHeartbeatStale?: (item: ScheduledItem) => void;
 }
 
 // Internal: compute next fire time from an item.
@@ -291,6 +300,13 @@ export class Scheduler {
         if (reuseTarget) {
           await this.options.sendMessage(reuseTarget, current.prompt);
           current.lastThreadId = reuseTarget;
+        } else if (current.isOrchestratorHeartbeat) {
+          // The orchestrator's own heartbeat backstop, but its target thread
+          // no longer resolves (deleted/archived out from under it). Do NOT
+          // fall back to creating a stray generic replacement thread — just
+          // notify so the caller can prompt the user to recreate it. lastRun/
+          // nextRun still advance below so this doesn't spin retrying every cycle.
+          this.options.onOrchestratorHeartbeatStale?.(current);
         } else {
           const cwd = current.cwd || this.options.getDefaultCwd();
           const thread = this.options.createThread(current.name, cwd, current.projectId, current.id);

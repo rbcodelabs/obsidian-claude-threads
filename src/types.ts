@@ -333,6 +333,15 @@ export interface ScheduledItem {
    * separate in-memory tracking structure. Absent for ordinary cron items.
    */
   origin?: 'wakeup';
+  /**
+   * Marks this item as the orchestrator's own heartbeat backstop (created by
+   * ensureOrchestratorThread()) so it can be found and cleaned up reliably
+   * when the orchestrator thread is recreated, and so Scheduler.fire() can
+   * special-case it: if its targetThreadId no longer resolves, skip creating
+   * a stray replacement thread rather than falling back to the generic
+   * new-thread behavior other targetThreadId items use.
+   */
+  isOrchestratorHeartbeat?: boolean;
 }
 
 export interface SkillSource {
