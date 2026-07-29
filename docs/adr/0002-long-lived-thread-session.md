@@ -194,10 +194,24 @@ Transport-error retry: `transportErrorRecovery.ts`'s existing trigger logic (`is
 died → respawn with `resume`" becomes `session.restart('transport-error')`.
 
 The exact bug in §"Context" is fixed by construction: when a new message arrives for a thread with a turn
-already in flight, `ThreadSession.send()` **queues** it onto the same open channel (or the CLI's own
-multi-turn queuing, once `send()` semantics are confirmed against the live CLI in implementation — see Open
-Questions) instead of `ThreadManager` spinning up competitor code that force-closes the live `Query`. There
-is only ever one `Query` per thread, so there is nothing to race.
+already in flight, `ThreadSession.send()` **queues** it onto the same open channel instead of `ThreadManager`
+spinning up competitor code that force-closes the live `Query`. There is only ever one `Query` per thread, so
+there is nothing to race.
+
+**Confirmed against the live CLI (resolves Open Question 4, below):** ran `pathToClaudeCodeExecutable`
+against `/opt/homebrew/bin/claude` with a held-open async-generator `prompt`, pushed a second `SDKUserMessage`
+onto that same generator at the exact moment `canUseTool` was pending for the first message's tool call (not
+a guessed timer — gated on the real `canUseTool ENTER` event). Result: no exception, no "Stream closed," no
+race — the CLI folds the second message into the *same* in-flight turn and emits a single `result` once the
+model naturally finishes, rather than starting a second independent turn. This means `ThreadSession.send()`
+needs **no internal queue-and-wait logic at all** — it can push directly onto the iterator unconditionally,
+regardless of whether a turn is currently in flight, and the CLI's own plumbing serializes it safely. This is
+a stronger result than "queues onto the same open channel" implied: there's no separate queuing layer to
+design; `push()` is uniformly safe.
+
+One consequence for `ThreadSession`/UI code: because concurrent pushes coalesce into one `result`, message
+count is not 1:1 with turn count when a follow-up lands before the prior turn's `result` has arrived — the
+UI's message log must not assume one `result` per user-authored message if sends can outpace generations.
 
 ### 3. Lifecycle / resource policy (the sketch explicitly deferred this — this ADR does not)
 
@@ -325,9 +339,10 @@ comes next). Stage 2 removes the premise. Do both, in that order.
    meaning changes from "safety cap on a stuck session" to "how long a thread stays warm doing nothing"?
 3. **Hard cap on concurrently-warm `ThreadSession`s:** none for v1 (recommended), or set a conservative
    number now given cron/orchestrator threads can accumulate without a visible tab?
-4. **`ThreadSession.send()`'s exact queuing contract against a live generation** needs to be probed against
-   the real CLI before implementation locks in the design (see Risks table) — who owns writing that probe,
-   and does it block starting the rewrite or run in parallel with early scaffolding?
+4. ~~**`ThreadSession.send()`'s exact queuing contract against a live generation**~~ — **Resolved.** Probed
+   against the live CLI (see §2 above): pushing onto the held-open generator mid-turn, including genuinely
+   during a pending `canUseTool` call, is safe with no queuing layer needed — the CLI coalesces concurrent
+   pushes into the current turn. `send()` can push directly, unconditionally.
 5. **`session_state_changed` adoption:** confirmed available in the pinned SDK version (§1) but not
    currently consumed anywhere in the codebase. Should Stage 2 wire it in immediately as the authoritative
    busy/idle signal (replacing the event-derived `turnInFlight` boolean), or land Stage 2 first and adopt it
