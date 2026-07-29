@@ -322,7 +322,7 @@ export class ThreadsView extends ItemView {
       const thread = this.manager.createThread(title ?? `Thread ${this.manager.getThreads().length + 1}`, cwd, projectId);
       await this.plugin.saveSettings();
       this.renderProjectBar();
-      this.setActiveThread(thread.id);
+      void this.setActiveThread(thread.id);
       if (initialPrompt) {
         this.dispatchInput?.setValue(initialPrompt);
       }
@@ -437,11 +437,11 @@ export class ThreadsView extends ItemView {
       const targetId = (this.activeThreadId && this.manager.getThread(this.activeThreadId))
         ? this.activeThreadId
         : threads[threads.length - 1].id;
-      this.setActiveThread(targetId);
+      void this.setActiveThread(targetId);
     } else {
       const thread = this.manager.createThread('Thread 1', this.plugin.getEffectiveCwd());
       await this.plugin.saveSettings();
-      this.setActiveThread(thread.id);
+      void this.setActiveThread(thread.id);
     }
 
     this.renderProjectBar();
@@ -632,7 +632,7 @@ export class ThreadsView extends ItemView {
         if (!currentThread || currentThread.projectId !== project.id) {
           const projectThreads = this.manager.getThreadsByProject(project.id);
           if (projectThreads.length > 0) {
-            this.setActiveThread(projectThreads[0].id);
+            void this.setActiveThread(projectThreads[0].id);
           }
         }
       });
@@ -668,7 +668,7 @@ export class ThreadsView extends ItemView {
 
 
   focusThread(id: string): void {
-    this.setActiveThread(id);
+    void this.setActiveThread(id);
   }
 
   /** Update the density data-attribute live when the user changes the setting. */
@@ -722,7 +722,7 @@ export class ThreadsView extends ItemView {
     }, 1500);
   }
 
-  private setActiveThread(id: string): void {
+  private async setActiveThread(id: string): Promise<void> {
     this.closeSwitcherPanel();
     const previousId = this.activeThreadId;
 
@@ -746,7 +746,7 @@ export class ThreadsView extends ItemView {
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
     this.renderThreadInfo();
-    this.renderMessages();
+    await this.renderMessages();
     this.setRunningState(this.manager.isRunning(id));
     this.updateProjectIndicator();
     this.updateModelIndicator();
@@ -1865,7 +1865,7 @@ export class ThreadsView extends ItemView {
         thread.projectId,
       );
       await this.plugin.saveSettings();
-      this.setActiveThread(forkedThread.id);
+      void this.setActiveThread(forkedThread.id);
       // Fire-and-forget: switch to the new thread and close the modal immediately
       // without waiting for Claude's response. The first message appears as the
       // thread loads, giving instant feedback instead of a frozen "Opening..." state.
@@ -2481,11 +2481,11 @@ export class ThreadsView extends ItemView {
     if (!this.activeThreadId) return;
     // If ThreadsView already has an in-memory pendingQuestions entry for this
     // thread, the question was raised while the thread was in the background
-    // and the renderMessages() tail re-render (triggered just before this
-    // method runs, in the same setActiveThread() call) already owns rendering
-    // that card via the live resolve callback. Rendering here too would race
-    // it and produce a duplicate card, since that path doesn't update this
-    // method's view of the world.
+    // and renderMessages() (awaited earlier in the same setActiveThread() call,
+    // so it has fully finished appending history by the time we get here)
+    // already owns rendering that card via the live resolve callback.
+    // Rendering here too would race it and produce a duplicate card, since
+    // that path doesn't update this method's view of the world.
     if (this.pendingQuestions.has(this.activeThreadId)) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread?.pendingQuestions) return;
@@ -4158,7 +4158,7 @@ export class ThreadsView extends ItemView {
         row.addEventListener('mousedown', (e) => {
           e.stopPropagation();
           this.closeSwitcherPanel();
-          this.setActiveThread(thread.id);
+          void this.setActiveThread(thread.id);
         });
       }
     };
@@ -4246,7 +4246,7 @@ export class ThreadsView extends ItemView {
     );
     await this.plugin.saveSettings();
     this.renderProjectBar(); // update thread count badges
-    this.setActiveThread(thread.id);
+    void this.setActiveThread(thread.id);
   }
 
   navigateTab(direction: 1 | -1): void {
@@ -4254,12 +4254,12 @@ export class ThreadsView extends ItemView {
     if (threads.length <= 1) return;
     const idx = threads.findIndex(t => t.id === this.activeThreadId);
     const next = (idx + direction + threads.length) % threads.length;
-    this.setActiveThread(threads[next].id);
+    void this.setActiveThread(threads[next].id);
   }
 
   switchToTabIndex(index: number): void {
     const threads = this.manager.getThreads();
-    if (threads[index]) this.setActiveThread(threads[index].id);
+    if (threads[index]) void this.setActiveThread(threads[index].id);
   }
 
   private applyAutoTitle(threadId: string, title: string): void {
@@ -4296,7 +4296,7 @@ export class ThreadsView extends ItemView {
     if (this.activeThreadId === id) {
       const remaining = this.manager.getThreads();
       if (remaining.length > 0) {
-        this.setActiveThread(remaining[0].id);
+        void this.setActiveThread(remaining[0].id);
       } else {
         this.activeThreadId = null;
         this.renderTitleBar();
