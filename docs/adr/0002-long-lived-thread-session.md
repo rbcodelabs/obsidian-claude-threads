@@ -213,6 +213,18 @@ One consequence for `ThreadSession`/UI code: because concurrent pushes coalesce 
 count is not 1:1 with turn count when a follow-up lands before the prior turn's `result` has arrived — the
 UI's message log must not assume one `result` per user-authored message if sends can outpace generations.
 
+**Second live-CLI probe — the genuinely sequential case, confirmed separately.** The probe above only
+establishes that *concurrent* pushes coalesce; it does not by itself prove the more common case, an ordinary
+back-and-forth conversation where turn 2 is pushed only *after* turn 1's `result` has already arrived. Ran a
+second probe: pushed turn 1, observed `RESULT #1` (`"ONE"`), then pushed turn 2 onto the *same* still-open
+channel only after that result had fully landed, and observed `RESULT #2` (`"TWO"`) through the same
+continuous `for-await` loop — no restart, no new process, no error. This confirms the foundational premise of
+the whole `ThreadSession` design: one `Query` genuinely serves multiple sequential turns for the thread's
+full lifetime, not just concurrent ones. (One incidental observation, not a design concern: after `q.close()`
+following the final result, the probe process did not exit on its own and needed a watchdog to force-exit —
+worth keeping in mind for `gracefulShutdown()`'s shutdown-latency budget, §4, though not investigated further
+here since the CLI's core multi-turn behavior was the thing under test.)
+
 ### 3. Lifecycle / resource policy (the sketch explicitly deferred this — this ADR does not)
 
 - **Desktop-only concern, confirmed.** Mobile has no `child_process` (`ClaudeSession`/`ThreadSession` will
