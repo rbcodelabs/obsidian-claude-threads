@@ -169,8 +169,13 @@ const addVaultBridgeSchema = {
 export interface ObsidianMcpServerOptions {
   /** Called when the agent requests a working-directory change. Receives the resolved absolute path. */
   onSetCwd?: (path: string) => void;
-  /** Called when the agent schedules a wakeup. delayMs is the delay in milliseconds. */
-  onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => void;
+  /**
+   * Called when the agent schedules a wakeup. delayMs is the delay in milliseconds.
+   * Backed by a durable one-shot Scheduler item (survives plugin reload/restart/sleep,
+   * same as the Cron tools) — awaited so the tool call doesn't resolve "success" before
+   * the wake-up is actually persisted to disk.
+   */
+  onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => Promise<void>;
   /**
    * Called when the agent requests a fork of the current conversation.
    * focusArea is an optional description of what the new thread should focus on.
@@ -589,7 +594,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
     async (args, _extra) => {
       try {
-        options.onScheduleWakeup?.(args.delaySeconds * 1000, args.prompt, args.reason);
+        await options.onScheduleWakeup?.(args.delaySeconds * 1000, args.prompt, args.reason);
         return {
           content: [
             {
