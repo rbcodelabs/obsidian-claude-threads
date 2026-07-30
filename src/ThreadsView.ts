@@ -1984,34 +1984,14 @@ export class ThreadsView extends ItemView {
       // Use the sub-agent label if the thread is waiting on a sub-agent, otherwise
       // the default "Claude is thinking" placeholder.
       this.createStreamingEl(buf?.subagentLabel ?? 'Claude is thinking');
-      // Restore streaming content and tool pills accumulated while this thread
+      // Restore streaming content and tool calls accumulated while this thread
       // was running in the background (user was viewing a different thread).
       if (buf) {
-        // Replay tool pills in the order they originally arrived. prepend()
-        // inserts above existing children, so iterate in reverse so the first
-        // tool ends up on top (matching the live order).
-        // Skip only the Agent tool itself (redundant with the sub-agent pill);
-        // all other tool calls, including ones from the sub-agent, are shown.
-        for (let i = buf.tools.length - 1; i >= 0; i--) {
-          const tool = buf.tools[i];
-          if (tool.name === 'Agent') continue;
-          const pill = document.createElement('div');
-          pill.className = 'ct-tool-pill ct-tool-active';
-          const iconEl = document.createElement('span');
-          iconEl.className = 'ct-tool-pill-icon';
-          setIcon(iconEl, getToolIcon(tool.name));
-          const badge = document.createElement('span');
-          badge.className = 'ct-tool-pill-name';
-          badge.textContent = formatToolName(tool.name);
-          pill.append(iconEl, badge);
-          if (tool.summary) {
-            const label = document.createElement('span');
-            label.className = 'ct-tool-pill-text';
-            label.textContent = tool.summary;
-            pill.append(label);
-          }
-          this.streamingEl!.prepend(pill);
-        }
+        // Route through the same live-render function the active-thread event
+        // handlers use, so the restored view is pixel-for-pixel identical to
+        // what it would look like had the user never switched away — same
+        // grouping, same chronological order, same pending/active styling.
+        if (buf.tools.length > 0) this.renderLiveToolCalls(buf.tools);
         // Restore accumulated text and re-render it into the streaming bubble.
         if (buf.content) {
           this.streamingContent = buf.content;
@@ -2984,35 +2964,20 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_use': {
-        // Skip a streaming pill for the Agent tool itself — the task_started
-        // event will render a "sub-agent" pill that carries the same info.
-        // All other tool calls (including ones bubbled up from sub-agents)
-        // are shown so the user can see what the agent is actually doing.
-        const isAgentCall = event.record.name === 'Agent';
-        if (!isAgentCall) {
-          if (!this.streamingEl) this.createStreamingEl();
-          const pill = document.createElement('div');
-          pill.className = 'ct-tool-pill ct-tool-active';
-          if (event.record.toolUseId) {
-            pill.dataset.toolUseId = event.record.toolUseId;
-            this.toolPillsByUseId.set(event.record.toolUseId, pill);
-          }
-          const iconEl = document.createElement('span');
-          iconEl.className = 'ct-tool-pill-icon';
-          setIcon(iconEl, getToolIcon(event.record.name));
-          const badge = document.createElement('span');
-          badge.className = 'ct-tool-pill-name';
-          badge.textContent = formatToolName(event.record.name);
-          pill.append(iconEl, badge);
-          if (event.record.summary) {
-            const label = document.createElement('span');
-            label.className = 'ct-tool-pill-text';
-            label.textContent = event.record.summary;
-            pill.append(label);
-          }
-          this.streamingEl!.prepend(pill);
-          this.scrollToBottom();
-        }
+        // Self-heal a missing streamingEl (mirrors 'token'/'streaming_start'/
+        // 'task_started'): a prior 'message' case may have nulled it, and if
+        // this turn is tool-call-only (no prose before it), nothing else
+        // would recreate it before we need to render into it. See #318.
+        if (!this.streamingEl) this.createStreamingEl();
+        // The cross-thread subscribe listener above (outside the activeThreadId
+        // guard) has already pushed event.record onto
+        // streamingBuffers.get(threadId).tools by the time this fires. Debounce
+        // a full rebuild of the live tool-call list from that buffer instead of
+        // mutating the DOM per event — this is what collapses fast bursts of
+        // same-kind calls into a single group live, not just after the fact.
+        // renderLiveToolCalls itself filters out the Agent tool call (the
+        // task_started event renders its own "sub-agent" pill for that).
+        this.scheduleLiveToolsRender();
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
           const filePath = event.record.summary.replace(/^[^:]+: /, '');
           if (filePath) {
@@ -3472,21 +3437,14 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_result_status': {
-        // Nice-to-have: flag the live pill with a success/fail icon immediately,
-        // ahead of the finalized message render. Reuses the same check-circle/
-        // x-circle convention as task_notification above.
-        const pill = this.toolPillsByUseId.get(event.toolUseId);
-        if (pill) {
-          pill.classList.remove('ct-tool-active');
-          const iconEl = pill.querySelector<HTMLElement>('.ct-tool-pill-icon');
-          if (event.status === 'error') {
-            pill.classList.add('ct-tool-error');
-            if (iconEl) setIcon(iconEl, 'x-circle');
-          } else {
-            pill.classList.add('ct-tool-success');
-            if (iconEl) setIcon(iconEl, 'check-circle');
-          }
-        }
+        // ClaudeSession mutates the SAME ToolCallRecord object in place
+        // (record.status = status — see the 'user'/tool_result handling in
+        // ClaudeSession.ts) and that object is the exact one held in
+        // streamingBuffers.get(threadId).tools, so buf.tools already reflects
+        // the new status by the time this event fires. Just trigger the
+        // debounced rebuild so the live pill/group picks it up — no manual
+        // DOM class-swap needed.
+        if (this.streamingEl) this.scheduleLiveToolsRender();
         break;
       }
 
@@ -3544,6 +3502,7 @@ export class ThreadsView extends ItemView {
           this.streamingEl.remove();
           this.streamingEl = null;
           this.streamingContentEl = null;
+          this.streamingToolsEl = null;
         }
         const noticeEl = this.messagesEl.createDiv('ct-message ct-reconnecting');
         noticeEl.createEl('div', {
