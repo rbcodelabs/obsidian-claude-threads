@@ -31,6 +31,15 @@ export class ThreadsView extends ItemView {
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
   private streamingRenderTimer: ReturnType<typeof setTimeout> | null = null;
+  // Lazily-created wrapper for the live (in-progress) turn's tool-call pills/groups.
+  // Only created the first time there's an actual tool call to show (see
+  // ensureStreamingToolsEl) — .ct-tools carries a non-zero margin-bottom, so
+  // creating it unconditionally would shift layout for turns with no tool calls.
+  private streamingToolsEl: HTMLElement | null = null;
+  // Debounce timer for rebuilding the live tool-call list, mirroring
+  // streamingRenderTimer's 80ms batching for streamed text tokens (see
+  // scheduleLiveToolsRender).
+  private liveToolsRenderTimer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribe: (() => void) | null = null;
 
   // DOM refs
@@ -165,6 +174,13 @@ export class ThreadsView extends ItemView {
   // ':'-joined toolUseId/timestamp of the group's tools. In-memory only —
   // cleared alongside groupSummaryCache so state doesn't leak across threads.
   private expandedToolGroups: Set<string> = new Set();
+  // Expand/collapse state for LIVE (in-progress) tool-call groups, keyed by
+  // liveToolGroupKey (firstToolUseId:activityKind) rather than toolGroupKey's
+  // full toolUseId list — a live group's tool list keeps growing as more calls
+  // arrive, so its member list isn't a stable key, but the first call's id is
+  // (groupToolCalls only ever extends a run at the tail, never reinterprets an
+  // earlier boundary). Cleared alongside expandedToolGroups.
+  private liveExpandedToolGroups: Set<string> = new Set();
   // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
   // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
