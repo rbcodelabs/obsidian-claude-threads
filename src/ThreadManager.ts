@@ -969,6 +969,46 @@ export class ThreadManager {
   }
 
   /**
+   * Clears the transient `'reconnecting'` status set by `onReconnecting`
+   * (see below) once the auto-retried continuation turn actually starts
+   * producing events again. Under the old per-turn model, this reset
+   * happened implicitly: the continuation was a brand-new `sendMessage()`
+   * call, which sets `thread.status = 'active'` at its own top (`:738`).
+   * Under the new long-lived-`ThreadSession` model there is no such call —
+   * `ThreadSession.pumpMessages()`'s catch block calls `this.send(...)`
+   * internally, with no `sendMessage()`/`ThreadManager` round-trip at all —
+   * so nothing would otherwise clear `'reconnecting'` if the continuation
+   * succeeds.
+   *
+   * Called from whichever of `onToken`/`onMessage`/`onStatus` fires first
+   * once the continuation's generation resumes producing events, mirroring
+   * the existing pattern elsewhere in this file of guarding a state
+   * transition with "if it's currently in the state I'm about to leave"
+   * (e.g. the `pendingPlan`/`pendingQuestions` safety nets in `onDone`/
+   * `onError` below) rather than introducing a new dedicated signal from
+   * `ThreadSession`. `onToken` is expected to fire first in the common case
+   * (`includePartialMessages: true` streams text deltas before the final
+   * `assistant` message), but a continuation whose first action is a tool
+   * call with no preceding text would skip straight to `onMessage` (or, for
+   * a `compacting`/`requesting` status flip mid-continuation, `onStatus`) —
+   * covering all three is what actually guarantees the thread never gets
+   * stuck showing `'reconnecting'` forever once real progress resumes,
+   * regardless of what shape that progress takes.
+   *
+   * Deliberately NOT cleared in `onDone`/`onInterrupted`/`onError`: those
+   * already unconditionally set `thread.status` to `'waiting'`/`'waiting'`/
+   * `'error'` respectively, so a reconnecting thread that settles without
+   * ever producing a visible event (unlikely, but not impossible) still
+   * ends up in a correct terminal status without needing this helper too.
+   */
+  private clearReconnectingStatus(thread: Thread): void {
+    if (thread.status === 'reconnecting') {
+      thread.status = 'active';
+      thread.updatedAt = Date.now();
+    }
+  }
+
+  /**
    * Builds the `SessionCallbacks` that wire a `ThreadSession`'s message pump
    * back into `ThreadEvent`s for this thread. Built once per `start()`/
    * `restart()` call — NOT once per turn, unlike the old per-turn
@@ -994,7 +1034,10 @@ export class ThreadManager {
           event,
         );
       },
-      onToken: (text) => this.emit(threadId, { type: 'token', text }),
+      onToken: (text) => {
+        this.clearReconnectingStatus(thread);
+        this.emit(threadId, { type: 'token', text });
+      },
       onToolUse: (record) => {
         this.threadActivity.set(threadId, record.summary);
         // Persist file paths for Write/Edit tools so they survive tab switches.
@@ -1012,6 +1055,7 @@ export class ThreadManager {
         this.emit(threadId, { type: 'recap', summary });
       },
       onMessage: (content, toolCalls) => {
+        this.clearReconnectingStatus(thread);
         const images = this.pendingToolResultImages.get(threadId);
         const assistantMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -1038,7 +1082,7 @@ export class ThreadManager {
         thread.sessionId = sessionId;
         thread.updatedAt = Date.now();
         thread.status = 'waiting';
-        thread.streamCloseRetryCount = 0;
+        thread.streamCloseRetryCount = 0; // TODO: likely vestigial post-Stage-C — see types.ts's doc comment on this field
         const lastMsg = thread.messages[thread.messages.length - 1];
         if (lastMsg?.role === 'assistant' && cost > 0) {
           lastMsg.cost = cost;
@@ -1139,7 +1183,7 @@ export class ThreadManager {
         thread.updatedAt = Date.now();
         thread.lastError = err.message;
         thread.status = 'error';
-        thread.streamCloseRetryCount = 0;
+        thread.streamCloseRetryCount = 0; // TODO: likely vestigial post-Stage-C — see types.ts's doc comment on this field
         this.threadActivity.delete(threadId);
         this.queuedMessages.delete(threadId);
         // Terminal, like onDone — stop tracking these ids as unresolved.
@@ -1179,7 +1223,24 @@ export class ThreadManager {
         }
       },
       onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
-      onStatus: (status) => this.emit(threadId, { type: 'status', status }),
+      onStatus: (status) => {
+        this.clearReconnectingStatus(thread);
+        this.emit(threadId, { type: 'status', status });
+      },
+      onReconnecting: (error) => {
+        // Mirrors the old per-turn model's ThreadManager.sendMessage()
+        // onError branch (see ClaudeSession.ts's SessionCallbacks.onReconnecting
+        // doc comment) as closely as possible: mark the thread as
+        // reconnecting and emit the same 'reconnecting' event the UI
+        // (ThreadsView.ts's `case 'reconnecting':`) already knows how to
+        // render. Cleared by clearReconnectingStatus() once the internally
+        // auto-retried continuation turn actually starts producing events
+        // again (see that method's doc comment for why onDone/onError don't
+        // also need to clear it).
+        thread.status = 'reconnecting';
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'reconnecting', error });
+      },
       onCompact: (trigger, preTokens) => {
         const compactMsg: ChatMessage = {
           id: crypto.randomUUID(),

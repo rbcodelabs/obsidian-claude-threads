@@ -826,6 +826,15 @@ export class ThreadSession {
         if (isTransportClosedError(e.message) && shouldAutoRetryTransportError(e.message, this.transportErrorRetryCount)) {
           this.transportErrorRetryCount++;
           supersededByRestart = true;
+          // Fire onReconnecting at the exact point that used to be
+          // ThreadManager.sendMessage()'s `thread.status = 'reconnecting'`
+          // branch under the old per-turn model (see ClaudeSession's
+          // SessionCallbacks.onReconnecting doc comment) — right before the
+          // restart that will silently open a new Query and re-send the
+          // continuation prompt, so the UI gets the same "hang on,
+          // recovering" signal it used to get, even though the retry itself
+          // is now entirely internal to ThreadSession.
+          callbacks.onReconnecting?.(e.message);
           try {
             await this.restart('transport-error');
             this.send(TRANSPORT_ERROR_CONTINUATION_PROMPT);
