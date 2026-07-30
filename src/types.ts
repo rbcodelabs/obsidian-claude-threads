@@ -277,7 +277,7 @@ export interface Project {
   createdAt: number;
 }
 
-export type ScheduleType = 'interval' | 'daily' | 'weekly';
+export type ScheduleType = 'interval' | 'daily' | 'weekly' | 'once';
 
 export interface ScheduledItemSchedule {
   type: ScheduleType;
@@ -287,6 +287,11 @@ export interface ScheduledItemSchedule {
   timeOfDay?: string;
   /** For 'weekly': array of day numbers 0=Sun...6=Sat */
   daysOfWeek?: number[];
+  /**
+   * For 'once': absolute epoch ms at which to fire exactly one time. The item
+   * is deleted after firing (see Scheduler.fire()) rather than rearmed.
+   */
+  fireAt?: number;
 }
 
 export interface ScheduledItem {
@@ -311,6 +316,13 @@ export interface ScheduledItem {
    * if the target thread no longer exists.
    */
   targetThreadId?: string;
+  /**
+   * Marks this item as created by the ScheduleWakeup tool rather than the
+   * user-facing Cron tools/dashboard. Lets ClaudeThreadsPlugin.getPendingWakeups/
+   * hasPendingWakeup/cancelWakeups find these durable one-shot items without a
+   * separate in-memory tracking structure. Absent for ordinary cron items.
+   */
+  origin?: 'wakeup';
 }
 
 export interface SkillSource {

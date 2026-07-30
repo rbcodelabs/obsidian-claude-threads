@@ -84,6 +84,13 @@ export function computeNextRun(item: ScheduledItem, fromNow = false): number {
     return nextWeeklyRun(schedule.timeOfDay ?? '09:00', schedule.daysOfWeek ?? [1], now);
   }
 
+  if (schedule.type === 'once') {
+    // Fixed absolute fire time — fromNow is irrelevant since there is no
+    // recurrence to re-anchor. Falls back to "now" only if fireAt was
+    // somehow omitted, so the item still fires promptly rather than never.
+    return schedule.fireAt ?? now;
+  }
+
   return now + 86400 * 1000;
 }
 
@@ -294,21 +301,38 @@ export class Scheduler {
         console.error(`[Scheduler] Failed to fire scheduled item "${current.name}" (${current.id}):`, err);
       }
 
-      current.lastRun = Date.now();
-      current.nextRun = computeNextRun(current, true);
+      if (current.schedule.type === 'once') {
+        // One-shot item (e.g. ScheduleWakeup): there is no next cycle to
+        // rearm for, so remove it from memory and disk instead of updating
+        // lastRun/nextRun. This is what makes ScheduleWakeup entries
+        // self-cleaning and keeps CronList from accumulating fired wakeups.
+        const idx = this.items.findIndex((i) => i.id === current.id);
+        if (idx >= 0) this.items.splice(idx, 1);
+        try {
+          await this.options.removeItem(current.id);
+        } catch (err) {
+          console.error(
+            `[Scheduler] Failed to persist removal of one-shot item "${current.name}" (${current.id}):`,
+            err,
+          );
+        }
+      } else {
+        current.lastRun = Date.now();
+        current.nextRun = computeNextRun(current, true);
 
-      // Await the save so failures are visible, but this method is only ever
-      // invoked fire-and-forget from a setTimeout callback (already
-      // .catch(console.error)'d there) — do not rethrow, just log and
-      // continue to armTimer regardless of save outcome.
-      try {
-        await this.options.saveItem({ ...current });
-      } catch (err) {
-        console.error(`[Scheduler] Failed to persist post-fire state for "${current.name}" (${current.id}):`, err);
+        // Await the save so failures are visible, but this method is only ever
+        // invoked fire-and-forget from a setTimeout callback (already
+        // .catch(console.error)'d there) — do not rethrow, just log and
+        // continue to armTimer regardless of save outcome.
+        try {
+          await this.options.saveItem({ ...current });
+        } catch (err) {
+          console.error(`[Scheduler] Failed to persist post-fire state for "${current.name}" (${current.id}):`, err);
+        }
+
+        // Rearm for the next run
+        this.armTimer(current);
       }
-
-      // Rearm for the next run
-      this.armTimer(current);
     } finally {
       this.firing.delete(item.id);
     }
