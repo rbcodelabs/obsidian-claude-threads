@@ -21,7 +21,7 @@ export interface SchedulerOptions {
   getItems: () => ScheduledItem[];
   saveItem: (item: ScheduledItem) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
-  createThread: (title: string, cwd: string, projectId?: string) => { id: string };
+  createThread: (title: string, cwd: string, projectId?: string, scheduledItemId?: string) => { id: string };
   sendMessage: (threadId: string, prompt: string) => Promise<void>;
   getDefaultCwd: () => string;
   /**
@@ -286,7 +286,7 @@ export class Scheduler {
           current.lastThreadId = reuseTarget;
         } else {
           const cwd = current.cwd || this.options.getDefaultCwd();
-          const thread = this.options.createThread(current.name, cwd, current.projectId);
+          const thread = this.options.createThread(current.name, cwd, current.projectId, current.id);
           await this.options.sendMessage(thread.id, current.prompt);
           current.lastThreadId = thread.id;
         }

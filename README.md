@@ -297,7 +297,7 @@ When Claude needs to write a file or run a command, a permission card appears in
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
-> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets.
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets. Such threads also carry the originating scheduled item's id and name (`scheduledItemId`/`scheduledItemName`), captured once at creation time and surfaced as a "Scheduled: `<name>`" footer pill and in the `obsidian_get_current_thread`/`obsidian_list_threads` tool output.
 
 ### Plan Mode
 
@@ -511,8 +511,8 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `isRunning`, `projectId`, `cwd`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. |
-| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag. |
+| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `uiStatus`, `isRunning`, `projectId`, `cwd`, `prUrl`, `scheduledItemId`, `scheduledItemName`, `rawLogPath`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. `uiStatus` matches the Agent Dashboard UI labels (`working` \| `new` \| `reviewed` \| `failed` \| `ready`). `prUrl` is the URL of the most recent GitHub PR opened in this thread, if any. `scheduledItemId`/`scheduledItemName` identify the cron item that created this thread, if it was created by one. |
+| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag — useful for matching threads to PRs or scheduled items without reading message history. |
 | `obsidian_list_projects` | — | Returns all configured projects: `id`, `name`, `description`, `vaultFolder`. Useful for deciding which project context a new thread should use. |
 | `obsidian_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates a new project and persists it. Returns the created project snapshot including its `id` — capture this for use with `CronCreate`, `obsidian_set_thread_project`, and other project-aware APIs. |
 | `obsidian_set_thread_project` | `threadId`, `projectId` | Assigns a thread to a project. Pass `projectId: null` to detach the thread from its current project. Call `obsidian_list_projects` first to get a valid `projectId`. |

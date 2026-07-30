@@ -299,6 +299,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               projectId: t.projectId,
               cwd: t.cwd,
               prUrl: t.prUrl,
+              scheduledItemId: t.scheduledItemId,
+              scheduledItemName: t.scheduledItemName,
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               rawLogPath: t.rawLogPath,
@@ -312,7 +314,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -331,6 +333,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               projectId: t.projectId,
               cwd: t.cwd,
               prUrl: t.prUrl,
+              scheduledItemId: t.scheduledItemId,
+              scheduledItemName: t.scheduledItemName,
               updatedAt: t.updatedAt,
               messageCount,
               rawLogPath: t.rawLogPath,
@@ -594,13 +598,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
         this.settings.scheduledItems = (this.settings.scheduledItems ?? []).filter((i) => i.id !== id);
         await this.saveSettings();
       },
-      createThread: (title, cwd, projectId) => {
+      createThread: (title, cwd, projectId, scheduledItemId) => {
         const thread = this.manager.createThread(title, cwd, projectId);
         // Scheduled sessions should not block on permission prompts. When the
         // global permissionMode is 'default' (ask every time), override to
         // 'dontAsk' so unattended runs complete without hanging.
         if (!thread.permissionMode && this.settings.permissionMode === 'default') {
           thread.permissionMode = 'dontAsk';
+        }
+        // Record the scheduled item that created this thread, for the
+        // "Scheduled: <name>" footer pill. Captured once at creation time —
+        // not kept in sync with later renames of the scheduled item.
+        if (scheduledItemId) {
+          thread.scheduledItemId = scheduledItemId;
+          thread.scheduledItemName = (this.settings.scheduledItems ?? []).find(
+            (i) => i.id === scheduledItemId
+          )?.name;
         }
         return thread;
       },
