@@ -111,7 +111,7 @@ describe('Scheduler — once items fire exactly once and self-delete', () => {
     // once-fires-then-deletes contract.
     await vi.advanceTimersByTimeAsync(30_000);
 
-    expect(createThread).toHaveBeenCalledWith('Wakeup: checking deploy status', '/tmp', undefined);
+    expect(createThread).toHaveBeenCalledWith('Wakeup: checking deploy status', '/tmp', undefined, item.id);
     expect(sendMessage).toHaveBeenCalledWith('new-thread', '/loop check-deploy');
 
     // The defining behavior: it must be gone, not rearmed for a "next cycle".
