@@ -847,6 +847,25 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-kanban-col', { hasText: 'Working' }).getByText(cardTitle)).toHaveCount(0);
   });
 
+  test('kanban board — orchestrator badge on matching card', async ({ page }) => {
+    // appendOrchestratorBadge only fires when a card's threadId matches
+    // settings.orchestratorThreadId — confirm the bot badge appears next to
+    // that one card's title and no other card's.
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+
+    const cardTitle = 'Add "why this place" provenance layer'; // kanbanRunningThreadId's card
+    await expect(page.locator('.ct-orchestrator-badge')).toHaveCount(0);
+
+    await page.evaluate(() => (window as any).__setOrchestrator('k-hiptrip-running'));
+    const badgedCard = page.locator('.ct-kanban-card', { hasText: cardTitle });
+    await expect(badgedCard.locator('.ct-orchestrator-badge')).toHaveCount(1);
+    await expect(page.locator('.ct-orchestrator-badge')).toHaveCount(1);
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('kanban-orchestrator-badge.png', { fullPage: true });
+  });
+
   // ─── Status area redesign ─────────────────────────────────────────────────
 
   test('queue rows — stacked removable rows above composer', async ({ page }) => {
