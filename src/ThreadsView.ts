@@ -12,7 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { groupToolCalls, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
+import { groupToolCalls, liveToolGroupKey, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -31,6 +31,15 @@ export class ThreadsView extends ItemView {
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
   private streamingRenderTimer: ReturnType<typeof setTimeout> | null = null;
+  // Lazily-created wrapper for the live (in-progress) turn's tool-call pills/groups.
+  // Only created the first time there's an actual tool call to show (see
+  // ensureStreamingToolsEl) — .ct-tools carries a non-zero margin-bottom, so
+  // creating it unconditionally would shift layout for turns with no tool calls.
+  private streamingToolsEl: HTMLElement | null = null;
+  // Debounce timer for rebuilding the live tool-call list, mirroring
+  // streamingRenderTimer's 80ms batching for streamed text tokens (see
+  // scheduleLiveToolsRender).
+  private liveToolsRenderTimer: ReturnType<typeof setTimeout> | null = null;
   private unsubscribe: (() => void) | null = null;
 
   // DOM refs
@@ -165,6 +174,13 @@ export class ThreadsView extends ItemView {
   // ':'-joined toolUseId/timestamp of the group's tools. In-memory only —
   // cleared alongside groupSummaryCache so state doesn't leak across threads.
   private expandedToolGroups: Set<string> = new Set();
+  // Expand/collapse state for LIVE (in-progress) tool-call groups, keyed by
+  // liveToolGroupKey (firstToolUseId:activityKind) rather than toolGroupKey's
+  // full toolUseId list — a live group's tool list keeps growing as more calls
+  // arrive, so its member list isn't a stable key, but the first call's id is
+  // (groupToolCalls only ever extends a run at the tail, never reinterprets an
+  // earlier boundary). Cleared alongside expandedToolGroups.
+  private liveExpandedToolGroups: Set<string> = new Set();
   // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
   // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
@@ -742,6 +758,7 @@ export class ThreadsView extends ItemView {
     this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();
+    this.liveExpandedToolGroups.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -1582,6 +1599,7 @@ export class ThreadsView extends ItemView {
     this.summaryTextEls.clear();
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();
+    this.liveExpandedToolGroups.clear();
     void this.renderMessages();
   }
 
@@ -1890,6 +1908,30 @@ export class ThreadsView extends ItemView {
     this.streamingContentEl = this.streamingEl.createDiv('ct-message-content');
     this.streamingContentEl.createSpan({ cls: 'ct-thinking-spinner', attr: { 'aria-label': label } });
     this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
+    // Fresh streamingEl — any previous tools wrapper is gone with it (or about
+    // to be replayed via renderLiveToolCalls if buf.tools carries anything over).
+    this.streamingToolsEl = null;
+  }
+
+  /**
+   * Lazily creates (or returns the existing) `.ct-tools` wrapper inside the
+   * current streamingEl, inserted as the FIRST child so live tool calls sit
+   * above the streamed text — matching the finalized layout (renderToolCalls
+   * is always called before the `.ct-message-content` div in appendMessage),
+   * which avoids a visual jump when the turn settles.
+   *
+   * Must stay lazy: `.ct-tools` carries `margin-bottom: 6px` even when empty,
+   * so creating it unconditionally on every streaming turn (even ones with no
+   * tool calls) would shift the layout of turns that never call a tool — a
+   * real regression caught in an earlier pass at this feature.
+   */
+  private ensureStreamingToolsEl(): HTMLElement {
+    if (this.streamingToolsEl && this.streamingToolsEl.isConnected) return this.streamingToolsEl;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ct-tools';
+    this.streamingEl!.prepend(wrapper);
+    this.streamingToolsEl = wrapper;
+    return wrapper;
   }
 
   private async renderMessages(): Promise<void> {
@@ -1942,34 +1984,14 @@ export class ThreadsView extends ItemView {
       // Use the sub-agent label if the thread is waiting on a sub-agent, otherwise
       // the default "Claude is thinking" placeholder.
       this.createStreamingEl(buf?.subagentLabel ?? 'Claude is thinking');
-      // Restore streaming content and tool pills accumulated while this thread
+      // Restore streaming content and tool calls accumulated while this thread
       // was running in the background (user was viewing a different thread).
       if (buf) {
-        // Replay tool pills in the order they originally arrived. prepend()
-        // inserts above existing children, so iterate in reverse so the first
-        // tool ends up on top (matching the live order).
-        // Skip only the Agent tool itself (redundant with the sub-agent pill);
-        // all other tool calls, including ones from the sub-agent, are shown.
-        for (let i = buf.tools.length - 1; i >= 0; i--) {
-          const tool = buf.tools[i];
-          if (tool.name === 'Agent') continue;
-          const pill = document.createElement('div');
-          pill.className = 'ct-tool-pill ct-tool-active';
-          const iconEl = document.createElement('span');
-          iconEl.className = 'ct-tool-pill-icon';
-          setIcon(iconEl, getToolIcon(tool.name));
-          const badge = document.createElement('span');
-          badge.className = 'ct-tool-pill-name';
-          badge.textContent = formatToolName(tool.name);
-          pill.append(iconEl, badge);
-          if (tool.summary) {
-            const label = document.createElement('span');
-            label.className = 'ct-tool-pill-text';
-            label.textContent = tool.summary;
-            pill.append(label);
-          }
-          this.streamingEl!.prepend(pill);
-        }
+        // Route through the same live-render function the active-thread event
+        // handlers use, so the restored view is pixel-for-pixel identical to
+        // what it would look like had the user never switched away — same
+        // grouping, same chronological order, same pending/active styling.
+        if (buf.tools.length > 0) this.renderLiveToolCalls(buf.tools);
         // Restore accumulated text and re-render it into the streaming bubble.
         if (buf.content) {
           this.streamingContent = buf.content;
@@ -2104,14 +2126,18 @@ export class ThreadsView extends ItemView {
   }
 
   /**
-   * Render a single finalized tool call as a `.ct-tool-pill` into `wrapper`.
-   * Shared by the flat (ungrouped) path and by renderToolGroup's expanded body
-   * so isolated calls and grouped calls look identical.
+   * Render a single tool call as a `.ct-tool-pill` into `wrapper`. Shared by
+   * the finalized flat (ungrouped) path, renderToolGroup's expanded body, and
+   * the live-streaming path (renderLiveToolCalls) so isolated calls, grouped
+   * calls, and in-progress calls all look identical. Returns the created pill
+   * so live-rendering can register it in toolPillsByUseId for tool_progress
+   * heartbeat updates.
    */
-  private renderToolPill(wrapper: HTMLElement, tool: ToolCallRecord): void {
+  private renderToolPill(wrapper: HTMLElement, tool: ToolCallRecord): HTMLElement {
     const pill = wrapper.createDiv('ct-tool-pill');
     if (tool.status === 'error') pill.addClass('ct-tool-error');
     else if (tool.status === 'success') pill.addClass('ct-tool-success');
+    else if (tool.status === 'pending') pill.addClass('ct-tool-active');
     const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
     setIcon(iconEl, getToolIcon(tool.name));
     pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
@@ -2119,12 +2145,14 @@ export class ThreadsView extends ItemView {
     if (tool.timestamp) {
       pill.createSpan({ cls: 'ct-tool-pill-ts', text: this.formatShortTime(tool.timestamp) });
     }
+    return pill;
   }
 
-  /** Deterministic key for a tool-call group's expand/collapse state. */
+  /** Deterministic key for a FINALIZED tool-call group's expand/collapse state. */
   private toolGroupKey(tools: ToolCallRecord[]): string {
     return tools.map(t => t.toolUseId ?? t.timestamp ?? '').join(':');
   }
+
 
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
     const wrapper = parent.createDiv('ct-tools');
@@ -2142,17 +2170,38 @@ export class ThreadsView extends ItemView {
    * section, mirroring appendAssistantGroup's collapse/expand pattern and CSS
    * classes. Auto-expands (and visually flags) if any tool in the group errored,
    * so failures are never hidden behind a collapsed group.
+   *
+   * Shared by the finalized view (default opts) and the live-streaming view
+   * (renderLiveToolCalls passes a stable liveToolGroupKey + a dedicated
+   * expand-state set + a callback to register pending pills for tool_progress
+   * heartbeat lookups).
    */
-  private renderToolGroup(wrapper: HTMLElement, entry: Extract<ToolCallGroup, { kind: 'group' }>): void {
+  private renderToolGroup(
+    wrapper: HTMLElement,
+    entry: Extract<ToolCallGroup, { kind: 'group' }>,
+    opts?: {
+      keyOverride?: string;
+      expandedSet?: Set<string>;
+      onPillRendered?: (tool: ToolCallRecord, pill: HTMLElement) => void;
+    },
+  ): void {
     const { activityKind, tools } = entry;
     const hasError = tools.some(t => t.status === 'error');
-    const groupKey = this.toolGroupKey(tools);
+    const hasPending = tools.some(t => t.status === 'pending');
+    const expandedSet = opts?.expandedSet ?? this.expandedToolGroups;
+    const groupKey = opts?.keyOverride ?? this.toolGroupKey(tools);
 
     const groupEl = wrapper.createDiv('ct-tool-group');
     const headerRow = groupEl.createDiv('ct-tool-group-header ct-compressed-row');
     // Flag on the header (which owns the border-left) so ct-tool-error's
     // border-left-color override and icon-tint rule both take visible effect.
     if (hasError) headerRow.addClass('ct-tool-error');
+    // "Still running" affordance — reuses the same ct-tool-active convention
+    // as an individual pending pill (pulsing left border + icon tint; the
+    // group-header-specific pulsing dot on .ct-compressed-summary is added in
+    // styles.css). Does NOT force-expand — only an error does that — so a
+    // long run of successful same-kind calls stays collapsed while live.
+    if (hasPending) headerRow.addClass('ct-tool-active');
 
     const iconEl = headerRow.createSpan({ cls: 'ct-tool-pill-icon' });
     setIcon(iconEl, getToolIcon(tools[0].name));
@@ -2166,10 +2215,11 @@ export class ThreadsView extends ItemView {
 
     const fullContent = groupEl.createDiv('ct-full-content');
     for (const tool of tools) {
-      this.renderToolPill(fullContent, tool);
+      const pill = this.renderToolPill(fullContent, tool);
+      opts?.onPillRendered?.(tool, pill);
     }
 
-    let expanded = hasError || this.expandedToolGroups.has(groupKey);
+    let expanded = hasError || expandedSet.has(groupKey);
     if (!expanded) fullContent.addClass('ct-hidden');
     setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
 
@@ -2177,13 +2227,81 @@ export class ThreadsView extends ItemView {
       expanded = !expanded;
       if (expanded) {
         fullContent.removeClass('ct-hidden');
-        this.expandedToolGroups.add(groupKey);
+        expandedSet.add(groupKey);
       } else {
         fullContent.addClass('ct-hidden');
-        this.expandedToolGroups.delete(groupKey);
+        expandedSet.delete(groupKey);
       }
       setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
     });
+  }
+
+  /**
+   * Live-rendering counterpart to renderToolCalls: rebuilds the entire
+   * `.ct-tools` wrapper for the in-progress turn from `tools` (the turn's
+   * accumulated ToolCallRecord[], i.e. streamingBuffers.get(id).tools) every
+   * time it's called. Reuses groupToolCalls()/renderToolPill()/renderToolGroup()
+   * so the live view collapses same-kind runs exactly like the finalized view
+   * — no separate rendering logic to keep in sync, and no visual jump when the
+   * turn settles and appendMessage() takes over.
+   *
+   * Called from the debounced scheduleLiveToolsRender() (tool_use/tool_result_status)
+   * and from renderMessages()'s restore-on-switch path. Not called on every
+   * single event directly — callers debounce or call it once per render pass.
+   */
+  private renderLiveToolCalls(tools: ToolCallRecord[]): void {
+    if (!this.streamingEl) return;
+    // Skip the Agent tool call itself — the task_started event renders its
+    // own "sub-agent working" pill carrying the same info (matches the old
+    // isAgentCall skip in the tool_use handler).
+    const visible = tools.filter(t => t.name !== 'Agent');
+    this.toolPillsByUseId.clear();
+    if (visible.length === 0) {
+      // Nothing to show (e.g. the only call so far was Agent) — don't leave a
+      // zero-item .ct-tools wrapper around (it has a non-zero margin-bottom).
+      if (this.streamingToolsEl) {
+        this.streamingToolsEl.remove();
+        this.streamingToolsEl = null;
+      }
+      return;
+    }
+    const wrapper = this.ensureStreamingToolsEl();
+    wrapper.empty();
+    for (const entry of groupToolCalls(visible)) {
+      if (entry.kind === 'single') {
+        const pill = this.renderToolPill(wrapper, entry.tool);
+        if (entry.tool.status === 'pending' && entry.tool.toolUseId) {
+          this.toolPillsByUseId.set(entry.tool.toolUseId, pill);
+        }
+      } else {
+        this.renderToolGroup(wrapper, entry, {
+          keyOverride: liveToolGroupKey(entry.tools),
+          expandedSet: this.liveExpandedToolGroups,
+          onPillRendered: (tool, pill) => {
+            if (tool.status === 'pending' && tool.toolUseId) {
+              this.toolPillsByUseId.set(tool.toolUseId, pill);
+            }
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Debounces a full rebuild of the live tool-call list, mirroring
+   * scheduleStreamingRender's 80ms batching for streamed text tokens. Batches
+   * fast bursts of tool_use/tool_result_status events into a single DOM
+   * rebuild instead of one mutation per event.
+   */
+  private scheduleLiveToolsRender(): void {
+    if (this.liveToolsRenderTimer !== null) clearTimeout(this.liveToolsRenderTimer);
+    this.liveToolsRenderTimer = setTimeout(() => {
+      this.liveToolsRenderTimer = null;
+      if (!this.activeThreadId) return;
+      const buf = this.streamingBuffers.get(this.activeThreadId);
+      this.renderLiveToolCalls(buf?.tools ?? []);
+      this.scrollToBottom();
+    }, 80);
   }
 
   /**
@@ -2717,8 +2835,13 @@ export class ThreadsView extends ItemView {
       clearTimeout(this.streamingRenderTimer);
       this.streamingRenderTimer = null;
     }
+    if (this.liveToolsRenderTimer !== null) {
+      clearTimeout(this.liveToolsRenderTimer);
+      this.liveToolsRenderTimer = null;
+    }
     this.streamingContent = '';
     this.streamingContentEl = null;
+    this.streamingToolsEl = null;
   }
 
   private scheduleStreamingRender(): void {
@@ -2827,35 +2950,20 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_use': {
-        // Skip a streaming pill for the Agent tool itself — the task_started
-        // event will render a "sub-agent" pill that carries the same info.
-        // All other tool calls (including ones bubbled up from sub-agents)
-        // are shown so the user can see what the agent is actually doing.
-        const isAgentCall = event.record.name === 'Agent';
-        if (!isAgentCall) {
-          if (!this.streamingEl) this.createStreamingEl();
-          const pill = document.createElement('div');
-          pill.className = 'ct-tool-pill ct-tool-active';
-          if (event.record.toolUseId) {
-            pill.dataset.toolUseId = event.record.toolUseId;
-            this.toolPillsByUseId.set(event.record.toolUseId, pill);
-          }
-          const iconEl = document.createElement('span');
-          iconEl.className = 'ct-tool-pill-icon';
-          setIcon(iconEl, getToolIcon(event.record.name));
-          const badge = document.createElement('span');
-          badge.className = 'ct-tool-pill-name';
-          badge.textContent = formatToolName(event.record.name);
-          pill.append(iconEl, badge);
-          if (event.record.summary) {
-            const label = document.createElement('span');
-            label.className = 'ct-tool-pill-text';
-            label.textContent = event.record.summary;
-            pill.append(label);
-          }
-          this.streamingEl!.prepend(pill);
-          this.scrollToBottom();
-        }
+        // Self-heal a missing streamingEl (mirrors 'token'/'streaming_start'/
+        // 'task_started'): a prior 'message' case may have nulled it, and if
+        // this turn is tool-call-only (no prose before it), nothing else
+        // would recreate it before we need to render into it. See #318.
+        if (!this.streamingEl) this.createStreamingEl();
+        // The cross-thread subscribe listener above (outside the activeThreadId
+        // guard) has already pushed event.record onto
+        // streamingBuffers.get(threadId).tools by the time this fires. Debounce
+        // a full rebuild of the live tool-call list from that buffer instead of
+        // mutating the DOM per event — this is what collapses fast bursts of
+        // same-kind calls into a single group live, not just after the fact.
+        // renderLiveToolCalls itself filters out the Agent tool call (the
+        // task_started event renders its own "sub-agent" pill for that).
+        this.scheduleLiveToolsRender();
         if (event.record.name === 'Write' || event.record.name === 'Edit') {
           const filePath = event.record.summary.replace(/^[^:]+: /, '');
           if (filePath) {
@@ -3315,21 +3423,14 @@ export class ThreadsView extends ItemView {
       }
 
       case 'tool_result_status': {
-        // Nice-to-have: flag the live pill with a success/fail icon immediately,
-        // ahead of the finalized message render. Reuses the same check-circle/
-        // x-circle convention as task_notification above.
-        const pill = this.toolPillsByUseId.get(event.toolUseId);
-        if (pill) {
-          pill.classList.remove('ct-tool-active');
-          const iconEl = pill.querySelector<HTMLElement>('.ct-tool-pill-icon');
-          if (event.status === 'error') {
-            pill.classList.add('ct-tool-error');
-            if (iconEl) setIcon(iconEl, 'x-circle');
-          } else {
-            pill.classList.add('ct-tool-success');
-            if (iconEl) setIcon(iconEl, 'check-circle');
-          }
-        }
+        // ClaudeSession mutates the SAME ToolCallRecord object in place
+        // (record.status = status — see the 'user'/tool_result handling in
+        // ClaudeSession.ts) and that object is the exact one held in
+        // streamingBuffers.get(threadId).tools, so buf.tools already reflects
+        // the new status by the time this event fires. Just trigger the
+        // debounced rebuild so the live pill/group picks it up — no manual
+        // DOM class-swap needed.
+        if (this.streamingEl) this.scheduleLiveToolsRender();
         break;
       }
 
@@ -3387,6 +3488,7 @@ export class ThreadsView extends ItemView {
           this.streamingEl.remove();
           this.streamingEl = null;
           this.streamingContentEl = null;
+          this.streamingToolsEl = null;
         }
         const noticeEl = this.messagesEl.createDiv('ct-message ct-reconnecting');
         noticeEl.createEl('div', {

@@ -250,6 +250,7 @@
 .ct-app-hidden .ct-status-card-spinner,
 .ct-app-hidden .ct-cursor,
 .ct-app-hidden .ct-tool-active .ct-tool-pill-name::before,
+.ct-app-hidden .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
 .ct-app-hidden .ct-workflow-agent-running .ct-workflow-agent-dot,
 .ct-app-hidden .ct-agents-icon-running,
 .ct-app-hidden .ct-agents-icon-permission,
@@ -1107,6 +1108,26 @@
 
 .ct-tool-success .ct-tool-pill-icon {
   color: var(--color-green);
+}
+
+/* "Still running" indicator on a LIVE tool-call group header (renderToolGroup
+   adds .ct-tool-active to the header when any child pill has status
+   'pending'). The icon tint is already covered by the existing
+   `.ct-tool-active .ct-tool-pill-icon` rule above since the header's icon
+   shares that class structure; this adds the equivalent pulsing dot for
+   `.ct-compressed-summary`, since a group header has no `.ct-tool-pill-name`
+   of its own to hang the ct-tool-active::before rule off of. */
+.ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+  content: '● ';
+  font-size: 0.65em;
+  vertical-align: middle;
+  color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 /* ── Workflow progress block ─────────────────────────────────────────────── */
