@@ -6695,6 +6695,46 @@ body.ct-skills-resizing {
   font-style: italic;
 }
 
+/* Multi-line modal fields (MCP server args/env/headers) */
+.ct-modal-textarea {
+  min-height: 4.5em;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  resize: vertical;
+}
+
+/* ── MCP servers tab ─────────────────────────────────────────────────────── */
+
+.ct-mcp-type-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+}
+
+.ct-mcp-type-badge--stdio {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.ct-mcp-type-badge--http,
+.ct-mcp-type-badge--sse {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 18%, transparent);
+}
+
+.ct-mcp-type-badge--sdk,
+.ct-mcp-type-badge--unknown {
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+}
+
 /* ── Staleness badge in settings ────────────────────────────────────────── */
 
 .ct-skill-source-updates-badge {
