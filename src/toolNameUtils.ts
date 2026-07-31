@@ -183,3 +183,24 @@ export function groupToolCalls(tools: import('./types').ToolCallRecord[]): ToolC
   }
   return result;
 }
+
+/**
+ * Deterministic key for a LIVE (in-progress) tool-call group's expand/collapse
+ * state — used by ThreadsView's renderLiveToolCalls/renderToolGroup so a group
+ * a user expands mid-turn stays expanded as more same-kind calls arrive and
+ * the group is rebuilt on every debounced re-render.
+ *
+ * Unlike a finalized group's key (which hashes every member's toolUseId — see
+ * ThreadsView.toolGroupKey), a live group's tool list keeps growing as the
+ * turn progresses, so the full member list isn't a stable identity. The FIRST
+ * call's id is stable though: groupToolCalls scans left-to-right and only
+ * ever extends a run at the tail or starts a new one — it never reinterprets
+ * an earlier boundary — so pairing the first call's id with the activity kind
+ * uniquely and durably identifies "this run" across rebuilds. A kind change
+ * always starts a new run (and therefore a new key), matching groupToolCalls'
+ * own chunking rule.
+ */
+export function liveToolGroupKey(tools: import('./types').ToolCallRecord[]): string {
+  const first = tools[0];
+  return `${first.toolUseId ?? first.timestamp ?? ''}:${getActivityKind(first.name)}`;
+}

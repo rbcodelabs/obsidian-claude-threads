@@ -12,7 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { groupToolCalls, getActivityKind, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
+import { groupToolCalls, liveToolGroupKey, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -2153,20 +2153,6 @@ export class ThreadsView extends ItemView {
     return tools.map(t => t.toolUseId ?? t.timestamp ?? '').join(':');
   }
 
-  /**
-   * Deterministic key for a LIVE tool-call group's expand/collapse state.
-   * Unlike toolGroupKey (which hashes every member's id), a live group's tool
-   * list keeps growing as more same-kind calls arrive mid-turn, so the full
-   * member list isn't stable. The first call's id IS stable though:
-   * groupToolCalls scans left-to-right and only ever extends a run at the
-   * tail or starts a new one — it never reinterprets an earlier boundary —
-   * so pairing it with the activity kind uniquely and durably identifies
-   * "this run" across rebuilds.
-   */
-  private liveToolGroupKey(tools: ToolCallRecord[]): string {
-    const first = tools[0];
-    return `${first.toolUseId ?? first.timestamp ?? ''}:${getActivityKind(first.name)}`;
-  }
 
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
     const wrapper = parent.createDiv('ct-tools');
@@ -2289,7 +2275,7 @@ export class ThreadsView extends ItemView {
         }
       } else {
         this.renderToolGroup(wrapper, entry, {
-          keyOverride: this.liveToolGroupKey(entry.tools),
+          keyOverride: liveToolGroupKey(entry.tools),
           expandedSet: this.liveExpandedToolGroups,
           onPillRendered: (tool, pill) => {
             if (tool.status === 'pending' && tool.toolUseId) {
