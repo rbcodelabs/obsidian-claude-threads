@@ -14,7 +14,7 @@ import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission, PendingQuestion } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
-import { formatToolName, getToolIcon } from './toolNameUtils';
+import { formatToolName, getToolIcon, groupToolCalls, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -59,6 +59,18 @@ export class MobileView extends ItemView {
   private lastRenderedPermissionCount = -1;
   private lastRenderedQuestionCount = -1;
   private streamingEl: HTMLElement | null = null;
+
+  // Expand/collapse state for tool-call groups (see renderToolGroup), keyed by
+  // `${startIndex}:${activityKind}` — mobile ToolCallRecords carry no
+  // toolUseId/timestamp (see MobileThreadStore.streamingTools), so position in
+  // the tool list is the only stable-ish identity available. Cleared on thread
+  // switch in renderConversation so state doesn't leak across threads. Note:
+  // updateStreamingEl() fully tears down and recreates the streaming element on
+  // every token/tool event, so expand state naturally does not persist across a
+  // live rebuild — this matches the pre-existing lack of any live incremental
+  // state on mobile (no per-tool status/toolUseId either); only the finalized
+  // per-message render benefits from this persisting.
+  private expandedToolGroups: Set<string> = new Set();
 
   // Context summary banner (mirrors desktop behaviour)
   private summaryBannerEl: HTMLElement | null = null;
@@ -441,6 +453,7 @@ export class MobileView extends ItemView {
     // Clear the streaming element ref — it will be destroyed by empty() below.
     this.streamingEl = null;
     this.messagesEl.empty();
+    this.expandedToolGroups.clear();
 
     if (!activeId || !this.store) {
       this.messagesEl.createDiv({ cls: 'ct-mobile-empty', text: 'Send a message to start.' });
@@ -642,17 +655,92 @@ export class MobileView extends ItemView {
     }
   }
 
-  /** Renders tool-call pills using the same ct-tool-pill classes as the desktop view. */
+  /**
+   * Renders tool-call pills using the same ct-tool-pill classes as the desktop
+   * view, collapsing runs of 2+ consecutive same-activity-kind calls into a
+   * `.ct-tool-group` exactly like ThreadsView.renderToolCalls (same
+   * groupToolCalls() chunking, same markup/classes) so the same styles.css
+   * rules apply unchanged and long agentic runs don't grow an unbounded flat
+   * pill list here either. Called for both the live streaming view
+   * (updateStreamingEl, active=true) and the finalized per-message view
+   * (renderMessage, active=false).
+   */
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], active: boolean): void {
     const wrapper = parent.createDiv('ct-tools');
-    for (const tool of tools) {
-      const pill = wrapper.createDiv(active ? 'ct-tool-pill ct-tool-active' : 'ct-tool-pill');
-      // 3.8 — Tool pill icons (matches desktop renderToolCalls pattern)
-      const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
-      setIcon(iconEl, getToolIcon(tool.name));
-      pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
-      if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+    let index = 0;
+    for (const entry of groupToolCalls(tools)) {
+      if (entry.kind === 'single') {
+        this.renderToolPill(wrapper, entry.tool, active);
+        index += 1;
+      } else {
+        this.renderToolGroup(wrapper, entry, active, index);
+        index += entry.tools.length;
+      }
     }
+  }
+
+  /** Renders a single tool call as a `.ct-tool-pill`. Shared by the flat path and renderToolGroup's body. */
+  private renderToolPill(wrapper: HTMLElement, tool: ToolCallRecord, active: boolean): void {
+    const pill = wrapper.createDiv(active ? 'ct-tool-pill ct-tool-active' : 'ct-tool-pill');
+    // 3.8 — Tool pill icons (matches desktop renderToolCalls pattern)
+    const iconEl = pill.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tool.name));
+    pill.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(tool.name) });
+    if (tool.summary) pill.createSpan({ cls: 'ct-tool-pill-text', text: tool.summary });
+  }
+
+  /**
+   * Renders a run of 2+ consecutive same-activity tool calls as a collapsible
+   * section, mirroring ThreadsView.renderToolGroup's markup/classes exactly so
+   * styles.css rules apply unchanged. Mobile ToolCallRecords carry no
+   * toolUseId/status (see MobileThreadStore.streamingTools) — there's no
+   * per-tool success/error/pending state to reflect on mobile today, live or
+   * finalized, so unlike the desktop version this has no error-triggered
+   * auto-expand and no "still running" pulse; that's a pre-existing fidelity
+   * gap on mobile, not a regression introduced here.
+   */
+  private renderToolGroup(
+    wrapper: HTMLElement,
+    entry: Extract<ToolCallGroup, { kind: 'group' }>,
+    active: boolean,
+    startIndex: number,
+  ): void {
+    const { activityKind, tools } = entry;
+    const groupKey = `${startIndex}:${activityKind}`;
+
+    const groupEl = wrapper.createDiv('ct-tool-group');
+    const headerRow = groupEl.createDiv('ct-tool-group-header ct-compressed-row');
+
+    const iconEl = headerRow.createSpan({ cls: 'ct-tool-pill-icon' });
+    setIcon(iconEl, getToolIcon(tools[0].name));
+
+    headerRow.createSpan({
+      cls: 'ct-compressed-summary',
+      text: `${ACTIVITY_LABELS[activityKind]} (${tools.length})`,
+    });
+
+    const expandBtn = headerRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+
+    const fullContent = groupEl.createDiv('ct-full-content');
+    for (const tool of tools) {
+      this.renderToolPill(fullContent, tool, active);
+    }
+
+    let expanded = this.expandedToolGroups.has(groupKey);
+    if (!expanded) fullContent.addClass('ct-hidden');
+    setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        fullContent.removeClass('ct-hidden');
+        this.expandedToolGroups.add(groupKey);
+      } else {
+        fullContent.addClass('ct-hidden');
+        this.expandedToolGroups.delete(groupKey);
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
   }
 
   /**
