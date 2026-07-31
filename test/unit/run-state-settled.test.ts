@@ -1,76 +1,100 @@
 /**
  * Regression tests for the "waiting to resume" UI-visibility bug (fix/
- * scheduled-wakeup-visibility).
+ * scheduled-wakeup-visibility), rewritten for the single-map ThreadSession
+ * model (ADR-0002 Stage 2).
  *
- * Root cause: `ThreadManager.isRunning(id)` returns true for
- * `sessions.has(id) || lingeringSessions.has(id)`. On `onDone`, the session
- * moves into `lingeringSessions` *before* the `'done'` event is emitted, so
- * `isRunning()` is still true at the moment the UI reacts to `'done'`.
- * `lingeringSessions` only actually clears once `run()` fully unwinds — but
- * no event was emitted at that point, so nothing told the UI to re-check.
- * The wake-up banner (and the AgentDashboard/Kanban "Waiting" bucket) stayed
- * stuck showing "running" state until an unrelated event forced a full
- * re-render (e.g. switching threads and back).
+ * Original root cause: under the old two-map model,
+ * `ThreadManager.isRunning(id)` returned `sessions.has(id) ||
+ * lingeringSessions.has(id)`. On `onDone`, the session moved into
+ * `lingeringSessions` *before* the `'done'` event was emitted, so
+ * `isRunning()` was still true at the moment the UI reacted to `'done'`.
+ * `lingeringSessions` only actually cleared once `run()` fully unwound — but
+ * no event fired at that point, so nothing told the UI to re-check. The
+ * fix was `{ type: 'run_state_settled' }`, emitted right after `run()`
+ * unwound, wired into every view that gates wake-up display on `isRunning()`.
  *
- * The fix: emit `{ type: 'run_state_settled' }` right after `run()` unwinds
- * (ThreadManager.ts, immediately after the lingering-cleanup block), and
- * wire every view that gates on `isRunning()` for wake-up display to react
- * to it.
+ * ADR-0002 Stage 2 removes the two-map design entirely: `isRunning(id)` is
+ * now a plain `this.sessions.get(id)?.turnInFlight ?? false` read — no
+ * second map, no separate "has run() unwound yet?" question. But a related,
+ * narrower race survives in a new shape and is exactly what
+ * `emitRunStateSettledWhenIdle()` still guards against (see its doc comment
+ * in ThreadManager.ts): `ThreadSession._turnInFlight` flips to `false`
+ * *immediately after* `onDone`/`onInterrupted`/`onError` returns, not
+ * before — the callback fires first, then `pumpMessages()`'s `case
+ * 'result':` handler sets the flag. So a listener reacting SYNCHRONOUSLY to
+ * the `'done'`/`'interrupted'`/`'error'` event ThreadManager's own callback
+ * emits (inside that same callback, before it returns) would still see
+ * `isRunning()` as `true` — the flag hasn't flipped yet. `run_state_settled`
+ * is deferred via `queueMicrotask()` specifically so that by the time
+ * listeners react to IT, the flip has already happened.
  *
- * These tests exercise the real `ThreadManager` (mocking only `ClaudeSession`
- * itself, exactly like thread-manager-lingering-sessions.test.ts) and small
- * mirrors of the view-layer decision logic that ThreadsView / AgentDashboard
- * / KanbanView apply in their `handleEvent()` switches — mirrors are used
- * because those views are full Obsidian ItemViews not instantiated directly
- * in this suite (see threads-view-cancel-restore.test.ts for the established
- * pattern). Each mirror only recomputes on the exact event types the real
- * `handleEvent()` case lists, so it fails the same way the real UI failed
- * before the fix if `run_state_settled` isn't wired up or isn't emitted.
+ * These tests exercise the real `ThreadManager` (mocking only `ThreadSession`
+ * itself, matching thread-manager-lingering-sessions.test.ts's canonical
+ * mock) and small mirrors of the view-layer decision logic that ThreadsView /
+ * AgentDashboard / KanbanView apply in their `handleEvent()` switches —
+ * mirrors are used because those views are full Obsidian ItemViews not
+ * instantiated directly in this suite (see threads-view-cancel-restore.test.ts
+ * for the established pattern). Each mirror only recomputes on the exact
+ * event types the real `handleEvent()` case lists, so it fails the same way
+ * the real UI failed before the fix if `run_state_settled` isn't wired up or
+ * isn't emitted.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ImageAttachment } from '../../src/types';
 
-interface MockClaudeSession {
-  callbacks: SessionCallbacks | null;
-  resolveRun: (() => void) | null;
-  run(...args: unknown[]): Promise<void>;
-  endInput(): void;
-  close(): void;
-  interrupt(): Promise<void>;
-}
+// ─── canonical ThreadSession mock (see test/unit/session-message-handlers.test.ts) ──
+//
+// Critically, this mock preserves the REAL ordering ThreadSession itself
+// uses — the wrapped callback runs, THEN turnInFlight flips false — rather
+// than flipping the flag first. Getting this order backwards would make
+// every test below pass for the wrong reason (or fail to catch a real
+// regression in emitRunStateSettledWhenIdle's queueMicrotask deferral).
 
 const mock = vi.hoisted(() => ({
-  instances: [] as MockClaudeSession[],
+  callbacks: null as SessionCallbacks | null,
+  lastKnownSessionId: undefined as string | undefined,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    callbacks: SessionCallbacks | null = null;
-    resolveRun: (() => void) | null = null;
-    constructor() {
-      mock.instances.push(this as unknown as MockClaudeSession);
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.lastKnownSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.lastKnownSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns); // callback fires first...
+          this._turnInFlight = false;            // ...flag flips after (real order)
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    async run(
-      _prompt: string,
-      _resume: unknown,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      this.callbacks = callbacks;
-      return new Promise<void>((res) => {
-        this.resolveRun = res;
-      });
+    send(_text: string, _images?: ImageAttachment[]): void {
+      this._turnInFlight = true;
     }
-    endInput() {}
-    close() {
-      this.resolveRun?.();
-      this.resolveRun = null;
+    async interrupt(): Promise<void> {
+      mock.callbacks?.onInterrupted(mock.lastKnownSessionId ?? '');
     }
-    async interrupt() {}
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -162,74 +186,117 @@ function makeBucketMirror(
 }
 
 beforeEach(() => {
-  mock.instances = [];
+  mock.callbacks = null;
+  mock.lastKnownSessionId = undefined;
 });
 
-describe('ThreadManager — run_state_settled', () => {
-  it('is emitted once run() fully unwinds, at which point isRunning() is false', async () => {
+describe('ThreadManager — run_state_settled (single-session model)', () => {
+  it('fires once after onDone, by which point isRunning() is already false', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', process.cwd());
 
     const events: string[] = [];
     manager.subscribe((id, event) => {
       if (id === thread.id) events.push(event.type);
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
-    await Promise.resolve();
-    const session = mock.instances[0];
-
-    // First result lands — session becomes lingering, run() has not resolved.
-    session.callbacks!.onDone('sess-1', 0.001, 1);
+    await manager.sendMessage(thread.id, 'Hi');
     expect(manager.isRunning(thread.id)).toBe(true);
+
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+
+    // queueMicrotask hasn't fired yet on this synchronous tick.
     expect(events).toContain('done');
     expect(events).not.toContain('run_state_settled');
 
-    // run() now fully resolves (mirrors the CLI process exiting after a
-    // lingering background-task-driven generation finishes).
-    session.close();
-    await sendPromise;
+    await Promise.resolve(); // let the queued microtask run
+    await Promise.resolve();
 
     expect(events[events.length - 1]).toBe('run_state_settled');
     expect(manager.isRunning(thread.id)).toBe(false);
+    const settledCount = events.filter((t) => t === 'run_state_settled').length;
+    expect(settledCount).toBe(1);
   });
 
-  it('is emitted on the fast path too, when there is no lingering session', async () => {
+  it('regression: isRunning() is still true at the exact synchronous moment the \'done\' event fires — the reason run_state_settled defers via queueMicrotask', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', process.cwd());
+
+    let isRunningDuringDoneEvent: boolean | null = null;
+    manager.subscribe((id, event) => {
+      if (id === thread.id && event.type === 'done') {
+        isRunningDuringDoneEvent = manager.isRunning(thread.id);
+      }
+    });
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+
+    // ThreadSession's real ordering: the onDone callback (which emits
+    // 'done') runs BEFORE _turnInFlight flips to false. A subscriber
+    // reacting to 'done' synchronously must therefore still see isRunning()
+    // as true — if this ever reads false, ThreadSession's callback/flag
+    // ordering silently inverted and `run_state_settled`'s queueMicrotask
+    // deferral (and this file's guarantee that listeners see the SETTLED
+    // value) would no longer be necessary/correct.
+    expect(isRunningDuringDoneEvent).toBe(true);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(manager.isRunning(thread.id)).toBe(false);
+  });
+
+  it('fires after onInterrupted too, not just onDone', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', process.cwd());
 
     const events: string[] = [];
     manager.subscribe((id, event) => {
       if (id === thread.id) events.push(event.type);
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
+    await manager.interrupt(thread.id);
+
     await Promise.resolve();
-    const session = mock.instances[0];
+    await Promise.resolve();
 
-    // onDone and the immediate run() resolution both happen before any
-    // await yields back to the test — run_state_settled must still land.
-    session.callbacks!.onDone('sess-1', 0.001, 1);
-    session.close();
-    await sendPromise;
+    expect(events).toContain('interrupted');
+    expect(events).toContain('run_state_settled');
+    expect(manager.isRunning(thread.id)).toBe(false);
+  });
 
+  it('fires after onError too', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', process.cwd());
+
+    const events: string[] = [];
+    manager.subscribe((id, event) => {
+      if (id === thread.id) events.push(event.type);
+    });
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onError(new Error('boom'));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(events).toContain('error');
     expect(events).toContain('run_state_settled');
     expect(manager.isRunning(thread.id)).toBe(false);
   });
 });
 
 describe('wake-up banner visibility — regression for the stuck-until-thread-switch bug', () => {
-  it('stays hidden while lingering, then becomes visible automatically on run_state_settled — no extra trigger', async () => {
+  it('stays hidden while a turn is in flight, then becomes visible automatically on run_state_settled — no extra trigger', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', process.cwd());
     const wakeups = makeWakeupStore();
     const banner = makeWakeupBannerMirror(manager, wakeups, thread.id);
 
     expect(banner.visible).toBe(false);
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
-    await Promise.resolve();
-    const session = mock.instances[0];
+    await manager.sendMessage(thread.id, 'Hi');
 
     // A wake-up is registered mid-turn, exactly like the ScheduleWakeup MCP
     // tool calling back into the plugin while the thread is still running.
@@ -237,18 +304,12 @@ describe('wake-up banner visibility — regression for the stuck-until-thread-sw
     manager.notifyWakeupChanged(thread.id);
     expect(banner.visible).toBe(false); // still running — must stay hidden
 
-    // The 'done' event fires while the session is lingering. isRunning() is
-    // still true at this instant — this is the exact moment the old code
-    // reacted to 'done' and left the banner hidden.
-    session.callbacks!.onDone('sess-1', 0.001, 1);
-    expect(manager.isRunning(thread.id)).toBe(true);
-    expect(banner.visible).toBe(false);
-
-    // run() fully unwinds — isRunning() reaches its final settled value.
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
     // The banner mirror only recomputes on 'wakeup_changed'/'run_state_settled',
-    // so this assertion fails unless run_state_settled actually fired here.
-    session.close();
-    await sendPromise;
+    // so this assertion fails unless run_state_settled actually fires and
+    // isRunning() has already settled to false by the time it does.
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(manager.isRunning(thread.id)).toBe(false);
     expect(banner.visible).toBe(true);
@@ -260,25 +321,21 @@ describe('wake-up banner visibility — regression for the stuck-until-thread-sw
 describe('AgentDashboard/Kanban "Waiting" bucket — same regression, dashboard side', () => {
   it('moves a thread from Working to Waiting automatically on run_state_settled', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+    const thread = manager.createThread('T', process.cwd());
     const wakeups = makeWakeupStore();
     const bucketMirror = makeBucketMirror(manager, wakeups, thread.id);
 
     expect(bucketMirror.bucket).toBe('other');
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
-    await Promise.resolve();
-    const session = mock.instances[0];
+    await manager.sendMessage(thread.id, 'Hi');
 
     wakeups.register(thread.id, { fireAt: Date.now() + 60_000 });
     manager.notifyWakeupChanged(thread.id);
+    expect(bucketMirror.bucket).toBe('running');
 
-    session.callbacks!.onDone('sess-1', 0.001, 1);
-    // Still lingering (isRunning() true) — must not have moved to Waiting yet.
-    expect(bucketMirror.bucket).not.toBe('waiting');
-
-    session.close();
-    await sendPromise;
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(bucketMirror.bucket).toBe('waiting');
 

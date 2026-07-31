@@ -9,14 +9,15 @@
  *   - New permissionMode values accepted by Thread type
  *
  * Strategy: ThreadManager.buildSessionOptions is private, so we test it
- * indirectly by spying on ClaudeSession.run and capturing the sessionOptions
- * argument (the 14th parameter).
+ * indirectly by spying on ThreadSession.start and capturing the
+ * options.sessionOptions object.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
-import type { Thread } from '../../src/types';
+import type { Thread, ImageAttachment } from '../../src/types';
 
 // ─── hoisted mock ─────────────────────────────────────────────────────────────
 
@@ -24,37 +25,52 @@ const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
   sessionOptions: null as Record<string, unknown> | null,
   permissionMode: null as string | null,
-  resolve: null as (() => void) | null,
+  lastKnownSessionId: undefined as string | undefined,
+  startCallCount: 0,
+  sendCallCount: 0,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      _prompt: string,
-      _resumeSessionId: string | undefined,
-      _cwd: unknown,
-      permissionMode: string,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-      _dirs?: unknown,
-      _model?: string,
-      _images?: unknown,
-      _appendSystem?: unknown,
-      _mcpServers?: unknown,
-      _secretEnv?: unknown,
-      _disallowedTools?: unknown,
-      sessionOptions?: Record<string, unknown>,
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      mock.sessionOptions = sessionOptions ?? null;
-      mock.permissionMode = permissionMode;
-      return new Promise<void>((res) => { mock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.startCallCount += 1;
+      mock.lastKnownSessionId = options.resume;
+      mock.sessionOptions = (options.sessionOptions as Record<string, unknown>) ?? null;
+      mock.permissionMode = options.permissionMode as string;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.lastKnownSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {}
+    send(_text: string, _images?: ImageAttachment[]): void {
+      mock.sendCallCount += 1;
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
+      mock.callbacks?.onInterrupted(mock.lastKnownSessionId ?? '');
+    }
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
-  formatToolName: (s: string) => s,
-  getToolIcon: () => 'wrench',
 }));
 
 const { ThreadManager } = await import('../../src/ThreadManager');
@@ -63,16 +79,17 @@ function makeManager(overrides = {}) {
   return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
 }
 
-async function finishSession() {
+function finishSession() {
   mock.callbacks!.onDone('sess', 0, 1);
-  mock.resolve!();
 }
 
 beforeEach(() => {
   mock.callbacks = null;
   mock.sessionOptions = null;
   mock.permissionMode = null;
-  mock.resolve = null;
+  mock.lastKnownSessionId = undefined;
+  mock.startCallCount = 0;
+  mock.sendCallCount = 0;
 });
 
 // ─── thinkingMode ─────────────────────────────────────────────────────────────
@@ -81,27 +98,24 @@ describe('thinkingMode → sessionOptions.thinking', () => {
   it("'disabled' does NOT pass thinking key", async () => {
     const manager = makeManager({ thinkingMode: 'disabled' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.thinking).toBeUndefined();
   });
 
   it("'adaptive' passes { type: 'adaptive' }", async () => {
     const manager = makeManager({ thinkingMode: 'adaptive' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.thinking).toEqual({ type: 'adaptive' });
   });
 
   it("'enabled' passes { type: 'enabled', budgetTokens }", async () => {
     const manager = makeManager({ thinkingMode: 'enabled', thinkingBudgetTokens: 5000 });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.thinking).toEqual({ type: 'enabled', budgetTokens: 5000 });
   });
 
@@ -112,9 +126,8 @@ describe('thinkingMode → sessionOptions.thinking', () => {
     delete (settings as Partial<typeof settings>).thinkingBudgetTokens;
     const manager = makeManager(settings);
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     const thinking = mock.sessionOptions?.thinking as { type: string; budgetTokens?: number } | undefined;
     expect(thinking?.budgetTokens).toBe(8000);
   });
@@ -126,36 +139,32 @@ describe('effort → sessionOptions.effort', () => {
   it("'default' does NOT pass effort key", async () => {
     const manager = makeManager({ effort: 'default' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.effort).toBeUndefined();
   });
 
   it("'high' passes effort: 'high'", async () => {
     const manager = makeManager({ effort: 'high' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.effort).toBe('high');
   });
 
   it("'max' passes effort: 'max'", async () => {
     const manager = makeManager({ effort: 'max' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.effort).toBe('max');
   });
 
   it("'xhigh' passes effort: 'xhigh'", async () => {
     const manager = makeManager({ effort: 'xhigh' });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.effort).toBe('xhigh');
   });
 });
@@ -166,18 +175,16 @@ describe('agentProgressSummaries → sessionOptions', () => {
   it('passes agentProgressSummaries: true when enabled', async () => {
     const manager = makeManager({ agentProgressSummaries: true });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.agentProgressSummaries).toBe(true);
   });
 
   it('passes agentProgressSummaries: false when disabled', async () => {
     const manager = makeManager({ agentProgressSummaries: false });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.agentProgressSummaries).toBe(false);
   });
 });
@@ -188,18 +195,16 @@ describe('enable1MContext → sessionOptions.betas', () => {
   it("passes betas: ['context-1m-2025-08-07'] when enable1MContext is true", async () => {
     const manager = makeManager({ enable1MContext: true });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.betas).toEqual(['context-1m-2025-08-07']);
   });
 
   it('does NOT pass betas when enable1MContext is false', async () => {
     const manager = makeManager({ enable1MContext: false });
     const thread = manager.createThread('T');
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.betas).toBeUndefined();
   });
 });
@@ -211,9 +216,8 @@ describe('Thread.ephemeral → sessionOptions.persistSession', () => {
     const manager = makeManager();
     const thread = manager.createThread('T');
     thread.ephemeral = true;
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.persistSession).toBe(false);
   });
 
@@ -221,9 +225,8 @@ describe('Thread.ephemeral → sessionOptions.persistSession', () => {
     const manager = makeManager();
     const thread = manager.createThread('T');
     // ephemeral is not set (undefined)
-    const p = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     await finishSession();
-    await p;
     expect(mock.sessionOptions?.persistSession).toBeUndefined();
   });
 });

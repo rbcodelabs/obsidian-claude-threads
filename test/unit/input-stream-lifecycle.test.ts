@@ -1,36 +1,49 @@
 /**
- * Tests for the streaming-input lifecycle fix (fix/stream-closed-permission-channel):
+ * Tests for ThreadSession's push-channel lifecycle (ADR-0002 Stage 2).
  *
- * ClaudeSession now always drives the SDK via a held-open async generator instead
- * of a plain string prompt. A string prompt sets the SDK's internal
- * `isSingleUserTurn` flag, which force-closes stdin — the only channel carrying
- * permission responses (canUseTool, AskUserQuestion, ExitPlanMode) — the instant
- * the first `result` event arrives. Once a background task keeps the CLI alive
- * past that first result (routine now — see task_started/task_notification
- * tracking), every later permission round-trip on a string-prompt session was
- * force-rejected with "Stream closed" even though the CLI process was still
- * running.
+ * This file used to test ClaudeSession's per-turn release-gate mechanics
+ * (pendingBgTaskIds / sawTaskNotificationSinceLastResult / the three-condition
+ * releaseInput() check) — the machinery that decided when it was "safe" to
+ * let the held-open input generator complete (triggering the SDK's
+ * transport.endInput()) without cutting off a still-pending permission
+ * round-trip. ADR-0002 deletes that machinery outright: ThreadSession has no
+ * release gate at all. Its input channel stays open unconditionally from
+ * start() until an explicit close()/restart() — there is no "is it safe to
+ * end the channel yet?" decision to get wrong, because the channel is never
+ * ended implicitly. `send()` pushes onto it unconditionally, whether or not a
+ * turn is in flight or a canUseTool call is pending (confirmed against the
+ * live CLI — see ADR-0002 §2's two probes).
  *
- * The generator now only completes (which is how *we* trigger the SDK's
- * `transport.endInput()`) once no background task is pending AND no
- * task_notification landed in the same result window, re-checked on every
- * `result` event this loop sees. The notification condition was added after
- * a live probe against the real CLI (see probe-stream-closed.ts referenced
- * in the PR) showed that a fast background Bash task can start, complete,
- * AND notify entirely before the first `result` — so "no task pending" alone
- * is not a sufficient release signal; the follow-up generation that actually
- * reacts to the notification still arrives afterward and needs the channel.
+ * The exact bug class the old release-gate tests guarded against — a
+ * still-pending permission request (ExitPlanMode / AskUserQuestion / a
+ * generic tool prompt) getting its stdin cut out from under it, producing
+ * "Stream closed" / "Tool permission request failed" — is now structurally
+ * impossible rather than patched case-by-case. The tests below prove that
+ * directly: they drive a real pending canUseTool call and a concurrent
+ * send(), against ThreadSession itself (mocking only the raw SDK, same
+ * technique the old file used against ClaudeSession), and assert nothing
+ * ever throws or drops the request, mirroring ADR-0002 §2's live-CLI probes.
+ *
+ * Also covers two Stage B regressions found during Stage B/C/D review that
+ * didn't have coverage yet:
+ *   - the double q.close() guard (`if (this.query === q)` in pumpMessages'
+ *     finally) — an external close() racing the pump loop's own cleanup must
+ *     not produce a second close()/spurious error.
+ *   - the `_turnInFlight` race in the transport-error auto-retry path — a
+ *     retry's own send() sets turnInFlight = true for the NEW generation;
+ *     the OLD generation's pump-loop finally must not stomp it back to false
+ *     (fixed via the `supersededByRestart` guard).
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 
-// ─── controllable output-message channel + SDK mock ──────────────────────────
+// ─── controllable output-message channel (mirrors the old file's helper) ─────
 //
 // A push()/close()-driven async iterable (rather than a static pre-baked
-// array) so tests can pace exactly which SDK message the run() loop has
-// processed before asserting on the state of the (separately, manually
-// driven) input generator.
+// array) so tests can pace exactly which SDK message the pump loop has
+// processed before asserting on state.
 
 function makeChannel() {
   const queue: Record<string, unknown>[] = [];
@@ -57,37 +70,93 @@ function makeChannel() {
   };
 }
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => {
-  let _promptArg: unknown = null;
-  let _queryIterable: AsyncIterable<Record<string, unknown>> | null = null;
-  let _canUseTool: unknown = null;
-
+/**
+ * Like makeChannel(), but supports injecting a rejection into whichever
+ * `.next()` call is next in line (either a pending waiter, if the pump loop
+ * is already suspended awaiting output, or the next call if none is pending
+ * yet). Used to simulate a transport dropping mid-turn at a controlled point
+ * — rather than rejecting immediately on construction — so the test can
+ * arrange state (send a turn, arm the next generation's channel) before
+ * triggering the failure.
+ */
+function makeThrowableChannel() {
+  const queue: Record<string, unknown>[] = [];
+  const waiters: Array<{ resolve: (v: IteratorResult<Record<string, unknown>>) => void; reject: (e: Error) => void }> = [];
+  let closed = false;
+  let pendingError: Error | null = null;
   return {
-    query: (opts: { prompt: unknown; options: Record<string, unknown> }) => {
-      _promptArg = opts.prompt;
-      _canUseTool = (opts.options as { canUseTool: unknown }).canUseTool;
-      const iter = _queryIterable!;
+    push(msg: Record<string, unknown>) {
+      if (waiters.length > 0) waiters.shift()!.resolve({ value: msg, done: false });
+      else queue.push(msg);
+    },
+    throwNext(err: Error) {
+      if (waiters.length > 0) waiters.shift()!.reject(err);
+      else pendingError = err;
+    },
+    close() {
+      closed = true;
+      while (waiters.length > 0) waiters.shift()!.resolve({ value: undefined as never, done: true });
+    },
+    [Symbol.asyncIterator]() {
       return {
-        [Symbol.asyncIterator]: () => iter[Symbol.asyncIterator](),
-        close: () => {},
+        next: (): Promise<IteratorResult<Record<string, unknown>>> => {
+          if (pendingError) {
+            const e = pendingError;
+            pendingError = null;
+            return Promise.reject(e);
+          }
+          if (queue.length > 0) return Promise.resolve({ value: queue.shift()!, done: false });
+          if (closed) return Promise.resolve({ value: undefined as never, done: true });
+          return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+        },
+      };
+    },
+  };
+}
+
+// ─── SDK mock — tracks every query() invocation ("generation") separately so
+// tests can inspect restart()'s second generation independently of the first ──
+
+interface Generation {
+  promptArg: AsyncIterable<Record<string, unknown>>;
+  canUseTool: ((name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>) | null;
+  closeCalls: number;
+  setPermissionMode: ReturnType<typeof vi.fn>;
+}
+
+const sdk = vi.hoisted(() => ({
+  generations: [] as Generation[],
+  nextIterable: null as AsyncIterable<Record<string, unknown>> | null,
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => {
+  return {
+    query: (opts: { prompt: AsyncIterable<Record<string, unknown>>; options: Record<string, unknown> }) => {
+      const gen: Generation = {
+        promptArg: opts.prompt,
+        canUseTool: (opts.options.canUseTool as Generation['canUseTool']) ?? null,
+        closeCalls: 0,
+        setPermissionMode: vi.fn(async () => {}),
+      };
+      sdk.generations.push(gen);
+      const outputIterable = sdk.nextIterable!;
+      return {
+        [Symbol.asyncIterator]: () => outputIterable[Symbol.asyncIterator](),
+        close: () => { gen.closeCalls += 1; },
         interrupt: async () => {},
         supportedModels: async () => [],
         supportedAgents: async () => [],
         getContextUsage: async () => null,
+        setPermissionMode: gen.setPermissionMode,
+        setModel: async () => {},
       };
     },
-    __setIterable: (it: AsyncIterable<Record<string, unknown>>) => { _queryIterable = it; },
-    __getPromptArg: () => _promptArg,
-    // Exposes the canUseTool closure the SDK would normally invoke itself
-    // when the model calls a tool. The mocked SDK never calls it on its
-    // own (we're driving events by hand via the channel), so tests that
-    // need to simulate an in-flight ExitPlanMode/AskUserQuestion/permission
-    // round-trip must invoke it directly.
-    __getCanUseTool: () => _canUseTool,
+    __setNextOutputIterable: (it: AsyncIterable<Record<string, unknown>>) => { sdk.nextIterable = it; },
+    __generations: () => sdk.generations,
   };
 });
 
-const { ClaudeSession } = await import('../../src/ClaudeSession');
+const { ThreadSession } = await import('../../src/ThreadSession');
 
 function minimalCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallbacks {
   return {
@@ -105,24 +174,33 @@ function minimalCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCal
   };
 }
 
+const baseOptions = (callbacks: SessionCallbacks): ThreadSessionOptions => ({
+  claudePath: '/fake/claude',
+  cwd: '/tmp',
+  permissionMode: 'default',
+  extraEnvRaw: '',
+  callbacks,
+});
+
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
-const successResult = (numTurns = 1) => ({ type: 'result', subtype: 'success', session_id: 's', total_cost_usd: 0, num_turns: numTurns });
+async function flush(times = 3): Promise<void> {
+  for (let i = 0; i < times; i++) await tick();
+}
 
-describe('ClaudeSession — prompt is always a streaming-input generator', () => {
-  it('passes an AsyncIterable (not a string) for a text-only turn, yielding one user message', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
+const successResult = (sessionId = 's', numTurns = 1) =>
+  ({ type: 'result', subtype: 'success', session_id: sessionId, total_cost_usd: 0, num_turns: numTurns });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hello there', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
+describe('ThreadSession — push-channel content shape', () => {
+  it('pushes a plain-text user message for a text-only send()', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
 
-    const promptArg = __getPromptArg();
-    expect(typeof promptArg).not.toBe('string');
-    expect(typeof (promptArg as AsyncIterable<unknown>)[Symbol.asyncIterator]).toBe('function');
+    const gen = sdk.generations[0];
+    const iter = gen.promptArg[Symbol.asyncIterator]();
 
-    const iter = (promptArg as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    session.send('hello there');
     const first = await iter.next();
     expect(first.done).toBe(false);
     const msg = first.value as { type: string; parent_tool_use_id: unknown; message: { role: string; content: unknown } };
@@ -131,397 +209,197 @@ describe('ClaudeSession — prompt is always a streaming-input generator', () =>
     expect(msg.message.role).toBe('user');
     expect(msg.message.content).toBe('hello there');
 
-    channel.push(successResult());
-    channel.close();
-    await runPromise;
+    session.close();
   });
 
-  it('passes an AsyncIterable with text+image content blocks for an image turn', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
+  it('pushes text+image content blocks for an image send()', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run(
-      'look at this',
-      undefined,
-      '/tmp',
-      'default',
-      '',
-      minimalCallbacks(),
-      undefined,
-      undefined,
-      [{ mediaType: 'image/png', base64: 'AAAA' }],
-    );
-    await tick();
+    const gen = sdk.generations[0];
+    const iter = gen.promptArg[Symbol.asyncIterator]();
 
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    session.send('look at this', [{ mediaType: 'image/png', base64: 'AAAA' }]);
     const first = await iter.next();
     const msg = first.value as { message: { content: Array<Record<string, unknown>> } };
     expect(Array.isArray(msg.message.content)).toBe(true);
     expect(msg.message.content[0]).toMatchObject({ type: 'text', text: 'look at this' });
     expect(msg.message.content[1]).toMatchObject({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
 
-    channel.push(successResult());
-    channel.close();
-    await runPromise;
+    session.close();
   });
 });
 
-describe('ClaudeSession — held-open input generator lifecycle', () => {
-  it('completes the input generator after a result with no pending background tasks', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
+describe('ThreadSession — channel stays open regardless of turn state (no release gate)', () => {
+  it('does NOT auto-close the channel after a result — only close()/restart() ends it', async () => {
+    sdk.generations = [];
+    const out = makeChannel();
+    sdk.nextIterable = out;
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    channel.push(successResult());
-    channel.close();
-    await runPromise;
-
-    const second = await iter.next();
-    expect(second.done).toBe(true);
-  });
-
-  it('stays open across a result while a background task is pending, then across the result the notification lands in, completing only on the next fully-quiet result', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', skip_transcript: true, uuid: 'u1', session_id: 's' });
-    channel.push(successResult());
-    await tick();
-
-    // Must still be open: race the second next() against a macrotask tick —
-    // it must not resolve while the background task is pending.
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    // The task notifies and a result immediately follows in the same window —
-    // verified live against the real CLI (a fast background Bash task can
-    // notify and resolve entirely *before* the CLI streams the follow-up
-    // generation that actually reacts to it) that this is NOT yet safe to
-    // release: it must survive one more full "quiet" result before we do.
-    channel.push({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed', summary: 'done', uuid: 'u2', session_id: 's' });
-    channel.push(successResult(2));
-    await tick();
-    expect(resolvedEarly).toBe(false);
-
-    // A subsequent result with no new task activity since the last one: now safe to release.
-    channel.push(successResult(3));
-    channel.close();
-    await runPromise;
-
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-    expect(resolvedEarly).toBe(true);
-  });
-
-  it('stays open when a background task starts AND notifies before the first result (verified live: a fast Bash background task still gets a follow-up generation)', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    // task_started, task_updated(completed), and task_notification all land
-    // before the first result — pendingBgTaskIds is already empty by result
-    // time, so that alone must NOT be read as "safe to release".
-    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', task_type: 'local_bash', uuid: 'u1', session_id: 's' });
-    channel.push({ type: 'system', subtype: 'task_updated', task_id: 't1', patch: { status: 'completed' }, uuid: 'u2', session_id: 's' });
-    channel.push({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed', summary: 'done', uuid: 'u3', session_id: 's' });
-    channel.push(successResult());
-    await tick();
-
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    // A follow-up generation's own result, with no new task activity since the last one.
-    channel.push(successResult(2));
-    channel.close();
-    await runPromise;
-
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-    expect(resolvedEarly).toBe(true);
-  });
-
-  it('releases at the result following a notification whose reaction generation already streamed (regression: wedged-on-Working)', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', task_type: 'local_bash', uuid: 'u1', session_id: 's' });
-    channel.push(successResult());
-    await tick();
-
-    // Still open: the background task is pending.
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    // The dominant real-world sequence (log-verified across 14 days of raw
-    // JSONL): the task notifies, the CLI streams the follow-up generation
-    // reacting to it, and that generation's own result is the LAST event of
-    // the turn. The assistant event IS the reaction the notification flag
-    // exists to protect — once it has streamed, the result that follows must
-    // release, because no further result is ever coming.
-    channel.push({ type: 'system', subtype: 'task_notification', task_id: 't1', status: 'completed', summary: 'done', uuid: 'u2', session_id: 's' });
-    channel.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'the task finished; here is my final answer' }] }, session_id: 's' });
-    channel.push(successResult(2));
-    await tick();
-
-    expect(resolvedEarly).toBe(true);
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-
-    channel.close();
-    await runPromise;
-  });
-
-  it('does not release on a result while a background task is still running, even after an assistant event (guard: PR #290 scenario)', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    // A task starts and the model finishes its generation while the task is
-    // still running — no notification, no terminal task_updated. The result
-    // must NOT release: the CLI process is still alive doing work and the
-    // next generation needs the permission channel (the original #290 bug).
-    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', task_type: 'local_bash', uuid: 'u1', session_id: 's' });
-    channel.push({ type: 'assistant', message: { content: [{ type: 'text', text: 'kicked off the task, waiting' }] }, session_id: 's' });
-    channel.push(successResult());
-    await tick();
-
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    session.endInput();
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-
-    channel.close();
-    await runPromise;
-  });
-
-  it('endInput() releases a held-open generator', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks());
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
+    const gen = sdk.generations[0];
+    const iter = gen.promptArg[Symbol.asyncIterator]();
+    session.send('hi');
     await iter.next();
 
-    channel.push({ type: 'system', subtype: 'task_started', task_id: 't1', description: 'bg', skip_transcript: true, uuid: 'u1', session_id: 's' });
-    channel.push(successResult());
-    await tick();
+    out.push(successResult());
+    await flush();
 
-    session.endInput();
-    const second = await iter.next();
-    expect(second.done).toBe(true);
-
-    channel.close();
-    await runPromise;
-  });
-
-  it('stays open while an ExitPlanMode canUseTool call is pending, even when an unrelated result lands with no background tasks (regression: premature-release-during-human-wait)', async () => {
-    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    let planApprove: ((editedPlan?: string) => void) | null = null;
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
-      onPlanReady: (_planText, approve, _reject) => { planApprove = approve; },
-    }));
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    // Simulate the SDK invoking canUseTool for ExitPlanMode — this is what
-    // happens when the model calls the tool mid-generation. Do NOT await it
-    // yet: it stays pending until the human clicks Approve/Reject.
-    const canUseTool = __getCanUseTool();
-    const canUseToolPromise = canUseTool('ExitPlanMode', { plan: 'do the thing' }, { signal: new AbortController().signal });
-
-    // A result from a *different*, concurrent background-task generation
-    // lands while ExitPlanMode is still awaiting the human — no background
-    // tasks pending, no notification flag set. Pre-fix, the gate would
-    // release here anyway, closing stdin out from under the still-pending
-    // plan approval.
-    channel.push(successResult());
-    await tick();
-
+    // The channel must still be open: racing another .next() against a
+    // macrotask tick must NOT resolve — unlike the old ClaudeSession release
+    // gate, a result alone is never sufficient to end the channel now.
     let resolvedEarly = false;
     const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
     await Promise.race([secondNext, tick()]);
     expect(resolvedEarly).toBe(false);
 
-    // The human approves the plan — canUseTool resolves, the counter drops
-    // back to 0, and the foreground generation that was blocked on it
-    // resumes and eventually emits its own result.
-    planApprove!();
-    await canUseToolPromise;
-    channel.push(successResult(2));
-    channel.close();
-    await runPromise;
-
+    session.close();
     const second = await secondNext;
     expect(second.done).toBe(true);
     expect(resolvedEarly).toBe(true);
   });
 
-  it('stays open while an AskUserQuestion canUseTool call is pending, even when an unrelated result lands with no background tasks', async () => {
-    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
+  it('regression: send() succeeds unconditionally while a canUseTool (permission) call is pending — the old "Stream closed" failure mode is structurally impossible', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    // Permission never resolves during this test — mirrors a human still
+    // staring at an approval dialog when a follow-up message arrives.
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({
+      onPermissionRequest: () => new Promise(() => {}),
+    })));
 
-    let resolveAnswers: ((answers: Record<string, string>) => void) | null = null;
-    const answersPromise = new Promise<Record<string, string>>((resolve) => { resolveAnswers = resolve; });
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
-      onAskUserQuestion: async () => answersPromise,
-    }));
-    await tick();
+    const gen = sdk.generations[0];
+    const iter = gen.promptArg[Symbol.asyncIterator]();
+    session.send('first message');
+    await iter.next();
 
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
+    // Simulate the model calling a tool mid-generation — canUseTool now has
+    // a pending, unresolved promise (a human permission prompt in flight).
+    expect(gen.canUseTool).not.toBeNull();
+    const canUseToolPromise = gen.canUseTool!('Bash', { command: 'ls' }, {});
+    let permissionSettled = false;
+    void canUseToolPromise.then(() => { permissionSettled = true; });
+    await flush();
+    expect(permissionSettled).toBe(false); // still pending — human hasn't acted
 
-    const canUseTool = __getCanUseTool();
-    const canUseToolPromise = canUseTool(
-      'AskUserQuestion',
-      { questions: [{ question: 'Which?', header: 'Choice', options: [], multiSelect: false }] },
-      { signal: new AbortController().signal },
-    );
-
-    channel.push(successResult());
-    await tick();
-
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    resolveAnswers!({});
-    await canUseToolPromise;
-    channel.push(successResult(2));
-    channel.close();
-    await runPromise;
-
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-    expect(resolvedEarly).toBe(true);
-  });
-
-  it('stays open while a generic permission-prompt canUseTool call is pending, even when an unrelated result lands with no background tasks', async () => {
-    const { __setIterable, __getPromptArg, __getCanUseTool } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = makeChannel();
-    __setIterable(channel);
-
-    let resolveAllowed: ((allowed: boolean) => void) | null = null;
-    const allowedPromise = new Promise<boolean>((resolve) => { resolveAllowed = resolve; });
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
-      onPermissionRequest: async () => allowedPromise,
-    }));
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield
-
-    const canUseTool = __getCanUseTool();
-    const canUseToolPromise = canUseTool(
-      'Bash',
-      { command: 'ls' },
-      { signal: new AbortController().signal, description: 'list files' },
-    );
-
-    channel.push(successResult());
-    await tick();
-
-    let resolvedEarly = false;
-    const secondNext = iter.next().then((r) => { resolvedEarly = true; return r; });
-    await Promise.race([secondNext, tick()]);
-    expect(resolvedEarly).toBe(false);
-
-    resolveAllowed!(true);
-    await canUseToolPromise;
-    channel.push(successResult(2));
-    channel.close();
-    await runPromise;
-
-    const second = await secondNext;
-    expect(second.done).toBe(true);
-    expect(resolvedEarly).toBe(true);
-  });
-
-  it('finally releases the input generator on a stream error', async () => {
-    const { __setIterable, __getPromptArg } = await import('@anthropic-ai/claude-agent-sdk') as any;
-    const channel = {
-      [Symbol.asyncIterator]: () => ({
-        next: () => Promise.reject(new Error('boom')),
-      }),
-    };
-    __setIterable(channel as AsyncIterable<Record<string, unknown>>);
-
-    const session = new ClaudeSession('/fake/claude');
-    const errors: Error[] = [];
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', minimalCallbacks({
-      onError: (e) => errors.push(e),
-    }));
-    await tick();
-
-    const iter = (__getPromptArg() as AsyncIterable<Record<string, unknown>>)[Symbol.asyncIterator]();
-    await iter.next(); // consume the initial yield; generator now suspended on `await inputReleased`
-
-    await runPromise;
-    expect(errors).toHaveLength(1);
+    // A second message arrives (e.g. the user typed a follow-up) while that
+    // permission request is still in flight. Under the old ClaudeSession
+    // model this exact scenario — a new message landing while
+    // pendingInteractiveCallbacks > 0 — was the one case PR #298's guard was
+    // built to protect, and ThreadManager's separate unwindLingeringSession()
+    // force-unwind path could still race past it (ADR-0002 "Context" section,
+    // second root cause). Under ThreadSession there is no gate and no second
+    // session to race: send() must just work.
+    expect(() => session.send('second message')).not.toThrow();
 
     const second = await iter.next();
-    expect(second.done).toBe(true);
+    expect(second.done).toBe(false);
+    const msg = second.value as { message: { content: unknown } };
+    expect(msg.message.content).toBe('second message');
+
+    // The permission request is still exactly as pending as before — sending
+    // more input never force-rejected it.
+    expect(permissionSettled).toBe(false);
+
+    session.close();
+  });
+
+  it('send() throws a clear error if called before start() or after close()', async () => {
+    const session = new ThreadSession('/fake/claude');
+    expect(() => session.send('too early')).toThrow(/before start\(\)/);
+
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    await session.start(baseOptions(minimalCallbacks()));
+    session.close();
+    expect(() => session.send('too late')).toThrow();
+  });
+});
+
+describe('ThreadSession — double-close guard (Stage B regression)', () => {
+  it('an external close() during an in-flight pump does not produce a second q.close() when the pump loop later unwinds', async () => {
+    sdk.generations = [];
+    const out = makeChannel();
+    sdk.nextIterable = out;
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
+
+    const gen = sdk.generations[0];
+    const iter = gen.promptArg[Symbol.asyncIterator]();
+    session.send('hi');
+    await iter.next();
+
+    // Nothing has been pushed to the output stream yet — the pump loop's
+    // `for await` is suspended waiting on it, exactly like a real in-flight
+    // generation. An external caller (e.g. deleteThread()/gracefulShutdown())
+    // closes the session out from under it.
+    session.close();
+    expect(gen.closeCalls).toBe(1);
+
+    // The suspended pump loop now gets its result and naturally unwinds.
+    // Its `finally` block must notice `this.query` is no longer THIS
+    // generation's q (already nulled by the external close() above) and
+    // must NOT call q.close() a second time.
+    out.push(successResult());
+    out.close();
+    await flush();
+
+    expect(gen.closeCalls).toBe(1);
+  });
+});
+
+describe('ThreadSession — transport-error auto-retry turnInFlight race (Stage B regression)', () => {
+  it('turnInFlight stays true across an internal transport-error retry — the old generation\'s pump-loop finally must not stomp the new generation\'s flag back to false', async () => {
+    sdk.generations = [];
+    // Generation 0's output stream: nothing pushed yet, so the pump loop's
+    // `for await` suspends waiting for output — exactly like a real
+    // in-flight generation — until the test triggers the transport failure
+    // explicitly below.
+    const out0 = makeThrowableChannel();
+    sdk.nextIterable = out0;
+
+    const reconnectingCalls: string[] = [];
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({
+      onReconnecting: (err) => { reconnectingCalls.push(err); },
+    })));
+
+    expect(sdk.generations).toHaveLength(1);
+    session.send('trigger a turn');
+    expect(session.turnInFlight).toBe(true);
+
+    // Arm the NEXT generation's output stream (left permanently open — this
+    // test only cares about the retry's own turnInFlight bookkeeping, not
+    // draining generation 1 to completion) BEFORE triggering the failure, so
+    // that when restart()'s internal start() calls query() again, it picks
+    // up a channel that won't itself immediately fail and cascade into a
+    // second, unrelated retry-exhaustion path.
+    sdk.nextIterable = makeChannel();
+
+    // Trigger the dropped-transport failure on generation 0's suspended
+    // `for await` — propagates into the catch block's auto-retry path
+    // (isTransportClosedError → shouldAutoRetryTransportError → restart() →
+    // send(TRANSPORT_ERROR_CONTINUATION_PROMPT)), and finally into the
+    // ORIGINAL pump call's `finally` block.
+    out0.throwNext(new Error('Stream closed'));
+    await flush(5);
+
+    // The retry happened: a second generation was opened, and onReconnecting
+    // fired for the UI's "hang on, recovering" signal.
+    expect(sdk.generations).toHaveLength(2);
+    expect(reconnectingCalls).toHaveLength(1);
+    expect(reconnectingCalls[0]).toMatch(/stream closed/i);
+
+    // The critical assertion: turnInFlight must still read true, because the
+    // retry's own send() (for the NEW generation) set it true, and the OLD
+    // generation's pump-loop finally is gated by `supersededByRestart` so it
+    // must not have reset it back to false afterward.
+    expect(session.turnInFlight).toBe(true);
+
+    session.close();
   });
 });

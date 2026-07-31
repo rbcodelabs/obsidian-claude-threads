@@ -7,8 +7,11 @@
  *      field Claude sends in the input. We signal approval via a non-interrupting deny message.)
  *   - reject() callback from onPlanReady → canUseTool resolves { behavior: 'deny', interrupt: true }
  *
- * These are tested through ClaudeSession directly (not ThreadManager) because
- * the plan-mode logic lives in ClaudeSession.canUseTool.  We drive the SDK
+ * These are tested through ThreadSession directly (not ThreadManager) because
+ * the plan-mode logic lives in ThreadSession.start()'s canUseTool closure (ADR-0002
+ * Stage 2 replaced the old per-turn ClaudeSession — see src/ThreadSession.ts's
+ * `start()` method, which duplicates the identical EnterPlanMode/ExitPlanMode
+ * branches that used to live in ClaudeSession.canUseTool). We drive the SDK
  * event stream so that EnterPlanMode / ExitPlanMode tool_use blocks fire the
  * real canUseTool callback chain.
  */
@@ -45,7 +48,18 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-const { ClaudeSession } = await import('../../src/ClaudeSession');
+const { ThreadSession } = await import('../../src/ThreadSession');
+
+/** Minimal ThreadSessionOptions builder shared by every test below. */
+function startOptions(callbacks: SessionCallbacks) {
+  return {
+    claudePath: '/fake/claude',
+    cwd: '/tmp',
+    permissionMode: 'default' as const,
+    extraEnvRaw: '',
+    callbacks,
+  };
+}
 
 async function* makeMessages(msgs: Record<string, unknown>[]): AsyncIterable<Record<string, unknown>> {
   for (const m of msgs) yield m;
@@ -108,8 +122,8 @@ describe('canUseTool EnterPlanMode', () => {
       onEnterPlanMode: () => enterPlanCalled.push(true),
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
 
     // Wait a tick for the session to initialize and register canUseTool
     await new Promise<void>((r) => setTimeout(r, 0));
@@ -126,7 +140,6 @@ describe('canUseTool EnterPlanMode', () => {
     expect(result.behavior).toBe('allow');
     expect(enterPlanCalled).toHaveLength(1);
 
-    await runPromise;
   });
 
   it('does NOT call onPlanReady for EnterPlanMode', async () => {
@@ -142,14 +155,13 @@ describe('canUseTool EnterPlanMode', () => {
       onPlanReady: () => planReadyCalled.push(true),
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
     await canUseTool('EnterPlanMode', {}, {});
 
-    await runPromise;
     expect(planReadyCalled).toHaveLength(0);
   });
 });
@@ -172,8 +184,8 @@ describe('canUseTool ExitPlanMode', () => {
       },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<{ behavior: string }>;
@@ -194,7 +206,6 @@ describe('canUseTool ExitPlanMode', () => {
     expect(result.behavior).toBe('deny');
     expect((result as any).interrupt).toBe(false);
 
-    await runPromise;
   });
 
   it("approve() makes canUseTool resolve with { behavior: 'deny', interrupt: false } (avoids Zod error on ExitPlanMode execution)", async () => {
@@ -209,8 +220,8 @@ describe('canUseTool ExitPlanMode', () => {
       onPlanReady: (_planText, approve, _reject) => { approveRef = approve; },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<{ behavior: string }>;
@@ -226,7 +237,6 @@ describe('canUseTool ExitPlanMode', () => {
     expect((result as any).interrupt).toBe(false);
     expect((result as any).message).toContain('approved');
 
-    await runPromise;
   });
 
   it("reject() makes canUseTool resolve with { behavior: 'deny' }", async () => {
@@ -241,8 +251,8 @@ describe('canUseTool ExitPlanMode', () => {
       onPlanReady: (_planText, _approve, reject) => { rejectRef = reject; },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<{ behavior: string; message?: string }>;
@@ -256,7 +266,6 @@ describe('canUseTool ExitPlanMode', () => {
     expect((result as any).interrupt).toBe(false);
     expect((result as any).message).toContain('rejected');
 
-    await runPromise;
   });
 
   it('fires onPlanReady with the plan text from input.plan', async () => {
@@ -274,14 +283,13 @@ describe('canUseTool ExitPlanMode', () => {
       },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
     await canUseTool('ExitPlanMode', { plan: 'Step 1: research\nStep 2: implement' }, {});
 
-    await runPromise;
     expect(receivedPlan).toBe('Step 1: research\nStep 2: implement');
   });
 
@@ -302,8 +310,8 @@ describe('canUseTool ExitPlanMode', () => {
       onPlanReady: (_planText, approve, _reject) => { approveRef = approve; },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
@@ -317,7 +325,6 @@ describe('canUseTool ExitPlanMode', () => {
     expect(setPermissionMode).toHaveBeenCalledWith('default');
 
     release();
-    await runPromise;
   });
 
   it('reject() does NOT call setPermissionMode — rejecting a plan should not clear plan mode', async () => {
@@ -332,8 +339,8 @@ describe('canUseTool ExitPlanMode', () => {
       onPlanReady: (_planText, _approve, reject) => { rejectRef = reject; },
     });
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>;
@@ -342,7 +349,6 @@ describe('canUseTool ExitPlanMode', () => {
     await new Promise<void>((r) => setTimeout(r, 0));
     rejectRef!();
     await callPromise;
-    await runPromise;
 
     const setPermissionMode = __getSetPermissionMode();
     expect(setPermissionMode).not.toHaveBeenCalled();
@@ -358,8 +364,8 @@ describe('canUseTool ExitPlanMode', () => {
     // No onPlanReady registered
     const callbacks = minimalCallbacks({});
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', callbacks);
+    const session = new ThreadSession('/fake/claude');
+    await session.start(startOptions(callbacks));
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const canUseTool = __getCanUseTool() as (name: string, input: unknown, opts: Record<string, unknown>) => Promise<{ behavior: string }>;
@@ -367,6 +373,5 @@ describe('canUseTool ExitPlanMode', () => {
     expect(result.behavior).toBe('deny');
     expect((result as any).interrupt).toBe(false);
 
-    await runPromise;
   });
 });
