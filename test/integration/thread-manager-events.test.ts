@@ -1,47 +1,81 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ImageAttachment } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
 
-// Hoisted mock state — accessible inside vi.mock factory
+// ─── canonical ThreadSession mock (see test/unit/session-message-handlers.test.ts) ──
+//
+// ADR-0002 Stage 2 replaced the old per-turn ClaudeSession (one instance,
+// one `run()` call, per user turn — `run()` stayed pending until the mock
+// explicitly resolved it) with a long-lived ThreadSession (one instance per
+// THREAD, reused across every turn via start() once + send() per turn).
+// `start()` resolves quickly — ThreadManager.sendMessage() itself resolves
+// shortly after start()/send(), well before any 'done'/'error'/'interrupted'
+// — so tests `await manager.sendMessage(...)` and then drive `mock.callbacks!`
+// synchronously, rather than holding a `sendPromise` open until a manual
+// `mock.resolve()` (which no longer exists).
+
 const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
   prompt: null as string | null,
-  model: null as string | undefined,
-  images: null as import('../../src/types').ImageAttachment[] | undefined,
-  resolve: null as (() => void) | null,
+  sentPrompts: [] as string[],
+  images: null as ImageAttachment[] | undefined,
+  sentImages: [] as (ImageAttachment[] | undefined)[],
+  model: undefined as string | undefined,
   resumeSessionId: undefined as string | undefined,
-  runCallCount: 0,
+  lastKnownSessionId: undefined as string | undefined,
+  constructCount: 0,
+  startCallCount: 0,
+  sendCallCount: 0,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      prompt: string,
-      resumeSessionId: string | undefined,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-      _dirs?: unknown,
-      model?: string,
-      images?: import('../../src/types').ImageAttachment[],
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      mock.prompt = prompt;
-      mock.model = model;
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) { mock.constructCount += 1; }
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.startCallCount += 1;
+      mock.model = options.model;
+      mock.resumeSessionId = options.resume;
+      mock.lastKnownSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.lastKnownSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
+    }
+    send(text: string, images?: ImageAttachment[]): void {
+      mock.sendCallCount += 1;
+      mock.prompt = text;
+      mock.sentPrompts.push(text);
       mock.images = images;
-      mock.resumeSessionId = resumeSessionId;
-      mock.runCallCount += 1;
-      return new Promise<void>((res) => { mock.resolve = res; });
+      mock.sentImages.push(images);
+      this._turnInFlight = true;
     }
-    close() {}
-    async interrupt() {
-      // Mirror real ClaudeSession: fire onInterrupted with the pre-interrupt session ID
-      mock.callbacks?.onInterrupted(mock.resumeSessionId ?? '');
-      mock.resolve?.();
+    async interrupt(): Promise<void> {
+      mock.callbacks?.onInterrupted(mock.lastKnownSessionId ?? '');
     }
+    async setModel(model?: string): Promise<void> { mock.model = model; }
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -54,22 +88,25 @@ function makeManager(overrides = {}) {
 }
 
 // Helper: drive a complete successful response through the mock
-async function driveResponse(content: string, sessionId = 'sess-1') {
+function driveResponse(content: string, sessionId = 'sess-1') {
   const cb = mock.callbacks!;
   cb.onToken(content);
   cb.onMessage(content, []);
   cb.onDone(sessionId, 0.001, 1);
-  mock.resolve!();
 }
 
 beforeEach(() => {
   mock.callbacks = null;
   mock.prompt = null;
-  mock.model = null;
-  mock.images = null;
-  mock.resolve = null;
+  mock.sentPrompts = [];
+  mock.images = undefined;
+  mock.sentImages = [];
+  mock.model = undefined;
   mock.resumeSessionId = undefined;
-  mock.runCallCount = 0;
+  mock.lastKnownSessionId = undefined;
+  mock.constructCount = 0;
+  mock.startCallCount = 0;
+  mock.sendCallCount = 0;
 });
 
 describe('send message → event flow', () => {
@@ -79,13 +116,15 @@ describe('send message → event flow', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hello');
-    await driveResponse('Hi there');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'Hello');
+    driveResponse('Hi there');
 
-    // 'run_state_settled' fires once run() has fully unwound (right after
-    // 'done' in the fast path where there's no lingering background task) —
-    // see run-state-settled.test.ts for the fix this event exists to support.
+    // 'run_state_settled' fires once turnInFlight has actually flipped false
+    // (deferred via queueMicrotask — see run-state-settled.test.ts) — flush
+    // one microtask so it lands before asserting the full sequence.
+    await Promise.resolve();
+    await Promise.resolve();
+
     expect(events.map(e => e.type)).toEqual(['user_message_added', 'streaming_start', 'token', 'message', 'done', 'run_state_settled']);
   });
 
@@ -93,9 +132,8 @@ describe('send message → event flow', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ping');
-    await driveResponse('Pong');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'Ping');
+    driveResponse('Pong');
 
     expect(thread.messages).toHaveLength(2);
     expect(thread.messages[0]).toMatchObject({ role: 'user', content: 'Ping' });
@@ -106,12 +144,10 @@ describe('send message → event flow', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onToken('Hey');
     mock.callbacks!.onMessage('Hey', []);
     mock.callbacks!.onDone('session-xyz', 0.0042, 1);
-    mock.resolve!();
-    await sendPromise;
 
     expect(thread.sessionId).toBe('session-xyz');
     expect(thread.messages[1].cost).toBe(0.0042);
@@ -121,94 +157,55 @@ describe('send message → event flow', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     expect(manager.isRunning(thread.id)).toBe(true);
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
     expect(manager.isRunning(thread.id)).toBe(false);
   });
 
-  it('second sendMessage while running queues and auto-fires after done', async () => {
+  it('a second sendMessage() while the first is in flight coalesces into the SAME generation — there is no queue anymore (ADR-0002)', async () => {
+    // ADR-0002 §2's live-CLI probe confirmed send() is safe to call
+    // unconditionally, even while a turn is already in flight — the CLI
+    // itself coalesces a concurrent push into the generation already
+    // running. ThreadManager.sendMessage() no longer has an "is this thread
+    // busy?" gate to queue behind (queuedMessages/'queued'/'dequeued' are
+    // unreachable dead code paths now — nothing in sendMessage() ever
+    // writes to that map anymore).
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const p1 = manager.sendMessage(thread.id, 'First');
-    await manager.sendMessage(thread.id, 'Second'); // queues, returns immediately
+    await manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Second');
 
-    expect(events.find(e => e.type === 'queued')).toBeTruthy();
-    expect(manager.getQueuedMessage(thread.id)).toBe('Second');
-
-    // Capture first session's references before driving it
-    const firstCallbacks = mock.callbacks!;
-    const firstResolve = mock.resolve!;
-
-    // Drive first session to completion
-    firstCallbacks.onToken('Reply 1');
-    firstCallbacks.onMessage('Reply 1', []);
-    firstCallbacks.onDone('sess-1', 0.001, 1);
-    firstResolve();
-
-    // Wait for the queued message's session to start (microtasks need to settle)
-    await vi.waitFor(() => expect(mock.callbacks).not.toBe(firstCallbacks));
-
-    // Drive second session
-    mock.callbacks!.onToken('Reply 2');
-    mock.callbacks!.onMessage('Reply 2', []);
-    mock.callbacks!.onDone('sess-2', 0.001, 1);
-    mock.resolve!();
-
-    await p1;
-
+    expect(events.find(e => e.type === 'queued')).toBeUndefined();
+    expect(mock.constructCount).toBe(1); // same ThreadSession, not a second one
+    expect(mock.sendCallCount).toBe(2);
     expect(thread.messages.filter(m => m.role === 'user')).toHaveLength(2);
     expect(thread.messages[0].content).toBe('First');
-    expect(thread.messages[2].content).toBe('Second');
-    expect(events.find(e => e.type === 'dequeued')).toBeTruthy();
+    expect(thread.messages[1].content).toBe('Second');
+
+    // Both pushes land in the same live generation — one onDone answers both.
+    driveResponse('Reply');
+
+    expect(thread.messages.filter(m => m.role === 'assistant')).toHaveLength(1);
+    expect(events.find(e => e.type === 'dequeued')).toBeUndefined();
   });
 
-  it('preserves images when a message is queued and later dequeued', async () => {
+  it('a second sendMessage() with images while the first is in flight pushes the images straight through send() (no queue to preserve them in)', async () => {
     const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
-    const events: ThreadEvent[] = [];
-    manager.subscribe((_, e) => events.push(e));
-
+    const thread = manager.createThread('T', os.tmpdir());
     const attachment = { type: 'base64' as const, mediaType: 'image/png' as const, data: 'abc123', name: 'shot.png' };
 
-    const p1 = manager.sendMessage(thread.id, 'First');
-    await manager.sendMessage(thread.id, 'Second', [attachment]); // queues with image
+    await manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Second', [attachment]);
 
-    // queued event should carry the image
-    const queuedEvt = events.find(e => e.type === 'queued');
-    expect(queuedEvt).toBeTruthy();
-    expect((queuedEvt as Extract<ThreadEvent, { type: 'queued' }>).images).toEqual([attachment]);
+    expect(mock.sentImages[1]).toEqual([attachment]);
+    expect(thread.messages[1].images).toEqual([attachment]);
 
-    // Drive first session to completion
-    const firstCallbacks = mock.callbacks!;
-    const firstResolve = mock.resolve!;
-    firstCallbacks.onToken('Reply 1');
-    firstCallbacks.onMessage('Reply 1', []);
-    firstCallbacks.onDone('sess-1', 0.001, 1);
-    firstResolve();
-
-    // Wait for second session to start
-    await vi.waitFor(() => expect(mock.callbacks).not.toBe(firstCallbacks));
-
-    // The second ClaudeSession.run() call should have received the image
-    expect(mock.images).toEqual([attachment]);
-
-    // dequeued event should also carry the image
-    const dequeuedEvt = events.find(e => e.type === 'dequeued');
-    expect(dequeuedEvt).toBeTruthy();
-    expect((dequeuedEvt as Extract<ThreadEvent, { type: 'dequeued' }>).images).toEqual([attachment]);
-
-    // Drive second session to completion
-    mock.callbacks!.onToken('Reply 2');
-    mock.callbacks!.onMessage('Reply 2', []);
-    mock.callbacks!.onDone('sess-2', 0.001, 1);
-    mock.resolve!();
-
-    await p1;
+    driveResponse('Reply');
+    expect(thread.messages.filter(m => m.role === 'assistant')).toHaveLength(1);
   });
 
   it('emits error event and cleans up session on failure', async () => {
@@ -217,10 +214,8 @@ describe('send message → event flow', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onError(new Error('Network failure'));
-    mock.resolve!();
-    await sendPromise;
 
     expect(events.find(e => e.type === 'error')).toBeTruthy();
     expect(manager.isRunning(thread.id)).toBe(false);
@@ -233,19 +228,59 @@ describe('send message → event flow', () => {
 });
 
 describe('model escalation', () => {
-  it('emits escalated event and uses opus model when keyword present', async () => {
+  it('emits escalated event when keyword present (independent of whether the model actually reaches the session)', async () => {
     const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, '/opus design the architecture');
-    await driveResponse('Here is the design');
-    await sendPromise;
+    await manager.sendMessage(thread.id, '/opus design the architecture');
+    driveResponse('Here is the design');
 
     const escalated = events.find(e => e.type === 'escalated') as { type: 'escalated'; model: string } | undefined;
     expect(escalated).toBeTruthy();
     expect(escalated!.model).toBe('opus');
+  });
+
+  it('regression (found while rewriting this suite, then fixed): the escalation keyword\'s model reaches the session on a thread\'s first-ever message too', async () => {
+    // ThreadManager.sendMessage() computes an escalation-aware `model` local
+    // (`keywordModel ?? thread.model ?? settings.defaultModel`) but
+    // buildThreadSessionOptions() (the object passed to a NEW session's
+    // start()) used to independently recompute its own `model` field as just
+    // `thread.model ?? settings.defaultModel`, never consulting the
+    // escalation-aware local — so a thread's very first message silently
+    // dropped the /escalate keyword, even though sendMessage()'s `else`
+    // branch (an EXISTING session) already applied it correctly via
+    // `session.setModel()` (see the next test). Fixed by threading the
+    // escalation-aware `model` into buildThreadSessionOptions() as an
+    // explicit `modelOverride` parameter, used only by sendMessage() — other
+    // call sites (e.g. setThreadCwd()'s cwd-change restart) correctly omit
+    // it, since there's no user message/escalation keyword in that context.
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, '/opus design the architecture');
+    driveResponse('Here is the design');
+
+    expect(mock.model).toBe('opus');
+  });
+
+  it('escalation DOES correctly reach the session via setModel() on a later turn of an already-started session', async () => {
+    const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
+    const thread = manager.createThread('T', os.tmpdir());
+
+    // First turn — no escalation keyword, establishes the session.
+    await manager.sendMessage(thread.id, 'plain message');
+    driveResponse('ok', 'sess-1');
+    expect(mock.model).toBeUndefined();
+
+    // Second turn — same (already-started) session, escalation keyword now
+    // present. This goes through sendMessage()'s `else` branch
+    // (`await session.setModel(model)`), which DOES use the correct
+    // escalation-aware `model` local — unlike the new-session start() path
+    // exercised by the previous test.
+    await manager.sendMessage(thread.id, '/opus now go big');
+    driveResponse('ok', 'sess-1');
     expect(mock.model).toBe('opus');
   });
 
@@ -253,9 +288,8 @@ describe('model escalation', () => {
     const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
-    await driveResponse('Roses are red');
-    await sendPromise;
+    await manager.sendMessage(thread.id, '/opus write me a poem');
+    driveResponse('Roses are red');
 
     expect(mock.prompt).toBe('write me a poem');
   });
@@ -264,9 +298,8 @@ describe('model escalation', () => {
     const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'opus' });
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, '/opus write me a poem');
-    await driveResponse('Roses are red');
-    await sendPromise;
+    await manager.sendMessage(thread.id, '/opus write me a poem');
+    driveResponse('Roses are red');
 
     expect(thread.messages[0].content).toBe('/opus write me a poem');
   });
@@ -277,9 +310,8 @@ describe('model escalation', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, '/opus do something');
-    await driveResponse('OK');
-    await sendPromise;
+    await manager.sendMessage(thread.id, '/opus do something');
+    driveResponse('OK');
 
     expect(events.find(e => e.type === 'escalated')).toBeUndefined();
     expect(mock.model).toBeUndefined();
@@ -291,9 +323,8 @@ describe('model escalation', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'just a normal message');
-    await driveResponse('Sure');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'just a normal message');
+    driveResponse('Sure');
 
     expect(events.find(e => e.type === 'escalated')).toBeUndefined();
     expect(mock.model).toBeUndefined();
@@ -305,9 +336,8 @@ describe('model escalation', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, '!expert help me');
-    await driveResponse('Expert answer');
-    await sendPromise;
+    await manager.sendMessage(thread.id, '!expert help me');
+    driveResponse('Expert answer');
 
     expect(events.find(e => e.type === 'escalated')).toBeTruthy();
     expect(mock.prompt).toBe('help me');
@@ -320,10 +350,9 @@ describe('permission handler', () => {
     const thread = manager.createThread('T', os.tmpdir());
     manager.permissionHandler = async () => true;
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     const result = await mock.callbacks!.onPermissionRequest('Write', '/some/file.ts');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     expect(result).toBe(true);
   });
@@ -333,10 +362,9 @@ describe('permission handler', () => {
     const thread = manager.createThread('T', os.tmpdir());
     manager.permissionHandler = async () => false;
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     const result = await mock.callbacks!.onPermissionRequest('Bash', 'rm -rf /');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     expect(result).toBe(false);
   });
@@ -349,13 +377,11 @@ describe('tool use events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Do something');
+    await manager.sendMessage(thread.id, 'Do something');
     const toolRecord = { name: 'Write', summary: 'Write: src/foo.ts' };
     mock.callbacks!.onToolUse(toolRecord);
     mock.callbacks!.onMessage('Done', [toolRecord]);
     mock.callbacks!.onDone('s1', 0, 1);
-    mock.resolve!();
-    await sendPromise;
 
     const toolEvent = events.find(e => e.type === 'tool_use') as { type: 'tool_use'; record: typeof toolRecord } | undefined;
     expect(toolEvent?.record.name).toBe('Write');
@@ -371,10 +397,9 @@ describe('recap events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onRecap('Used Write (2 calls)');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     expect(thread.recap).toBe('Used Write (2 calls)');
     expect(events.find(e => e.type === 'recap')).toBeTruthy();
@@ -382,16 +407,15 @@ describe('recap events', () => {
 });
 
 describe('image attachments', () => {
-  it('passes images to session.run', async () => {
+  it('passes images to session.send', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
-    const images: import('../../src/types').ImageAttachment[] = [
+    const images: ImageAttachment[] = [
       { base64: 'abc123', mediaType: 'image/png', name: 'screenshot.png' },
     ];
 
-    const sendPromise = manager.sendMessage(thread.id, 'Look at this', images);
-    await driveResponse('I see it');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'Look at this', images);
+    driveResponse('I see it');
 
     expect(mock.images).toEqual(images);
     expect(mock.prompt).toBe('Look at this');
@@ -401,9 +425,8 @@ describe('image attachments', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'No images here');
-    await driveResponse('OK');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'No images here');
+    driveResponse('OK');
 
     expect(mock.images).toBeUndefined();
   });
@@ -411,13 +434,12 @@ describe('image attachments', () => {
   it('stores user message content as the text prompt regardless of images', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
-    const images: import('../../src/types').ImageAttachment[] = [
+    const images: ImageAttachment[] = [
       { base64: 'xyz', mediaType: 'image/jpeg', name: 'photo.jpg' },
     ];
 
-    const sendPromise = manager.sendMessage(thread.id, 'Describe this', images);
-    await driveResponse('Sure');
-    await sendPromise;
+    await manager.sendMessage(thread.id, 'Describe this', images);
+    driveResponse('Sure');
 
     expect(thread.messages[0]).toMatchObject({ role: 'user', content: 'Describe this' });
   });
@@ -430,10 +452,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onStatus!('compacting');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const statusEvent = events.find(e => e.type === 'status') as { type: 'status'; status: string } | undefined;
     expect(statusEvent?.status).toBe('compacting');
@@ -445,10 +466,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onStatus!(null);
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const statusEvent = events.find(e => e.type === 'status') as { type: 'status'; status: null } | undefined;
     expect(statusEvent?.status).toBeNull();
@@ -460,10 +480,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onTaskStarted!('task-1', 'Running security audit', false);
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const taskEvent = events.find(e => e.type === 'task_started') as
       { type: 'task_started'; taskId: string; description: string; skipTranscript: boolean } | undefined;
@@ -478,10 +497,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onTaskProgress!('task-1', 'Scanning files', 'Grep');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'task_progress') as
       { type: 'task_progress'; taskId: string; description: string; lastToolName?: string } | undefined;
@@ -495,10 +513,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onTaskNotification!('task-1', 'completed', 'Found 3 issues');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'task_notification') as
       { type: 'task_notification'; taskId: string; status: string; summary: string } | undefined;
@@ -512,10 +529,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onTaskNotification!('task-1', 'failed', 'Timed out');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'task_notification') as
       { type: 'task_notification'; status: string } | undefined;
@@ -528,10 +544,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onNotification!('Deploy succeeded', 'high');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'notification') as
       { type: 'notification'; text: string; priority: string } | undefined;
@@ -545,10 +560,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onApiRetry!(1, 3, 'server_error');
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'api_retry') as
       { type: 'api_retry'; attempt: number; maxRetries: number; error: string } | undefined;
@@ -563,10 +577,9 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onRateLimit!('rejected', 1700000000000);
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'rate_limit') as
       { type: 'rate_limit'; limitStatus: string; resetsAt?: number } | undefined;
@@ -580,15 +593,86 @@ describe('system events', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     mock.callbacks!.onRateLimit!('allowed_warning', undefined);
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const evt = events.find(e => e.type === 'rate_limit') as
       { type: 'rate_limit'; limitStatus: string; resetsAt?: number } | undefined;
     expect(evt?.limitStatus).toBe('allowed_warning');
     expect(evt?.resetsAt).toBeUndefined();
+  });
+});
+
+describe('reconnecting status — auto-retry transport-error signal (Stage D regression)', () => {
+  // Under the old per-turn ClaudeSession model, ThreadManager.sendMessage()'s
+  // own onError branch drove the "reconnecting" UI state directly, because a
+  // transport-error retry was a brand-new sendMessage() call. Under
+  // ThreadSession, the retry is entirely internal (restart() + a
+  // continuation send(), inside ThreadSession.pumpMessages()'s catch block —
+  // see ADR-0002 Stage D) — ThreadManager only finds out via the new
+  // onReconnecting callback. This describe block exercises the ThreadManager
+  // wiring that consumes it: `onReconnecting` sets thread.status and emits
+  // 'reconnecting', and `clearReconnectingStatus()` (invoked from
+  // onToken/onMessage/onStatus — whichever fires first once the continuation
+  // resumes) clears it back to 'active'.
+  it('sets thread.status to reconnecting, emits the event, and clears back to active once onToken fires', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    await manager.sendMessage(thread.id, 'Hi');
+    expect(thread.status).toBe('active');
+
+    mock.callbacks!.onReconnecting!('Stream closed');
+
+    expect(thread.status).toBe('reconnecting');
+    const reconnectEvt = events.find(e => e.type === 'reconnecting') as
+      Extract<ThreadEvent, { type: 'reconnecting' }> | undefined;
+    expect(reconnectEvt).toBeTruthy();
+    expect(reconnectEvt!.error).toBe('Stream closed');
+
+    // includePartialMessages streams text deltas before the final assistant
+    // message — onToken is expected to fire first in the common case.
+    mock.callbacks!.onToken('continuing...');
+    expect(thread.status).toBe('active');
+  });
+
+  it('clears via onMessage when the continuation\'s first action has no preceding token deltas (e.g. straight to a tool call)', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onReconnecting!('Stream closed');
+    expect(thread.status).toBe('reconnecting');
+
+    mock.callbacks!.onMessage('resumed', []);
+    expect(thread.status).toBe('active');
+  });
+
+  it('clears via onStatus when the continuation immediately flips a compacting/requesting status', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onReconnecting!('Stream closed');
+    expect(thread.status).toBe('reconnecting');
+
+    mock.callbacks!.onStatus!('compacting');
+    expect(thread.status).toBe('active');
+  });
+
+  it('does NOT clear on an unrelated status while not reconnecting (guard: only leaves the reconnecting state, never re-enters it via a stray clear)', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Hi');
+    expect(thread.status).toBe('active');
+
+    // No onReconnecting fired — a normal onToken must simply leave status alone.
+    mock.callbacks!.onToken('normal streaming');
+    expect(thread.status).toBe('active');
   });
 });
 
@@ -599,9 +683,8 @@ describe('interrupt / stop behavior', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.sendMessage(thread.id, 'Hello');
     await manager.interrupt(thread.id);
-    await sendPromise;
 
     const types = events.map(e => e.type);
     expect(types).toContain('interrupted');
@@ -612,11 +695,10 @@ describe('interrupt / stop behavior', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.sendMessage(thread.id, 'Hello');
     // Message is in the array while running
     expect(thread.messages).toHaveLength(1);
     await manager.interrupt(thread.id);
-    await sendPromise;
 
     // After interrupt it should be removed
     expect(thread.messages).toHaveLength(0);
@@ -627,9 +709,8 @@ describe('interrupt / stop behavior', () => {
     const thread = manager.createThread('T', os.tmpdir());
     thread.sessionId = 'prior-session-id';
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.sendMessage(thread.id, 'Hello');
     await manager.interrupt(thread.id);
-    await sendPromise;
 
     expect(thread.sessionId).toBe('prior-session-id');
   });
@@ -638,10 +719,9 @@ describe('interrupt / stop behavior', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hello');
+    await manager.sendMessage(thread.id, 'Hello');
     expect(manager.isRunning(thread.id)).toBe(true);
     await manager.interrupt(thread.id);
-    await sendPromise;
     expect(manager.isRunning(thread.id)).toBe(false);
   });
 
@@ -650,16 +730,14 @@ describe('interrupt / stop behavior', () => {
     const thread = manager.createThread('T', os.tmpdir());
 
     // First turn completes successfully
-    const p1 = manager.sendMessage(thread.id, 'First');
-    await driveResponse('First response', 'sess-1');
-    await p1;
+    await manager.sendMessage(thread.id, 'First');
+    driveResponse('First response', 'sess-1');
 
     expect(thread.messages).toHaveLength(2);
 
     // Second message gets interrupted before any response
-    const p2 = manager.sendMessage(thread.id, 'Second');
+    await manager.sendMessage(thread.id, 'Second');
     await manager.interrupt(thread.id);
-    await p2;
 
     // Only the first turn's messages remain; session ID is still the successful one
     expect(thread.messages).toHaveLength(2);
@@ -668,46 +746,52 @@ describe('interrupt / stop behavior', () => {
     expect(thread.sessionId).toBe('sess-1');
   });
 
-  it('resumes from the correct session ID on the next send after interrupt', async () => {
+  it('the same ThreadSession persists across an interrupted turn and a resumed one — session continuity is the SDK\'s job now, not a per-turn resume parameter', async () => {
+    // Under the old per-turn ClaudeSession model, each turn constructed a
+    // brand-new session and had to be told which sessionId to resume via a
+    // fresh `resume` argument — this test used to assert that 3rd-turn
+    // argument was 'sess-1', not corrupted by the interrupted 2nd turn.
+    // Under ThreadSession there is only ever ONE Query for the thread's
+    // whole lifetime (constructed once, on the very first turn) — later
+    // turns just push onto the same open channel, with no re-resume step to
+    // get right or wrong. What actually matters now: the SAME ThreadSession
+    // instance persists through the interrupt (never torn down/reconstructed)
+    // and thread.sessionId still ends up correct once a later turn succeeds.
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    // First turn establishes a session
-    const p1 = manager.sendMessage(thread.id, 'First');
-    await driveResponse('First response', 'sess-1');
-    await p1;
+    await manager.sendMessage(thread.id, 'First');
+    driveResponse('First response', 'sess-1');
+    expect(mock.constructCount).toBe(1);
+    expect(mock.resumeSessionId).toBeUndefined(); // brand-new thread, nothing to resume
 
-    // Second turn interrupted
-    const p2 = manager.sendMessage(thread.id, 'Interrupted');
+    await manager.sendMessage(thread.id, 'Interrupted');
     await manager.interrupt(thread.id);
-    await p2;
 
-    // Third turn — should resume from sess-1, not from an empty/corrupted ID
-    const p3 = manager.sendMessage(thread.id, 'Third');
-    await driveResponse('Third response', 'sess-2');
-    await p3;
+    await manager.sendMessage(thread.id, 'Third');
+    driveResponse('Third response', 'sess-2');
 
-    expect(mock.resumeSessionId).toBe('sess-1');
+    expect(mock.constructCount).toBe(1); // never reconstructed
     expect(thread.messages).toHaveLength(4);
+    expect(thread.sessionId).toBe('sess-2');
   });
 
-  it('discards any queued message when interrupted', async () => {
+  it('interrupting after a coalesced second message rolls back both — no dequeued/queued event ever fires (nothing was ever queued)', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const p1 = manager.sendMessage(thread.id, 'First');
-    await manager.sendMessage(thread.id, 'Queued'); // parks in queue
+    await manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Queued');
 
-    expect(manager.getQueuedMessage(thread.id)).toBe('Queued');
+    expect(thread.messages).toHaveLength(2);
 
     await manager.interrupt(thread.id);
-    await p1;
 
-    // Queue cleared, dequeued never fired
-    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+    expect(thread.messages).toHaveLength(0);
     expect(events.find(e => e.type === 'dequeued')).toBeUndefined();
+    expect(events.find(e => e.type === 'queued')).toBeUndefined();
   });
 });
 
@@ -739,10 +823,10 @@ describe('Scheduler + ThreadManager: busy-thread dedup on loop tick', () => {
     scheduler.start([]);
 
     // Simulate Fix 1's immediate kickoff: a message is sent right away and is
-    // still in flight (ClaudeSession.run has not resolved).
-    const kickoff = manager.sendMessage(thread.id, 'kickoff prompt');
+    // still in flight (no onDone/onError/onInterrupted has fired yet).
+    await manager.sendMessage(thread.id, 'kickoff prompt');
     expect(manager.isRunning(thread.id)).toBe(true);
-    expect(mock.runCallCount).toBe(1);
+    expect(mock.sendCallCount).toBe(1);
 
     scheduler.createItem({
       name: 'Loop: recurring',
@@ -754,26 +838,23 @@ describe('Scheduler + ThreadManager: busy-thread dedup on loop tick', () => {
 
     // The interval elapses while the kickoff turn is still running. The tick
     // must be deferred (retried) rather than firing a second sendMessage
-    // that would queue as a duplicate turn.
+    // that would coalesce into the still-live generation as an unrelated
+    // duplicate turn.
     await vi.advanceTimersByTimeAsync(11_000);
-    expect(mock.runCallCount).toBe(1);
-    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+    expect(mock.sendCallCount).toBe(1);
 
     // Finish the kickoff turn — the thread becomes free.
     const cb = mock.callbacks!;
     cb.onToken('kickoff done');
     cb.onMessage('kickoff done', []);
     cb.onDone('sess-1', 0.001, 1);
-    mock.resolve!();
-    await kickoff;
     expect(manager.isRunning(thread.id)).toBe(false);
 
     // The scheduler's retry (capped at 15s) should now find the thread free
     // and send the loop prompt exactly once.
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(mock.runCallCount).toBe(2);
-    expect(mock.prompt).toBe('loop prompt');
-    expect(manager.getQueuedMessage(thread.id)).toBeUndefined();
+    expect(mock.sendCallCount).toBe(2);
+    expect(mock.sentPrompts[1]).toBe('loop prompt');
 
     // Clean up the still-running loop turn so the test doesn't leak a
     // dangling promise.

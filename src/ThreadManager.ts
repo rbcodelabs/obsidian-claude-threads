@@ -793,7 +793,7 @@ export class ThreadManager {
     // emits when Claude is spawned with a non-existent cwd — see
     // ensureCwdExists() for the repair strategy. Bail out (an 'error' event
     // has already been emitted) if the cwd is still missing afterward.
-    const options = this.buildThreadSessionOptions(threadId, thread);
+    const options = this.buildThreadSessionOptions(threadId, thread, model);
     if (!options) return;
 
     // If there is no session to resume but there IS prior history, the cwd must
@@ -921,7 +921,7 @@ export class ThreadManager {
    * null if the thread's cwd is missing and couldn't be repaired (an
    * 'error' event has already been emitted in that case).
    */
-  private buildThreadSessionOptions(threadId: string, thread: Thread): ThreadSessionOptions | null {
+  private buildThreadSessionOptions(threadId: string, thread: Thread, modelOverride?: string): ThreadSessionOptions | null {
     if (!this.ensureCwdExists(threadId, thread)) return null;
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
@@ -959,7 +959,20 @@ export class ThreadManager {
       resume: thread.sessionId,
       callbacks: this.buildSessionCallbacks(threadId, thread),
       additionalDirectories: additionalDirs,
-      model: thread.model ?? (this.settings.defaultModel || undefined),
+      // modelOverride carries sendMessage()'s escalation-aware `model` local
+      // (keywordModel ?? thread.model ?? settings.defaultModel) through to a
+      // brand-new session's start(). Without it, a thread's first-ever
+      // message silently dropped the /escalate keyword: this method used to
+      // independently recompute `thread.model ?? settings.defaultModel`,
+      // never consulting the escalation resolution sendMessage() already
+      // did. On an existing session, sendMessage()'s `else` branch already
+      // applies the escalation-aware value directly via `session.setModel()`
+      // — this override brings the very first message in line with that.
+      // Other call sites (e.g. setThreadCwd()'s cwd-change restart) omit it
+      // and fall back to the plain thread.model — correct there, since a
+      // cwd-change restart isn't a new user message and has no escalation
+      // keyword to apply.
+      model: modelOverride ?? thread.model ?? (this.settings.defaultModel || undefined),
       appendSystemPrompt,
       mcpServers: sessionMcpServers,
       secretEnv: resolvedSecretEnv,
