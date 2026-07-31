@@ -356,6 +356,20 @@ export const fixtureThreads: Thread[] = [
     createdAt: T3 - 60000,
     updatedAt: T3 + 30000,
   },
+  {
+    // Deliberately empty — used by tool-call-grouping.spec.ts's LIVE-rendering
+    // tests, which drive tool_use/tool_result_status events in directly via
+    // window.__emitEvent rather than relying on any pre-seeded message/tool
+    // state. An empty thread keeps those tests self-contained and avoids
+    // coupling live-mode assertions to whatever thread6Messages happens to
+    // contain.
+    id: 'thread-live-tool-grouping',
+    title: 'Live tool-call grouping test',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: [],
+    createdAt: T3 - 30000,
+    updatedAt: T3 - 30000,
+  },
 ];
 
 // ─── Kanban board fixtures ────────────────────────────────────────────────────
