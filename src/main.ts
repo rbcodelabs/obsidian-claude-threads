@@ -95,10 +95,14 @@ if (!Platform.isMobile) {
   }
 }
 
-/** A scheduled ScheduleWakeup timer awaiting fire, tracked per thread. */
+/**
+ * A scheduled ScheduleWakeup entry awaiting fire, tracked per thread. Backed
+ * by a durable one-shot Scheduler item (schedule.type 'once', origin
+ * 'wakeup') rather than a volatile in-memory timer — see
+ * ClaudeThreadsPlugin.getPendingWakeups, which derives these from
+ * this.scheduler.listItems() so they survive a plugin reload/restart.
+ */
 export interface PendingWakeup {
-  /** window.setTimeout handle, used to clear the timer on cancel/unload. */
-  timerId: number;
   /** Wall-clock epoch ms at which the wake-up will fire. Drives the UI countdown. */
   fireAt: number;
   /** Agent-supplied reason for the wake-up, surfaced in the dashboard and banner. */
@@ -127,10 +131,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
    */
   discoveredModels: import('@anthropic-ai/claude-agent-sdk').ModelInfo[] = [];
 
-  // Tracks pending ScheduleWakeup timers keyed by threadId. Each entry carries
-  // the timer ID (for cleanup/cancel), the wall-clock fire time (for the UI
-  // countdown), and the agent-supplied reason (shown in the dashboard + banner).
-  pendingWakeups = new Map<string, PendingWakeup[]>();
 
   // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).
   private pendingBgTaskTimers = new Map<string, number>();
@@ -228,28 +228,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.manager.setThreadCwd(threadId, newCwd);
             this.saveSettings().catch(console.error);
           },
-          onScheduleWakeup: (delayMs: number, prompt: string, reason: string) => {
-            const id = window.setTimeout(async () => {
-              // Drop this entry before firing so the UI stops showing "waiting"
-              // the moment the wake-up triggers, even while sendMessage runs.
-              const list = this.pendingWakeups.get(threadId) ?? [];
-              const idx = list.findIndex(w => w.timerId === id);
-              if (idx !== -1) list.splice(idx, 1);
-              if (list.length === 0) this.pendingWakeups.delete(threadId);
-              this.manager.notifyWakeupChanged(threadId);
-              try {
-                if (!this.manager.getThread(threadId)) {
-                  console.warn(`[ClaudeThreads] ScheduleWakeup: thread ${threadId} no longer exists, skipping`);
-                  return;
-                }
-                await this.manager.sendMessage(threadId, prompt);
-              } catch (err) {
-                console.error(`[ClaudeThreads] ScheduleWakeup failed for thread ${threadId}:`, err);
-              }
-            }, delayMs) as unknown as number;
-            const list = this.pendingWakeups.get(threadId) ?? [];
-            list.push({ timerId: id, fireAt: Date.now() + delayMs, reason });
-            this.pendingWakeups.set(threadId, list);
+          onScheduleWakeup: async (delayMs: number, prompt: string, reason: string) => {
+            // Durable one-shot Scheduler item instead of a bare window.setTimeout:
+            // the old implementation tracked wake-ups only in an in-memory Map
+            // that onunload() wiped on every plugin reload/restart/quit, and a
+            // Mac sleep could drop the timer entirely with no record it ever
+            // existed. Routing through the same Scheduler that backs the Cron
+            // tools means this item is persisted to disk immediately, survives
+            // a reload, and — if the fire time is missed entirely (app closed,
+            // machine asleep) — still catches up shortly after the next load
+            // instead of silently vanishing. See Scheduler.fire()'s 'once'
+            // branch: it self-deletes after firing instead of rearming, and
+            // getPendingWakeups/hasPendingWakeup/cancelWakeups below read this
+            // same durable state rather than a separate volatile registry.
+            const sourceThread = this.manager.getThread(threadId);
+            await this.scheduler.createItem({
+              name: `Wakeup: ${reason}`,
+              prompt,
+              schedule: { type: 'once', fireAt: Date.now() + delayMs },
+              enabled: true,
+              targetThreadId: threadId,
+              cwd: sourceThread?.cwd,
+              projectId: sourceThread?.projectId,
+              origin: 'wakeup',
+            });
             this.manager.notifyWakeupChanged(threadId);
             debugLog(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
@@ -299,6 +301,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               projectId: t.projectId,
               cwd: t.cwd,
               prUrl: t.prUrl,
+              scheduledItemId: t.scheduledItemId,
+              scheduledItemName: t.scheduledItemName,
               updatedAt: t.updatedAt,
               messageCount: nonCompact.length,
               rawLogPath: t.rawLogPath,
@@ -312,7 +316,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -331,6 +335,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               projectId: t.projectId,
               cwd: t.cwd,
               prUrl: t.prUrl,
+              scheduledItemId: t.scheduledItemId,
+              scheduledItemName: t.scheduledItemName,
               updatedAt: t.updatedAt,
               messageCount,
               rawLogPath: t.rawLogPath,
@@ -594,13 +600,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
         this.settings.scheduledItems = (this.settings.scheduledItems ?? []).filter((i) => i.id !== id);
         await this.saveSettings();
       },
-      createThread: (title, cwd, projectId) => {
+      createThread: (title, cwd, projectId, scheduledItemId) => {
         const thread = this.manager.createThread(title, cwd, projectId);
         // Scheduled sessions should not block on permission prompts. When the
         // global permissionMode is 'default' (ask every time), override to
         // 'dontAsk' so unattended runs complete without hanging.
         if (!thread.permissionMode && this.settings.permissionMode === 'default') {
           thread.permissionMode = 'dontAsk';
+        }
+        // Record the scheduled item that created this thread, for the
+        // "Scheduled: <name>" footer pill. Captured once at creation time —
+        // not kept in sync with later renames of the scheduled item.
+        if (scheduledItemId) {
+          thread.scheduledItemId = scheduledItemId;
+          thread.scheduledItemName = (this.settings.scheduledItems ?? []).find(
+            (i) => i.id === scheduledItemId
+          )?.name;
         }
         return thread;
       },
@@ -1242,31 +1257,43 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   /**
-   * Pending ScheduleWakeup timers for a thread, soonest-to-fire first.
+   * Pending ScheduleWakeup entries for a thread, soonest-to-fire first. Reads
+   * live off the durable Scheduler (schedule.type 'once', origin 'wakeup',
+   * targetThreadId === threadId) rather than a separate in-memory registry,
+   * so this reflects on-disk state that survives a plugin reload — not a
+   * volatile timer list that a restart could silently wipe.
    * Returns an empty array when the thread has none.
    */
   getPendingWakeups(threadId: string): PendingWakeup[] {
-    const list = this.pendingWakeups.get(threadId);
-    if (!list || list.length === 0) return [];
-    return [...list].sort((a, b) => a.fireAt - b.fireAt);
+    return this.scheduler
+      .listItems()
+      .filter((i) => i.origin === 'wakeup' && i.enabled && i.targetThreadId === threadId)
+      .map((i) => ({ fireAt: i.nextRun ?? Date.now(), reason: i.name.replace(/^Wakeup: /, '') }))
+      .sort((a, b) => a.fireAt - b.fireAt);
   }
 
   /** Whether a thread has at least one scheduled wake-up awaiting fire. */
   hasPendingWakeup(threadId: string): boolean {
-    return (this.pendingWakeups.get(threadId)?.length ?? 0) > 0;
+    return this.getPendingWakeups(threadId).length > 0;
   }
 
   /**
-   * Cancel all pending wake-ups for a thread (user clicked "Cancel"). Clears the
-   * underlying timers and notifies the views so the waiting indicator disappears.
+   * Cancel all pending wake-ups for a thread (user clicked "Cancel"). Deletes
+   * the underlying Scheduler items — removed from disk, not just from
+   * memory — and notifies the views so the waiting indicator disappears.
    */
   cancelWakeups(threadId: string): void {
-    const list = this.pendingWakeups.get(threadId);
-    if (!list || list.length === 0) return;
-    for (const w of list) window.clearTimeout(w.timerId);
-    this.pendingWakeups.delete(threadId);
+    const items = this.scheduler
+      .listItems()
+      .filter((i) => i.origin === 'wakeup' && i.enabled && i.targetThreadId === threadId);
+    if (items.length === 0) return;
+    for (const item of items) {
+      this.scheduler.deleteItem(item.id).catch((err) => {
+        console.error(`[ClaudeThreads] Failed to cancel wake-up ${item.id} for thread ${threadId}:`, err);
+      });
+    }
     this.manager.notifyWakeupChanged(threadId);
-    debugLog(`[ClaudeThreads] Cancelled ${list.length} pending wake-up(s) for thread ${threadId}`);
+    debugLog(`[ClaudeThreads] Cancelled ${items.length} pending wake-up(s) for thread ${threadId}`);
   }
 
   async onunload(): Promise<void> {
@@ -1311,11 +1338,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.gitDiff?.stop();
     this.manager?.destroy();
 
-    // Cancel any pending ScheduleWakeup timers to avoid firing into a dead plugin context.
-    for (const list of this.pendingWakeups.values()) {
-      for (const w of list) window.clearTimeout(w.timerId);
-    }
-    this.pendingWakeups.clear();
+    // Note: pending ScheduleWakeup entries are now durable Scheduler items
+    // (schedule.type 'once', origin 'wakeup') persisted to disk — they must
+    // NOT be cancelled/deleted here. this.scheduler.destroy() above already
+    // stopped their in-memory timers; the items themselves stay on disk so
+    // the next onload() rearms them (or catches them up immediately if their
+    // fireAt already passed while the plugin was unloaded/reloaded/asleep).
+    // Deleting them here would silently drop wake-ups on every plugin
+    // reload — exactly the bug this durability fix removes.
 
     // Cancel background task poll timers.
     for (const id of this.pendingBgTaskTimers.values()) {

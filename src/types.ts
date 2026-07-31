@@ -198,6 +198,18 @@ export interface Thread {
    */
   prUrl?: string;
   /**
+   * ID of the scheduled item (cron) whose fire() created this thread, if any.
+   * Set once at creation time and never cleared. Undefined for threads created
+   * any other way (manual, dispatched, etc).
+   */
+  scheduledItemId?: string;
+  /**
+   * Name of the scheduled item at the time this thread was created, captured
+   * alongside `scheduledItemId` for display (e.g. the "Scheduled: <name>" footer pill).
+   * Not kept in sync with later renames of the scheduled item.
+   */
+  scheduledItemName?: string;
+  /**
    * Status-line pills for this thread, populated by StatusLineService from the
    * configured statusLineCommand. Ephemeral — never persisted to data.json,
    * re-derived on the next poll. Undefined on mobile / when no script is set.
@@ -275,7 +287,7 @@ export interface Project {
   createdAt: number;
 }
 
-export type ScheduleType = 'interval' | 'daily' | 'weekly';
+export type ScheduleType = 'interval' | 'daily' | 'weekly' | 'once';
 
 export interface ScheduledItemSchedule {
   type: ScheduleType;
@@ -285,6 +297,11 @@ export interface ScheduledItemSchedule {
   timeOfDay?: string;
   /** For 'weekly': array of day numbers 0=Sun...6=Sat */
   daysOfWeek?: number[];
+  /**
+   * For 'once': absolute epoch ms at which to fire exactly one time. The item
+   * is deleted after firing (see Scheduler.fire()) rather than rearmed.
+   */
+  fireAt?: number;
 }
 
 export interface ScheduledItem {
@@ -309,6 +326,13 @@ export interface ScheduledItem {
    * if the target thread no longer exists.
    */
   targetThreadId?: string;
+  /**
+   * Marks this item as created by the ScheduleWakeup tool rather than the
+   * user-facing Cron tools/dashboard. Lets ClaudeThreadsPlugin.getPendingWakeups/
+   * hasPendingWakeup/cancelWakeups find these durable one-shot items without a
+   * separate in-memory tracking structure. Absent for ordinary cron items.
+   */
+  origin?: 'wakeup';
 }
 
 export interface SkillSource {
