@@ -177,4 +177,73 @@ test.describe('Mobile View', () => {
     await page.waitForTimeout(250); // debounce
     await expect(page.locator('.ct-mobile-list-panel')).toHaveScreenshot('mobile-thread-list-search.png');
   });
+
+  // ── Live tool-call grouping ────────────────────────────────────────────────
+  // Mobile has no debounced live-render pipeline (unlike desktop's
+  // scheduleLiveToolsRender) — MobileThreadStore.applyFrame's 'tool_use' case
+  // pushes onto streamingTools and notifies synchronously on every frame, and
+  // MobileView.updateStreamingEl() fully rebuilds the streaming element (and
+  // therefore renderToolCalls) on every single one. So this test just fires a
+  // burst of frames directly via window.__store.applyFrame (same pattern as
+  // the status-rail/error-card tests above) and asserts the FINAL rendered
+  // state stays bounded, exercising the exact same MobileView.renderToolCalls
+  // grouping path production frames go through.
+
+  test('live tool-call grouping — a burst of same-kind calls collapses into one bounded group', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-connected'));
+    await page.waitForSelector('.ct-mobile-conv-panel');
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const store = (window as any).__store;
+      const threadId = 'thread-fix-auth';
+      // Multiple tool NAMES, all classified as the 'exploring' activity kind
+      // (see getActivityKind in src/toolNameUtils.ts) so they all merge into
+      // a single run — mirrors the desktop live-grouping burst test.
+      const names = ['Read', 'Grep', 'Bash', 'Glob'];
+      for (let i = 0; i < 50; i++) {
+        store.applyFrame({ type: 'tool_use', threadId, name: names[i % names.length], summary: `call #${i}` });
+      }
+    });
+    await page.waitForTimeout(200);
+
+    // Scope to the LIVE streaming element (.ct-mobile-streaming) — the fixture
+    // thread's already-settled messages also render their own .ct-tools/
+    // .ct-tool-group (thread1Messages has a finalized 2-call Read group), so
+    // an unscoped locator would match those too.
+    const liveTools = page.locator('.ct-mobile-streaming .ct-tools');
+    // All 50 calls collapse into exactly one live group: top-level .ct-tools
+    // children stay bounded instead of growing 1:1 with the frame count.
+    await expect(liveTools.locator('> *')).toHaveCount(1);
+    const group = liveTools.locator('.ct-tool-group').first();
+    await expect(group).toBeVisible();
+    await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (50)');
+    // Collapsed by default (mobile has no per-tool status, so there's no
+    // error-triggered auto-expand to worry about either).
+    await expect(group.locator('.ct-full-content')).toHaveClass(/ct-hidden/);
+
+    await expect(page).toHaveScreenshot('mobile-live-tool-call-grouping.png', { fullPage: true });
+  });
+
+  test('live tool-call grouping — expanding still shows every individual call', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-connected'));
+    await page.waitForSelector('.ct-mobile-conv-panel');
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const store = (window as any).__store;
+      const threadId = 'thread-fix-auth';
+      for (let i = 0; i < 5; i++) {
+        store.applyFrame({ type: 'tool_use', threadId, name: 'Read', summary: `call #${i}` });
+      }
+    });
+    await page.waitForTimeout(200);
+
+    const group = page.locator('.ct-mobile-streaming .ct-tool-group').first();
+    await group.locator('.ct-expand-btn').click();
+    await expect(group.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
+    await expect(group.locator('.ct-full-content .ct-tool-pill')).toHaveCount(5);
+  });
 });
