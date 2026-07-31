@@ -44,7 +44,37 @@ function makeEntries() {
   }));
 }
 
+// Fixture for ~/.claude/settings.json — read by claudeSettingsMcp(Editor).ts
+// via require('fs').readFileSync(). Populated with one server of each shape
+// (stdio, http, sdk) so the Settings → MCP tab screenshot shows real rows,
+// including the read-only sdk entry, instead of just an empty state.
+const MCP_SETTINGS_JSON = JSON.stringify(
+  {
+    model: 'sonnet',
+    mcpServers: {
+      obsidian_notes: {
+        type: 'stdio',
+        command: 'npx',
+        args: ['-y', '@example/obsidian-notes-mcp'],
+        env: { NOTES_API_TOKEN: '${NOTES_API_TOKEN}' },
+      },
+      compass: {
+        type: 'http',
+        url: 'https://compass.rbcodelabs.com/api/mcp',
+        headers: { Authorization: 'Bearer ${COMPASS_API_KEY}' },
+      },
+      internal_tools: {
+        type: 'sdk',
+        name: 'internal-tools',
+      },
+    },
+  },
+  null,
+  2,
+);
+
 function resolveContent(filePath: string): string {
+  if (filePath.endsWith('settings.json')) return MCP_SETTINGS_JSON;
   for (const s of SKILLS) {
     if (filePath.includes(s.name)) return s.content;
   }
@@ -60,6 +90,12 @@ export const existsSync = (_p: string) => false;
 export const readdirSync = (_p: string) => SKILLS.map((s) => `${s.name}.md`);
 export const readFileSync = (p: string, _enc: string): string => resolveContent(p);
 export const statSync = (_p: string) => ({ isDirectory: () => false });
+// realpathSync/mkdirSync/writeFileSync are no-ops in the harness — the MCP
+// settings tab reads via readFileSync above; writes (Add/Edit/Remove) are
+// exercised by the unit tests against the real fs, not this browser harness.
+export const realpathSync = (p: string) => p;
+export const mkdirSync = (_p: string, _opts?: unknown) => undefined;
+export const writeFileSync = (_p: string, _data: string, _enc?: string) => undefined;
 
 export const promises = {
   readdir: async (_path: string, _opts?: unknown) => makeEntries(),
@@ -73,4 +109,13 @@ export const promises = {
 };
 
 // Also keep a default export for static `import fs from 'fs'` usage.
-export default { existsSync, readdirSync, readFileSync, statSync, promises };
+export default {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  realpathSync,
+  mkdirSync,
+  writeFileSync,
+  promises,
+};
