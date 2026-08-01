@@ -328,6 +328,24 @@ Some MCP servers need a credential or a form filled before they can proceed — 
 
 Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Obsidian.
 
+### Managing MCP servers
+
+Settings → **MCP** lists, adds, edits, and removes the external MCP servers referenced above (Compass, Helio, or any other HTTP/SSE/stdio server) — no manual JSON editing required for the common case.
+
+<p align="center">
+  <img src="docs/screenshot-mcp-servers.png" width="800" alt="Settings MCP tab: a list of configured MCP servers, each with a type badge (stdio, http, sdk), a one-line summary, and Edit/Remove buttons, plus an Add MCP server button" />
+</p>
+
+**This tab edits your GLOBAL `~/.claude/settings.json`** (or the per-machine file it symlinks to), not a per-vault or per-plugin config. That file is shared by every Obsidian vault running Claude Threads on this machine *and* by the `claude` CLI itself, so a server you add here shows up everywhere, and a server someone else added via the CLI shows up here too. Changes take effect for new threads only — sessions already running keep whatever MCP servers they started with.
+
+For each server you can see its name, a type badge (`stdio`, `http`, `sse`, or `sdk`), and a one-line summary (the command for `stdio`, the URL for `http`/`sse`). Adding or editing a server opens a form for the command/args/env (stdio) or URL/transport/headers (http/sse) — env values and header values support `${VAR_NAME}` placeholders, resolved the same way as everywhere else in the plugin (environment variables merged with keychain-stored secrets).
+
+<p align="center">
+  <img src="docs/screenshot-mcp-edit-server.png" width="800" alt="Add/edit MCP server form: a type toggle between Command (stdio) and HTTP or SSE, with Name, Command, Arguments, and Environment variables fields, the env field showing a ${NOTES_API_TOKEN} placeholder" />
+</p>
+
+`sdk`-type entries (servers registered by an in-process integration rather than a spawned process or remote URL) render read-only in this tab — they need a live server instance that can't be represented as JSON, so edit `~/.claude/settings.json` by hand if you need to change one. If the settings file has invalid JSON, the tab shows the parse error and hides the add/edit controls entirely rather than risking a write that clobbers whatever's actually on disk.
+
 ### Remote access (mobile)
 
 Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, answer AskUserQuestion prompts, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
