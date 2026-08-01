@@ -41,7 +41,8 @@ export class OrchestratorWakeup {
   private manager: ThreadManager;
   private deps: OrchestratorWakeupDeps;
   private unsubscribe: (() => void) | null = null;
-  private pending = new Set<string>();
+  /** Thread id -> most recent event type ('done' | 'error') since the last flush. */
+  private pending = new Map<string, 'done' | 'error'>();
   private timer: unknown = null;
 
   constructor(manager: ThreadManager, deps: OrchestratorWakeupDeps) {
@@ -70,7 +71,7 @@ export class OrchestratorWakeup {
     if (!orchestratorId) return; // orchestrator not set up yet — nothing to wake
     if (threadId === orchestratorId) return; // never ping itself
 
-    this.pending.add(threadId);
+    this.pending.set(threadId, event.type);
     this.armTimer(orchestratorId);
   }
 
@@ -92,20 +93,27 @@ export class OrchestratorWakeup {
   }
 
   private async flush(orchestratorId: string): Promise<void> {
-    const count = this.pending.size;
+    // Snapshot before clearing — building the message reads this data, so
+    // clearing first (as this used to do) would silently drop it.
+    const entries = Array.from(this.pending.entries());
     this.pending.clear();
-    if (count === 0) return;
+    if (entries.length === 0) return;
 
     if (!this.deps.threadExists(orchestratorId)) {
       this.deps.onWarn?.(`Orchestrator wake-up: thread ${orchestratorId} no longer exists, skipping`);
       return;
     }
 
+    const count = entries.length;
+    const lines = entries.map(([threadId, status]) => {
+      const title = this.manager.getThread(threadId)?.title;
+      const label = title ? `${threadId} "${title}"` : threadId;
+      return `- ${label} (${status})`;
+    });
+    const message = [`New activity on ${count} thread${count === 1 ? '' : 's'} — run your review pass.`, ...lines].join('\n');
+
     try {
-      await this.deps.sendMessage(
-        orchestratorId,
-        `New activity on ${count} thread${count === 1 ? '' : 's'} — run your review pass.`,
-      );
+      await this.deps.sendMessage(orchestratorId, message);
     } catch (err) {
       this.deps.onError?.(err);
     }
