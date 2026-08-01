@@ -2,6 +2,7 @@ import { ThreadSession, type SessionCallbacks, type TaskTrackerEvent, type Threa
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
+import { resolveGitProjectName } from './pathUtils';
 import { debugLog } from './logger';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -341,10 +342,20 @@ export class ThreadManager {
     }
   }
 
-  setThreadCwd(id: string, cwd: string): void {
+  /**
+   * `originRepoPath` semantics (see `ObsidianMcpServerOptions.onSetCwd`):
+   *  - omitted (`undefined`) — plain `set_working_directory` call; leave any
+   *    existing `thread.originRepoPath` untouched.
+   *  - a string — `enter_worktree` captured the origin repo's git root; store it.
+   *  - `null` — `exit_worktree` is back in the origin repo; clear it.
+   */
+  setThreadCwd(id: string, cwd: string, originRepoPath?: string | null): void {
     const thread = this.threads.get(id);
     if (thread) {
       thread.cwd = cwd;
+      if (originRepoPath !== undefined) {
+        thread.originRepoPath = originRepoPath ?? undefined;
+      }
       // Session IDs are scoped to a Claude Code project directory. Resuming a
       // session from the old cwd in the new cwd's project directory will fail with
       // "No conversation found with session ID". Clear it so the next turn starts
@@ -389,10 +400,13 @@ export class ThreadManager {
    * should surface as an explicit error so the user knows to update the path.
    *
    * For each stale worktree path this method:
-   *   1. Walks up the directory tree to the nearest valid ancestor, stopping before
-   *      the worktree container dir itself.
-   *   2. Falls back to `vaultRoot` or `os.homedir()` if no valid ancestor is found.
-   *   3. Calls `setThreadCwd()` so the session ID is cleared and `cwd_changed` fires
+   *   1. Prefers rerouting straight to `thread.originRepoPath` (the origin repo's
+   *      git root, captured by `enter_worktree`) when that path still exists —
+   *      this recovers a working cwd AND the correct project name in one shot.
+   *   2. Otherwise walks up the directory tree to the nearest valid ancestor,
+   *      stopping before the worktree container dir itself.
+   *   3. Falls back to `vaultRoot` or `os.homedir()` if no valid ancestor is found.
+   *   4. Calls `setThreadCwd()` so the session ID is cleared and `cwd_changed` fires
    *      (giving callers a chance to persist the fix via `saveSettings()`).
    *
    * Returns the number of threads that were repaired.
@@ -428,6 +442,20 @@ export class ThreadManager {
       if (!thread.cwd || !isWorktreePath(thread.cwd)) continue;
       if (fs.existsSync(thread.cwd)) continue;
 
+      // Prefer rerouting straight back to the origin repo captured at
+      // `enter_worktree` time (Thread.originRepoPath) — this recovers both a
+      // working cwd AND the correct project name in one shot, and is
+      // available even when the worktree directory itself is long gone.
+      if (thread.originRepoPath && fs.existsSync(thread.originRepoPath)) {
+        console.warn(
+          `[ClaudeThreads] Repairing stale worktree cwd for thread "${thread.title}" via originRepoPath: ` +
+          `"${thread.cwd}" → "${thread.originRepoPath}"`,
+        );
+        this.setThreadCwd(id, thread.originRepoPath, null);
+        repaired++;
+        continue;
+      }
+
       // Walk up the tree to the nearest ancestor that both exists and is not
       // the worktree container directory itself.
       let fallback = thread.cwd;
@@ -451,6 +479,52 @@ export class ThreadManager {
     }
 
     return repaired;
+  }
+
+  /**
+   * One-time migration for threads orphaned *before* `Thread.originRepoPath`
+   * existed: their worktree cwd was already gone (with nothing recoverable on
+   * disk) by the time this fix shipped, so `repairStaleCwds()` can only reroute
+   * them to a generic ancestor/vaultRoot/homedir — which also can't resolve a
+   * project name, leaving the Kanban lane showing the bare worktree hash.
+   *
+   * For each thread that:
+   *   - has no `originRepoPath` and no `projectNameOverride` already, and
+   *   - can't resolve a project name from its current `cwd` via a live git walk
+   *     (`resolveGitProjectName` returns null), and
+   *   - has a `prUrl` pointing at a GitHub PR (e.g.
+   *     `https://github.com/<owner>/<repo>/pull/<n>`)
+   *
+   * ...sets `projectNameOverride` to `<repo>` extracted from the PR URL, purely
+   * as a display label for `resolveThreadProjectName()` (see pathUtils.ts) —
+   * it does not touch `cwd` or attempt to find a real filesystem path.
+   *
+   * Safe to call repeatedly / on every load: threads that already have
+   * `originRepoPath` or `projectNameOverride`, or whose cwd resolves fine on
+   * its own, are left untouched.
+   *
+   * Returns the number of threads that were backfilled.
+   */
+  backfillLegacyProjectNames(): number {
+    let backfilled = 0;
+
+    for (const thread of this.threads.values()) {
+      if (thread.originRepoPath || thread.projectNameOverride) continue;
+      if (!thread.prUrl) continue;
+      if (resolveGitProjectName(thread.cwd)) continue; // cwd already resolves fine
+
+      const match = thread.prUrl.match(/github\.com\/[^/]+\/([^/]+)\/pull\/\d+/);
+      if (!match) continue;
+
+      thread.projectNameOverride = match[1];
+      console.warn(
+        `[ClaudeThreads] Backfilled project name for orphaned thread "${thread.title}" ` +
+        `from prUrl: "${match[1]}"`,
+      );
+      backfilled++;
+    }
+
+    return backfilled;
   }
 
   setThreadModel(id: string, model: string | undefined): void {

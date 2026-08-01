@@ -224,8 +224,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
         const mcpServer = createObsidianMcpServer(this.app, {
           enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
           initialCwd,
-          onSetCwd: (newCwd: string) => {
-            this.manager.setThreadCwd(threadId, newCwd);
+          onSetCwd: (newCwd: string, originRepoPath?: string | null) => {
+            this.manager.setThreadCwd(threadId, newCwd, originRepoPath);
             this.saveSettings().catch(console.error);
           },
           onScheduleWakeup: async (delayMs: number, prompt: string, reason: string) => {
@@ -300,6 +300,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               reviewed: t.reviewed,
               projectId: t.projectId,
               cwd: t.cwd,
+              originRepoPath: t.originRepoPath,
+              projectNameOverride: t.projectNameOverride,
               prUrl: t.prUrl,
               scheduledItemId: t.scheduledItemId,
               scheduledItemName: t.scheduledItemName,
@@ -316,7 +318,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
-          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
+          getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; originRepoPath?: string; projectNameOverride?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;
             return {
@@ -334,6 +336,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
               reviewed: t.reviewed,
               projectId: t.projectId,
               cwd: t.cwd,
+              originRepoPath: t.originRepoPath,
+              projectNameOverride: t.projectNameOverride,
               prUrl: t.prUrl,
               scheduledItemId: t.scheduledItemId,
               scheduledItemName: t.scheduledItemName,
@@ -759,6 +763,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
       const repairedCount = this.manager.repairStaleCwds();
       if (repairedCount > 0) {
         console.log(`[ClaudeThreads] Repaired ${repairedCount} thread(s) with stale working director${repairedCount === 1 ? 'y' : 'ies'}`);
+        await this.saveSettings();
+      }
+    }
+
+    // One-time backfill for threads orphaned before Thread.originRepoPath existed:
+    // their worktree cwd was already unrecoverable, so repairStaleCwds() above can't
+    // restore a project name either. Recover a display-only label from the thread's
+    // PR URL instead (see backfillLegacyProjectNames() doc comment).
+    {
+      const backfilledCount = this.manager.backfillLegacyProjectNames();
+      if (backfilledCount > 0) {
+        console.log(`[ClaudeThreads] Backfilled project name for ${backfilledCount} legacy thread(s)`);
         await this.saveSettings();
       }
     }
