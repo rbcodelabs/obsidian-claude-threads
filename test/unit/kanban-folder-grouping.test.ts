@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import * as path from 'path';
+import * as os from 'os';
 import type { Thread } from '../../src/types';
+import { resolveThreadProjectName } from '../../src/pathUtils';
 
 /**
  * Mirrors the folder-grouping logic from KanbanView.groupLabel() and the lane
@@ -188,5 +191,34 @@ describe('KanbanView folder grouping — worktree collapsing', () => {
     const b = makeThread('b', 1_000, { cwd: '/Users/me/projects/other-repo' });
     const lanes = groupThreadsIntoLanes([a, b], getProjectName, repoName);
     expect(lanes.map(l => l[0])).toEqual(['hip-trip-marketing-site', 'other-repo']);
+  });
+});
+
+// ── real resolveThreadProjectName wired into groupLabel ──────────────────────
+// Unlike the mirrors above (which stand in a deterministic cwdLabel resolver),
+// these exercise the actual pathUtils.resolveThreadProjectName so a regression
+// in its originRepoPath/projectNameOverride precedence shows up here too — this
+// is the exact bug (Kanban lane showing a worktree hash instead of the repo
+// name) that originRepoPath/projectNameOverride were added to fix.
+
+describe('KanbanView folder grouping — real resolveThreadProjectName precedence', () => {
+  const realCwdLabel = (thread: Thread) => resolveThreadProjectName(thread);
+
+  it('a deleted worktree cwd still groups under the origin repo name via originRepoPath', () => {
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'kanban-test-deadbeef');
+    const t = makeThread('t', 1_000, { cwd: staleCwd, originRepoPath: '/Users/me/projects/obsidian-claude-threads' });
+    expect(groupLabel(t, getProjectName, () => realCwdLabel(t))).toBe('obsidian-claude-threads');
+  });
+
+  it('a legacy orphaned thread groups under projectNameOverride when nothing else resolves', () => {
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'kanban-test-orphan-hash');
+    const t = makeThread('t', 1_000, { cwd: staleCwd, projectNameOverride: 'obsidian-claude-threads' });
+    expect(groupLabel(t, getProjectName, () => realCwdLabel(t))).toBe('obsidian-claude-threads');
+  });
+
+  it('without originRepoPath or projectNameOverride, a deleted worktree cwd falls back to the raw hash', () => {
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'kanban-test-no-recovery');
+    const t = makeThread('t', 1_000, { cwd: staleCwd });
+    expect(groupLabel(t, getProjectName, () => realCwdLabel(t))).toBe('kanban-test-no-recovery');
   });
 });

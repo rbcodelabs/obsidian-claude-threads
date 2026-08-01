@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { resolveProjectName } from '../../src/pathUtils';
+import { describe, it, expect, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { resolveProjectName, resolveGitProjectName, resolveThreadProjectName } from '../../src/pathUtils';
 
 describe('resolveProjectName', () => {
   it('returns the last path component for a normal project path', () => {
@@ -38,5 +41,91 @@ describe('resolveProjectName', () => {
     // lastIndexOf('/') on 'a/b/' returns the last /, giving ''
     // This is acceptable — document the behavior
     expect(resolveProjectName('/Users/rick/projects/myapp')).toBe('myapp');
+  });
+});
+
+describe('resolveGitProjectName', () => {
+  const scratchDirs: string[] = [];
+  afterEach(() => {
+    while (scratchDirs.length) {
+      const dir = scratchDirs.pop()!;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null (not a fallback) when no .git is found anywhere', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-none-'));
+    scratchDirs.push(dir);
+    expect(resolveGitProjectName(dir)).toBeNull();
+  });
+
+  it('returns the repo root basename for a standard .git directory', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-repo-'));
+    scratchDirs.push(repoRoot);
+    fs.mkdirSync(path.join(repoRoot, '.git'));
+    const sub = path.join(repoRoot, 'src', 'nested');
+    fs.mkdirSync(sub, { recursive: true });
+    expect(resolveGitProjectName(sub)).toBe(path.basename(repoRoot));
+  });
+
+  it('follows a worktree .git file back to the main repo root', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-mainrepo-'));
+    scratchDirs.push(repoRoot);
+    const mainGitDir = path.join(repoRoot, '.git');
+    fs.mkdirSync(mainGitDir);
+
+    const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-worktree-'));
+    scratchDirs.push(worktreeDir);
+    const worktreesMeta = path.join(mainGitDir, 'worktrees', 'my-branch');
+    fs.mkdirSync(worktreesMeta, { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '.git'), `gitdir: ${worktreesMeta}\n`);
+
+    expect(resolveGitProjectName(worktreeDir)).toBe(path.basename(repoRoot));
+  });
+
+  it('returns null for a relative path (does not walk the test runner cwd)', () => {
+    expect(resolveGitProjectName('some/relative/path')).toBeNull();
+  });
+});
+
+describe('resolveThreadProjectName', () => {
+  const scratchDirs: string[] = [];
+  afterEach(() => {
+    while (scratchDirs.length) {
+      const dir = scratchDirs.pop()!;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers a live git-walk of originRepoPath over cwd', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-thread-origin-'));
+    scratchDirs.push(repoRoot);
+    fs.mkdirSync(path.join(repoRoot, '.git'));
+
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'deadbeef01');
+    expect(resolveThreadProjectName({ cwd: staleCwd, originRepoPath: repoRoot })).toBe(path.basename(repoRoot));
+  });
+
+  it('falls back to the basename of originRepoPath when it no longer exists on disk', () => {
+    const deletedRepo = path.join(os.tmpdir(), 'pathutils-deleted-repo-xyz');
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'deadbeef02');
+    expect(resolveThreadProjectName({ cwd: staleCwd, originRepoPath: deletedRepo })).toBe('pathutils-deleted-repo-xyz');
+  });
+
+  it('falls back to a live git-walk of cwd when originRepoPath is absent', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pathutils-thread-cwd-'));
+    scratchDirs.push(repoRoot);
+    fs.mkdirSync(path.join(repoRoot, '.git'));
+    expect(resolveThreadProjectName({ cwd: repoRoot })).toBe(path.basename(repoRoot));
+  });
+
+  it('falls back to projectNameOverride when neither originRepoPath nor cwd resolve', () => {
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'deadbeef03');
+    expect(resolveThreadProjectName({ cwd: staleCwd, projectNameOverride: 'obsidian-claude-threads' })).toBe('obsidian-claude-threads');
+  });
+
+  it('falls back to the last path segment of cwd as a last resort', () => {
+    const staleCwd = path.join(os.tmpdir(), 'claude-worktrees', 'deadbeef04');
+    expect(resolveThreadProjectName({ cwd: staleCwd })).toBe('deadbeef04');
   });
 });

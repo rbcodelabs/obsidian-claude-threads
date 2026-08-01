@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
@@ -229,5 +232,160 @@ describe('ThreadManager — model escalation (resolveModel / stripKeyword)', () 
   it('strips the keyword from the middle of a message', () => {
     const manager = makeManager({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'fable' });
     expect(strip(manager, 'please /escalate fix this')).toBe('please fix this');
+  });
+});
+
+describe('ThreadManager — setThreadCwd originRepoPath semantics', () => {
+  let manager: ThreadManager;
+  beforeEach(() => { manager = makeManager(); });
+
+  it('sets originRepoPath when a string is passed', () => {
+    const t = manager.createThread('T', '/old/cwd');
+    manager.setThreadCwd(t.id, '/new/worktree', '/repo/root');
+    expect(manager.getThread(t.id)!.originRepoPath).toBe('/repo/root');
+  });
+
+  it('clears originRepoPath when null is passed explicitly', () => {
+    const t = manager.createThread('T', '/old/worktree');
+    manager.setThreadCwd(t.id, '/old/worktree', '/repo/root');
+    manager.setThreadCwd(t.id, '/repo/root', null);
+    expect(manager.getThread(t.id)!.originRepoPath).toBeUndefined();
+  });
+
+  it('leaves an existing originRepoPath untouched when the argument is omitted', () => {
+    const t = manager.createThread('T', '/worktree');
+    manager.setThreadCwd(t.id, '/worktree', '/repo/root');
+    manager.setThreadCwd(t.id, '/worktree/subdir');
+    expect(manager.getThread(t.id)!.originRepoPath).toBe('/repo/root');
+  });
+});
+
+describe('ThreadManager — repairStaleCwds', () => {
+  let manager: ThreadManager;
+  const scratchDirs: string[] = [];
+
+  beforeEach(() => { manager = makeManager(); });
+  afterEach(() => {
+    while (scratchDirs.length) {
+      fs.rmSync(scratchDirs.pop()!, { recursive: true, force: true });
+    }
+  });
+
+  it('reroutes to originRepoPath when it still exists on disk, and clears originRepoPath', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-repair-repo-'));
+    scratchDirs.push(repoRoot);
+
+    const staleWorktree = path.join(os.tmpdir(), 'claude-worktrees', 'repair-test-01');
+    const t = manager.createThread('Worktree thread', staleWorktree);
+    t.originRepoPath = repoRoot;
+
+    const repaired = manager.repairStaleCwds();
+
+    expect(repaired).toBe(1);
+    const after = manager.getThread(t.id)!;
+    expect(after.cwd).toBe(repoRoot);
+    expect(after.originRepoPath).toBeUndefined();
+  });
+
+  it('falls back to the ancestor walk when originRepoPath is missing', () => {
+    const staleWorktree = path.join(os.tmpdir(), 'claude-worktrees', 'repair-test-02', 'nested');
+    const t = manager.createThread('No origin thread', staleWorktree);
+    // No originRepoPath set at all.
+
+    const repaired = manager.repairStaleCwds();
+
+    expect(repaired).toBe(1);
+    const after = manager.getThread(t.id)!;
+    expect(after.cwd).not.toBe(staleWorktree);
+    expect(fs.existsSync(after.cwd)).toBe(true);
+  });
+
+  it('falls back to the ancestor walk when originRepoPath no longer exists on disk', () => {
+    const staleWorktree = path.join(os.tmpdir(), 'claude-worktrees', 'repair-test-03');
+    const t = manager.createThread('Deleted origin thread', staleWorktree);
+    t.originRepoPath = path.join(os.tmpdir(), 'tm-repair-deleted-repo-xyz');
+
+    const repaired = manager.repairStaleCwds();
+
+    expect(repaired).toBe(1);
+    const after = manager.getThread(t.id)!;
+    expect(after.cwd).not.toBe(t.originRepoPath);
+    expect(fs.existsSync(after.cwd)).toBe(true);
+  });
+
+  it('does not touch threads whose cwd is not under the worktree container', () => {
+    const t = manager.createThread('Regular thread', '/nonexistent/regular/path');
+    const repaired = manager.repairStaleCwds();
+    expect(repaired).toBe(0);
+    expect(manager.getThread(t.id)!.cwd).toBe('/nonexistent/regular/path');
+  });
+});
+
+describe('ThreadManager — backfillLegacyProjectNames', () => {
+  let manager: ThreadManager;
+  const scratchDirs: string[] = [];
+
+  beforeEach(() => { manager = makeManager(); });
+  afterEach(() => {
+    while (scratchDirs.length) {
+      fs.rmSync(scratchDirs.pop()!, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills projectNameOverride from prUrl when cwd cannot resolve a project', () => {
+    const staleCwd = path.join(os.tmpdir(), 'tm-backfill-orphan-01');
+    const t = manager.createThread('Orphaned PR thread', staleCwd);
+    t.prUrl = 'https://github.com/rickbowman/obsidian-claude-threads/pull/317';
+
+    const count = manager.backfillLegacyProjectNames();
+
+    expect(count).toBe(1);
+    expect(manager.getThread(t.id)!.projectNameOverride).toBe('obsidian-claude-threads');
+  });
+
+  it('does not backfill when cwd already resolves to a real repo', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-backfill-realrepo-'));
+    scratchDirs.push(repoRoot);
+    fs.mkdirSync(path.join(repoRoot, '.git'));
+
+    const t = manager.createThread('Healthy thread', repoRoot);
+    t.prUrl = 'https://github.com/someone/some-other-repo/pull/1';
+
+    const count = manager.backfillLegacyProjectNames();
+
+    expect(count).toBe(0);
+    expect(manager.getThread(t.id)!.projectNameOverride).toBeUndefined();
+  });
+
+  it('does not backfill when originRepoPath is already set', () => {
+    const staleCwd = path.join(os.tmpdir(), 'tm-backfill-hasorigin-01');
+    const t = manager.createThread('Has origin thread', staleCwd);
+    t.originRepoPath = '/somewhere/repo';
+    t.prUrl = 'https://github.com/someone/some-repo/pull/2';
+
+    const count = manager.backfillLegacyProjectNames();
+
+    expect(count).toBe(0);
+    expect(manager.getThread(t.id)!.projectNameOverride).toBeUndefined();
+  });
+
+  it('does not backfill when there is no prUrl', () => {
+    const staleCwd = path.join(os.tmpdir(), 'tm-backfill-noprurl-01');
+    const t = manager.createThread('No PR thread', staleCwd);
+
+    const count = manager.backfillLegacyProjectNames();
+
+    expect(count).toBe(0);
+    expect(manager.getThread(t.id)!.projectNameOverride).toBeUndefined();
+  });
+
+  it('is idempotent — a second call backfills nothing further', () => {
+    const staleCwd = path.join(os.tmpdir(), 'tm-backfill-idempotent-01');
+    const t = manager.createThread('Orphaned thread', staleCwd);
+    t.prUrl = 'https://github.com/rickbowman/obsidian-claude-threads/pull/318';
+
+    expect(manager.backfillLegacyProjectNames()).toBe(1);
+    expect(manager.backfillLegacyProjectNames()).toBe(0);
+    expect(manager.getThread(t.id)!.projectNameOverride).toBe('obsidian-claude-threads');
   });
 });

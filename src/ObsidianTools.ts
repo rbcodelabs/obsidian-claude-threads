@@ -105,6 +105,10 @@ export interface ThreadSnapshot {
   reviewed?: boolean;
   projectId?: string;
   cwd?: string;
+  /** Git root of the origin repo a worktree cwd was cut from, if `cwd` is a worktree. See Thread.originRepoPath. */
+  originRepoPath?: string;
+  /** Display-only project name for legacy orphaned threads with no other way to resolve one. See Thread.projectNameOverride. */
+  projectNameOverride?: string;
   /** URL of the most recent GitHub PR opened during this thread, if any (e.g. https://github.com/owner/repo/pull/42) */
   prUrl?: string;
   /** ID of the scheduled item (cron) whose fire() created this thread, if any. */
@@ -171,8 +175,21 @@ const addVaultBridgeSchema = {
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
-  /** Called when the agent requests a working-directory change. Receives the resolved absolute path. */
-  onSetCwd?: (path: string) => void;
+  /**
+   * Called when the agent requests a working-directory change. Receives the
+   * resolved absolute path.
+   *
+   * `originRepoPath` is the git root a worktree was created from, passed only
+   * by `enter_worktree`/`exit_worktree`:
+   *  - `enter_worktree` passes the origin repo's git root, to be persisted on
+   *    the thread so its project name (and repair routing) survive the
+   *    worktree directory being deleted later.
+   *  - `exit_worktree` passes `null` to clear it once back in the origin repo.
+   *  - Plain `set_working_directory` calls omit the argument entirely
+   *    (`undefined`) — callers should leave any existing value untouched in
+   *    that case, distinct from an explicit `null` clear.
+   */
+  onSetCwd?: (path: string, originRepoPath?: string | null) => void;
   /**
    * Called when the agent schedules a wakeup. delayMs is the delay in milliseconds.
    * Backed by a durable one-shot Scheduler item (survives plugin reload/restart/sleep,
@@ -744,7 +761,10 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
         activeWorktrees.set(worktreePath, gitRoot);
         effectiveCwd = worktreePath;
-        options.onSetCwd?.(worktreePath);
+        // Persist gitRoot alongside the new cwd so the thread's project name
+        // (Kanban grouping) and repair routing survive this worktree
+        // directory being deleted later — see Thread.originRepoPath.
+        options.onSetCwd?.(worktreePath, gitRoot);
 
         // Notify other plugins (e.g. Vault Bridges auto-flip) that this
         // session moved into a worktree. Fire-and-forget: listeners must
@@ -827,7 +847,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
         activeWorktrees.delete(targetPath);
         effectiveCwd = originalRepo;
-        options.onSetCwd?.(originalRepo);
+        // Back in the origin repo itself — clear originRepoPath explicitly
+        // (cwd now resolves its own project name via the normal git walk).
+        options.onSetCwd?.(originalRepo, null);
 
         // Notify other plugins (e.g. Vault Bridges auto-flip) that this
         // session left its worktree and the directory was removed.

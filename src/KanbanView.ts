@@ -4,7 +4,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
-import { resolveProjectName } from './pathUtils';
+import { resolveThreadProjectName } from './pathUtils';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
@@ -489,22 +489,26 @@ export class KanbanView extends ItemView {
    * the assigned Project's name, else the thread's git repo / project name,
    * else the Unassigned catch-all.
    *
-   * Uses the repo NAME (resolveProjectName) rather than buildCwdLabel so that
-   * every worktree of a repo collapses into a single lane — e.g. a main checkout
-   * and its `feat-x` / temp worktrees all group under "my-repo" instead of
-   * appearing as separate "my-repo · feat-x" lanes. Each card still shows its own
-   * branch/worktree via the cwd chip in the footer.
+   * Uses the repo NAME (resolveThreadProjectName) rather than buildCwdLabel so
+   * that every worktree of a repo collapses into a single lane — e.g. a main
+   * checkout and its `feat-x` / temp worktrees all group under "my-repo" instead
+   * of appearing as separate "my-repo · feat-x" lanes. Each card still shows its
+   * own branch/worktree via the cwd chip in the footer.
+   *
+   * `resolveThreadProjectName` additionally prefers `thread.originRepoPath` /
+   * `thread.projectNameOverride` when the live cwd can no longer resolve a repo
+   * name (e.g. its worktree directory was deleted) — see pathUtils.ts.
    */
   private groupLabel(thread: Thread): string {
     if (thread.projectId) {
       const project = this.manager.getProject(thread.projectId);
       if (project) return project.name;
     }
-    if (thread.cwd) {
-      const repo = resolveProjectName(thread.cwd);
+    if (thread.cwd || thread.originRepoPath) {
+      const repo = resolveThreadProjectName(thread);
       if (repo) return repo;
-      // Fallback for non-repo paths (resolveProjectName already returns the last
-      // path segment, but guard anyway): shortened cwd label.
+      // Fallback for non-repo paths (resolveThreadProjectName already returns
+      // the last path segment, but guard anyway): shortened cwd label.
       const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);
       if (label) return label;
     }

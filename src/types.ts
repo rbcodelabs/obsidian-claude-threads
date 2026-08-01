@@ -132,6 +132,26 @@ export interface Thread {
   sessionId?: string;
   title: string;
   cwd: string;
+  /**
+   * Absolute path to the origin repo's git root, set when `cwd` is a worktree
+   * created by `enter_worktree` (captured at creation time via `git rev-parse
+   * --show-toplevel` on the repo the worktree was cut from). Persisted so the
+   * project name for Kanban grouping and `repairStaleCwds()`'s repair target
+   * both survive the worktree directory itself being deleted later (by
+   * `exit_worktree`, an external `git worktree remove`/prune, or the
+   * worktree-cleanup skill) — see `resolveThreadProjectName()` in pathUtils.ts.
+   * Cleared when `exit_worktree` restores the thread to the origin repo cwd.
+   */
+  originRepoPath?: string;
+  /**
+   * Display-only project name override for legacy threads whose worktree cwd
+   * was already gone (and `originRepoPath` was never captured) before this
+   * field existed. Populated once by `ThreadManager.backfillLegacyProjectNames()`
+   * from the thread's `prUrl` (`github.com/<owner>/<repo>/pull/<n>`) when no
+   * other way remains to resolve a project name. Never used to derive a real
+   * filesystem path — purely a label of last resort in `resolveThreadProjectName()`.
+   */
+  projectNameOverride?: string;
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;

@@ -7,12 +7,12 @@
  *    - `.git` is a *file*       → we're in a worktree; parse the `gitdir:` pointer,
  *                                  navigate to the main `.git` dir, and return the
  *                                  repo root's basename.
- * 2. If nothing is found, return the last path component as a fallback.
+ * 2. If nothing is found, return null — callers decide their own fallback.
  *
  * Uses synchronous fs calls (acceptable — only called from UI render paths on desktop).
  */
-export function resolveProjectName(cwd: string): string {
-  if (!cwd) return '';
+export function resolveGitProjectName(cwd: string): string | null {
+  if (!cwd) return null;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -74,10 +74,68 @@ export function resolveProjectName(cwd: string): string {
       }
     }
   } catch {
-    // Silently fall through to basename fallback on any I/O error
+    // Silently fall through to null on any I/O error
   }
+
+  return null;
+}
+
+/**
+ * Resolves a human-readable project name (git repo name) from a working directory path.
+ *
+ * Thin wrapper over `resolveGitProjectName` that preserves the historical
+ * behavior of always returning *something*: when the git walk can't determine
+ * a repo name, falls back to the last path segment of `cwd`.
+ */
+export function resolveProjectName(cwd: string): string {
+  if (!cwd) return '';
+  const resolved = resolveGitProjectName(cwd);
+  if (resolved) return resolved;
 
   // Last resort: return the final path component.
   const lastSlash = cwd.lastIndexOf('/');
   return lastSlash === -1 ? cwd : cwd.slice(lastSlash + 1);
+}
+
+/**
+ * Minimal shape needed to resolve a thread's project/Kanban-lane label.
+ * Matches (a subset of) `Thread` from types.ts without importing it here,
+ * keeping this module dependency-free for its existing unit tests.
+ */
+export interface ThreadProjectNameInput {
+  cwd: string;
+  originRepoPath?: string;
+  projectNameOverride?: string;
+}
+
+/**
+ * Resolves the project name to display for a thread, in priority order:
+ *
+ * 1. `originRepoPath` (the git root a worktree was cut from, captured at
+ *    `enter_worktree` time) — tried via a live git-walk first in case the
+ *    path itself moved, then its basename as a direct fallback. This is what
+ *    keeps Kanban grouping correct after the worktree directory is deleted.
+ * 2. A live git-walk from `cwd` (handles ordinary repos and worktrees that
+ *    still exist on disk).
+ * 3. `projectNameOverride` — a display-only label backfilled for legacy
+ *    threads that predate `originRepoPath` (see
+ *    `ThreadManager.backfillLegacyProjectNames()`).
+ * 4. The last path segment of `cwd`, matching `resolveProjectName`'s final
+ *    fallback so callers always get a non-empty label.
+ */
+export function resolveThreadProjectName(thread: ThreadProjectNameInput): string {
+  if (thread.originRepoPath) {
+    const viaOrigin = resolveGitProjectName(thread.originRepoPath);
+    if (viaOrigin) return viaOrigin;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodePath = require('path') as typeof import('path');
+    return nodePath.basename(thread.originRepoPath);
+  }
+
+  const viaCwd = resolveGitProjectName(thread.cwd);
+  if (viaCwd) return viaCwd;
+
+  if (thread.projectNameOverride) return thread.projectNameOverride;
+
+  return resolveProjectName(thread.cwd);
 }
