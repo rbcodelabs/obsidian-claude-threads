@@ -15,6 +15,7 @@ import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission, PendingQuestion } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon } from './toolNameUtils';
+import { splitErrorMessage } from './dashboardUtils';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -1259,7 +1260,17 @@ export class MobileView extends ItemView {
 
   private renderErrorCard(threadId: string, errorText: string): void {
     const card = this.messagesEl.createDiv('ct-mobile-error-card');
-    card.createDiv({ cls: 'ct-mobile-error-text', text: errorText });
+    const { headline, stack } = splitErrorMessage(errorText);
+    // Wrap headline + collapsed stack together so they stack vertically as a
+    // single flex item, instead of sitting side-by-side with the dismiss
+    // button in the card's flex-row layout.
+    const bodyEl = card.createDiv('ct-mobile-error-body');
+    bodyEl.createDiv({ cls: 'ct-mobile-error-text', text: headline });
+    if (stack) {
+      const detailsEl = bodyEl.createEl('details', { cls: 'ct-mobile-error-details' });
+      detailsEl.createEl('summary', { text: 'Show technical details' });
+      detailsEl.createEl('pre', { cls: 'ct-mobile-error-stack', text: stack });
+    }
     const dismissBtn = card.createEl('button', {
       cls: 'ct-mobile-error-dismiss',
       text: '×',

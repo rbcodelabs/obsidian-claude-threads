@@ -153,6 +153,12 @@ export interface Thread {
    * Reset to 0 on a successful onDone; incremented on each auto-retry.
    */
   streamCloseRetryCount?: number;
+  /**
+   * Auto-retry budget tracker for API rate-limit / overload errors (see
+   * rateLimitRecovery.ts). Reset to 0 on a successful onDone; incremented
+   * on each auto-retry.
+   */
+  rateLimitRetryCount?: number;
   model?: string;
   projectId?: string;
   reviewed?: boolean;
