@@ -4,6 +4,8 @@ import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledIte
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { secretStorageKey } from './secretUtils';
+import { KANBAN_VIEW_TYPE, type KanbanView } from './KanbanView';
+import { AGENT_VIEW_TYPE, type AgentDashboard } from './AgentDashboard';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -675,6 +677,16 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     private plugin: ClaudeThreadsPlugin,
   ) {
     super(app, plugin);
+  }
+
+  /** Re-renders any open Kanban board / Agent Dashboard leaves so a setting toggled here (e.g. scheduled-thread stacking) takes effect immediately, without requiring the user to close and reopen the tab. */
+  private refreshKanbanAndDashboardViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(KANBAN_VIEW_TYPE)) {
+      (leaf.view as KanbanView).render();
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)) {
+      (leaf.view as AgentDashboard).render();
+    }
   }
 
   /**
@@ -1452,6 +1464,19 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.kanbanCollapseSide = value as PluginSettings['kanbanCollapseSide'];
             await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Stack scheduled job threads')
+      .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack in the Kanban board\'s quiet columns (New, Done, Ready) and group them into a "Scheduled Jobs" section on the Agent Dashboard. A run that\'s running, waiting on input, or errored is never stacked.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.stackScheduledThreads ?? true)
+          .onChange(async (value) => {
+            this.plugin.settings.stackScheduledThreads = value;
+            await this.plugin.saveSettings();
+            this.refreshKanbanAndDashboardViews();
           }),
       );
 
