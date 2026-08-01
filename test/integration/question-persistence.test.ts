@@ -12,6 +12,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
+import type { ImageAttachment } from '../../src/types';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import type { AskQuestion } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
@@ -21,30 +23,47 @@ import type { ThreadEvent } from '../../src/ThreadManager';
 const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
   prompt: null as string | null,
-  resolve: null as (() => void) | null,
   resumeSessionId: undefined as string | undefined,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      prompt: string,
-      resumeSessionId: string | undefined,
-      _cwd: unknown,
-      _permissionMode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      mock.prompt = prompt;
-      mock.resumeSessionId = resumeSessionId;
-      return new Promise<void>((res) => { mock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.resumeSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.resumeSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {
+    send(text: string, _images?: ImageAttachment[]): void {
+      mock.prompt = text;
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
       mock.callbacks?.onInterrupted(mock.resumeSessionId ?? '');
-      mock.resolve?.();
+      this._turnInFlight = false;
     }
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -63,12 +82,11 @@ function wireQuestionHandler(manager: InstanceType<typeof ThreadManager>) {
     });
 }
 
-async function driveResponse(content: string, sessionId = 'sess-1') {
+function driveResponse(content: string, sessionId = 'sess-1') {
   const cb = mock.callbacks!;
   cb.onToken(content);
   cb.onMessage(content, []);
   cb.onDone(sessionId, 0.001, 1);
-  mock.resolve!();
 }
 
 /** Collect events emitted while a thunk runs. */
@@ -102,7 +120,6 @@ const SAMPLE_QUESTIONS: AskQuestion[] = [
 beforeEach(() => {
   mock.callbacks = null;
   mock.prompt = null;
-  mock.resolve = null;
   mock.resumeSessionId = undefined;
 });
 
@@ -114,14 +131,13 @@ describe('pendingQuestions — set and persist', () => {
     wireQuestionHandler(manager);
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+    await manager.sendMessage(thread.id, 'Ask me something');
     void mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
 
     expect(thread.pendingQuestions).toEqual(SAMPLE_QUESTIONS);
 
     manager.resolveQuestion(thread.id, { 'Which color?': 'Red' });
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('emits pending_question_changed with the question set', async () => {
@@ -130,11 +146,10 @@ describe('pendingQuestions — set and persist', () => {
     const thread = manager.createThread('T', os.tmpdir());
 
     const events = await collectEvents(manager, thread.id, async () => {
-      const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+      await manager.sendMessage(thread.id, 'Ask me something');
       void mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
       manager.resolveQuestion(thread.id, { 'Which color?': 'Red' });
-      await driveResponse('Done');
-      await sendPromise;
+      driveResponse('Done');
     });
 
     const changedEvents = events.filter(e => e.type === 'pending_question_changed') as
@@ -155,15 +170,14 @@ describe('pendingQuestions — set and persist', () => {
       if (e.type === 'question_ready') captured = e.questions;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+    await manager.sendMessage(thread.id, 'Ask me something');
     void mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
 
     unsub();
     expect(captured).toEqual(SAMPLE_QUESTIONS);
 
     manager.resolveQuestion(thread.id, { 'Which color?': 'Red' });
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('pendingQuestions survives JSON serialization (reload simulation)', async () => {
@@ -171,7 +185,7 @@ describe('pendingQuestions — set and persist', () => {
     wireQuestionHandler(manager);
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+    await manager.sendMessage(thread.id, 'Ask me something');
     void mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
 
     const serialized = JSON.stringify(thread);
@@ -179,8 +193,7 @@ describe('pendingQuestions — set and persist', () => {
     expect(restored.pendingQuestions).toEqual(SAMPLE_QUESTIONS);
 
     manager.resolveQuestion(thread.id, { 'Which color?': 'Red' });
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 });
 
@@ -192,7 +205,7 @@ describe('pendingQuestions — resolveQuestion clears it and returns answers', (
     wireQuestionHandler(manager);
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+    await manager.sendMessage(thread.id, 'Ask me something');
     void mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
 
     expect(thread.pendingQuestions).toEqual(SAMPLE_QUESTIONS);
@@ -208,8 +221,7 @@ describe('pendingQuestions — resolveQuestion clears it and returns answers', (
     expect(manager.hasPendingQuestion(thread.id)).toBe(false);
     expect(manager.getPendingQuestionResolver(thread.id)).toBeUndefined();
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('returns the answers to the awaiting onAskUserQuestion caller', async () => {
@@ -217,15 +229,14 @@ describe('pendingQuestions — resolveQuestion clears it and returns answers', (
     wireQuestionHandler(manager);
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Ask me something');
+    await manager.sendMessage(thread.id, 'Ask me something');
     const answerPromise = mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
     manager.resolveQuestion(thread.id, { 'Which color?': 'Red' });
 
     const answers = await answerPromise;
     expect(answers).toEqual({ 'Which color?': 'Red' });
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('resolveQuestion is a safe no-op when no resolver is registered', () => {
@@ -242,12 +253,11 @@ describe('pendingQuestions — onDone safety-net', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     // Manually set pendingQuestions (simulates a stale value from a prior session)
     thread.pendingQuestions = SAMPLE_QUESTIONS;
 
-    await driveResponse('Done', 'sess-1');
-    await sendPromise;
+    driveResponse('Done', 'sess-1');
 
     expect(thread.pendingQuestions).toBeUndefined();
   });
@@ -258,11 +268,10 @@ describe('pendingQuestions — onDone safety-net', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((id, e) => { if (id === thread.id) events.push(e); });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     thread.pendingQuestions = SAMPLE_QUESTIONS;
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const clearEvent = events.find(e =>
       e.type === 'pending_question_changed' &&

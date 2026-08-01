@@ -111,29 +111,53 @@ function installMockWebSocket(socketFn: () => MockWebSocket): () => void {
 
 // ── ThreadManager mock ─────────────────────────────────────────────────────────
 
-// Captures the SessionCallbacks passed to ClaudeSession.run() so tests can fire
-// onAskUserQuestion (and friends) directly, mirroring question-persistence.test.ts.
-// run() never auto-resolves — tests that need it to finish call claudeMock.resolve().
+// Captures the SessionCallbacks passed to ThreadSession.start() so tests can
+// fire onAskUserQuestion (and friends) directly, mirroring
+// question-persistence.test.ts. ADR-0002 Stage 2 replaced the old per-turn
+// ClaudeSession (whose run() never resolved until the test explicitly ended
+// it) with a long-lived ThreadSession whose start() resolves immediately —
+// there's no separate "resolve" step for the mock to expose anymore.
 const claudeMock = vi.hoisted(() => ({
   callbacks: null as Record<string, (...args: never[]) => unknown> | null,
-  resolve: null as (() => void) | null,
+  lastKnownSessionId: undefined as string | undefined,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      _prompt: string,
-      _resumeSessionId: unknown,
-      _cwd: unknown,
-      _permissionMode: unknown,
-      _env: unknown,
-      callbacks: Record<string, (...args: never[]) => unknown>,
-    ): Promise<void> {
-      claudeMock.callbacks = callbacks;
-      return new Promise<void>((res) => { claudeMock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: { resume?: string; callbacks: Record<string, (...args: never[]) => unknown> }): Promise<void> {
+      claudeMock.lastKnownSessionId = options.resume;
+      const raw = options.callbacks;
+      claudeMock.callbacks = {
+        ...raw,
+        onDone: (...args: never[]) => {
+          claudeMock.lastKnownSessionId = args[0] as string | undefined;
+          (raw.onDone as (...a: never[]) => unknown)(...args);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (...args: never[]) => {
+          (raw.onInterrupted as (...a: never[]) => unknown)(...args);
+          this._turnInFlight = false;
+        },
+        onError: (...args: never[]) => {
+          (raw.onError as (...a: never[]) => unknown)(...args);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {}
+    send(): void {
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
+      (claudeMock.callbacks?.onInterrupted as ((id: string) => void) | undefined)?.(claudeMock.lastKnownSessionId ?? '');
+    }
+    async setModel(): Promise<void> {}
+    async setPermissionMode(): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -360,7 +384,7 @@ describe('RelayClient — send_message round-trip', () => {
 describe('RelayClient — question request/resolution bridge', () => {
   beforeEach(() => {
     claudeMock.callbacks = null;
-    claudeMock.resolve = null;
+    claudeMock.lastKnownSessionId = undefined;
   });
 
   const SAMPLE_QUESTIONS = [

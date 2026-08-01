@@ -151,6 +151,16 @@ export interface Thread {
    * Auto-retry budget tracker for the closed-source CLI's spurious
    * "Stream closed" transport errors (see transportErrorRecovery.ts).
    * Reset to 0 on a successful onDone; incremented on each auto-retry.
+   *
+   * TODO(ADR-0002 Stage 2 gap fix): as of ThreadSession, the retry decision
+   * is gated entirely by `ThreadSession.transportErrorRetryCount` (private,
+   * in-memory, resets on every `start()`/successful `result` — see
+   * ThreadSession.ts). Grepping src/ turns up only two write sites for this
+   * field (both in ThreadManager.ts, both `= 0` resets in onDone/onError)
+   * and zero reads anywhere — it looks fully vestigial post-Stage-C, but
+   * this wasn't the stage for aggressive cleanup, so it's left in place
+   * (and still persisted to disk via VaultPersistence) pending confirmation
+   * it's truly safe to delete.
    */
   streamCloseRetryCount?: number;
   model?: string;
