@@ -149,6 +149,25 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('loop-banner.png', { fullPage: true });
   });
 
+  test('scheduled origin footer pill', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.waitForTimeout(200);
+    // Seed the thread's origin metadata the same way Scheduler.createThread
+    // does when a cron item fires and creates a new thread.
+    await page.evaluate(() => {
+      (window as any).__setScheduledOrigin('thread-fix-auth', 'sched-1', 'Nightly build check');
+      (window as any).__view.renderThreadInfo();
+    });
+    await page.waitForSelector('.ct-footer-pill');
+    await expect(page.locator('.ct-footer-pill')).toContainText('Scheduled: Nightly build check');
+    await expect(page).toHaveScreenshot('scheduled-origin-pill.png', { fullPage: true });
+  });
+
   test('fork conversation menu item', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
@@ -482,6 +501,43 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-settings-tab-btn:has-text("Tools")');
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('settings-tools.png', { fullPage: true });
+  });
+
+  test('settings — mcp tab', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+    // Collapse the fixed-height harness shell to the content so the docs
+    // screenshot (copied out by posttest:screenshots:update) crops tight
+    // instead of trailing a large empty panel below the server list.
+    await page.evaluate(() => {
+      const app = document.getElementById('app');
+      if (app) app.style.height = 'auto';
+    });
+    await page.waitForTimeout(50);
+    await expect(page).toHaveScreenshot('settings-mcp.png', { fullPage: true });
+  });
+
+  test('settings — mcp edit server form', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+    // Open the edit modal on the first (stdio) server so the form shows real
+    // values, including an ${ENV_VAR} placeholder in the environment field.
+    await page
+      .locator('.ct-mcp-servers-list .setting-item')
+      .first()
+      .getByRole('button', { name: 'Edit' })
+      .click();
+    await page.waitForSelector('.modal-overlay');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('settings-mcp-edit.png', { fullPage: true });
   });
 
   test('sub-agent task pill while working', async ({ page }) => {
@@ -826,6 +882,25 @@ test.describe('Claude Threads UI', () => {
     const waitingCard = page.locator('.ct-kanban-col-waiting').getByText(cardTitle);
     await expect(waitingCard).toBeVisible({ timeout: 2000 });
     await expect(page.locator('.ct-kanban-col', { hasText: 'Working' }).getByText(cardTitle)).toHaveCount(0);
+  });
+
+  test('kanban board — orchestrator badge on matching card', async ({ page }) => {
+    // appendOrchestratorBadge only fires when a card's threadId matches
+    // settings.orchestratorThreadId — confirm the bot badge appears next to
+    // that one card's title and no other card's.
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+
+    const cardTitle = 'Add "why this place" provenance layer'; // kanbanRunningThreadId's card
+    await expect(page.locator('.ct-orchestrator-badge')).toHaveCount(0);
+
+    await page.evaluate(() => (window as any).__setOrchestrator('k-hiptrip-running'));
+    const badgedCard = page.locator('.ct-kanban-card', { hasText: cardTitle });
+    await expect(badgedCard.locator('.ct-orchestrator-badge')).toHaveCount(1);
+    await expect(page.locator('.ct-orchestrator-badge')).toHaveCount(1);
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('kanban-orchestrator-badge.png', { fullPage: true });
   });
 
   // ─── Status area redesign ─────────────────────────────────────────────────

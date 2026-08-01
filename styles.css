@@ -250,6 +250,7 @@
 .ct-app-hidden .ct-status-card-spinner,
 .ct-app-hidden .ct-cursor,
 .ct-app-hidden .ct-tool-active .ct-tool-pill-name::before,
+.ct-app-hidden .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
 .ct-app-hidden .ct-workflow-agent-running .ct-workflow-agent-dot,
 .ct-app-hidden .ct-agents-icon-running,
 .ct-app-hidden .ct-agents-icon-permission,
@@ -1107,6 +1108,26 @@
 
 .ct-tool-success .ct-tool-pill-icon {
   color: var(--color-green);
+}
+
+/* "Still running" indicator on a LIVE tool-call group header (renderToolGroup
+   adds .ct-tool-active to the header when any child pill has status
+   'pending'). The icon tint is already covered by the existing
+   `.ct-tool-active .ct-tool-pill-icon` rule above since the header's icon
+   shares that class structure; this adds the equivalent pulsing dot for
+   `.ct-compressed-summary`, since a group header has no `.ct-tool-pill-name`
+   of its own to hang the ct-tool-active::before rule off of. */
+.ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+  content: '● ';
+  font-size: 0.65em;
+  vertical-align: middle;
+  color: color-mix(in srgb, var(--color-yellow) 85%, var(--text-normal));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+    animation: ct-dot-pulse 1.2s ease-in-out infinite;
+  }
 }
 
 /* ── Workflow progress block ─────────────────────────────────────────────── */
@@ -2511,6 +2532,24 @@
   vertical-align: middle;
 }
 
+/* Marks the thread running the bundled orchestrator skill — shown inline next
+   to the title in Agent Dashboard rows, Kanban cards, and the thread switcher. */
+.ct-orchestrator-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-left: 6px;
+  color: var(--interactive-accent);
+  vertical-align: middle;
+}
+.ct-orchestrator-badge svg {
+  width: 12px;
+  height: 12px;
+}
+
 .ct-agents-row-unreviewed {
   border-left: 2px solid var(--interactive-accent);
   padding-left: 6px;
@@ -2643,6 +2682,31 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── Scheduled Jobs section (Agent Dashboard) ───────────────────────────── */
+/* Collapsed rollup row for a cron job's quiet (unreviewed/reviewed/empty)
+   runs, grouped separately from the main status groups so a busy hourly job
+   doesn't bury manually-created threads. */
+.ct-agents-icon-scheduled {
+  color: var(--text-muted);
+}
+.ct-agents-stack-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ct-agents-stack-count {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ct-agents-stack-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 16px;
+  margin: 0 6px 4px;
+  border-left: 2px solid var(--background-modifier-border);
 }
 
 /* Dispatch area */
@@ -2819,6 +2883,17 @@
   color: var(--text-muted);
   background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
   border-left: 3px solid var(--interactive-accent);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 8px 0 16px;
+}
+
+/* Settings: warning notice block (e.g. broken orchestrator thread correlation) */
+.ct-settings-warning {
+  font-size: var(--font-ui-small);
+  color: var(--color-orange, #e67700);
+  background: color-mix(in srgb, var(--color-orange, #e67700) 8%, transparent);
+  border-left: 3px solid var(--color-orange, #e67700);
   border-radius: 4px;
   padding: 8px 12px;
   margin: 8px 0 16px;
@@ -5198,6 +5273,41 @@
   font-size: 9px;
 }
 
+/* ── Scheduled-job stack card (Kanban) ──────────────────────────────────── */
+/* Collapsed rollup of repeat runs of the same cron job in a quiet column
+   (New/Done/Ready). Dashed border + muted icon distinguish it at a glance
+   from a normal single-run card. */
+.ct-kanban-card-stack {
+  border-style: dashed;
+  cursor: default;
+}
+.ct-kanban-stack-header {
+  cursor: pointer;
+  align-items: center;
+}
+.ct-kanban-icon-stack {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ct-kanban-stack-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ct-kanban-stack-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 14px;
+  margin-top: 2px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+.ct-kanban-stack-body .ct-kanban-card {
+  cursor: pointer;
+}
+
 /* ── Speech-to-text mic button ──────────────────────────────────────────── */
 
 .ct-mic-btn {
@@ -6632,6 +6742,46 @@ body.ct-skills-resizing {
   font-size: 12px;
   color: var(--text-muted);
   font-style: italic;
+}
+
+/* Multi-line modal fields (MCP server args/env/headers) */
+.ct-modal-textarea {
+  min-height: 4.5em;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  resize: vertical;
+}
+
+/* ── MCP servers tab ─────────────────────────────────────────────────────── */
+
+.ct-mcp-type-badge {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+}
+
+.ct-mcp-type-badge--stdio {
+  color: var(--text-on-accent);
+  background: var(--interactive-accent);
+}
+
+.ct-mcp-type-badge--http,
+.ct-mcp-type-badge--sse {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 18%, transparent);
+}
+
+.ct-mcp-type-badge--sdk,
+.ct-mcp-type-badge--unknown {
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
 }
 
 /* ── Staleness badge in settings ────────────────────────────────────────── */

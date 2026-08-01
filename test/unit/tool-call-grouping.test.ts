@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getActivityKind, groupToolCalls, type ActivityKind } from '../../src/toolNameUtils';
+import { getActivityKind, groupToolCalls, liveToolGroupKey, type ActivityKind } from '../../src/toolNameUtils';
 import type { ToolCallRecord } from '../../src/types';
 
 function tool(name: string, extra: Partial<ToolCallRecord> = {}): ToolCallRecord {
@@ -96,5 +96,84 @@ describe('groupToolCalls', () => {
     const tools = [tool('Read'), tool('Read'), tool('Read')];
     const result = groupToolCalls(tools);
     expect(result).toEqual([{ kind: 'group', activityKind: 'exploring', tools }]);
+  });
+
+  // A tool call the live view hasn't gotten a result for yet still has
+  // status: 'pending' (stamped by ClaudeSession the instant tool_use fires).
+  // groupToolCalls only buckets on activity kind, not status, so a pending
+  // call in the middle of an otherwise-resolved run must still merge into the
+  // same group — this is what lets a live run keep collapsing as new pending
+  // calls are appended mid-turn, not just after they all resolve.
+  it('treats a "pending" call as groupable alongside "success"/"error" calls of the same kind', () => {
+    const tools = [
+      tool('Read', { toolUseId: 't1', status: 'success' }),
+      tool('Read', { toolUseId: 't2', status: 'success' }),
+      tool('Bash', { toolUseId: 't3', status: 'pending' }),
+    ];
+    const result = groupToolCalls(tools);
+    expect(result).toEqual([{ kind: 'group', activityKind: 'exploring', tools }]);
+  });
+
+  it('groups two still-pending calls of the same kind together', () => {
+    const tools = [
+      tool('Edit', { toolUseId: 't1', status: 'pending' }),
+      tool('Edit', { toolUseId: 't2', status: 'pending' }),
+    ];
+    const result = groupToolCalls(tools);
+    expect(result).toEqual([{ kind: 'group', activityKind: 'editing', tools }]);
+  });
+});
+
+// ─── liveToolGroupKey ──────────────────────────────────────────────────────
+// Stable identity for a LIVE group's expand/collapse state across rebuilds —
+// see the function's doc comment in toolNameUtils.ts for the full rationale.
+// The key must stay the same as a run is extended at the tail (so a group
+// the user expands mid-turn doesn't snap back closed on the next event), and
+// must change once a genuinely different run starts (a kind-interrupting
+// call, or — after that call — a new run of the original kind resuming).
+
+describe('liveToolGroupKey', () => {
+  it('is derived from the FIRST call in the run, not the last', () => {
+    const tools = [
+      tool('Read', { toolUseId: 't1', status: 'success' }),
+      tool('Read', { toolUseId: 't2', status: 'pending' }),
+    ];
+    expect(liveToolGroupKey(tools)).toBe('t1:exploring');
+  });
+
+  it('stays the same key when more same-kind calls are appended to the run', () => {
+    const before = [
+      tool('Read', { toolUseId: 't1', status: 'success' }),
+      tool('Read', { toolUseId: 't2', status: 'pending' }),
+    ];
+    const after = [
+      ...before,
+      tool('Bash', { toolUseId: 't3', status: 'pending' }),
+      tool('Grep', { toolUseId: 't4', status: 'pending' }),
+    ];
+    expect(liveToolGroupKey(after)).toBe(liveToolGroupKey(before));
+  });
+
+  it('produces a different key for a run that starts with a different first call (kind-interrupting call started a new run)', () => {
+    // Simulates: Read,Read (group A, key = t1:exploring) then Edit (single,
+    // breaks the run) then Edit,Edit (group B — a NEW exploring-adjacent run
+    // of a different kind, first call t3). Group B's key must not collide
+    // with group A's.
+    const groupA = [
+      tool('Read', { toolUseId: 't1' }),
+      tool('Read', { toolUseId: 't2' }),
+    ];
+    const groupB = [
+      tool('Edit', { toolUseId: 't3' }),
+      tool('Edit', { toolUseId: 't4' }),
+    ];
+    expect(liveToolGroupKey(groupA)).not.toBe(liveToolGroupKey(groupB));
+    expect(liveToolGroupKey(groupA)).toBe('t1:exploring');
+    expect(liveToolGroupKey(groupB)).toBe('t3:editing');
+  });
+
+  it('falls back to timestamp when the first call has no toolUseId', () => {
+    const tools = [tool('Read', { toolUseId: undefined, timestamp: 5000 })];
+    expect(liveToolGroupKey(tools)).toBe('5000:exploring');
   });
 });

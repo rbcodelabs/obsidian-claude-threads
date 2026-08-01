@@ -11,6 +11,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
+import type { ImageAttachment } from '../../src/types';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
 
@@ -20,31 +22,48 @@ const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
   prompt: null as string | null,
   permissionMode: null as unknown,
-  resolve: null as (() => void) | null,
   resumeSessionId: undefined as string | undefined,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      prompt: string,
-      resumeSessionId: string | undefined,
-      _cwd: unknown,
-      permissionMode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      mock.prompt = prompt;
-      mock.permissionMode = permissionMode;
-      mock.resumeSessionId = resumeSessionId;
-      return new Promise<void>((res) => { mock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.permissionMode = options.permissionMode;
+      mock.resumeSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.resumeSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {
+    send(text: string, _images?: ImageAttachment[]): void {
+      mock.prompt = text;
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
       mock.callbacks?.onInterrupted(mock.resumeSessionId ?? '');
-      mock.resolve?.();
+      this._turnInFlight = false;
     }
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -54,12 +73,11 @@ function makeManager(overrides: Record<string, unknown> = {}) {
   return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
 }
 
-async function driveResponse(content: string, sessionId = 'sess-1') {
+function driveResponse(content: string, sessionId = 'sess-1') {
   const cb = mock.callbacks!;
   cb.onToken(content);
   cb.onMessage(content, []);
   cb.onDone(sessionId, 0.001, 1);
-  mock.resolve!();
 }
 
 /** Collect events emitted while a thunk runs, then wait for the session. */
@@ -82,7 +100,6 @@ beforeEach(() => {
   mock.callbacks = null;
   mock.prompt = null;
   mock.permissionMode = null;
-  mock.resolve = null;
   mock.resumeSessionId = undefined;
 });
 
@@ -93,14 +110,13 @@ describe('pendingPlan — set and persist', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     // Simulate ClaudeSession calling the onPlanReady callback
     mock.callbacks!.onPlanReady!('Step 1\nStep 2', () => {}, () => {});
 
     expect(thread.pendingPlan).toBe('Step 1\nStep 2');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('emits pending_plan_changed with the plan text', async () => {
@@ -108,10 +124,9 @@ describe('pendingPlan — set and persist', () => {
     const thread = manager.createThread('T', os.tmpdir());
 
     const events = await collectEvents(manager, thread.id, async () => {
-      const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+      await manager.sendMessage(thread.id, 'Make a plan');
       mock.callbacks!.onPlanReady!('Step 1\nStep 2', () => {}, () => {});
-      await driveResponse('Done');
-      await sendPromise;
+      driveResponse('Done');
     });
 
     const planChangedEvents = events.filter(e => e.type === 'pending_plan_changed') as
@@ -134,22 +149,21 @@ describe('pendingPlan — set and persist', () => {
       }
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     mock.callbacks!.onPlanReady!('My plan', () => {}, () => {});
 
     unsub();
     expect(capturedApprove).toBeTypeOf('function');
     expect(capturedReject).toBeTypeOf('function');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('pendingPlan survives JSON serialization (reload simulation)', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     mock.callbacks!.onPlanReady!('## Plan\n1. Do A\n2. Do B', () => {}, () => {});
 
     // Simulate what Obsidian's saveData/loadData does: JSON round-trip the thread.
@@ -157,8 +171,7 @@ describe('pendingPlan — set and persist', () => {
     const restored = JSON.parse(serialized);
     expect(restored.pendingPlan).toBe('## Plan\n1. Do A\n2. Do B');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 });
 
@@ -174,7 +187,7 @@ describe('pendingPlan — approve clears it', () => {
       if (e.type === 'plan_ready') capturedApprove = e.approve;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     mock.callbacks!.onPlanReady!('My plan', () => {}, () => {});
     unsub();
 
@@ -182,8 +195,7 @@ describe('pendingPlan — approve clears it', () => {
     capturedApprove!();
     expect(thread.pendingPlan).toBeUndefined();
 
-    await driveResponse('Implementing');
-    await sendPromise;
+    driveResponse('Implementing');
   });
 
   it('emits pending_plan_changed with undefined when approve fires', async () => {
@@ -197,7 +209,7 @@ describe('pendingPlan — approve clears it', () => {
       if (e.type === 'pending_plan_changed') planEvents.push(e as typeof planEvents[number]);
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     mock.callbacks!.onPlanReady!('My plan', () => {}, () => {});
     capturedApprove!();
     unsub();
@@ -205,8 +217,7 @@ describe('pendingPlan — approve clears it', () => {
     const clearEvent = planEvents.find(e => e.planText === undefined);
     expect(clearEvent).toBeTruthy();
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('passes edited plan text through to the original approve callback', async () => {
@@ -219,15 +230,14 @@ describe('pendingPlan — approve clears it', () => {
       if (e.type === 'plan_ready') capturedApprove = e.approve;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Plan');
+    await manager.sendMessage(thread.id, 'Plan');
     mock.callbacks!.onPlanReady!('Original', (ed) => { receivedEdited = ed; }, () => {});
     unsub();
 
     capturedApprove!('Edited plan text');
     expect(receivedEdited).toBe('Edited plan text');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('passes undefined to original approve callback when no edits', async () => {
@@ -240,15 +250,14 @@ describe('pendingPlan — approve clears it', () => {
       if (e.type === 'plan_ready') capturedApprove = e.approve;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Plan');
+    await manager.sendMessage(thread.id, 'Plan');
     mock.callbacks!.onPlanReady!('Original', (ed) => { receivedEdited = ed; }, () => {});
     unsub();
 
     capturedApprove!(undefined);
     expect(receivedEdited).toBeUndefined();
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 });
 
@@ -264,7 +273,7 @@ describe('pendingPlan — reject clears it', () => {
       if (e.type === 'plan_ready') capturedReject = e.reject;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Make a plan');
+    await manager.sendMessage(thread.id, 'Make a plan');
     mock.callbacks!.onPlanReady!('My plan', () => {}, () => {});
     unsub();
 
@@ -272,8 +281,7 @@ describe('pendingPlan — reject clears it', () => {
     capturedReject!();
     expect(thread.pendingPlan).toBeUndefined();
 
-    await driveResponse('Stopping');
-    await sendPromise;
+    driveResponse('Stopping');
   });
 
   it('calls the original reject callback', async () => {
@@ -286,15 +294,14 @@ describe('pendingPlan — reject clears it', () => {
       if (e.type === 'plan_ready') capturedReject = e.reject;
     });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Plan');
+    await manager.sendMessage(thread.id, 'Plan');
     mock.callbacks!.onPlanReady!('My plan', () => {}, () => { rejectCalled = true; });
     unsub();
 
     capturedReject!();
     expect(rejectCalled).toBe(true);
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 });
 
@@ -305,12 +312,11 @@ describe('pendingPlan — onDone safety-net', () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     // Manually set pendingPlan (simulates a stale value from a prior session)
     thread.pendingPlan = 'Stale plan';
 
-    await driveResponse('Done', 'sess-1');
-    await sendPromise;
+    driveResponse('Done', 'sess-1');
 
     expect(thread.pendingPlan).toBeUndefined();
   });
@@ -321,11 +327,10 @@ describe('pendingPlan — onDone safety-net', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((id, e) => { if (id === thread.id) events.push(e); });
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     thread.pendingPlan = 'Stale plan';
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
 
     const clearEvent = events.find(e =>
       e.type === 'pending_plan_changed' &&
@@ -342,11 +347,10 @@ describe('per-thread permissionMode', () => {
     const manager = makeManager({ permissionMode: 'acceptEdits' });
     const thread = manager.createThread('T', os.tmpdir());
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     expect(mock.permissionMode).toBe('acceptEdits');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('uses thread.permissionMode when set, overriding the global setting', async () => {
@@ -354,11 +358,10 @@ describe('per-thread permissionMode', () => {
     const thread = manager.createThread('T', os.tmpdir());
     thread.permissionMode = 'plan';
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     expect(mock.permissionMode).toBe('plan');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('falls back to global when thread.permissionMode is cleared (undefined)', async () => {
@@ -369,11 +372,10 @@ describe('per-thread permissionMode', () => {
     manager.setThreadPermissionMode(thread.id, 'plan');
     manager.setThreadPermissionMode(thread.id, undefined);
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
+    await manager.sendMessage(thread.id, 'Hi');
     expect(mock.permissionMode).toBe('dontAsk');
 
-    await driveResponse('Done');
-    await sendPromise;
+    driveResponse('Done');
   });
 
   it('setThreadPermissionMode stores the override on the thread', () => {

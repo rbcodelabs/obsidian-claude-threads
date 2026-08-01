@@ -52,10 +52,29 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
   };
 });
 
-const { ClaudeSession } = await import('../../src/ClaudeSession');
+const { ThreadSession } = await import('../../src/ThreadSession');
 
 async function* makeMessages(msgs: Record<string, unknown>[]): AsyncIterable<Record<string, unknown>> {
   for (const m of msgs) yield m;
+}
+
+// Base SessionCallbacks shared by the tests below — ThreadSession.start()
+// takes ONE options object (see ThreadSessionOptions in src/ThreadSession.ts)
+// rather than ClaudeSession.run()'s long positional-arg list.
+function baseCallbacks(overrides: Partial<import('../../src/ClaudeSession').SessionCallbacks> = {}) {
+  return {
+    onToken: () => {},
+    onToolUse: () => {},
+    onMessage: () => {},
+    onRecap: () => {},
+    onDone: () => {},
+    onInterrupted: () => {},
+    onError: () => {},
+    onPermissionRequest: async () => true,
+    onAskUserQuestion: async () => ({}),
+    onOpenNewTab: async () => ({ threadId: '', title: '' }),
+    ...overrides,
+  };
 }
 
 // ─── supportedModels / supportedAgents ────────────────────────────────────────
@@ -68,19 +87,17 @@ describe('onCapabilitiesDiscovered', () => {
     ]));
 
     const discovered: { models: unknown[]; agents: unknown[] }[] = [];
-    const session = new ClaudeSession('/fake/claude');
-    await session.run('hi', undefined, '/tmp', 'default', '', {
-      onToken: () => {},
-      onToolUse: () => {},
-      onMessage: () => {},
-      onRecap: () => {},
-      onDone: () => {},
-      onInterrupted: () => {},
-      onError: () => {},
-      onPermissionRequest: async () => true,
-      onAskUserQuestion: async () => ({}),
-      onOpenNewTab: async () => ({ threadId: '', title: '' }),
-      onCapabilitiesDiscovered: (models, agents) => discovered.push({ models, agents }),
+    const session = new ThreadSession('/fake/claude');
+    // start() resolves once the Query exists — it does not block for the
+    // thread's lifetime the way ClaudeSession.run() blocked for one turn.
+    await session.start({
+      claudePath: '/fake/claude',
+      cwd: '/tmp',
+      permissionMode: 'default',
+      extraEnvRaw: '',
+      callbacks: baseCallbacks({
+        onCapabilitiesDiscovered: (models, agents) => discovered.push({ models, agents }),
+      }),
     });
 
     // Discovery is async (fire-and-forget), so we need to flush the microtask queue
@@ -100,29 +117,27 @@ describe('onCapabilitiesDiscovered', () => {
     ]));
 
     // No onCapabilitiesDiscovered registered — must not throw
-    const session = new ClaudeSession('/fake/claude');
+    const session = new ThreadSession('/fake/claude');
     await expect(
-      session.run('hi', undefined, '/tmp', 'default', '', {
-        onToken: () => {},
-        onToolUse: () => {},
-        onMessage: () => {},
-        onRecap: () => {},
-        onDone: () => {},
-        onInterrupted: () => {},
-        onError: () => {},
-        onPermissionRequest: async () => true,
-        onAskUserQuestion: async () => ({}),
-        onOpenNewTab: async () => ({ threadId: '', title: '' }),
+      session.start({
+        claudePath: '/fake/claude',
+        cwd: '/tmp',
+        permissionMode: 'default',
+        extraEnvRaw: '',
+        callbacks: baseCallbacks(),
       }),
     ).resolves.not.toThrow();
+
+    // Let the detached pump run to completion before the test tears down.
+    await new Promise<void>((r) => setTimeout(r, 50));
   });
 });
 
 // ─── getContextUsage ──────────────────────────────────────────────────────────
 
-describe('ClaudeSession.getContextUsage', () => {
+describe('ThreadSession.getContextUsage', () => {
   it('returns null when no session is active', async () => {
-    const session = new ClaudeSession('/fake/claude');
+    const session = new ThreadSession('/fake/claude');
     const result = await session.getContextUsage();
     expect(result).toBeNull();
   });
@@ -139,21 +154,20 @@ describe('ClaudeSession.getContextUsage', () => {
       yield { type: 'result', subtype: 'success', session_id: 'sess', total_cost_usd: 0, num_turns: 1 };
     })());
 
-    const session = new ClaudeSession('/fake/claude');
-    const runPromise = session.run('hi', undefined, '/tmp', 'default', '', {
-      onToken: () => {},
-      onToolUse: () => {},
-      onMessage: () => {},
-      onRecap: () => {},
-      onDone: () => {},
-      onInterrupted: () => {},
-      onError: () => {},
-      onPermissionRequest: async () => true,
-      onAskUserQuestion: async () => ({}),
-      onOpenNewTab: async () => ({ threadId: '', title: '' }),
+    const session = new ThreadSession('/fake/claude');
+    // start() resolves quickly (it just opens the Query) — the message pump
+    // runs detached (`void this.pumpMessages(...)`), so activeQuery/`query`
+    // is already set by the time this await returns.
+    await session.start({
+      claudePath: '/fake/claude',
+      cwd: '/tmp',
+      permissionMode: 'default',
+      extraEnvRaw: '',
+      callbacks: baseCallbacks(),
     });
 
-    // Wait for the session to start iterating (so activeQuery is set)
+    // Wait a beat for the pump to begin iterating (matches the old test's
+    // "wait for the session to start iterating" idiom).
     await new Promise<void>((r) => setTimeout(r, 0));
 
     const usage = await session.getContextUsage();
@@ -161,9 +175,9 @@ describe('ClaudeSession.getContextUsage', () => {
     expect(usage).toHaveProperty('system_prompt');
     expect(usage).toHaveProperty('messages');
 
-    // Resume the session so it can complete
+    // Resume the session so its detached pump can complete.
     pauseResolve!();
-    await runPromise;
+    await new Promise<void>((r) => setTimeout(r, 0));
   });
 });
 

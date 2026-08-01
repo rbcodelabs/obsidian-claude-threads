@@ -83,9 +83,13 @@ describe('ThreadManager — thread lifecycle', () => {
 
   it('gracefulShutdown returns timedOut=true when sessions do not drain before timeout', async () => {
     const t = manager.createThread('Stubborn');
-    // Inject a fake session whose interrupt() never resolves (simulates a hung agent)
+    // Inject a fake session whose interrupt() never resolves (simulates a hung
+    // agent). ADR-0002 Stage 2: gracefulShutdown() now reads `turnInFlight` as
+    // a plain property (not map presence) to decide who's busy, and
+    // unconditionally calls close() on every session regardless of how the
+    // drain went — the fake must have both.
     const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
-    sessions.set(t.id, { interrupt: () => new Promise(() => {}) });
+    sessions.set(t.id, { turnInFlight: true, interrupt: () => new Promise(() => {}), close: () => {} });
     // Use a very short timeout so the test completes quickly
     const result = await manager.gracefulShutdown(50);
     expect(result.timedOut).toBe(true);
@@ -94,13 +98,19 @@ describe('ThreadManager — thread lifecycle', () => {
   it('gracefulShutdown returns timedOut=false when sessions drain before timeout', async () => {
     const t = manager.createThread('Quick');
     const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
-    // Interrupt removes itself from the sessions map after a short delay
-    sessions.set(t.id, {
+    // Under the single-session model, a session never removes itself from the
+    // map on settling (ADR-0002 §4: it stays warm, idle) — settling now means
+    // flipping `turnInFlight` back to false, which gracefulShutdown's own
+    // anyBusy() poll re-checks directly.
+    const fakeSession = {
+      turnInFlight: true,
       interrupt: async () => {
         await new Promise<void>(resolve => setTimeout(resolve, 10));
-        sessions.delete(t.id);
+        fakeSession.turnInFlight = false;
       },
-    });
+      close: () => {},
+    };
+    sessions.set(t.id, fakeSession);
     const result = await manager.gracefulShutdown(2_000);
     expect(result.timedOut).toBe(false);
   });

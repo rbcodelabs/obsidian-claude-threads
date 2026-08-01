@@ -4,6 +4,9 @@ import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledIte
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { secretStorageKey } from './secretUtils';
+import { KANBAN_VIEW_TYPE, type KanbanView } from './KanbanView';
+import { AGENT_VIEW_TYPE, type AgentDashboard } from './AgentDashboard';
+import type { RawMcpServer } from './claudeSettingsMcpEditor';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -642,11 +645,223 @@ class AddSkillSourceModal extends Modal {
   }
 }
 
+/**
+ * Add/edit modal for one entry in ~/.claude/settings.json's mcpServers block.
+ * Operates on the raw, unresolved config — ${VAR} placeholders are passed
+ * through verbatim, never decrypted or expanded here.
+ *
+ * Pass `existing` (and it carries `previousName` implicitly via its `name`)
+ * to pre-fill the form for an edit; pass `null` to add a new entry.
+ */
+class McpServerModal extends Modal {
+  private serverType: 'stdio' | 'http';
+  private contentEl2!: HTMLElement;
+
+  constructor(
+    app: App,
+    private existing: RawMcpServer | null,
+    private onSaved: () => void,
+  ) {
+    super(app);
+    this.serverType = existing && (existing.type === 'http' || existing.type === 'sse') ? 'http' : 'stdio';
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h2', { text: this.existing ? 'Edit MCP server' : 'Add MCP server' });
+
+    const typeRow = contentEl.createEl('div', { cls: 'ct-modal-type-row' });
+    const stdioBtn = typeRow.createEl('button', {
+      cls: 'ct-modal-type-btn' + (this.serverType === 'stdio' ? ' ct-modal-type-btn--active' : ''),
+      text: 'Command (stdio)',
+    });
+    const httpBtn = typeRow.createEl('button', {
+      cls: 'ct-modal-type-btn' + (this.serverType === 'http' ? ' ct-modal-type-btn--active' : ''),
+      text: 'HTTP or SSE',
+    });
+
+    this.contentEl2 = contentEl.createEl('div');
+
+    stdioBtn.addEventListener('click', () => {
+      this.serverType = 'stdio';
+      stdioBtn.addClass('ct-modal-type-btn--active');
+      httpBtn.removeClass('ct-modal-type-btn--active');
+      this.renderTypeContent();
+    });
+    httpBtn.addEventListener('click', () => {
+      this.serverType = 'http';
+      httpBtn.addClass('ct-modal-type-btn--active');
+      stdioBtn.removeClass('ct-modal-type-btn--active');
+      this.renderTypeContent();
+    });
+
+    this.renderTypeContent();
+  }
+
+  private renderTypeContent(): void {
+    this.contentEl2.empty();
+    if (this.serverType === 'stdio') this.renderStdioForm();
+    else this.renderHttpForm();
+  }
+
+  private renderStdioForm(): void {
+    const el = this.contentEl2;
+    const ex = this.existing?.type === 'stdio' ? this.existing : null;
+
+    el.createEl('label', { text: 'Name', cls: 'ct-modal-label' });
+    const nameInput = el.createEl('input', { type: 'text', placeholder: 'my-mcp-server', cls: 'ct-modal-input' });
+    nameInput.value = this.existing?.name ?? '';
+
+    el.createEl('label', { text: 'Command', cls: 'ct-modal-label' });
+    const commandInput = el.createEl('input', { type: 'text', placeholder: 'npx', cls: 'ct-modal-input' });
+    commandInput.value = ex?.command ?? '';
+
+    el.createEl('label', { text: 'Arguments (one per line)', cls: 'ct-modal-label' });
+    const argsInput = el.createEl('textarea', { cls: 'ct-modal-input ct-modal-textarea' });
+    argsInput.placeholder = '-y\nmy-mcp-package';
+    argsInput.value = (ex?.args ?? []).join('\n');
+
+    el.createEl('label', { text: 'Environment variables', cls: 'ct-modal-label' });
+    const envInput = el.createEl('textarea', { cls: 'ct-modal-input ct-modal-textarea' });
+    envInput.placeholder = 'API_TOKEN=${MY_SECRET}';
+    envInput.value = Object.entries(ex?.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n');
+
+    const errorEl = el.createEl('p', { cls: 'ct-modal-error' });
+    errorEl.style.display = 'none';
+
+    const buttonRow = el.createDiv('ct-modal-button-row');
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+    const saveBtn = buttonRow.createEl('button', { text: this.existing ? 'Save' : 'Add', cls: 'mod-cta' });
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg;
+      errorEl.style.display = '';
+    };
+
+    const handleSave = () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { saveMcpServer } = require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseExtraEnv } = require('./types') as typeof import('./types');
+
+      const name = nameInput.value.trim();
+      if (!name) { showError('Name is required.'); return; }
+
+      const args = argsInput.value.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+      const env = parseExtraEnv(envInput.value);
+
+      const server: RawMcpServer = {
+        name,
+        type: 'stdio',
+        command: commandInput.value.trim(),
+        ...(args.length > 0 ? { args } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      };
+
+      const result = saveMcpServer(server, this.existing?.name);
+      if (!result.ok) { showError(result.error); return; }
+
+      new Notice(`Saved MCP server "${name}".`);
+      this.close();
+      this.onSaved();
+    };
+
+    saveBtn.addEventListener('click', handleSave);
+    nameInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+    commandInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  private renderHttpForm(): void {
+    const el = this.contentEl2;
+    const ex = (this.existing?.type === 'http' || this.existing?.type === 'sse') ? this.existing : null;
+
+    el.createEl('label', { text: 'Name', cls: 'ct-modal-label' });
+    const nameInput = el.createEl('input', { type: 'text', placeholder: 'compass', cls: 'ct-modal-input' });
+    nameInput.value = this.existing?.name ?? '';
+
+    el.createEl('label', { text: 'Transport', cls: 'ct-modal-label' });
+    const transportSelect = el.createEl('select', { cls: 'ct-modal-input' });
+    transportSelect.createEl('option', { text: 'HTTP', value: 'http' });
+    transportSelect.createEl('option', { text: 'SSE', value: 'sse' });
+    transportSelect.value = ex?.type === 'sse' ? 'sse' : 'http';
+
+    el.createEl('label', { text: 'URL', cls: 'ct-modal-label' });
+    const urlInput = el.createEl('input', {
+      type: 'text',
+      placeholder: 'https://example.com/api/mcp',
+      cls: 'ct-modal-input',
+    });
+    urlInput.value = ex?.url ?? '';
+
+    el.createEl('label', { text: 'Headers', cls: 'ct-modal-label' });
+    const headersInput = el.createEl('textarea', { cls: 'ct-modal-input ct-modal-textarea' });
+    headersInput.placeholder = 'Authorization=Bearer ${API_KEY}';
+    headersInput.value = Object.entries(ex?.headers ?? {}).map(([k, v]) => `${k}=${v}`).join('\n');
+
+    const errorEl = el.createEl('p', { cls: 'ct-modal-error' });
+    errorEl.style.display = 'none';
+
+    const buttonRow = el.createDiv('ct-modal-button-row');
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+    const saveBtn = buttonRow.createEl('button', { text: this.existing ? 'Save' : 'Add', cls: 'mod-cta' });
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg;
+      errorEl.style.display = '';
+    };
+
+    const handleSave = () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { saveMcpServer } = require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseExtraEnv } = require('./types') as typeof import('./types');
+
+      const name = nameInput.value.trim();
+      if (!name) { showError('Name is required.'); return; }
+
+      const url = urlInput.value.trim();
+      if (!url) { showError('URL is required.'); return; }
+
+      const headers = parseExtraEnv(headersInput.value);
+      const transport = transportSelect.value === 'sse' ? 'sse' : 'http';
+
+      const server: RawMcpServer = {
+        name,
+        type: transport,
+        url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      };
+
+      const result = saveMcpServer(server, this.existing?.name);
+      if (!result.ok) { showError(result.error); return; }
+
+      new Notice(`Saved MCP server "${name}".`);
+      this.close();
+      this.onSaved();
+    };
+
+    saveBtn.addEventListener('click', handleSave);
+    nameInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+    urlInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Settings tab
 // ───────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = 'general' | 'claude' | 'tools' | 'vault' | 'features' | 'remote' | 'skills';
+type SettingsTabId = 'general' | 'claude' | 'tools' | 'vault' | 'features' | 'remote' | 'skills' | 'mcp';
 
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -656,6 +871,7 @@ const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'features', label: 'Features' },
   { id: 'remote', label: 'Remote' },
   { id: 'skills', label: 'Skills' },
+  { id: 'mcp', label: 'MCP' },
 ];
 
 /** Fallback model list shown before any session has run and populated discoveredModels. */
@@ -675,6 +891,16 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     private plugin: ClaudeThreadsPlugin,
   ) {
     super(app, plugin);
+  }
+
+  /** Re-renders any open Kanban board / Agent Dashboard leaves so a setting toggled here (e.g. scheduled-thread stacking) takes effect immediately, without requiring the user to close and reopen the tab. */
+  private refreshKanbanAndDashboardViews(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(KANBAN_VIEW_TYPE)) {
+      (leaf.view as KanbanView).render();
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)) {
+      (leaf.view as AgentDashboard).render();
+    }
   }
 
   /**
@@ -734,6 +960,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       case 'features': this.renderFeaturesTab(body); break;
       case 'remote': this.renderRemoteTab(body); break;
       case 'skills': this.renderSkillsTab(body); break;
+      case 'mcp': this.renderMcpTab(body); break;
     }
   }
 
@@ -1455,6 +1682,52 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(containerEl)
+      .setName('Stack scheduled job threads')
+      .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack in the Kanban board\'s quiet columns (New, Done, Ready) and group them into a "Scheduled Jobs" section on the Agent Dashboard. A run that\'s running, waiting on input, or errored is never stacked.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.stackScheduledThreads ?? true)
+          .onChange(async (value) => {
+            this.plugin.settings.stackScheduledThreads = value;
+            await this.plugin.saveSettings();
+            this.refreshKanbanAndDashboardViews();
+          }),
+      );
+
+    // — Orchestrator —
+    new Setting(containerEl)
+      .setName('Orchestrator')
+      .setDesc('The persistent thread that runs the bundled thread-orchestrator skill, reviewing other threads and proposing replies.')
+      .setHeading();
+
+    {
+      const orchestratorId = this.plugin.settings.orchestratorThreadId;
+      const orchestratorThread = orchestratorId ? this.plugin.manager.getThread(orchestratorId) : undefined;
+
+      if (!orchestratorId) {
+        new Setting(containerEl)
+          .setName('Not yet created')
+          .setDesc('Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create it.');
+      } else if (orchestratorThread) {
+        new Setting(containerEl)
+          .setName(orchestratorThread.title)
+          .setDesc('This is your Thread Orchestrator thread. It is marked with a bot badge in the Agent Dashboard, Kanban board, and thread switcher.')
+          .addButton((btn) =>
+            btn.setButtonText('Open').setCta().onClick(() => {
+              void this.plugin.openThreadInChatView(orchestratorId);
+            }),
+          );
+      } else {
+        const warning = containerEl.createDiv({ cls: 'ct-settings-warning' });
+        warning.createEl('strong', { text: 'Orchestrator thread missing: ' });
+        warning.appendText(
+          'The thread previously tracked as your Thread Orchestrator was deleted or archived. ' +
+          'Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create a new one.',
+        );
+      }
+    }
+
     // — Scheduled tasks —
     new Setting(containerEl)
       .setName('Scheduled tasks')
@@ -1676,6 +1949,108 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
               }
             }
           }).open();
+        }),
+      );
+  }
+
+  // ── MCP ─────────────────────────────────────────────────────────────────
+
+  private renderMcpTab(containerEl: HTMLElement): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { listMcpServers, deleteMcpServer } =
+      require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+
+    containerEl.createEl('h2', { text: 'MCP Servers' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Manage external MCP servers merged into every new Claude thread. This edits the GLOBAL ' +
+        '~/.claude/settings.json file (or the per-machine file it symlinks to) — the same config ' +
+        'shared by every vault and every `claude` CLI session on this machine, not just this vault. ' +
+        'Changes apply to new threads only; sessions already running are unaffected.',
+    });
+
+    const { path: settingsPath, parseError: initialParseError } = listMcpServers();
+    containerEl.createEl('p', { cls: 'ct-settings-desc', text: `File: ${settingsPath}` });
+
+    if (initialParseError) {
+      const notice = containerEl.createDiv({ cls: 'ct-settings-notice' });
+      notice.createEl('strong', { text: 'Could not read settings.json: ' });
+      notice.appendText(initialParseError);
+      notice.createEl('br');
+      notice.appendText(
+        'Fix the JSON by hand, then reopen this tab. No add/edit/remove controls are shown while the ' +
+        'file is unparseable, to avoid overwriting whatever is actually on disk.',
+      );
+      return;
+    }
+
+    const listEl = containerEl.createDiv({ cls: 'ct-mcp-servers-list' });
+    const renderList = () => {
+      listEl.empty();
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { listMcpServers: reread } =
+        require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+      const { servers } = reread();
+
+      if (servers.length === 0) {
+        listEl.createEl('p', { text: 'No MCP servers configured yet.', cls: 'ct-settings-empty' });
+        return;
+      }
+
+      for (const server of servers) {
+        const summary =
+          server.type === 'stdio'
+            ? [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
+            : server.type === 'http' || server.type === 'sse'
+              ? (server.url ?? '')
+              : server.type === 'sdk'
+                ? 'Registered by an in-process integration.'
+                : 'Unrecognized entry type.';
+
+        const row = new Setting(listEl)
+          .setName(server.name)
+          .setDesc(summary || '(not configured)');
+
+        row.nameEl.createEl('span', {
+          cls: `ct-mcp-type-badge ct-mcp-type-badge--${server.type}`,
+          text: server.type,
+        });
+
+        const isEditable = server.type === 'stdio' || server.type === 'http' || server.type === 'sse';
+        if (isEditable) {
+          row.addButton((btn) =>
+            btn.setButtonText('Edit').onClick(() => {
+              new McpServerModal(this.app, server, () => renderList()).open();
+            }),
+          );
+        } else {
+          row.descEl.createEl('br');
+          row.descEl.createEl('span', {
+            cls: 'ct-skill-source-repo',
+            text: 'Read-only here — edit settings.json directly to change it.',
+          });
+        }
+
+        row.addButton((btn) =>
+          btn.setButtonText('Remove').setWarning().onClick(() => {
+            const result = deleteMcpServer(server.name);
+            if (!result.ok) {
+              new Notice(`Could not remove "${server.name}": ${result.error}`);
+              return;
+            }
+            new Notice(`Removed MCP server "${server.name}".`);
+            renderList();
+          }),
+        );
+      }
+    };
+    renderList();
+
+    new Setting(containerEl)
+      .addButton((btn) =>
+        btn.setButtonText('Add MCP server').setCta().onClick(() => {
+          new McpServerModal(this.app, null, () => renderList()).open();
         }),
       );
   }

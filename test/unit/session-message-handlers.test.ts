@@ -6,41 +6,79 @@
  *   - memory_recall    → onMemoryRecall
  *   - commands_changed → onCommandsChanged
  *
- * Pattern: mock ClaudeSession so test code drives individual callbacks directly
- * through ThreadManager.sendMessage(), then assert on the ThreadEvents emitted.
+ * Pattern: mock ThreadSession (ADR-0002 Stage 2 — replaces the old per-turn
+ * ClaudeSession) so test code drives individual callbacks directly through
+ * ThreadManager.sendMessage(), then assert on the ThreadEvents emitted.
+ *
+ * Mock shape notes (see ThreadSession's real contract in src/ThreadSession.ts):
+ *   - start(options) captures options.callbacks and resolves immediately —
+ *     it does NOT block for the turn's lifetime the way the old ClaudeSession
+ *     mock's run() did. ThreadManager.sendMessage() itself resolves shortly
+ *     after start()/send(), well before a 'done'/'error'/'interrupted' — so
+ *     tests `await manager.sendMessage(...)` and then drive `mock.callbacks!`
+ *     synchronously, rather than holding a `sendPromise` open until the mock
+ *     "resolves" it (there is no separate resolve step anymore).
+ *   - send(text, images) is synchronous and sets turnInFlight = true.
+ *   - turnInFlight flips back to false right after onDone/onInterrupted/
+ *     onError is invoked, mirroring ThreadSession.pumpMessages()'s real
+ *     case 'result': handler (callback fires, then the flag flips).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ImageAttachment } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
 
 // ─── hoisted mock state ───────────────────────────────────────────────────────
 
 const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
-  resolve: null as (() => void) | null,
+  lastKnownSessionId: undefined as string | undefined,
+  startCallCount: 0,
+  sendCallCount: 0,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      _prompt: string,
-      _resumeSessionId: string | undefined,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      return new Promise<void>((res) => { mock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.startCallCount += 1;
+      mock.lastKnownSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.lastKnownSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {}
+    send(_text: string, _images?: ImageAttachment[]): void {
+      mock.sendCallCount += 1;
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
+      mock.callbacks?.onInterrupted(mock.lastKnownSessionId ?? '');
+    }
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
-  // Re-export the real formatToolName / getToolIcon so other imports keep working
-  formatToolName: (s: string) => s,
-  getToolIcon: () => 'wrench',
 }));
 
 const { ThreadManager } = await import('../../src/ThreadManager');
@@ -49,17 +87,18 @@ function makeManager() {
   return new ThreadManager({ ...DEFAULT_SETTINGS });
 }
 
-async function driveResponse(sessionId = 'sess-1') {
+function driveResponse(sessionId = 'sess-1') {
   const cb = mock.callbacks!;
   cb.onToken('ok');
   cb.onMessage('ok', []);
   cb.onDone(sessionId, 0.001, 1);
-  mock.resolve!();
 }
 
 beforeEach(() => {
   mock.callbacks = null;
-  mock.resolve = null;
+  mock.lastKnownSessionId = undefined;
+  mock.startCallCount = 0;
+  mock.sendCallCount = 0;
 });
 
 // ─── model_fallback ───────────────────────────────────────────────────────────
@@ -71,10 +110,9 @@ describe('model_fallback → onModelFallback', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onModelFallback!('overloaded', 'claude-opus-4', 'claude-sonnet-4-5');
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'model_fallback') as
       Extract<ThreadEvent, { type: 'model_fallback' }> | undefined;
@@ -88,12 +126,11 @@ describe('model_fallback → onModelFallback', () => {
     const manager = makeManager();
     const thread = manager.createThread('T');
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     expect(() =>
       mock.callbacks!.onModelFallback!('overloaded', 'model-a', 'model-b'),
     ).not.toThrow();
-    await driveResponse();
-    await sendP;
+    driveResponse();
   });
 });
 
@@ -106,10 +143,9 @@ describe('task_updated → onTaskUpdated', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onTaskUpdated!('task-7', { status: 'completed', description: 'Done!' });
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'task_updated') as
       Extract<ThreadEvent, { type: 'task_updated' }> | undefined;
@@ -125,10 +161,9 @@ describe('task_updated → onTaskUpdated', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onTaskUpdated!('task-3', { status: 'failed', error: 'Timeout after 30s' });
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'task_updated') as
       Extract<ThreadEvent, { type: 'task_updated' }> | undefined;
@@ -143,10 +178,9 @@ describe('task_updated → onTaskUpdated', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onTaskUpdated!('task-1', { status: 'in_progress' });
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'task_updated') as
       Extract<ThreadEvent, { type: 'task_updated' }> | undefined;
@@ -166,10 +200,9 @@ describe('tool_progress → onToolProgress', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onToolProgress!('tool-use-abc', 'Bash', 14);
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'tool_progress') as
       Extract<ThreadEvent, { type: 'tool_progress' }> | undefined;
@@ -185,12 +218,11 @@ describe('tool_progress → onToolProgress', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onToolProgress!('tid-1', 'Bash', 5);
     mock.callbacks!.onToolProgress!('tid-1', 'Bash', 10);
     mock.callbacks!.onToolProgress!('tid-1', 'Bash', 15);
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const progressEvents = events.filter(e => e.type === 'tool_progress') as
       Extract<ThreadEvent, { type: 'tool_progress' }>[];
@@ -208,13 +240,12 @@ describe('memory_recall → onMemoryRecall', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onMemoryRecall!(
       ['~/.claude/CLAUDE.md', '~/projects/my-app/.claude/CLAUDE.md'],
       'select',
     );
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'memory_recall') as
       Extract<ThreadEvent, { type: 'memory_recall' }> | undefined;
@@ -229,10 +260,9 @@ describe('memory_recall → onMemoryRecall', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onMemoryRecall!(['~/.claude/CLAUDE.md'], 'synthesize');
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'memory_recall') as
       Extract<ThreadEvent, { type: 'memory_recall' }> | undefined;
@@ -254,10 +284,9 @@ describe('commands_changed → onCommandsChanged', () => {
       { name: 'deep-research', description: 'Deep research skill' },
     ];
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onCommandsChanged!(newCommands as never);
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'commands_changed') as
       Extract<ThreadEvent, { type: 'commands_changed' }> | undefined;
@@ -273,10 +302,9 @@ describe('commands_changed → onCommandsChanged', () => {
     const events: ThreadEvent[] = [];
     manager.subscribe((_, e) => events.push(e));
 
-    const sendP = manager.sendMessage(thread.id, 'hi');
+    await manager.sendMessage(thread.id, 'hi');
     mock.callbacks!.onCommandsChanged!([]);
-    await driveResponse();
-    await sendP;
+    driveResponse();
 
     const evt = events.find(e => e.type === 'commands_changed') as
       Extract<ThreadEvent, { type: 'commands_changed' }> | undefined;

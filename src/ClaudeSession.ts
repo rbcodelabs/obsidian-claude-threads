@@ -28,6 +28,31 @@ export interface SessionCallbacks {
   onDone: (sessionId: string, cost: number, numTurns: number) => void;
   onInterrupted: (sessionId: string) => void;
   onError: (err: Error) => void;
+  /**
+   * Fired when a transport-closed error is about to be auto-retried
+   * in-process (ADR-0002 Stage 2 gap fix): the connection to the CLI dropped
+   * mid-turn but the auto-retry budget (`transportErrorRecovery.ts`) hasn't
+   * been exhausted yet, so a continuation turn is about to be sent
+   * automatically rather than surfacing a terminal `onError`. Only invoked
+   * by `ThreadSession` (whose long-lived `Query` handles this retry
+   * internally, see `pumpMessages()`'s catch block) — `ClaudeSession`'s
+   * per-turn `run()` never calls it, since under the old model
+   * `ThreadManager.sendMessage()` drove the equivalent "reconnecting" UI
+   * state itself from its own `onError` branch rather than needing a
+   * dedicated callback.
+   */
+  onReconnecting?: (error: string) => void;
+  /**
+   * Fired when a rate-limit / overload error is about to be auto-retried
+   * in-process by `ThreadSession` (see `pumpMessages()`'s catch block). The
+   * API rejected the turn before the model saw it, so the plugin silently
+   * replays the exact same turn after `delayMs` of backoff — no new
+   * transcript message. `attempt` is 1-based; `maxRetries` is the budget
+   * (`MAX_RATE_LIMIT_AUTO_RETRIES`). Only `ThreadSession` invokes it; the
+   * per-turn `ClaudeSession` never does. Distinct from `onRateLimit`, which
+   * merely surfaces the CLI's observed rate-limit *window* status.
+   */
+  onRateLimitRetry?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;

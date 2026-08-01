@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.19.14-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.21.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -54,7 +54,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
 - **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Obsidian
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files Claude edited that you subsequently modified show a "Modified by user" badge
-- **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills; a group containing a failed call auto-expands and stays flagged so errors are never hidden
+- **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills, live as the turn runs (not just after it settles) — so a long agentic run never grows an unbounded wall of pills while Claude is still working; the in-progress group shows a "still running" pulse, the group you expand mid-turn stays expanded as more calls arrive, and a group containing a failed call auto-expands and stays flagged so errors are never hidden. Works on both desktop and mobile.
 - **Cancel and restore** — press Escape (or click Stop) while Claude is running to cancel; the sent message pops back into the input box ready to edit and re-send
 - **Keyboard shortcuts** — navigate tabs without touching the mouse
 
@@ -248,6 +248,8 @@ This combination means you can dispatch several threads in parallel, switch to o
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
 
+**Scheduled Jobs.** An hourly (or more frequent) recurring cron task (see `CronCreate` / `ScheduleWakeup` below) can produce dozens of quiet threads a day, burying the manually-created ones you actually need to triage. When a run created by the scheduler is unreviewed, reviewed, or empty — never one that's running, awaiting a permission/question, or errored — it's pulled out of its normal group into a **Scheduled Jobs** section at the bottom of the dashboard, one collapsed row per job showing its name, run count, and the latest run's time. Click a row to expand it into the individual runs. Disable via **Settings → Features → Stack scheduled job threads**.
+
 ### Inline workflow progress
 
 When a thread runs the `Workflow` tool (multi-agent orchestration), a live progress block appears inline in the conversation — pinned above the streaming output — showing:
@@ -280,6 +282,8 @@ Toggle the **Kanban** button in the dashboard toolbar to switch from the default
   <img src="docs/screenshot-kanban-folder.png" width="800" alt="Kanban board grouped by folder — one horizontal swimlane per app/project, each with its own nested status columns" />
 </p>
 
+**Stacked scheduled-job threads.** Repeat runs of the same cron job pile up fast — an hourly triage job produces ~24 cards a day, crowding out the threads you started yourself. In the quiet columns only (**New**, **Done**, **Ready** — a run that's Working, Awaiting, Waiting, or Failed always stays its own card), runs that share a scheduled job collapse into a single dashed-border rollup card: job name, a "×N" run count, and the latest run's time. Click the card to expand it into the individual run cards, indented beneath. This applies in both status-column and folder-swimlane mode. Disable via **Settings → Features → Stack scheduled job threads**.
+
 ### Push-to-talk voice input
 
 Hold the configured push-to-talk key (default: none — set it in Settings → Push to Talk Hotkey) and speak. The microphone activates while you hold the key; releasing it stops recording and transcribes your speech using the Claude Code STT pipeline. The transcript populates the input box so you can review and edit before sending. The floating input panel highlights while recording so you always know the mic is live.
@@ -297,7 +301,7 @@ When Claude needs to write a file or run a command, a permission card appears in
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
-> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets.
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets. Such threads also carry the originating scheduled item's id and name (`scheduledItemId`/`scheduledItemName`), captured once at creation time and surfaced as a "Scheduled: `<name>`" footer pill and in the `obsidian_get_current_thread`/`obsidian_list_threads` tool output.
 
 ### Plan Mode
 
@@ -323,6 +327,24 @@ Some MCP servers need a credential or a form filled before they can proceed — 
 - **Form card** — renders input fields derived from the server's JSON schema (text fields, selects, checkboxes). Fill in the form and submit; the response is forwarded to the MCP server and the session continues.
 
 Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Obsidian.
+
+### Managing MCP servers
+
+Settings → **MCP** lists, adds, edits, and removes the external MCP servers referenced above (Compass, Helio, or any other HTTP/SSE/stdio server) — no manual JSON editing required for the common case.
+
+<p align="center">
+  <img src="docs/screenshot-mcp-servers.png" width="800" alt="Settings MCP tab: a list of configured MCP servers, each with a type badge (stdio, http, sdk), a one-line summary, and Edit/Remove buttons, plus an Add MCP server button" />
+</p>
+
+**This tab edits your GLOBAL `~/.claude/settings.json`** (or the per-machine file it symlinks to), not a per-vault or per-plugin config. That file is shared by every Obsidian vault running Claude Threads on this machine *and* by the `claude` CLI itself, so a server you add here shows up everywhere, and a server someone else added via the CLI shows up here too. Changes take effect for new threads only — sessions already running keep whatever MCP servers they started with.
+
+For each server you can see its name, a type badge (`stdio`, `http`, `sse`, or `sdk`), and a one-line summary (the command for `stdio`, the URL for `http`/`sse`). Adding or editing a server opens a form for the command/args/env (stdio) or URL/transport/headers (http/sse) — env values and header values support `${VAR_NAME}` placeholders, resolved the same way as everywhere else in the plugin (environment variables merged with keychain-stored secrets).
+
+<p align="center">
+  <img src="docs/screenshot-mcp-edit-server.png" width="800" alt="Add/edit MCP server form: a type toggle between Command (stdio) and HTTP or SSE, with Name, Command, Arguments, and Environment variables fields, the env field showing a ${NOTES_API_TOKEN} placeholder" />
+</p>
+
+`sdk`-type entries (servers registered by an in-process integration rather than a spawned process or remote URL) render read-only in this tab — they need a live server instance that can't be represented as JSON, so edit `~/.claude/settings.json` by hand if you need to change one. If the settings file has invalid JSON, the tab shows the parse error and hides the add/edit controls entirely rather than risking a write that clobbers whatever's actually on disk.
 
 ### Remote access (mobile)
 
@@ -511,8 +533,8 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `isRunning`, `projectId`, `cwd`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. |
-| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag. |
+| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `uiStatus`, `isRunning`, `projectId`, `cwd`, `prUrl`, `scheduledItemId`, `scheduledItemName`, `rawLogPath`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. `uiStatus` matches the Agent Dashboard UI labels (`working` \| `new` \| `reviewed` \| `failed` \| `ready`). `prUrl` is the URL of the most recent GitHub PR opened in this thread, if any. `scheduledItemId`/`scheduledItemName` identify the cron item that created this thread, if it was created by one. |
+| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag — useful for matching threads to PRs or scheduled items without reading message history. |
 | `obsidian_list_projects` | — | Returns all configured projects: `id`, `name`, `description`, `vaultFolder`. Useful for deciding which project context a new thread should use. |
 | `obsidian_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates a new project and persists it. Returns the created project snapshot including its `id` — capture this for use with `CronCreate`, `obsidian_set_thread_project`, and other project-aware APIs. |
 | `obsidian_set_thread_project` | `threadId`, `projectId` | Assigns a thread to a project. Pass `projectId: null` to detach the thread from its current project. Call `obsidian_list_projects` first to get a valid `projectId`. |
@@ -599,6 +621,7 @@ Edits made directly to vault files are unaffected — they don't match any bridg
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
+| Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agent Dashboard's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agent dashboard](#agent-dashboard). |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |
 | Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
 | Show pairing QR | Display a QR code for one-time mobile pairing (expires in 5 minutes) |

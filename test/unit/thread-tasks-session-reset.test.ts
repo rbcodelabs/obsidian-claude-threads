@@ -1,29 +1,56 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ImageAttachment } from '../../src/types';
 import type { ThreadEvent } from '../../src/ThreadManager';
 
 // Hoisted mock state — accessible inside vi.mock factory
 const mock = vi.hoisted(() => ({
   callbacks: null as SessionCallbacks | null,
-  resolve: null as (() => void) | null,
+  lastKnownSessionId: undefined as string | undefined,
+  startCallCount: 0,
+  sendCallCount: 0,
 }));
 
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    async run(
-      _prompt: string,
-      _resumeSessionId: string | undefined,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      mock.callbacks = callbacks;
-      return new Promise<void>((res) => { mock.resolve = res; });
+vi.mock('../../src/ThreadSession', () => ({
+  ThreadSession: class {
+    private _turnInFlight = false;
+    constructor(_claudePath: string) {}
+    get turnInFlight(): boolean { return this._turnInFlight; }
+    async start(options: ThreadSessionOptions): Promise<void> {
+      mock.startCallCount += 1;
+      mock.lastKnownSessionId = options.resume;
+      const raw = options.callbacks;
+      mock.callbacks = {
+        ...raw,
+        onDone: (sessionId, cost, numTurns) => {
+          mock.lastKnownSessionId = sessionId;
+          raw.onDone(sessionId, cost, numTurns);
+          this._turnInFlight = false;
+        },
+        onInterrupted: (sessionId) => {
+          raw.onInterrupted(sessionId);
+          this._turnInFlight = false;
+        },
+        onError: (err) => {
+          raw.onError(err);
+          this._turnInFlight = false;
+        },
+      };
     }
-    close() {}
-    async interrupt() {}
+    send(_text: string, _images?: ImageAttachment[]): void {
+      mock.sendCallCount += 1;
+      this._turnInFlight = true;
+    }
+    async interrupt(): Promise<void> {
+      mock.callbacks?.onInterrupted(mock.lastKnownSessionId ?? '');
+    }
+    async setModel(_model?: string): Promise<void> {}
+    async setPermissionMode(_mode: unknown): Promise<void> {}
+    async restart(): Promise<void> {}
+    close(): void {}
+    async getContextUsage(): Promise<null> { return null; }
   },
 }));
 
@@ -34,17 +61,18 @@ function makeManager(overrides = {}) {
   return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
 }
 
-async function driveResponse(content: string, sessionId = 'sess-1') {
+function driveResponse(content: string, sessionId = 'sess-1') {
   const cb = mock.callbacks!;
   cb.onToken(content);
   cb.onMessage(content, []);
   cb.onDone(sessionId, 0.001, 1);
-  mock.resolve!();
 }
 
 beforeEach(() => {
   mock.callbacks = null;
-  mock.resolve = null;
+  mock.lastKnownSessionId = undefined;
+  mock.startCallCount = 0;
+  mock.sendCallCount = 0;
 });
 
 describe('ThreadManager — task board reset on unresumed new session', () => {

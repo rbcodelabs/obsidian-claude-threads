@@ -68,6 +68,15 @@ const mockPlugin = {
   });
 };
 
+// Lets screenshot tests seed the "Scheduled: <name>" footer pill, mirroring
+// what Scheduler.createThread records on a thread created by a cron fire.
+(window as any).__setScheduledOrigin = (threadId: string, scheduledItemId: string, scheduledItemName: string) => {
+  const thread = manager.getThread(threadId);
+  if (!thread) throw new Error(`Thread not found: ${threadId}`);
+  thread.scheduledItemId = scheduledItemId;
+  thread.scheduledItemName = scheduledItemName;
+};
+
 // Mutable wake-up state so screenshot tests can drive the waiting indicator
 // through the real notifyWakeupChanged → handleEvent → refreshWakeupBanner path.
 const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();
@@ -96,6 +105,15 @@ const mgrInternals = manager as unknown as {
 };
 (window as any).__fireRunStateSettled = (threadId: string) => {
   mgrInternals.emit(threadId, { type: 'run_state_settled' });
+};
+
+// Generic event-emit passthrough for screenshot/E2E tests that need to drive
+// arbitrary ThreadEvents directly (e.g. synthesizing a burst of live
+// tool_use/tool_result_status events for the live tool-call-grouping tests)
+// without standing up a real ClaudeSession. Mirrors the pattern of the
+// bespoke helpers above but isn't limited to one event type.
+(window as any).__emitEvent = (threadId: string, event: { type: string; [key: string]: unknown }) => {
+  mgrInternals.emit(threadId, event);
 };
 
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);

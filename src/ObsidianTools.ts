@@ -107,6 +107,10 @@ export interface ThreadSnapshot {
   cwd?: string;
   /** URL of the most recent GitHub PR opened during this thread, if any (e.g. https://github.com/owner/repo/pull/42) */
   prUrl?: string;
+  /** ID of the scheduled item (cron) whose fire() created this thread, if any. */
+  scheduledItemId?: string;
+  /** Name of the scheduled item at the time this thread was created, if any. */
+  scheduledItemName?: string;
   updatedAt: number;
   /** Number of non-compact messages */
   messageCount: number;
@@ -169,8 +173,13 @@ const addVaultBridgeSchema = {
 export interface ObsidianMcpServerOptions {
   /** Called when the agent requests a working-directory change. Receives the resolved absolute path. */
   onSetCwd?: (path: string) => void;
-  /** Called when the agent schedules a wakeup. delayMs is the delay in milliseconds. */
-  onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => void;
+  /**
+   * Called when the agent schedules a wakeup. delayMs is the delay in milliseconds.
+   * Backed by a durable one-shot Scheduler item (survives plugin reload/restart/sleep,
+   * same as the Cron tools) — awaited so the tool call doesn't resolve "success" before
+   * the wake-up is actually persisted to disk.
+   */
+  onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => Promise<void>;
   /**
    * Called when the agent requests a fork of the current conversation.
    * focusArea is an optional description of what the new thread should focus on.
@@ -184,6 +193,8 @@ export interface ObsidianMcpServerOptions {
   initialCwd?: string;
   /** ID of the current thread. Used by obsidian_get_current_thread. */
   threadId?: string;
+  /** Returns the ID of the thread running the bundled orchestrator skill, if one has been created. */
+  getOrchestratorThreadId?: () => string | undefined;
   /** Returns full detail (metadata + messages) for a thread by ID. */
   getThreadDetail?: (id: string) => ThreadDetail | undefined;
   /** Returns metadata snapshots for all threads. */
@@ -589,7 +600,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     },
     async (args, _extra) => {
       try {
-        options.onScheduleWakeup?.(args.delaySeconds * 1000, args.prompt, args.reason);
+        await options.onScheduleWakeup?.(args.delaySeconds * 1000, args.prompt, args.reason);
         return {
           content: [
             {
@@ -1027,7 +1038,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with obsidian_get_thread_log).',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with obsidian_get_thread_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1051,7 +1062,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with obsidian_get_thread_log).',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with obsidian_get_thread_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1274,9 +1285,11 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       'Archives a thread by ID — saves it to the vault (if vault persistence is enabled) then removes it from memory.',
       'Use this to close out completed threads, e.g. after merging PRs or finishing release management.',
       'Cannot archive the current thread.',
+      'Archiving the Thread Orchestrator (the thread tracked in settings.orchestratorThreadId) requires confirm: true.',
     ].join(' '),
     {
       threadId: z.string().describe('ID of the thread to archive'),
+      confirm: z.boolean().optional().describe('Must be true to archive the orchestrator thread (the thread tracked in settings.orchestratorThreadId). Not required for any other thread.'),
     },
     async (args, _extra) => {
       try {
@@ -1285,6 +1298,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         }
         if (args.threadId === options.threadId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot archive the current thread.' }) }], isError: true };
+        }
+        if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is the Thread Orchestrator. Pass confirm: true to archive it anyway — doing so stops automatic thread review until "Open Thread Orchestrator" is run again.' }) }], isError: true };
         }
         await options.archiveThread(args.threadId);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, archivedThreadId: args.threadId }) }] };

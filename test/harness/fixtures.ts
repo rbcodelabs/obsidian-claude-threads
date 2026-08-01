@@ -356,6 +356,20 @@ export const fixtureThreads: Thread[] = [
     createdAt: T3 - 60000,
     updatedAt: T3 + 30000,
   },
+  {
+    // Deliberately empty — used by tool-call-grouping.spec.ts's LIVE-rendering
+    // tests, which drive tool_use/tool_result_status events in directly via
+    // window.__emitEvent rather than relying on any pre-seeded message/tool
+    // state. An empty thread keeps those tests self-contained and avoids
+    // coupling live-mode assertions to whatever thread6Messages happens to
+    // contain.
+    id: 'thread-live-tool-grouping',
+    title: 'Live tool-call grouping test',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: [],
+    createdAt: T3 - 30000,
+    updatedAt: T3 - 30000,
+  },
 ];
 
 // ─── Kanban board fixtures ────────────────────────────────────────────────────
@@ -399,6 +413,13 @@ export const kanbanRunningActivity = 'Editing src/itinerary/PlaceCard.tsx';
 export const kanbanWaitingThreadId = 'k-hiptrip-waiting';
 export const kanbanWaitingFireAt = KT + 4 * 60 * 1000; // 4 minutes from the pinned clock
 export const kanbanWaitingReason = 'check CI status';
+
+// A scheduled/cron job whose repeat runs share `scheduledItemId` — exercises
+// the Kanban stacking feature (quiet columns collapse repeat runs into one
+// expandable rollup card). Three quiet, unreviewed runs is enough to clear
+// the default minCount=2 threshold.
+export const kanbanScheduledJobId = 'sched-hourly-triage';
+export const kanbanScheduledJobName = 'Hourly Triage';
 
 export const kanbanFixtureThreads: Thread[] = [
   // ── HipTrip lane (most-recent activity → top lane) ──────────────────────────
@@ -461,6 +482,53 @@ export const kanbanFixtureThreads: Thread[] = [
     reviewed: true,
     prUrl: 'https://github.com/acme/hip-trip/pull/482',
     editedFiles: ['/Users/mock/projects/hip-trip/src/middleware/auth.ts'],
+  },
+
+  // Three quiet, unreviewed runs of the same hourly cron job — the "why we
+  // built stacking" scenario. Together with kanbanScheduledJobId's shared
+  // id these collapse into one rollup card in the New column instead of
+  // burying the manually-created cards above/below.
+  {
+    id: 'k-hiptrip-sched-1',
+    title: 'Hourly Triage — run 1',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [asstMsg('k-sched-1', 'No new feedback items to triage this hour.', KT - 3 * 60 * 60_000,
+      'No new feedback items to triage this hour.')],
+    createdAt: KT - 3 * 60 * 60_000,
+    updatedAt: KT - 3 * 60 * 60_000,
+    summary: 'No new feedback items to triage this hour.',
+    reviewed: false,
+    scheduledItemId: kanbanScheduledJobId,
+    scheduledItemName: kanbanScheduledJobName,
+  },
+  {
+    id: 'k-hiptrip-sched-2',
+    title: 'Hourly Triage — run 2',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [asstMsg('k-sched-2', 'Triaged 2 feedback items — both linked to existing opportunities.', KT - 2 * 60 * 60_000,
+      'Triaged 2 feedback items — both linked to existing opportunities.')],
+    createdAt: KT - 2 * 60 * 60_000,
+    updatedAt: KT - 2 * 60 * 60_000,
+    summary: 'Triaged 2 feedback items — both linked to existing opportunities.',
+    reviewed: false,
+    scheduledItemId: kanbanScheduledJobId,
+    scheduledItemName: kanbanScheduledJobName,
+  },
+  {
+    id: 'k-hiptrip-sched-3',
+    title: 'Hourly Triage — run 3',
+    cwd: '/Users/mock/projects/hip-trip',
+    projectId: 'proj-hiptrip',
+    messages: [asstMsg('k-sched-3', 'No new feedback items to triage this hour.', KT - 60_000 * 30,
+      'No new feedback items to triage this hour.')],
+    createdAt: KT - 60_000 * 30,
+    updatedAt: KT - 60_000 * 30,
+    summary: 'No new feedback items to triage this hour.',
+    reviewed: false,
+    scheduledItemId: kanbanScheduledJobId,
+    scheduledItemName: kanbanScheduledJobName,
   },
 
   // ── Claude Threads lane ─────────────────────────────────────────────────────

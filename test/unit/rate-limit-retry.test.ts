@@ -1,165 +1,244 @@
 /**
- * Tests for ThreadManager's rate-limit auto-retry path (fix/rate-limit-auto-
- * retry). Unlike the transport-closed retry (which resends a synthetic
- * continuation message, since a tool call may have already gone out),
- * a rate-limit error happens before the turn is processed at all, so the
- * retry must silently replay the exact same turn — no new visible message.
+ * Integration tests for ThreadSession's rate-limit auto-retry path
+ * (fix/rate-limit-auto-retry, re-homed onto the long-lived ThreadSession per
+ * ADR-0002). Unlike the transport-closed retry (which resends a synthetic
+ * continuation message, since a tool call may already have gone out), a
+ * rate-limit error happens before the turn is processed at all — the model
+ * never saw the prompt. So the retry must silently REPLAY THE EXACT SAME turn
+ * after a backoff delay, with no new visible message.
  *
- * Mocks ClaudeSession itself (not the SDK), exactly like
- * thread-manager-lingering-sessions.test.ts and run-state-settled.test.ts.
- * Uses fake timers to fast-forward through the real backoff delays
- * (rateLimitBackoffMs: 3s/8s/20s/45s/90s) without the test actually waiting.
+ * Mocks the SDK `query()` (not ThreadSession), mirroring
+ * input-stream-lifecycle.test.ts: each query() call is a "generation", and a
+ * throwable output channel lets us inject a rate-limit rejection into the
+ * pump loop's suspended `for await` at a controlled point. Fake timers
+ * fast-forward the real backoff delays (3s/8s/20s/45s/90s).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
-import { DEFAULT_SETTINGS } from '../../src/types';
+import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { MAX_RATE_LIMIT_AUTO_RETRIES, rateLimitBackoffMs } from '../../src/rateLimitRecovery';
 
 const RATE_LIMIT_MESSAGE = 'Server is temporarily limiting requests (not your usage limit) · Rate limited';
 
-interface MockClaudeSession {
-  callbacks: SessionCallbacks | null;
-  resolveRun: (() => void) | null;
-  run(...args: unknown[]): Promise<void>;
-  endInput(): void;
-  close(): void;
-  interrupt(): Promise<void>;
-}
-
-const mock = vi.hoisted(() => ({
-  instances: [] as MockClaudeSession[],
-}));
-
-vi.mock('../../src/ClaudeSession', () => ({
-  ClaudeSession: class {
-    callbacks: SessionCallbacks | null = null;
-    resolveRun: (() => void) | null = null;
-    constructor() {
-      mock.instances.push(this as unknown as MockClaudeSession);
-    }
-    async run(
-      _prompt: string,
-      _resume: unknown,
-      _cwd: unknown,
-      _mode: unknown,
-      _env: unknown,
-      callbacks: SessionCallbacks,
-    ): Promise<void> {
-      this.callbacks = callbacks;
-      return new Promise<void>((res) => {
-        this.resolveRun = res;
-      });
-    }
-    endInput() {}
+// ─── controllable output channel that can inject a rejection on demand ───────
+function makeThrowableChannel() {
+  const queue: Record<string, unknown>[] = [];
+  const waiters: Array<{ resolve: (v: IteratorResult<Record<string, unknown>>) => void; reject: (e: Error) => void }> = [];
+  let closed = false;
+  let pendingError: Error | null = null;
+  return {
+    push(msg: Record<string, unknown>) {
+      if (waiters.length > 0) waiters.shift()!.resolve({ value: msg, done: false });
+      else queue.push(msg);
+    },
+    throwNext(err: Error) {
+      if (waiters.length > 0) waiters.shift()!.reject(err);
+      else pendingError = err;
+    },
     close() {
-      this.resolveRun?.();
-      this.resolveRun = null;
-    }
-    async interrupt() {}
-  },
-}));
-
-const { ThreadManager } = await import('../../src/ThreadManager');
-
-function makeManager(overrides = {}) {
-  return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
+      closed = true;
+      while (waiters.length > 0) waiters.shift()!.resolve({ value: undefined as never, done: true });
+    },
+    [Symbol.asyncIterator]() {
+      return {
+        next: (): Promise<IteratorResult<Record<string, unknown>>> => {
+          if (pendingError) {
+            const e = pendingError;
+            pendingError = null;
+            return Promise.reject(e);
+          }
+          if (queue.length > 0) return Promise.resolve({ value: queue.shift()!, done: false });
+          if (closed) return Promise.resolve({ value: undefined as never, done: true });
+          return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+        },
+      };
+    },
+  };
 }
 
-beforeEach(() => {
-  mock.instances = [];
-  vi.useFakeTimers();
+// ─── SDK mock — one entry per query() invocation ("generation") ──────────────
+interface Generation {
+  promptArg: AsyncIterable<Record<string, unknown>>;
+  closeCalls: number;
+}
+
+const sdk = vi.hoisted(() => ({
+  generations: [] as Generation[],
+  nextIterable: null as AsyncIterable<Record<string, unknown>> | null,
+}));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => {
+  return {
+    query: (opts: { prompt: AsyncIterable<Record<string, unknown>>; options: Record<string, unknown> }) => {
+      const gen: Generation = { promptArg: opts.prompt, closeCalls: 0 };
+      sdk.generations.push(gen);
+      const outputIterable = sdk.nextIterable!;
+      return {
+        [Symbol.asyncIterator]: () => outputIterable[Symbol.asyncIterator](),
+        close: () => { gen.closeCalls += 1; },
+        interrupt: async () => {},
+        supportedModels: async () => [],
+        supportedAgents: async () => [],
+        getContextUsage: async () => null,
+        setPermissionMode: vi.fn(async () => {}),
+        setModel: async () => {},
+      };
+    },
+  };
 });
 
-afterEach(() => {
-  vi.useRealTimers();
+const { ThreadSession } = await import('../../src/ThreadSession');
+
+function minimalCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallbacks {
+  return {
+    onToken: () => {},
+    onToolUse: () => {},
+    onMessage: () => {},
+    onRecap: () => {},
+    onDone: () => {},
+    onInterrupted: () => {},
+    onError: () => {},
+    onPermissionRequest: async () => true,
+    onAskUserQuestion: async () => ({}),
+    onOpenNewTab: async () => ({ threadId: '', title: '' }),
+    ...overrides,
+  };
+}
+
+const baseOptions = (callbacks: SessionCallbacks): ThreadSessionOptions => ({
+  claudePath: '/fake/claude',
+  cwd: '/tmp',
+  permissionMode: 'default',
+  extraEnvRaw: '',
+  callbacks,
 });
 
-describe('ThreadManager — rate-limit auto-retry', () => {
-  it('(a) emits a rate_limit_retry notice instead of a hard error, and (b) completes with exactly one user + one assistant message after recovering', async () => {
-    const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+/** Flush pending microtasks without relying on setTimeout (fake timers eat it). */
+async function flushMicrotasks(times = 8): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
 
-    const events: Array<{ type: string; [k: string]: unknown }> = [];
-    manager.subscribe((_id, e) => events.push(e as { type: string }));
+/** Read the first message the given generation received on its input channel. */
+async function firstInput(gen: Generation): Promise<{ role: string; content: unknown }> {
+  const res = await gen.promptArg[Symbol.asyncIterator]().next();
+  return (res.value as { message: { role: string; content: unknown } }).message;
+}
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(mock.instances).toHaveLength(1);
-    const first = mock.instances[0];
-
-    // First attempt fails with a rate-limit error.
-    first.callbacks!.onError(new Error(RATE_LIMIT_MESSAGE));
-    first.close(); // simulates run() unwinding after the error, like the real CLI process exiting
-    await vi.advanceTimersByTimeAsync(0);
-
-    // (a) No hard error — a reconnecting-style retry notice instead.
-    expect(thread.status).toBe('reconnecting');
-    expect(thread.lastError).toBeUndefined();
-    const retryEvent = events.find((e) => e.type === 'rate_limit_retry');
-    expect(retryEvent).toMatchObject({
-      type: 'rate_limit_retry',
-      attempt: 1,
-      maxRetries: MAX_RATE_LIMIT_AUTO_RETRIES,
-      delayMs: rateLimitBackoffMs(0),
-    });
-    expect(events.some((e) => e.type === 'error')).toBe(false);
-    expect(thread.rateLimitRetryCount).toBe(1);
-
-    // Advance past the backoff delay — the same turn silently replays (no new
-    // user_message_added event, since it's not a new visible message).
-    const eventsBeforeRetry = events.length;
-    await vi.advanceTimersByTimeAsync(rateLimitBackoffMs(0));
-    expect(mock.instances).toHaveLength(2);
-    expect(events.slice(eventsBeforeRetry).some((e) => e.type === 'user_message_added')).toBe(false);
-
-    // Second attempt succeeds.
-    const second = mock.instances[1];
-    second.callbacks!.onDone('sess-1', 0.001, 1);
-    second.close();
-    await sendPromise;
-
-    // (b) Exactly one visible user message + one assistant message — no
-    // duplicate/synthetic message was added for the silent replay.
-    expect(thread.messages.filter((m) => m.role === 'user')).toHaveLength(1);
-    expect(thread.status).toBe('waiting');
-    expect(thread.rateLimitRetryCount).toBe(0);
+describe('ThreadSession — rate-limit auto-retry', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    sdk.generations = [];
+    sdk.nextIterable = null;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('(c) falls through to a terminal error with a clean message after exhausting MAX_RATE_LIMIT_AUTO_RETRIES', async () => {
-    const manager = makeManager();
-    const thread = manager.createThread('T', '/cwd');
+  it('replays the exact same turn after a backoff and fires onRateLimitRetry, not onError', async () => {
+    const out0 = makeThrowableChannel();
+    sdk.nextIterable = out0;
 
-    const events: Array<{ type: string; [k: string]: unknown }> = [];
-    manager.subscribe((_id, e) => events.push(e as { type: string }));
+    const retries: Array<{ attempt: number; maxRetries: number; delayMs: number }> = [];
+    const errors: Error[] = [];
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({
+      onRateLimitRetry: (attempt, maxRetries, delayMs) => retries.push({ attempt, maxRetries, delayMs }),
+      onError: (e) => errors.push(e),
+    })));
 
-    const sendPromise = manager.sendMessage(thread.id, 'Hi');
-    await vi.advanceTimersByTimeAsync(0);
+    expect(sdk.generations).toHaveLength(1);
+    session.send('do the thing');
+    expect(session.turnInFlight).toBe(true);
 
-    // Fail MAX_RATE_LIMIT_AUTO_RETRIES + 1 times total — the first
-    // MAX_RATE_LIMIT_AUTO_RETRIES failures auto-retry, the one after that
-    // must fall through to a terminal error instead of retrying again.
-    for (let i = 0; i <= MAX_RATE_LIMIT_AUTO_RETRIES; i++) {
-      expect(mock.instances).toHaveLength(i + 1);
-      const attempt = mock.instances[i];
-      attempt.callbacks!.onError(new Error(RATE_LIMIT_MESSAGE));
-      attempt.close();
-      await vi.advanceTimersByTimeAsync(0);
-      if (i < MAX_RATE_LIMIT_AUTO_RETRIES) {
-        expect(thread.status).toBe('reconnecting');
-        await vi.advanceTimersByTimeAsync(rateLimitBackoffMs(i));
-      }
+    // Arm generation 1's (the retry's) output channel BEFORE the failure so
+    // restart()'s internal start() gets a channel that won't itself fail.
+    const out1 = makeThrowableChannel();
+    sdk.nextIterable = out1;
+
+    // Reject generation 0's suspended `for await` with a rate-limit error.
+    out0.throwNext(new Error(RATE_LIMIT_MESSAGE));
+    await flushMicrotasks();
+
+    // onRateLimitRetry fired immediately with the first backoff; no restart yet
+    // (still inside the backoff delay).
+    expect(retries).toEqual([{ attempt: 1, maxRetries: MAX_RATE_LIMIT_AUTO_RETRIES, delayMs: rateLimitBackoffMs(0) }]);
+    expect(sdk.generations).toHaveLength(1);
+
+    // Fast-forward the backoff → restart() opens generation 1 and replays.
+    await vi.advanceTimersByTimeAsync(rateLimitBackoffMs(0));
+    await flushMicrotasks();
+
+    expect(sdk.generations).toHaveLength(2);
+    expect(errors).toHaveLength(0);
+    expect(session.turnInFlight).toBe(true);
+
+    // The replayed turn is byte-for-byte the original — no synthetic
+    // continuation prompt, no new user text.
+    const replayed = await firstInput(sdk.generations[1]);
+    expect(replayed.role).toBe('user');
+    expect(replayed.content).toBe('do the thing');
+
+    session.close();
+  });
+
+  it('surfaces a terminal onError once the retry budget is exhausted', async () => {
+    const retries: number[] = [];
+    const errors: Error[] = [];
+    const session = new ThreadSession('/fake/claude');
+
+    let out = makeThrowableChannel();
+    sdk.nextIterable = out;
+    await session.start(baseOptions(minimalCallbacks({
+      onRateLimitRetry: (attempt) => retries.push(attempt),
+      onError: (e) => errors.push(e),
+    })));
+    session.send('do the thing');
+
+    // Reject every generation with a rate-limit error. The budget allows
+    // MAX_RATE_LIMIT_AUTO_RETRIES silent retries; the next rejection is terminal.
+    for (let attempt = 1; attempt <= MAX_RATE_LIMIT_AUTO_RETRIES; attempt++) {
+      const next = makeThrowableChannel();
+      sdk.nextIterable = next;
+      out.throwNext(new Error(RATE_LIMIT_MESSAGE));
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(rateLimitBackoffMs(attempt - 1));
+      await flushMicrotasks();
+      out = next;
     }
 
-    await sendPromise;
+    expect(retries).toEqual([1, 2, 3, 4, 5]);
+    expect(errors).toHaveLength(0);
 
-    // No 6th+1 = 7th retry attempt was spawned.
-    expect(mock.instances).toHaveLength(MAX_RATE_LIMIT_AUTO_RETRIES + 1);
-    expect(thread.status).toBe('error');
-    expect(thread.lastError).toBe(RATE_LIMIT_MESSAGE);
-    expect(thread.rateLimitRetryCount).toBe(0);
-    const errorEvent = events.find((e) => e.type === 'error');
-    expect(errorEvent).toBeDefined();
-    expect((errorEvent as unknown as { error: Error }).error.message).toBe(RATE_LIMIT_MESSAGE);
+    // One more rejection — budget now exhausted → terminal error.
+    out.throwNext(new Error(RATE_LIMIT_MESSAGE));
+    await flushMicrotasks();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/rate limited/i);
+
+    session.close();
+  });
+
+  it('does not retry a non-rate-limit error', async () => {
+    const out0 = makeThrowableChannel();
+    sdk.nextIterable = out0;
+    const retries: number[] = [];
+    const errors: Error[] = [];
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({
+      onRateLimitRetry: (attempt) => retries.push(attempt),
+      onError: (e) => errors.push(e),
+    })));
+    session.send('do the thing');
+
+    out0.throwNext(new Error('ENOENT: no such file or directory'));
+    await flushMicrotasks();
+
+    expect(retries).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(sdk.generations).toHaveLength(1);
+
+    session.close();
   });
 });

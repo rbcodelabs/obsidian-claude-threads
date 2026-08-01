@@ -151,6 +151,16 @@ export interface Thread {
    * Auto-retry budget tracker for the closed-source CLI's spurious
    * "Stream closed" transport errors (see transportErrorRecovery.ts).
    * Reset to 0 on a successful onDone; incremented on each auto-retry.
+   *
+   * TODO(ADR-0002 Stage 2 gap fix): as of ThreadSession, the retry decision
+   * is gated entirely by `ThreadSession.transportErrorRetryCount` (private,
+   * in-memory, resets on every `start()`/successful `result` — see
+   * ThreadSession.ts). Grepping src/ turns up only two write sites for this
+   * field (both in ThreadManager.ts, both `= 0` resets in onDone/onError)
+   * and zero reads anywhere — it looks fully vestigial post-Stage-C, but
+   * this wasn't the stage for aggressive cleanup, so it's left in place
+   * (and still persisted to disk via VaultPersistence) pending confirmation
+   * it's truly safe to delete.
    */
   streamCloseRetryCount?: number;
   /**
@@ -193,6 +203,18 @@ export interface Thread {
    * release archive-on-merge workflow can still match a thread after its PR merges.
    */
   prUrl?: string;
+  /**
+   * ID of the scheduled item (cron) whose fire() created this thread, if any.
+   * Set once at creation time and never cleared. Undefined for threads created
+   * any other way (manual, dispatched, etc).
+   */
+  scheduledItemId?: string;
+  /**
+   * Name of the scheduled item at the time this thread was created, captured
+   * alongside `scheduledItemId` for display (e.g. the "Scheduled: <name>" footer pill).
+   * Not kept in sync with later renames of the scheduled item.
+   */
+  scheduledItemName?: string;
   /**
    * Status-line pills for this thread, populated by StatusLineService from the
    * configured statusLineCommand. Ephemeral — never persisted to data.json,
@@ -271,7 +293,7 @@ export interface Project {
   createdAt: number;
 }
 
-export type ScheduleType = 'interval' | 'daily' | 'weekly';
+export type ScheduleType = 'interval' | 'daily' | 'weekly' | 'once';
 
 export interface ScheduledItemSchedule {
   type: ScheduleType;
@@ -281,6 +303,11 @@ export interface ScheduledItemSchedule {
   timeOfDay?: string;
   /** For 'weekly': array of day numbers 0=Sun...6=Sat */
   daysOfWeek?: number[];
+  /**
+   * For 'once': absolute epoch ms at which to fire exactly one time. The item
+   * is deleted after firing (see Scheduler.fire()) rather than rearmed.
+   */
+  fireAt?: number;
 }
 
 export interface ScheduledItem {
@@ -305,6 +332,22 @@ export interface ScheduledItem {
    * if the target thread no longer exists.
    */
   targetThreadId?: string;
+  /**
+   * Marks this item as created by the ScheduleWakeup tool rather than the
+   * user-facing Cron tools/dashboard. Lets ClaudeThreadsPlugin.getPendingWakeups/
+   * hasPendingWakeup/cancelWakeups find these durable one-shot items without a
+   * separate in-memory tracking structure. Absent for ordinary cron items.
+   */
+  origin?: 'wakeup';
+  /**
+   * Marks this item as the orchestrator's own heartbeat backstop (created by
+   * ensureOrchestratorThread()) so it can be found and cleaned up reliably
+   * when the orchestrator thread is recreated, and so Scheduler.fire() can
+   * special-case it: if its targetThreadId no longer resolves, skip creating
+   * a stray replacement thread rather than falling back to the generic
+   * new-thread behavior other targetThreadId items use.
+   */
+  isOrchestratorHeartbeat?: boolean;
 }
 
 export interface SkillSource {
@@ -455,6 +498,17 @@ export interface PluginSettings {
    */
   kanbanCollapseSide?: 'none' | 'left' | 'right' | 'both';
   /**
+   * When true (default), repeat runs of the same scheduled/cron job collapse
+   * into a single expandable rollup — the Kanban board's quiet columns (New,
+   * Done, Ready) show one stack card per job instead of one card per run, and
+   * the Agent Dashboard groups their quiet runs into a "Scheduled Jobs"
+   * section. A run that's running, waiting on a permission/question, or
+   * errored is never stacked — it always renders individually in its normal
+   * group. Set to false to disable and render every run as its own card/row,
+   * exactly like before this setting existed.
+   */
+  stackScheduledThreads?: boolean;
+  /**
    * When true, the obsidian_open_url MCP tool is registered and available to Claude.
    * Only takes effect if the Obsidian Web Viewer core plugin is also enabled.
    * Defaults to true so the tool is available out of the box.
@@ -511,6 +565,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   enableWebViewerTool: true,
   kanbanGroupBy: 'status',
   kanbanCollapseSide: 'none',
+  stackScheduledThreads: true,
   skillSources: [],
   skillsListWidth: 200,
 };

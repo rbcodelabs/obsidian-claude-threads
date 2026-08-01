@@ -139,4 +139,84 @@ describe('obsidian_archive_thread', () => {
     expect(result.isError).toBe(true);
     expect((parseResult(result) as { error: string }).error).toMatch(/Thread not found/);
   });
+
+  describe('orchestrator thread confirm guard', () => {
+    it('returns an error and does not archive the orchestrator thread when confirm is omitted', async () => {
+      const archiveThread = vi.fn().mockResolvedValue(undefined);
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'current-thread',
+        archiveThread,
+        getOrchestratorThreadId: () => 'orchestrator-thread',
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'orchestrator-thread' });
+
+      expect(result.isError).toBe(true);
+      expect((parseResult(result) as { error: string }).error).toMatch(/Thread Orchestrator/);
+      expect(archiveThread).not.toHaveBeenCalled();
+    });
+
+    it('returns an error when confirm is explicitly false', async () => {
+      const archiveThread = vi.fn().mockResolvedValue(undefined);
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'current-thread',
+        archiveThread,
+        getOrchestratorThreadId: () => 'orchestrator-thread',
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'orchestrator-thread', confirm: false });
+
+      expect(result.isError).toBe(true);
+      expect(archiveThread).not.toHaveBeenCalled();
+    });
+
+    it('archives the orchestrator thread when confirm is true', async () => {
+      const archiveThread = vi.fn().mockResolvedValue(undefined);
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'current-thread',
+        archiveThread,
+        getOrchestratorThreadId: () => 'orchestrator-thread',
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'orchestrator-thread', confirm: true });
+
+      expect(result.isError).toBeUndefined();
+      expect(archiveThread).toHaveBeenCalledWith('orchestrator-thread');
+      const payload = parseResult(result) as { success: boolean; archivedThreadId: string };
+      expect(payload.success).toBe(true);
+      expect(payload.archivedThreadId).toBe('orchestrator-thread');
+    });
+
+    it('archives a non-orchestrator thread without confirm needed (unchanged behavior)', async () => {
+      const archiveThread = vi.fn().mockResolvedValue(undefined);
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'current-thread',
+        archiveThread,
+        getOrchestratorThreadId: () => 'orchestrator-thread',
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'some-other-thread' });
+
+      expect(result.isError).toBeUndefined();
+      expect(archiveThread).toHaveBeenCalledWith('some-other-thread');
+    });
+
+    it('does not require confirm when getOrchestratorThreadId is not provided', async () => {
+      const archiveThread = vi.fn().mockResolvedValue(undefined);
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'current-thread',
+        archiveThread,
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'any-thread' });
+
+      expect(result.isError).toBeUndefined();
+      expect(archiveThread).toHaveBeenCalledWith('any-thread');
+    });
+  });
 });
