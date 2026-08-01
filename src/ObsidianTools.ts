@@ -193,6 +193,8 @@ export interface ObsidianMcpServerOptions {
   initialCwd?: string;
   /** ID of the current thread. Used by obsidian_get_current_thread. */
   threadId?: string;
+  /** Returns the ID of the thread running the bundled orchestrator skill, if one has been created. */
+  getOrchestratorThreadId?: () => string | undefined;
   /** Returns full detail (metadata + messages) for a thread by ID. */
   getThreadDetail?: (id: string) => ThreadDetail | undefined;
   /** Returns metadata snapshots for all threads. */
@@ -1283,9 +1285,11 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       'Archives a thread by ID — saves it to the vault (if vault persistence is enabled) then removes it from memory.',
       'Use this to close out completed threads, e.g. after merging PRs or finishing release management.',
       'Cannot archive the current thread.',
+      'Archiving the Thread Orchestrator (the thread tracked in settings.orchestratorThreadId) requires confirm: true.',
     ].join(' '),
     {
       threadId: z.string().describe('ID of the thread to archive'),
+      confirm: z.boolean().optional().describe('Must be true to archive the orchestrator thread (the thread tracked in settings.orchestratorThreadId). Not required for any other thread.'),
     },
     async (args, _extra) => {
       try {
@@ -1294,6 +1298,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         }
         if (args.threadId === options.threadId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot archive the current thread.' }) }], isError: true };
+        }
+        if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is the Thread Orchestrator. Pass confirm: true to archive it anyway — doing so stops automatic thread review until "Open Thread Orchestrator" is run again.' }) }], isError: true };
         }
         await options.archiveThread(args.threadId);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, archivedThreadId: args.threadId }) }] };

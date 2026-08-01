@@ -98,6 +98,68 @@ describe('Scheduler targetThreadId (loops)', () => {
   });
 });
 
+describe('Scheduler isOrchestratorHeartbeat (stale target guard)', () => {
+  it('does not create a replacement thread or send a message when the heartbeat target is gone', async () => {
+    const onOrchestratorHeartbeatStale = vi.fn();
+    const { options, sendMessage, createThread } = makeOptions({
+      threadExists: () => false,
+      onOrchestratorHeartbeatStale,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    const item = await scheduler.createItem({
+      name: 'Thread Orchestrator Heartbeat',
+      prompt: 'Heartbeat: run your review pass across all threads.',
+      schedule: { type: 'interval', intervalSeconds: 3600 },
+      enabled: true,
+      targetThreadId: 'deleted-orchestrator-thread',
+      isOrchestratorHeartbeat: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(3601_000);
+
+    expect(createThread).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(onOrchestratorHeartbeatStale).toHaveBeenCalledOnce();
+    expect(onOrchestratorHeartbeatStale.mock.calls[0][0].id).toBe(item.id);
+
+    // lastRun/nextRun still advance so the item doesn't spin retrying every cycle.
+    const fresh = scheduler.getItem(item.id);
+    expect(fresh?.lastRun).toBeDefined();
+    expect(fresh?.nextRun).toBeGreaterThan(Date.now());
+
+    scheduler.destroy();
+  });
+
+  it('sends into the existing thread normally when the heartbeat target still exists', async () => {
+    const onOrchestratorHeartbeatStale = vi.fn();
+    const { options, sendMessage, createThread } = makeOptions({
+      threadExists: (id) => id === 'orchestrator-thread',
+      onOrchestratorHeartbeatStale,
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([]);
+
+    await scheduler.createItem({
+      name: 'Thread Orchestrator Heartbeat',
+      prompt: 'Heartbeat: run your review pass across all threads.',
+      schedule: { type: 'interval', intervalSeconds: 3600 },
+      enabled: true,
+      targetThreadId: 'orchestrator-thread',
+      isOrchestratorHeartbeat: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(3601_000);
+
+    expect(sendMessage).toHaveBeenCalledWith('orchestrator-thread', 'Heartbeat: run your review pass across all threads.');
+    expect(createThread).not.toHaveBeenCalled();
+    expect(onOrchestratorHeartbeatStale).not.toHaveBeenCalled();
+
+    scheduler.destroy();
+  });
+});
+
 describe('Scheduler isThreadBusy (dedup pileup guard)', () => {
   it('skips sending and retries when the target thread is busy', async () => {
     const { options, sendMessage } = makeOptions({

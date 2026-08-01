@@ -68,6 +68,13 @@ view.onOpen();
   (view as any).updateGroupByBtn?.();
 };
 
+// Lets screenshot tests seed settings.orchestratorThreadId so the bot badge
+// (appendOrchestratorBadge) renders on the matching card's title.
+(window as any).__setOrchestrator = (threadId: string | undefined) => {
+  settings.orchestratorThreadId = threadId;
+  view.render();
+};
+
 // ── fix/scheduled-wakeup-visibility regression helpers ──────────────────────
 // Mirrors the equivalent helpers in test/harness/index.ts — lets screenshot
 // tests drive the real ThreadManager → KanbanView.handleEvent → scheduleRender

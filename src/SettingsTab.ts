@@ -1480,6 +1480,39 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    // — Orchestrator —
+    new Setting(containerEl)
+      .setName('Orchestrator')
+      .setDesc('The persistent thread that runs the bundled thread-orchestrator skill, reviewing other threads and proposing replies.')
+      .setHeading();
+
+    {
+      const orchestratorId = this.plugin.settings.orchestratorThreadId;
+      const orchestratorThread = orchestratorId ? this.plugin.manager.getThread(orchestratorId) : undefined;
+
+      if (!orchestratorId) {
+        new Setting(containerEl)
+          .setName('Not yet created')
+          .setDesc('Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create it.');
+      } else if (orchestratorThread) {
+        new Setting(containerEl)
+          .setName(orchestratorThread.title)
+          .setDesc('This is your Thread Orchestrator thread. It is marked with a bot badge in the Agent Dashboard, Kanban board, and thread switcher.')
+          .addButton((btn) =>
+            btn.setButtonText('Open').setCta().onClick(() => {
+              void this.plugin.openThreadInChatView(orchestratorId);
+            }),
+          );
+      } else {
+        const warning = containerEl.createDiv({ cls: 'ct-settings-warning' });
+        warning.createEl('strong', { text: 'Orchestrator thread missing: ' });
+        warning.appendText(
+          'The thread previously tracked as your Thread Orchestrator was deleted or archived. ' +
+          'Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create a new one.',
+        );
+      }
+    }
+
     // — Scheduled tasks —
     new Setting(containerEl)
       .setName('Scheduled tasks')

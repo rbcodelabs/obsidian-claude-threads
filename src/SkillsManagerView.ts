@@ -113,7 +113,7 @@ function formatInstalls(count: number): string {
 
 // ── Confirmation Modal ────────────────────────────────────────────────────────
 
-class ConfirmModal extends Modal {
+export class ConfirmModal extends Modal {
   private onResult: (confirmed: boolean) => void;
   private message: string;
   private confirmLabel: string;
