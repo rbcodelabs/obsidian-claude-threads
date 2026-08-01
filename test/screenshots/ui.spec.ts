@@ -510,7 +510,34 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("MCP")');
     await page.waitForTimeout(200);
+    // Collapse the fixed-height harness shell to the content so the docs
+    // screenshot (copied out by posttest:screenshots:update) crops tight
+    // instead of trailing a large empty panel below the server list.
+    await page.evaluate(() => {
+      const app = document.getElementById('app');
+      if (app) app.style.height = 'auto';
+    });
+    await page.waitForTimeout(50);
     await expect(page).toHaveScreenshot('settings-mcp.png', { fullPage: true });
+  });
+
+  test('settings — mcp edit server form', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+    // Open the edit modal on the first (stdio) server so the form shows real
+    // values, including an ${ENV_VAR} placeholder in the environment field.
+    await page
+      .locator('.ct-mcp-servers-list .setting-item')
+      .first()
+      .getByRole('button', { name: 'Edit' })
+      .click();
+    await page.waitForSelector('.modal-overlay');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('settings-mcp-edit.png', { fullPage: true });
   });
 
   test('sub-agent task pill while working', async ({ page }) => {
