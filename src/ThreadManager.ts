@@ -18,6 +18,7 @@ export type ThreadEvent =
   | { type: 'done' }
   | { type: 'error'; error: Error }
   | { type: 'reconnecting'; error: string }
+  | { type: 'rate_limit_retry'; attempt: number; maxRetries: number; delayMs: number }
   | { type: 'streaming_start' }
   | { type: 'escalated'; model: string }
   | { type: 'queued'; text: string; images?: ImageAttachment[] }
@@ -1170,6 +1171,7 @@ export class ThreadManager {
         thread.updatedAt = Date.now();
         thread.status = 'waiting';
         thread.streamCloseRetryCount = 0; // TODO: likely vestigial post-Stage-C — see types.ts's doc comment on this field
+        thread.rateLimitRetryCount = 0;
         const lastMsg = thread.messages[thread.messages.length - 1];
         if (lastMsg?.role === 'assistant' && cost > 0) {
           lastMsg.cost = cost;
@@ -1271,6 +1273,7 @@ export class ThreadManager {
         thread.lastError = err.message;
         thread.status = 'error';
         thread.streamCloseRetryCount = 0; // TODO: likely vestigial post-Stage-C — see types.ts's doc comment on this field
+        thread.rateLimitRetryCount = 0;
         this.threadActivity.delete(threadId);
         this.queuedMessages.delete(threadId);
         // Terminal, like onDone — stop tracking these ids as unresolved.
@@ -1327,6 +1330,19 @@ export class ThreadManager {
         thread.status = 'reconnecting';
         thread.updatedAt = Date.now();
         this.emit(threadId, { type: 'reconnecting', error });
+      },
+      onRateLimitRetry: (attempt, maxRetries, delayMs) => {
+        // A rate-limit / overload reject that ThreadSession is silently
+        // replaying after a backoff (see its pumpMessages() catch block).
+        // Share the transport-error path's transient 'reconnecting' status —
+        // both are auto-recovered, non-terminal, and cleared by
+        // clearReconnectingStatus() once the replayed turn produces events —
+        // but emit a distinct event so the UI can show rate-limit-specific
+        // copy (attempt N/M, retrying in Ns).
+        thread.status = 'reconnecting';
+        thread.rateLimitRetryCount = attempt;
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'rate_limit_retry', attempt, maxRetries, delayMs });
       },
       onCompact: (trigger, preTokens) => {
         const compactMsg: ChatMessage = {

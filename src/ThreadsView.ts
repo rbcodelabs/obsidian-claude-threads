@@ -14,7 +14,7 @@ import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
 import { groupToolCalls, liveToolGroupKey, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
-import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv } from './dashboardUtils';
+import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
@@ -3502,6 +3502,27 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'rate_limit_retry': {
+        // The API rejected this turn with a rate-limit/overload error before
+        // it was ever processed. ThreadManager is silently replaying the
+        // exact same turn after a backoff delay — not a terminal error, and
+        // not a new user-visible message, so reuse the same visual treatment
+        // as the transport-closed 'reconnecting' notice above, just with
+        // rate-limit-specific copy.
+        if (this.streamingEl) {
+          this.streamingEl.remove();
+          this.streamingEl = null;
+          this.streamingContentEl = null;
+        }
+        const rateLimitNoticeEl = this.messagesEl.createDiv('ct-message ct-reconnecting');
+        rateLimitNoticeEl.createEl('div', {
+          text: `Rate limited by the API — retrying in ${Math.round(event.delayMs / 1000)}s (attempt ${event.attempt}/${event.maxRetries})…`,
+          cls: 'ct-reconnecting-text',
+        });
+        this.scrollToBottom();
+        break;
+      }
+
       case 'error': {
         this.clearStreamingState();
         this.taskPills.clear();
@@ -3518,10 +3539,16 @@ export class ThreadsView extends ItemView {
           this.streamingContentEl = null;
         }
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
-        errEl.createEl('pre', {
-          text: event.error.message,
+        const { headline, stack } = splitErrorMessage(event.error.message);
+        errEl.createEl('div', {
+          text: headline,
           cls: 'ct-error-text',
         });
+        if (stack) {
+          const detailsEl = errEl.createEl('details', { cls: 'ct-error-details' });
+          detailsEl.createEl('summary', { text: 'Show technical details' });
+          detailsEl.createEl('pre', { text: stack, cls: 'ct-error-stack' });
+        }
         // ── AWS SSO reauth button ──────────────────────────────────────────
         // When the error looks like an expired SSO token, show a one-click
         // button inline in the conversation so the user doesn't need to find

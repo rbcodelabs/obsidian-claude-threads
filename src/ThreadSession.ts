@@ -24,6 +24,12 @@ import {
   shouldAutoRetryTransportError,
   TRANSPORT_ERROR_CONTINUATION_PROMPT,
 } from './transportErrorRecovery';
+import {
+  isRateLimitError,
+  shouldAutoRetryRateLimitError,
+  rateLimitBackoffMs,
+  MAX_RATE_LIMIT_AUTO_RETRIES,
+} from './rateLimitRecovery';
 
 /**
  * Everything needed to open a thread's long-lived `Query`, once, for the
@@ -58,7 +64,7 @@ export interface ThreadSessionOptions {
   };
 }
 
-export type RestartReason = 'cwd-change' | 'transport-error' | 'init-options-change';
+export type RestartReason = 'cwd-change' | 'transport-error' | 'init-options-change' | 'rate-limit';
 
 /**
  * One `ThreadSession` per thread, not per turn — owns a single SDK `Query`
@@ -85,6 +91,15 @@ export class ThreadSession {
   private lastKnownSessionId: string | undefined;
   /** Auto-retry budget for transport-closed errors, reset on every successful `result`. */
   private transportErrorRetryCount = 0;
+  /** Auto-retry budget for rate-limit / overload errors, reset on every successful `result`. */
+  private rateLimitRetryCount = 0;
+  /**
+   * The turn currently being attempted, captured on each `send()`. A
+   * rate-limit auto-retry replays it verbatim after a backoff (the API
+   * rejected it before the model saw it, so no new transcript message is
+   * added — see the replay in `pumpMessages()`'s catch block).
+   */
+  private lastUserTurn: { text: string; images?: ImageAttachment[] } | null = null;
   private recapEmitted = false;
 
   // --- state surface for a reaper / UI, per ADR-0002 §3 ---
@@ -372,6 +387,13 @@ export class ThreadSession {
     if (!this.query) {
       throw new Error('[ClaudeThreads] ThreadSession.send() called before start() (or after close())');
     }
+    // Remember the turn currently being attempted so a rate-limit auto-retry
+    // can replay it verbatim (the API rejected it before the model saw it).
+    // Recording on every send() — including an internal transport-continuation
+    // or rate-limit replay — is deliberate: whatever turn is in flight is
+    // exactly what a subsequent rate-limit rejection must re-send, and
+    // re-recording the same replayed turn is idempotent.
+    this.lastUserTurn = { text, images };
     const message: SDKUserMessage = {
       type: 'user',
       parent_tool_use_id: null,
@@ -574,6 +596,7 @@ export class ThreadSession {
             if (msg.subtype === 'success') {
               this.lastKnownSessionId = msg.session_id;
               this.transportErrorRetryCount = 0;
+              this.rateLimitRetryCount = 0;
               if (allToolCalls.length > 0 && !this.recapEmitted) {
                 const names = [...new Set(allToolCalls.map(t => formatToolName(t.name)))];
                 callbacks.onRecap(`Used ${names.join(', ')} (${allToolCalls.length} call${allToolCalls.length > 1 ? 's' : ''})`);
@@ -818,12 +841,48 @@ export class ThreadSession {
         callbacks.onInterrupted(this.lastKnownSessionId ?? '');
       } else {
         const e = err instanceof Error ? err : new Error(String(err));
+        // Rate-limit / overload retry: checked before the transport-error case
+        // because the two failure shapes are distinct and a rate-limit reject
+        // is never a "stream closed". Unlike a transport error (which happens
+        // mid-turn, after a tool call has already gone out), the API rejected
+        // this turn before processing it at all — the model never saw the
+        // prompt. So instead of a synthetic continuation, silently replay the
+        // exact same user turn after a backoff delay, adding no new transcript
+        // message. Entirely internal to ThreadSession; the UI only learns of
+        // it via onRateLimitRetry (a transient 'reconnecting'-style notice),
+        // never a terminal onError, unless the backoff budget is exhausted.
+        if (isRateLimitError(e.message) && shouldAutoRetryRateLimitError(e.message, this.rateLimitRetryCount)) {
+          this.rateLimitRetryCount++;
+          const attempt = this.rateLimitRetryCount;
+          const delayMs = rateLimitBackoffMs(attempt - 1);
+          const turn = this.lastUserTurn;
+          supersededByRestart = true;
+          callbacks.onRateLimitRetry?.(attempt, MAX_RATE_LIMIT_AUTO_RETRIES, delayMs);
+          try {
+            await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+            // The user may have interrupted or closed the session during the
+            // backoff window (the input channel stays open — the error came
+            // from the output iterator, not the channel). Bail out of the
+            // replay rather than reviving a session the user walked away from.
+            if (this.interrupted) {
+              callbacks.onInterrupted(this.lastKnownSessionId ?? '');
+            } else if (this.channelEnded) {
+              // close() was called during the backoff — nothing to restart.
+            } else {
+              await this.restart('rate-limit');
+              if (turn) this.send(turn.text, turn.images);
+            }
+          } catch (retryErr) {
+            console.error('[ClaudeThreads] ThreadSession rate-limit auto-retry failed:', retryErr);
+            callbacks.onError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)));
+          }
+        }
         // Transport-error retry (ADR-0002 §2): reuse transportErrorRecovery.ts's
         // existing trigger logic unchanged, rather than re-deriving the
         // "stream closed" detection here. "Process died → respawn with resume"
         // becomes an internal restart() + a continuation turn, invisible to
         // the caller unless the retry budget is exhausted.
-        if (isTransportClosedError(e.message) && shouldAutoRetryTransportError(e.message, this.transportErrorRetryCount)) {
+        else if (isTransportClosedError(e.message) && shouldAutoRetryTransportError(e.message, this.transportErrorRetryCount)) {
           this.transportErrorRetryCount++;
           supersededByRestart = true;
           // Fire onReconnecting at the exact point that used to be

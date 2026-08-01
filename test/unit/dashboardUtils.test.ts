@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from '../../src/dashboardUtils';
+import { relativeTime, shortenPath, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown, splitErrorMessage } from '../../src/dashboardUtils';
 
 // ── formatWakeupCountdown ───────────────────────────────────────────────────────
 
@@ -185,6 +185,42 @@ describe('isAwsSsoError', () => {
   it('is case-insensitive', () => {
     expect(isAwsSsoError('TOKEN EXPIRED')).toBe(true);
     expect(isAwsSsoError('AWS SSO LOGIN')).toBe(true);
+  });
+});
+
+// ── splitErrorMessage ────────────────────────────────────────────────────────
+
+describe('splitErrorMessage', () => {
+  it('returns the whole message as the headline when there is no stack marker', () => {
+    expect(splitErrorMessage('Something went wrong')).toEqual({ headline: 'Something went wrong' });
+  });
+
+  it('returns an empty-string headline unchanged for an empty message', () => {
+    expect(splitErrorMessage('')).toEqual({ headline: '' });
+  });
+
+  it('splits a message with a trailing "\\n\\nStack:" block', () => {
+    const message = 'Rate limited\n\nStack: Error: Rate limited\n    at foo (bar.ts:1:1)';
+    expect(splitErrorMessage(message)).toEqual({
+      headline: 'Rate limited',
+      stack: 'Stack: Error: Rate limited\n    at foo (bar.ts:1:1)',
+    });
+  });
+
+  it('splits a message that also has a Zod issues block before the stack', () => {
+    const message = 'Bad input\n\nZod issues: [{"path":["x"]}]\n\nStack: Error: Bad input\n    at foo (bar.ts:1:1)';
+    expect(splitErrorMessage(message)).toEqual({
+      headline: 'Bad input\n\nZod issues: [{"path":["x"]}]',
+      stack: 'Stack: Error: Bad input\n    at foo (bar.ts:1:1)',
+    });
+  });
+
+  it('only splits on the first "\\n\\nStack:" occurrence', () => {
+    const message = 'Outer\n\nStack: inner\n\nStack: nested';
+    expect(splitErrorMessage(message)).toEqual({
+      headline: 'Outer',
+      stack: 'Stack: inner\n\nStack: nested',
+    });
   });
 });
 

@@ -1320,6 +1320,27 @@
 .ct-error-text {
   margin: 0;
   color: var(--color-red);
+  white-space: normal;
+  word-break: break-word;
+  font-size: var(--font-ui-smaller);
+}
+
+/* Collapsed technical-details disclosure below the one-line error headline —
+   holds the raw stack trace so the error card stays short by default. */
+.ct-error-details {
+  margin-top: 6px;
+}
+
+.ct-error-details summary {
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.ct-error-stack {
+  margin: 6px 0 0 0;
+  color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-all;
   font-size: var(--font-ui-smaller);
@@ -4695,11 +4716,39 @@
   gap: 8px;
 }
 
-.ct-mobile-error-text {
+.ct-mobile-error-body {
   flex: 1;
+  min-width: 0;
+}
+
+.ct-mobile-error-text {
   font-size: var(--font-ui-smaller);
   color: var(--text-error, #c92a2a);
   word-break: break-word;
+}
+
+.ct-mobile-error-details {
+  margin-top: 6px;
+}
+
+.ct-mobile-error-details summary {
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.ct-mobile-error-stack {
+  margin: 6px 0 0 0;
+  color: var(--text-faint);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  font-family: var(--font-monospace);
+  background: none;
+  padding: 0;
 }
 
 .ct-mobile-error-dismiss {

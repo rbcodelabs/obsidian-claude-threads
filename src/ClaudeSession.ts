@@ -42,6 +42,17 @@ export interface SessionCallbacks {
    * dedicated callback.
    */
   onReconnecting?: (error: string) => void;
+  /**
+   * Fired when a rate-limit / overload error is about to be auto-retried
+   * in-process by `ThreadSession` (see `pumpMessages()`'s catch block). The
+   * API rejected the turn before the model saw it, so the plugin silently
+   * replays the exact same turn after `delayMs` of backoff — no new
+   * transcript message. `attempt` is 1-based; `maxRetries` is the budget
+   * (`MAX_RATE_LIMIT_AUTO_RETRIES`). Only `ThreadSession` invokes it; the
+   * per-turn `ClaudeSession` never does. Distinct from `onRateLimit`, which
+   * merely surfaces the CLI's observed rate-limit *window* status.
+   */
+  onRateLimitRetry?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
