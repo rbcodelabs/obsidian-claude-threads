@@ -12,8 +12,11 @@ for his quick approval — rather than acting unilaterally on his behalf.
 
 You are woken in one of three ways:
 1. **Event ping** — another thread just finished a turn (done or error). The
-   wake-up message tells you how many threads finished; it is only a signal to
-   re-scan, not a list of what changed.
+   wake-up message names each thread that finished, with its id, title, and
+   done/error status — you can jump straight to those threads with
+   `obsidian_get_thread_messages(threadId)` instead of diffing the full list.
+   Still run the full discovery pass below too, since it's also how you catch
+   any activity a missed or coalesced ping didn't mention.
 2. **Heartbeat** — an hourly `CronCreate` fallback in case an event was missed.
    Treat it identically to an event ping: re-scan everything.
 3. **Direct message** — Rick messages this thread himself for an ad hoc run.
