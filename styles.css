@@ -2645,6 +2645,31 @@
   text-overflow: ellipsis;
 }
 
+/* ── Scheduled Jobs section (Agent Dashboard) ───────────────────────────── */
+/* Collapsed rollup row for a cron job's quiet (unreviewed/reviewed/empty)
+   runs, grouped separately from the main status groups so a busy hourly job
+   doesn't bury manually-created threads. */
+.ct-agents-icon-scheduled {
+  color: var(--text-muted);
+}
+.ct-agents-stack-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ct-agents-stack-count {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ct-agents-stack-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 16px;
+  margin: 0 6px 4px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+
 /* Dispatch area */
 .ct-agents-dispatch {
   flex-shrink: 0;
@@ -5168,6 +5193,41 @@
   max-width: 130px;
   font-family: var(--font-monospace);
   font-size: 9px;
+}
+
+/* ── Scheduled-job stack card (Kanban) ──────────────────────────────────── */
+/* Collapsed rollup of repeat runs of the same cron job in a quiet column
+   (New/Done/Ready). Dashed border + muted icon distinguish it at a glance
+   from a normal single-run card. */
+.ct-kanban-card-stack {
+  border-style: dashed;
+  cursor: default;
+}
+.ct-kanban-stack-header {
+  cursor: pointer;
+  align-items: center;
+}
+.ct-kanban-icon-stack {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ct-kanban-stack-count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ct-kanban-stack-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 14px;
+  margin-top: 2px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+.ct-kanban-stack-body .ct-kanban-card {
+  cursor: pointer;
 }
 
 /* ── Speech-to-text mic button ──────────────────────────────────────────── */

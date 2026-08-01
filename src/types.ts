@@ -473,6 +473,17 @@ export interface PluginSettings {
    */
   kanbanCollapseSide?: 'none' | 'left' | 'right' | 'both';
   /**
+   * When true (default), repeat runs of the same scheduled/cron job collapse
+   * into a single expandable rollup — the Kanban board's quiet columns (New,
+   * Done, Ready) show one stack card per job instead of one card per run, and
+   * the Agent Dashboard groups their quiet runs into a "Scheduled Jobs"
+   * section. A run that's running, waiting on a permission/question, or
+   * errored is never stacked — it always renders individually in its normal
+   * group. Set to false to disable and render every run as its own card/row,
+   * exactly like before this setting existed.
+   */
+  stackScheduledThreads?: boolean;
+  /**
    * When true, the obsidian_open_url MCP tool is registered and available to Claude.
    * Only takes effect if the Obsidian Web Viewer core plugin is also enabled.
    * Defaults to true so the tool is available out of the box.
@@ -529,6 +540,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   enableWebViewerTool: true,
   kanbanGroupBy: 'status',
   kanbanCollapseSide: 'none',
+  stackScheduledThreads: true,
   skillSources: [],
   skillsListWidth: 200,
 };

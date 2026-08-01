@@ -7,6 +7,7 @@ import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
+import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -39,6 +40,9 @@ export class AgentDashboard extends ItemView {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   // Periodic time refresh
   private timeInterval: ReturnType<typeof setInterval> | null = null;
+
+  /** IDs (Thread.scheduledItemId) of currently-expanded rows in the "Scheduled Jobs" section. */
+  private expandedScheduledStacks = new Set<string>();
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -310,10 +314,10 @@ export class AgentDashboard extends ItemView {
       : allThreads;
     const running: Thread[] = [];
     const waiting: Thread[] = [];
-    const unreviewed: Thread[] = [];
-    const reviewed: Thread[] = [];
+    let unreviewed: Thread[] = [];
+    let reviewed: Thread[] = [];
     const errors: Thread[] = [];
-    const empty: Thread[] = [];
+    let empty: Thread[] = [];
 
     for (const t of threads) {
       if (this.manager.isRunning(t.id)) running.push(t);
@@ -336,6 +340,23 @@ export class AgentDashboard extends ItemView {
     errors.sort(byRecency);
     empty.sort(byRecency);
 
+    // Pull "quiet" scheduled-job runs (unreviewed / reviewed / empty only —
+    // running, waiting, and errored runs always stay in their normal group,
+    // untouched) into a separate rollup section so a busy hourly job doesn't
+    // bury manually-created threads. Gated behind a setting; disabled it's a
+    // no-op and the dashboard behaves exactly as it did before this existed.
+    let scheduledStacks: ScheduledStack[] = [];
+    if (this.plugin.settings.stackScheduledThreads ?? true) {
+      const scheduledQuiet = [...unreviewed, ...reviewed, ...empty].filter(t => t.scheduledItemId);
+      unreviewed = unreviewed.filter(t => !t.scheduledItemId);
+      reviewed = reviewed.filter(t => !t.scheduledItemId);
+      empty = empty.filter(t => !t.scheduledItemId);
+      // minCount=1: every distinct job gets its own row even with only one
+      // quiet run right now, so the section doesn't pop in/out of existence.
+      scheduledStacks = partitionScheduledStacks(scheduledQuiet, 1).stacks
+        .sort((a, b) => b.threads[0].updatedAt - a.threads[0].updatedAt);
+    }
+
     if (threads.length === 0) {
       const emptyEl = this.listEl.createDiv('ct-agents-empty');
       if (q) {
@@ -352,8 +373,56 @@ export class AgentDashboard extends ItemView {
     if (reviewed.length > 0) this.renderGroup('Reviewed', reviewed, 'idle');
     if (errors.length > 0) this.renderGroup('Failed', errors, 'error');
     if (empty.length > 0) this.renderGroup('Ready', empty, 'empty');
+    if (scheduledStacks.length > 0) this.renderScheduledJobsGroup(scheduledStacks);
 
     this.updateHeader(threads.length, running.length);
+  }
+
+  /** Renders the "Scheduled Jobs" section — one collapsed rollup row per distinct cron job with quiet runs. Always last (least urgent content). */
+  private renderScheduledJobsGroup(stacks: ScheduledStack[]): void {
+    const group = this.listEl.createDiv('ct-agents-group');
+    const labelEl = group.createDiv('ct-agents-group-label');
+    labelEl.createSpan({ text: 'Scheduled Jobs' });
+    for (const stack of stacks) {
+      this.renderScheduledJobRow(stack, group);
+    }
+  }
+
+  /**
+   * Renders one collapsed-by-default row for a scheduled job's quiet runs:
+   * job name, run count, latest-run relative time, and a chevron that
+   * expands into one normal `renderRow()` per underlying thread.
+   */
+  private renderScheduledJobRow(stack: ScheduledStack, parent: HTMLElement): void {
+    const key = stack.scheduledItemId;
+    const expanded = this.expandedScheduledStacks.has(key);
+
+    const row = parent.createDiv('ct-agents-row ct-agents-row-scheduled-stack');
+    const iconEl = row.createDiv('ct-agents-icon ct-agents-icon-scheduled');
+    setIcon(iconEl, 'clock');
+
+    const body = row.createDiv('ct-agents-row-body');
+    const titleRow = body.createDiv('ct-agents-stack-title-row');
+    titleRow.createSpan({ cls: 'ct-agents-row-title', text: stack.scheduledItemName });
+    titleRow.createSpan({ cls: 'ct-agents-group-badge ct-agents-stack-count', text: `×${stack.threads.length}` });
+    body.createDiv({ cls: 'ct-agents-row-activity', text: `Last run ${relativeTime(stack.threads[0].updatedAt)}` });
+
+    const chevron = row.createDiv('ct-expand-btn');
+    setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
+
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.expandedScheduledStacks.has(key)) this.expandedScheduledStacks.delete(key);
+      else this.expandedScheduledStacks.add(key);
+      this.scheduleRender();
+    });
+
+    if (expanded) {
+      const nested = parent.createDiv('ct-agents-stack-body');
+      for (const thread of stack.threads) {
+        this.renderRow(thread, thread.messages.length === 0 ? 'empty' : 'idle', nested);
+      }
+    }
   }
 
   private renderGroup(label: string, threads: Thread[], state: RowState, badge?: number): void {

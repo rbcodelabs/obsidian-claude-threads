@@ -5,6 +5,7 @@ import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { resolveProjectName } from './pathUtils';
+import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
@@ -17,6 +18,13 @@ type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?:
 
 /** Group key + display label for a thread's app/project, used by folder grouping. */
 const UNASSIGNED_GROUP = 'Unassigned';
+
+/**
+ * Kanban column labels eligible for scheduled-thread stacking. These are the
+ * "quiet" columns — a run that's running, awaiting a permission/question, or
+ * errored always renders as its own card and is never a candidate.
+ */
+const QUIET_COLUMN_LABELS = new Set(['New', 'Done', 'Ready']);
 
 export class KanbanView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
@@ -43,6 +51,14 @@ export class KanbanView extends ItemView {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private timeInterval: ReturnType<typeof setInterval> | null = null;
   private dispatchInput!: DispatchInput;
+
+  /**
+   * Keys of currently-expanded scheduled-job stacks, formatted
+   * `${scopeKey}:${scheduledItemId}` where scopeKey is the column label
+   * ("New") in status-board mode or `${laneLabel}::${columnLabel}` in
+   * folder/swimlane mode — this keeps keys from colliding across lanes.
+   */
+  private expandedScheduledStacks = new Set<string>();
 
   /** Tracks which sidebars were collapsed by this view on open, so we can restore them on close. */
   private _didCollapseLeft = false;
@@ -508,9 +524,75 @@ export class KanbanView extends ItemView {
     if (scrollKey) body.dataset.scrollKey = scrollKey;
     if (threads.length === 0) {
       body.createDiv({ cls: 'ct-kanban-col-empty', text: 'Nothing here' });
+      return;
     }
-    for (const thread of threads) {
-      this.renderCard(thread, state, body);
+
+    const stackingEnabled = QUIET_COLUMN_LABELS.has(label) && (this.plugin.settings.stackScheduledThreads ?? true);
+    if (!stackingEnabled) {
+      for (const thread of threads) {
+        this.renderCard(thread, state, body);
+      }
+      return;
+    }
+
+    // Interleave standalone cards and job stacks by recency (newest first),
+    // using each stack's newest run as its sort key, so a stack doesn't
+    // artificially sink to the bottom of an otherwise recency-ordered column.
+    const { stacks, standalone } = partitionScheduledStacks(threads);
+    const items: Array<
+      | { kind: 'card'; thread: Thread; ts: number }
+      | { kind: 'stack'; stack: ScheduledStack; ts: number }
+    > = [
+      ...standalone.map(thread => ({ kind: 'card' as const, thread, ts: thread.updatedAt })),
+      ...stacks.map(stack => ({ kind: 'stack' as const, stack, ts: stack.threads[0].updatedAt })),
+    ];
+    items.sort((a, b) => b.ts - a.ts);
+
+    const scopeKey = scrollKey ?? label;
+    for (const item of items) {
+      if (item.kind === 'card') this.renderCard(item.thread, state, body);
+      else this.renderStackCard(item.stack, state, body, scopeKey);
+    }
+  }
+
+  /**
+   * Renders a collapsed-by-default rollup card for repeat runs of the same
+   * scheduled job: job name, run count, latest-run time, and a chevron that
+   * expands into one normal `renderCard()` per underlying thread. Only used
+   * in "quiet" columns (New/Done/Ready) — a run that's running, awaiting
+   * input, or errored is always rendered individually via `renderCard()`.
+   */
+  private renderStackCard(stack: ScheduledStack, state: RowState, parent: HTMLElement, scopeKey: string): void {
+    const key = `${scopeKey}:${stack.scheduledItemId}`;
+    const expanded = this.expandedScheduledStacks.has(key);
+
+    const card = parent.createDiv({
+      cls: `ct-kanban-card ct-kanban-card-${state} ct-kanban-card-stack`,
+    });
+
+    const cardHeader = card.createDiv('ct-kanban-card-header ct-kanban-stack-header');
+    const iconEl = cardHeader.createDiv('ct-kanban-card-icon ct-kanban-icon-stack');
+    setIcon(iconEl, 'clock');
+    cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: stack.scheduledItemName });
+    cardHeader.createSpan({ cls: 'ct-kanban-stack-count', text: `×${stack.threads.length}` });
+    const chevron = cardHeader.createSpan('ct-expand-btn');
+    setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
+
+    cardHeader.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.expandedScheduledStacks.has(key)) this.expandedScheduledStacks.delete(key);
+      else this.expandedScheduledStacks.add(key);
+      this.scheduleRender();
+    });
+
+    const footer = card.createDiv('ct-kanban-card-footer');
+    footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-time', text: relativeTime(stack.threads[0].updatedAt) });
+
+    if (expanded) {
+      const stackBody = card.createDiv('ct-kanban-stack-body');
+      for (const thread of stack.threads) {
+        this.renderCard(thread, state, stackBody);
+      }
     }
   }
 
