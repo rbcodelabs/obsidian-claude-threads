@@ -130,3 +130,66 @@ describe('DispatchInput — PTT wiring', () => {
     expect(stt.createMicButton).toHaveBeenCalledOnce();
   });
 });
+
+// Regression guard for the /escalate popup-registration fix: builtinCommands
+// must also accept a resolver function so a settings-derived list (e.g. the
+// escalation command, which can be renamed/disabled at runtime) is re-read
+// on every keystroke instead of being frozen at construction time.
+describe('DispatchInput — dynamic builtinCommands', () => {
+  function typeAndTriggerInput(root: HTMLElement, value: string): void {
+    const textarea = root.querySelector('textarea')!;
+    textarea.value = value;
+    textarea.dispatchEvent(new Event('input'));
+  }
+
+  it('still converts a static builtinCommands array into a pill (existing behavior)', () => {
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend: vi.fn(),
+      builtinCommands: [{ name: 'goal', description: 'set a goal' }],
+    });
+    const root = di.mount(makeContainer());
+
+    typeAndTriggerInput(root, '/goal ');
+
+    expect(root.querySelector('.ct-command-pill')).toBeTruthy();
+    expect(di.getValue()).toBe('/goal ');
+  });
+
+  it('accepts a resolver function for builtinCommands', () => {
+    const commands = [{ name: 'escalate', description: 'escalate this turn' }];
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend: vi.fn(),
+      builtinCommands: () => commands,
+    });
+    const root = di.mount(makeContainer());
+
+    typeAndTriggerInput(root, '/escalate ');
+
+    expect(root.querySelector('.ct-command-pill')).toBeTruthy();
+    expect(di.getValue()).toBe('/escalate ');
+  });
+
+  it('re-invokes the resolver on every keystroke, reflecting a list that changes at runtime', () => {
+    let commands: { name: string; description: string }[] = [
+      { name: 'escalate', description: 'escalate this turn' },
+    ];
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend: vi.fn(),
+      builtinCommands: () => commands,
+    });
+    const root = di.mount(makeContainer());
+
+    // Simulate the user disabling escalation in Settings between keystrokes —
+    // no re-mount, no event bus, just a plain list mutation.
+    commands = [];
+    typeAndTriggerInput(root, '/escalate ');
+
+    // No matching builtin command anymore, so no pill is created and the
+    // raw text stays in the textarea as a plain (non-intercepted) prompt.
+    expect(root.querySelector('.ct-command-pill')).toBeFalsy();
+    expect(di.getValue()).toBe('/escalate ');
+  });
+});
