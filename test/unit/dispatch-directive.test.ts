@@ -100,6 +100,38 @@ describe('parseDispatchDirective', () => {
   });
 });
 
+describe('parseDispatchDirective — escalation keyword', () => {
+  it('returns an error directive for a bare keyword with no prompt', () => {
+    const d = parseDispatchDirective('/escalate', '/escalate');
+    expect(d?.kind).toBe('escalate');
+    expect(d?.error).toContain('Include a prompt');
+  });
+
+  it('is case-insensitive for the bare-keyword check', () => {
+    const d = parseDispatchDirective('/ESCALATE', '/escalate');
+    expect(d?.kind).toBe('escalate');
+  });
+
+  it('ignores surrounding whitespace on a bare keyword', () => {
+    const d = parseDispatchDirective('  /escalate  ', '/escalate');
+    expect(d?.kind).toBe('escalate');
+  });
+
+  it('returns null for keyword + prompt (handled by the existing keyword path)', () => {
+    expect(parseDispatchDirective('/escalate fix the failing build', '/escalate')).toBeNull();
+  });
+
+  it('returns null when no keyword is passed (escalation disabled)', () => {
+    expect(parseDispatchDirective('/escalate')).toBeNull();
+  });
+
+  it('respects a renamed keyword', () => {
+    const d = parseDispatchDirective('/opus', '/opus');
+    expect(d?.kind).toBe('escalate');
+    expect(parseDispatchDirective('/escalate', '/opus')).toBeNull();
+  });
+});
+
 describe('goalKickoffMessage', () => {
   it('embeds the goal text', () => {
     const msg = goalKickoffMessage('ship v1');

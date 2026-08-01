@@ -3,6 +3,7 @@ import {
   DISPATCH_BUILTIN_COMMANDS,
   DISPATCH_ARG_COMPLETIONS,
   THREAD_BUILTIN_COMMANDS,
+  escalationCommand,
 } from '../../src/slashCommands';
 
 describe('DISPATCH_BUILTIN_COMMANDS', () => {
@@ -29,5 +30,55 @@ describe('DISPATCH_BUILTIN_COMMANDS', () => {
     // dispatch (clear/stop are thread-only and must not be suggested).
     expect(Object.keys(DISPATCH_ARG_COMPLETIONS)).toEqual(['model']);
     expect(DISPATCH_ARG_COMPLETIONS.model.length).toBeGreaterThan(0);
+  });
+});
+
+describe('escalationCommand', () => {
+  const base = { escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'opus' };
+
+  it('returns null when escalation is disabled', () => {
+    expect(escalationCommand({ ...base, escalationEnabled: false })).toBeNull();
+  });
+
+  it('returns null for an empty keyword', () => {
+    expect(escalationCommand({ ...base, escalationKeyword: '' })).toBeNull();
+    expect(escalationCommand({ ...base, escalationKeyword: '   ' })).toBeNull();
+  });
+
+  it('returns null for a non-slash keyword', () => {
+    expect(escalationCommand({ ...base, escalationKeyword: 'escalate' })).toBeNull();
+  });
+
+  it('returns null for a bare slash with nothing after it', () => {
+    expect(escalationCommand({ ...base, escalationKeyword: '/' })).toBeNull();
+  });
+
+  it('returns the command with default keyword and model', () => {
+    const cmd = escalationCommand(base);
+    expect(cmd).toEqual({
+      name: 'escalate',
+      description: 'Escalate this turn to opus: /escalate <prompt>',
+    });
+  });
+
+  it('reflects a renamed keyword and model', () => {
+    const cmd = escalationCommand({ escalationEnabled: true, escalationKeyword: '/opus', escalationModel: 'fable' });
+    expect(cmd).toEqual({
+      name: 'opus',
+      description: 'Escalate this turn to fable: /opus <prompt>',
+    });
+  });
+
+  it('falls back to opus when no model is configured', () => {
+    const cmd = escalationCommand({ escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: '' });
+    expect(cmd?.description).toContain('opus');
+  });
+
+  it('uses dispatch-specific wording when dispatch=true', () => {
+    const cmd = escalationCommand(base, true);
+    expect(cmd).toEqual({
+      name: 'escalate',
+      description: 'Dispatch on the escalation model (opus): /escalate <prompt>',
+    });
   });
 });

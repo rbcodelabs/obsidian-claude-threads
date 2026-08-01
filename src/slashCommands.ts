@@ -37,6 +37,29 @@ export const DISPATCH_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'loop', description: 'Dispatch a thread that re-runs a prompt: /loop 10m <prompt>' },
 ];
 
+/**
+ * Builds the /escalate (or renamed keyword) popup entry from live settings.
+ * Returns null when escalation is disabled, the keyword is empty, or the
+ * keyword doesn't start with "/" (a non-slash keyword can't be a slash
+ * command). Shared by ThreadsView and the dispatch boxes so the wording
+ * differs only slightly by context.
+ */
+export function escalationCommand(
+  settings: { escalationEnabled: boolean; escalationKeyword: string; escalationModel: string },
+  dispatch = false,
+): SlashCommand | null {
+  if (!settings.escalationEnabled) return null;
+  const keyword = (settings.escalationKeyword ?? '').trim();
+  if (!keyword.startsWith('/') || keyword.length < 2) return null;
+  const model = settings.escalationModel || 'opus';
+  return {
+    name: keyword.slice(1),
+    description: dispatch
+      ? `Dispatch on the escalation model (${model}): ${keyword} <prompt>`
+      : `Escalate this turn to ${model}: ${keyword} <prompt>`,
+  };
+}
+
 /** Argument completions for /model — shown after typing "/model ". */
 export const MODEL_ARG_COMPLETIONS: SlashCommand[] = [
   { name: 'fable', description: 'Claude Fable 5 — most capable' },
@@ -130,17 +153,34 @@ export function createPrKickoffMessage(draft: boolean): string {
 export type DispatchDirective =
   | { kind: 'model'; model: string | undefined; rest: string; error?: string }
   | { kind: 'goal'; goal: string; error?: string }
-  | { kind: 'loop'; intervalSeconds: number; prompt: string; error?: string };
+  | { kind: 'loop'; intervalSeconds: number; prompt: string; error?: string }
+  | { kind: 'escalate'; error: string };
 
 /**
  * Parses a leading built-in command on text typed into a dispatch box.
  * Returns null for plain prompts (dispatch as-is). When `error` is set the
  * input is a recognized command with bad/missing arguments — show the error
  * and do not create a thread.
+ *
+ * `escalationKeyword` is optional — when passed, a bare keyword with no
+ * prompt text is caught and reported as a usage error (matching /goal's
+ * behavior) instead of silently falling through to be dispatched as-is.
+ * Anything else involving the keyword (including `<keyword> <prompt>`) is
+ * left alone — it returns null here so the caller's existing keyword-based
+ * escalation routing (ThreadManager.resolveModel/stripKeyword) handles it.
  */
-export function parseDispatchDirective(text: string): DispatchDirective | null {
+export function parseDispatchDirective(text: string, escalationKeyword?: string): DispatchDirective | null {
   const model = parseDispatchModelPrefix(text);
   if (model) return { kind: 'model', model: model.model, rest: model.rest, error: model.error };
+
+  const keyword = (escalationKeyword ?? '').trim();
+  if (keyword && keyword.startsWith('/')) {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const bareMatch = new RegExp(`^${escaped}$`, 'i').test(text.trim());
+    if (bareMatch) {
+      return { kind: 'escalate', error: `Include a prompt — e.g. "${keyword} fix the failing build"` };
+    }
+  }
 
   const goalMatch = text.trim().match(/^\/goal(?:\s+([\s\S]+))?$/i);
   if (goalMatch) {

@@ -15,8 +15,13 @@ export interface DispatchPayload {
 export interface DispatchInputOptions {
   app: App;
   placeholder?: string;
-  /** Built-in slash commands to show before skill completions */
-  builtinCommands?: { name: string; description: string }[];
+  /**
+   * Built-in slash commands to show before skill completions. Accepts a
+   * static array or a resolver function — pass a function when the list can
+   * change at runtime (e.g. it's derived from plugin settings) so the popup
+   * reflects the latest value on every keystroke without re-mounting.
+   */
+  builtinCommands?: { name: string; description: string }[] | (() => { name: string; description: string }[]);
   /**
    * Argument completions per command name. When the input starts with
    * "/<command> " and the cursor is in the first argument word, the matching
@@ -293,6 +298,13 @@ export class DispatchInput {
     return this.rootEl;
   }
 
+  /** Resolves the current builtin command list, whether static or a function. */
+  private getBuiltinCommands(): { name: string; description: string }[] {
+    const bc = this.options.builtinCommands;
+    if (!bc) return [];
+    return typeof bc === 'function' ? bc() : bc;
+  }
+
   focus(): void { this.inputEl?.focus(); }
 
   /** Resize the textarea to fit its content (used in inline layout). */
@@ -559,7 +571,7 @@ export class DispatchInput {
     const match = val.match(/^\/(\S+)(\s)/);
     if (!match) return;
     const name = match[1].toLowerCase();
-    if (!(this.options.builtinCommands ?? []).some(c => c.name === name)) return;
+    if (!this.getBuiltinCommands().some(c => c.name === name)) return;
     const pos = this.inputEl.selectionStart ?? val.length;
     this.setCommandPill(name);
     this.inputEl.value = val.slice(match[0].length);
@@ -665,7 +677,7 @@ export class DispatchInput {
    */
   setAvailableCommands(commands: { name: string; description: string }[]): void {
     const builtinNames = new Set(
-      (this.options.builtinCommands ?? []).map(c => c.name.toLowerCase()),
+      this.getBuiltinCommands().map(c => c.name.toLowerCase()),
     );
     this.skills = commands
       .filter(c => !builtinNames.has(c.name.toLowerCase()))
@@ -708,7 +720,7 @@ export class DispatchInput {
 
   private showSkillDropdown(query: string): void {
     const q = query.toLowerCase();
-    const builtins = (this.options.builtinCommands ?? []).filter(c => c.name.startsWith(q));
+    const builtins = this.getBuiltinCommands().filter(c => c.name.startsWith(q));
     const skills = this.skills.filter(s => s.name.toLowerCase().startsWith(q));
     this.skillDropdownMode = 'command';
     this.openDropdownWith([...builtins, ...skills]);
@@ -757,7 +769,7 @@ export class DispatchInput {
     start++;
     // Selecting a built-in command at the start of the input becomes a pill
     // chip instead of inserted text (skills stay as text in the message).
-    const isBuiltin = (this.options.builtinCommands ?? []).some(c => c.name === skillName);
+    const isBuiltin = this.getBuiltinCommands().some(c => c.name === skillName);
     if (this.skillDropdownMode === 'command' && start === 0 && isBuiltin && !this.pendingCommand) {
       this.setCommandPill(skillName);
       this.inputEl.value = val.slice(pos);

@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sani
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
-import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage } from './slashCommands';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage, escalationCommand } from './slashCommands';
 import { buildComparePrUrl } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
@@ -215,8 +215,6 @@ export class ThreadsView extends ItemView {
   private managerNotesToggleEl: HTMLElement | null = null;
   private managerNotesPanelEl: HTMLElement | null = null;
   private managerNotesCollapsed = true;
-
-  private static readonly BUILTIN_COMMANDS = THREAD_BUILTIN_COMMANDS;
 
   // Ordered list for the footer permission-mode picker menu.
   // `value: undefined` means "use the global default" (clears the per-thread override).
@@ -569,7 +567,10 @@ export class ThreadsView extends ItemView {
       showThisMention: true,
       showCwdChip: true,
       captureLongPaste: true,
-      builtinCommands: ThreadsView.BUILTIN_COMMANDS,
+      builtinCommands: () => {
+        const esc = escalationCommand(this.plugin.settings);
+        return esc ? [...THREAD_BUILTIN_COMMANDS, esc] : THREAD_BUILTIN_COMMANDS;
+      },
       argCompletions: THREAD_ARG_COMPLETIONS,
       extraSkillDirs: githubSkillDirs,
       onInput: () => this.scheduleDraftSave(),
@@ -4045,6 +4046,19 @@ export class ThreadsView extends ItemView {
         );
       }
       return;
+    }
+
+    // Bare escalation keyword (e.g. "/escalate" with no prompt) — show a
+    // usage error instead of sending an empty escalated turn, matching /goal.
+    if (this.plugin.settings.escalationEnabled) {
+      const keyword = (this.plugin.settings.escalationKeyword ?? '').trim();
+      if (keyword.startsWith('/') && keyword.length > 1) {
+        const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (new RegExp(`^${escaped}$`, 'i').test(typed.trim())) {
+          this.showCommandDivider(`Include a prompt — e.g. "${keyword} fix the failing build"`);
+          return;
+        }
+      }
     }
 
     // /goal [text | clear] — set/show/clear the persistent goal for this thread.

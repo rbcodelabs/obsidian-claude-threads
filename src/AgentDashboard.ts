@@ -6,7 +6,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
-import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage } from './slashCommands';
+import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 
@@ -138,14 +138,20 @@ export class AgentDashboard extends ItemView {
     this.dispatchComponent = new DispatchInput({
       app: this.app,
       placeholder: 'Dispatch a task...',
-      builtinCommands: DISPATCH_BUILTIN_COMMANDS,
+      builtinCommands: () => {
+        const esc = escalationCommand(this.plugin.settings, true);
+        return esc ? [...DISPATCH_BUILTIN_COMMANDS, esc] : DISPATCH_BUILTIN_COMMANDS;
+      },
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       onSend: async ({ text, images, attachment }) => {
         // Intercept leading built-in commands (/model, /goal, /loop) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
         let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number } } | undefined;
         let titleText = text;
-        const directive = parseDispatchDirective(text);
+        const directive = parseDispatchDirective(
+          text,
+          this.plugin.settings.escalationEnabled ? this.plugin.settings.escalationKeyword : undefined,
+        );
         if (directive) {
           if (directive.error) {
             new Notice(directive.error);
@@ -164,10 +170,13 @@ export class AgentDashboard extends ItemView {
             dispatchOpts = { goal: directive.goal };
             text = goalKickoffMessage(directive.goal);
             titleText = directive.goal;
-          } else {
+          } else if (directive.kind === 'loop') {
             dispatchOpts = { loop: { intervalSeconds: directive.intervalSeconds } };
             text = titleText = directive.prompt;
           }
+          // 'escalate' directives always carry `error` (handled above) — no
+          // success case, so nothing to do here; fall through to dispatch
+          // the raw text as-is via the ThreadManager keyword path.
         }
 
         let messageText = buildMessageWithAttachment(text, attachment);
