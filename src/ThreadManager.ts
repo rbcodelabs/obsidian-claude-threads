@@ -365,24 +365,20 @@ export class ThreadManager {
       thread.updatedAt = Date.now();
       this.emit(id, { type: 'cwd_changed', cwd });
 
-      // ADR-0002 §2: a cwd change is session-breaking (a resumed session
-      // can't cross Claude Code project directories — the comment above
-      // already establishes that). Previously this was an *implicit*
-      // consequence of the next `sendMessage()` building a fresh, unresumed
-      // `ClaudeSession`. With a long-lived `ThreadSession`, that has to be
-      // made explicit: force an immediate close()+start() (no resume, and
-      // rebuilt with the new cwd/MCP servers/system prompt) rather than
-      // leaving the live Query pointed at the old directory until the next
-      // turn happens to notice.
-      const session = this.sessions.get(id);
-      if (session) {
-        const options = this.buildThreadSessionOptions(id, thread);
-        if (options) {
-          session.restart('cwd-change', options).catch((err) => {
-            console.error('[ClaudeThreads] setThreadCwd: session restart failed:', err);
-          });
-        }
-      }
+      // A cwd change is session-breaking (a resumed session can't cross
+      // Claude Code project directories — the comment above establishes
+      // that). We deliberately do NOT restart the live Query here. This call
+      // path is reached synchronously mid-tool-call by enter_worktree /
+      // set_working_directory (via onSetCwd), BEFORE those tools have
+      // returned their tool_result. Closing the live Query here would tear
+      // down the very transport that must carry that tool_result back to the
+      // model — the turn would hang forever waiting for a result that can
+      // never arrive (the EnterWorktree hang). Instead the rebuild is
+      // DEFERRED: sendMessage() rebuilds the session against the new cwd at
+      // the next safe turn boundary (see the stale-cwd guard there), which
+      // restores the pre-ADR-0002 behavior where a fresh unresumed session
+      // was built on the next turn anyway. The tool descriptions' "takes
+      // effect next turn" wording is therefore accurate.
     }
   }
 
@@ -853,6 +849,18 @@ export class ThreadManager {
     // is already in flight (the CLI coalesces it into the current
     // generation), so there's no need to hold messages back locally anymore.
     let session = this.sessions.get(threadId);
+    // A cwd change (enter_worktree / set_working_directory) since this session
+    // was built leaves its Query pinned to the old directory. setThreadCwd() no
+    // longer restarts eagerly (that stranded the very tool result that triggered
+    // the change — the EnterWorktree hang). Rebuild here instead, at a safe turn
+    // boundary. Guard on !turnInFlight so a rare concurrent send mid-turn can't
+    // re-introduce the mid-turn close(); that message coalesces into the current
+    // generation and the rebuild happens on the following turn.
+    if (session && session.cwd !== undefined && session.cwd !== thread.cwd && !session.turnInFlight) {
+      session.close();
+      this.sessions.delete(threadId);
+      session = undefined;
+    }
     const isNewSession = !session;
     if (!session) {
       session = new ThreadSession(this.settings.claudeBinaryPath);
@@ -1107,6 +1115,12 @@ export class ThreadManager {
    * these callbacks are reused across every turn of the thread's session.
    */
   private buildSessionCallbacks(threadId: string, thread: Thread): SessionCallbacks {
+    // Captured once, when this session's callbacks are built (i.e. when the
+    // session is opened against a particular cwd). If a cwd change lands
+    // mid-turn, thread.cwd will have moved on by the time onDone fires; the
+    // guard below then refuses to write back a sessionId that belongs to the
+    // OLD directory's project (see onDone).
+    const cwdAtStart = thread.cwd;
     return {
       onRawEvent: (event) => {
         if (!this.settings.saveRawLogs || !this.vaultRoot) return;
@@ -1159,15 +1173,19 @@ export class ThreadManager {
         this.emit(threadId, { type: 'message', message: assistantMsg });
       },
       onDone: (sessionId, cost) => {
-        // Under the old per-turn model, a `thread.cwd === cwdAtStart` check
-        // guarded against a race where obsidian_set_working_directory
-        // changed the cwd mid-run and this generation's sessionId belonged
-        // to the old directory. That race can't happen anymore:
-        // setThreadCwd() now immediately restart()s the live Query on a cwd
-        // change (ADR-0002 §2), so by the time any onDone fires, the
-        // session it belongs to was already opened against the current
-        // thread.cwd.
-        thread.sessionId = sessionId;
+        // Only persist this sessionId if the cwd hasn't changed since this
+        // session was opened. setThreadCwd() (enter_worktree /
+        // set_working_directory) clears thread.sessionId and defers the
+        // session rebuild to the next turn (see setThreadCwd()); if the
+        // change landed mid-turn, this sessionId belongs to the OLD
+        // directory's Claude Code project. Writing it back would resurrect
+        // the id setThreadCwd() just cleared, and the next turn would try to
+        // `resume` an old-dir session in the new dir — failing with "No
+        // conversation found". The guard keeps thread.sessionId undefined so
+        // the next turn starts fresh in the new cwd with a history preamble.
+        if (thread.cwd === cwdAtStart) {
+          thread.sessionId = sessionId;
+        }
         thread.updatedAt = Date.now();
         thread.status = 'waiting';
         thread.streamCloseRetryCount = 0; // TODO: likely vestigial post-Stage-C — see types.ts's doc comment on this field
