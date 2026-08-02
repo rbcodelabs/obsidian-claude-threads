@@ -1791,7 +1791,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundCronCreate = tool(
     'CronCreate',
-    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week.",
+    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week. Optionally scope it to a local-time active-hours window (e.g. business hours) with activeHoursStart/activeHoursEnd so cycles outside that window are skipped automatically — no thread created, no message sent — instead of firing a thread just to check the clock and bail.",
     {
       name: z.string().describe('Human-readable name for this scheduled task'),
       prompt: z.string().describe('The prompt to send when this item fires'),
@@ -1801,11 +1801,34 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("For 'weekly': day numbers 0=Sun through 6=Sat"),
       cwd: z.string().optional().describe('Working directory override for spawned threads'),
       projectId: z.string().optional().describe('Project ID to assign to new threads'),
+      activeHoursStart: z
+        .string()
+        .optional()
+        .describe(
+          "Optional HH:MM local time — only fire at/after this time each day (e.g. '07:00'). Must be provided together with activeHoursEnd. Cycles due outside [activeHoursStart, activeHoursEnd) are skipped entirely (no thread created).",
+        ),
+      activeHoursEnd: z
+        .string()
+        .optional()
+        .describe(
+          "Optional HH:MM local time — only fire before this time each day (e.g. '22:00'). Must be provided together with activeHoursStart. Supports overnight windows where start > end (e.g. 22:00-06:00).",
+        ),
     },
     async (args, _extra) => {
       try {
         if (!options.onCronCreate) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronCreate is not available in this context.' }) }], isError: true };
+        }
+        if ((args.activeHoursStart !== undefined) !== (args.activeHoursEnd !== undefined)) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify({ error: 'activeHoursStart and activeHoursEnd must both be provided together, or both omitted.' }),
+              },
+            ],
+            isError: true,
+          };
         }
         const item = await options.onCronCreate({
           name: args.name,
@@ -1815,6 +1838,10 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             intervalSeconds: args.intervalSeconds,
             timeOfDay: args.timeOfDay,
             daysOfWeek: args.daysOfWeek,
+            activeHours:
+              args.activeHoursStart !== undefined && args.activeHoursEnd !== undefined
+                ? { start: args.activeHoursStart, end: args.activeHoursEnd }
+                : undefined,
           },
           enabled: true,
           cwd: args.cwd,
@@ -1850,7 +1877,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundCronUpdate = tool(
     'CronUpdate',
-    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true.',
+    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true. Use activeHoursStart/activeHoursEnd to set or change the local-time window this item is allowed to fire in (cycles outside it are skipped automatically); use clearActiveHours to remove that restriction entirely.',
     {
       id: z.string().describe('ID of the scheduled item to update'),
       name: z.string().optional().describe('New human-readable name'),
@@ -1861,22 +1888,63 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("New days of week (for 'weekly')"),
       cwd: z.string().optional().describe('New working directory override'),
       projectId: z.string().optional().describe('New project ID'),
+      activeHoursStart: z
+        .string()
+        .optional()
+        .describe(
+          'New HH:MM start time for the active-hours window. If the item has no existing window, activeHoursEnd must also be provided (in this call or a previous one).',
+        ),
+      activeHoursEnd: z
+        .string()
+        .optional()
+        .describe(
+          'New HH:MM end time for the active-hours window. If the item has no existing window, activeHoursStart must also be provided.',
+        ),
+      clearActiveHours: z.boolean().optional().describe('Set to true to remove the active-hours restriction entirely, so this item fires on its normal schedule at any time of day.'),
     },
     async (args, _extra) => {
       try {
         if (!options.onCronUpdate) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronUpdate is not available in this context.' }) }], isError: true };
         }
-        const { id, name, prompt, enabled, intervalSeconds, timeOfDay, daysOfWeek, cwd, projectId } = args;
+        const { id, name, prompt, enabled, intervalSeconds, timeOfDay, daysOfWeek, cwd, projectId, activeHoursStart, activeHoursEnd, clearActiveHours } = args;
         const patch: CronUpdatePatch = {};
         if (name !== undefined) patch.name = name;
         if (prompt !== undefined) patch.prompt = prompt;
         if (enabled !== undefined) patch.enabled = enabled;
         if (intervalSeconds !== undefined || timeOfDay !== undefined || daysOfWeek !== undefined) {
-          patch.schedule = {};
+          patch.schedule = { ...patch.schedule };
           if (intervalSeconds !== undefined) patch.schedule.intervalSeconds = intervalSeconds;
           if (timeOfDay !== undefined) patch.schedule.timeOfDay = timeOfDay;
           if (daysOfWeek !== undefined) patch.schedule.daysOfWeek = daysOfWeek;
+        }
+        if (clearActiveHours) {
+          patch.schedule = { ...patch.schedule, activeHours: undefined };
+        } else if (activeHoursStart !== undefined || activeHoursEnd !== undefined) {
+          // activeHours is a nested object, so — unlike the flat sub-fields
+          // above — a partial update (only start or only end) needs the
+          // other side filled in from the existing item, since Scheduler's
+          // merge is a shallow spread over `schedule` and would otherwise
+          // clobber the untouched side.
+          const existing = options.onCronList?.().find((i) => i.id === id);
+          const existingActiveHours = existing?.schedule.activeHours;
+          const start = activeHoursStart ?? existingActiveHours?.start;
+          const end = activeHoursEnd ?? existingActiveHours?.end;
+          if (!start || !end) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({
+                    error:
+                      'Cannot set only one of activeHoursStart/activeHoursEnd when the item has no existing active-hours window to fill in the other side. Provide both.',
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          patch.schedule = { ...patch.schedule, activeHours: { start, end } };
         }
         if (cwd !== undefined) patch.cwd = cwd;
         if (projectId !== undefined) patch.projectId = projectId;
