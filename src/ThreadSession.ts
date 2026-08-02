@@ -112,6 +112,11 @@ export class ThreadSession {
     return this._turnInFlight;
   }
 
+  /** The cwd the live Query was opened against (undefined before start()). */
+  get cwd(): string | undefined {
+    return this.currentOptions?.cwd;
+  }
+
   /**
    * True while a `canUseTool` round-trip (permission prompt, AskUserQuestion,
    * ExitPlanMode, ...) is awaiting a human response. No longer a release gate

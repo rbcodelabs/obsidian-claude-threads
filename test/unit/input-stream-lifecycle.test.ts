@@ -403,3 +403,20 @@ describe('ThreadSession — transport-error auto-retry turnInFlight race (Stage 
     session.close();
   });
 });
+
+describe('ThreadSession.cwd getter', () => {
+  it('is undefined before start() and reflects the started options.cwd after', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+
+    expect(session.cwd).toBeUndefined();
+
+    const opts = { ...baseOptions(minimalCallbacks()), cwd: '/tmp/some-worktree' };
+    await session.start(opts);
+
+    expect(session.cwd).toBe('/tmp/some-worktree');
+
+    session.close();
+  });
+});
