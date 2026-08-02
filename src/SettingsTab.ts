@@ -44,18 +44,24 @@ function maskOpenAiKey(key: string | null | undefined): string {
 }
 
 function formatScheduleDescription(schedule: ScheduledItemSchedule): string {
+  const activeHoursSuffix = schedule.activeHours
+    ? ` (${schedule.activeHours.start}-${schedule.activeHours.end} only)`
+    : '';
+
   if (schedule.type === 'interval') {
     const secs = schedule.intervalSeconds ?? 0;
-    if (secs >= 86400) return `Every ${Math.round(secs / 86400)} day(s)`;
-    if (secs >= 3600) return `Every ${Math.round(secs / 3600)} hour(s)`;
-    if (secs >= 60) return `Every ${Math.round(secs / 60)} minute(s)`;
-    return `Every ${secs}s`;
+    let base: string;
+    if (secs >= 86400) base = `Every ${Math.round(secs / 86400)} day(s)`;
+    else if (secs >= 3600) base = `Every ${Math.round(secs / 3600)} hour(s)`;
+    else if (secs >= 60) base = `Every ${Math.round(secs / 60)} minute(s)`;
+    else base = `Every ${secs}s`;
+    return base + activeHoursSuffix;
   }
-  if (schedule.type === 'daily') return `Daily at ${schedule.timeOfDay ?? '?'}`;
+  if (schedule.type === 'daily') return `Daily at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix;
   if (schedule.type === 'weekly') {
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const days = (schedule.daysOfWeek ?? []).map((d) => dayNames[d] ?? d).join(', ');
-    return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}`;
+    return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix;
   }
   return 'Unknown schedule';
 }

@@ -103,6 +103,44 @@ export function computeNextRun(item: ScheduledItem, fromNow = false): number {
   return now + 86400 * 1000;
 }
 
+// Returns true when `atMs` falls within the schedule's configured
+// `activeHours` window (if any). No `activeHours` means unrestricted — always
+// true. Supports overnight windows where start > end (e.g. "22:00"-"06:00")
+// by wrapping past midnight. A zero-width window (start === end) is treated
+// as a misconfiguration and, like no window at all, is unrestricted rather
+// than silently never firing.
+//
+// Exported (like computeNextRun) so tests can exercise the boundary/wrap
+// logic directly without driving a full Scheduler instance through fake timers.
+export function isWithinActiveHours(schedule: ScheduledItemSchedule, atMs: number): boolean {
+  const { activeHours } = schedule;
+  if (!activeHours) return true;
+
+  const nowMinutes = minutesOfDay(atMs);
+  const startMinutes = parseHHMM(activeHours.start);
+  const endMinutes = parseHHMM(activeHours.end);
+
+  if (startMinutes === endMinutes) return true;
+
+  if (startMinutes < endMinutes) {
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+  // Overnight window: active from start through midnight, then midnight through end.
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
+function parseHHMM(timeOfDay: string): number {
+  const [hStr, mStr] = timeOfDay.split(':');
+  const h = parseInt(hStr ?? '0', 10);
+  const m = parseInt(mStr ?? '0', 10);
+  return h * 60 + m;
+}
+
+function minutesOfDay(atMs: number): number {
+  const d = new Date(atMs);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
 // Returns the next epoch ms for a given HH:MM time today or tomorrow.
 function nextTimeOfDay(timeOfDay: string, fromMs: number): number {
   const [hStr, mStr] = timeOfDay.split(':');
@@ -247,6 +285,29 @@ export class Scheduler {
       // Re-fetch the current item state in case it was updated while the timer was pending
       const current = this.items.find((i) => i.id === item.id);
       if (!current || !current.enabled) return;
+
+      // Active-hours gate: a cycle that comes due outside the item's
+      // configured local-time window is skipped entirely — no thread is
+      // created, no message is sent, and lastRun is left untouched (nothing
+      // actually ran). nextRun jumps straight to the next window-open time
+      // rather than following the schedule's normal interval/daily math, so
+      // e.g. an every-6h interval scoped to 07:00-22:00 resumes cleanly at
+      // the next window open instead of retrying every interval through the
+      // night only to be skipped each time. Placed before claimFire/thread
+      // creation so a skipped cycle never contends for the fencing token.
+      if (current.schedule.activeHours && !isWithinActiveHours(current.schedule, Date.now())) {
+        current.nextRun = nextTimeOfDay(current.schedule.activeHours.start, Date.now());
+        try {
+          await this.options.saveItem({ ...current });
+        } catch (err) {
+          console.error(
+            `[Scheduler] Failed to persist active-hours skip for "${current.name}" (${current.id}):`,
+            err,
+          );
+        }
+        this.armTimer(current);
+        return;
+      }
 
       try {
         // Loop items target an existing thread; fall back to a new thread if it's gone.

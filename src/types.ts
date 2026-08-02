@@ -328,6 +328,22 @@ export interface ScheduledItemSchedule {
    * is deleted after firing (see Scheduler.fire()) rather than rearmed.
    */
   fireAt?: number;
+  /**
+   * Optional local time-of-day window (24h "HH:MM") during which this item
+   * is allowed to actually fire. Applies on top of any schedule type — most
+   * useful for 'interval' (e.g. "every 6h, but only 07:00-22:00"). When a
+   * cycle comes due outside [start, end), Scheduler.fire() skips it entirely
+   * — no thread is created, no message is sent — and jumps `nextRun` straight
+   * to the next window-open time instead of following the schedule's normal
+   * math. This replaces the need to encode a business-hours check into the
+   * prompt itself (which wastes a thread/turn every time it fires outside
+   * the window just to check and bail).
+   *
+   * Supports overnight windows where start > end (e.g. "22:00"-"06:00") by
+   * wrapping past midnight. A zero-width window (start === end) is treated
+   * as unrestricted rather than "never fires".
+   */
+  activeHours?: { start: string; end: string };
 }
 
 export interface ScheduledItem {
