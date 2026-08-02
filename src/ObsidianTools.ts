@@ -11,6 +11,14 @@ import os from 'os';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 import { execFileSync } from 'child_process';
 import { secretStorageKey } from './secretUtils';
+import type {
+  InstalledSkillInfo,
+  MarketplaceSkill,
+  SkillDetailResult,
+  SkillSourceListItem,
+  SourceUpdateCheckResult,
+  InstallSkillParams,
+} from './skillManager';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -264,6 +272,22 @@ export interface ObsidianMcpServerOptions {
    * has opted out in settings. Defaults to true.
    */
   enableOpenUrl?: boolean;
+  /** Returns every skill currently installed in ~/.claude/skills/ (content omitted — use onSkillsGet for a specific skill's full SKILL.md). */
+  onSkillsListInstalled?: () => Promise<Array<Omit<InstalledSkillInfo, 'content'>>>;
+  /** Searches the skills.sh marketplace registry for the given query. */
+  onSkillsSearch?: (query: string, limit?: number) => Promise<MarketplaceSkill[]>;
+  /** Returns full detail for one skill, installed or not, by name or marketplace slug ("owner/repo/skill-id"). */
+  onSkillsGet?: (identifier: string) => Promise<SkillDetailResult>;
+  /** Lists configured skill sources (GitHub/local), plus the built-in skills.sh registry. */
+  onSkillsListSources?: () => SkillSourceListItem[];
+  /** Checks every configured GitHub-type skill source for how many commits behind origin it is. */
+  onSkillsCheckUpdates?: () => Promise<SourceUpdateCheckResult[]>;
+  /** Installs a skill from the marketplace (as returned by onSkillsSearch) into ~/.claude/skills/. */
+  onSkillsInstall?: (params: InstallSkillParams) => Promise<{ name: string; targetDir: string }>;
+  /** Uninstalls (deletes) an installed skill by name. */
+  onSkillsUninstall?: (name: string) => Promise<{ skillPath: string }>;
+  /** Pulls the latest commits for a configured GitHub-type skill source by its source id. */
+  onSkillsUpdate?: (sourceId: string) => Promise<{ behindCount: number; lastFetched: number }>;
 }
 
 export interface CronCreateParams {
@@ -1979,6 +2003,176 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     { alwaysLoad: true },
   );
 
+  // ── Skills Manager tools ──────────────────────────────────────────────────
+  // Expose the same view/search/install/uninstall/update capabilities as the
+  // Skills Manager UI (SkillsManagerView.ts) so any agent can manage skill
+  // packages, not just a human clicking around. All logic lives in
+  // skillManager.ts; these handlers are thin adapters over the onSkillsXxx
+  // callbacks, mirroring the Cron tools above.
+
+  const boundSkillsListInstalled = tool(
+    'skills_list_installed',
+    "Lists skills currently installed in ~/.claude/skills/, with name, description, install path, and which configured skill source (if any) each came from. Use skills_get for a specific skill's full SKILL.md content.",
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.onSkillsListInstalled) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_list_installed is not available in this context.' }) }], isError: true };
+        }
+        const skills = await options.onSkillsListInstalled();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(skills, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsSearch = tool(
+    'skills_search',
+    'Searches the skills.sh marketplace registry for installable skills matching a query. Returns each match\'s name, slug, GitHub source, install count, and whether it is already installed locally.',
+    {
+      query: z.string().describe('Search query, e.g. a skill name or keyword'),
+      limit: z.number().int().positive().optional().describe('Maximum number of results to return (default 15)'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onSkillsSearch) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_search is not available in this context.' }) }], isError: true };
+        }
+        const results = await options.onSkillsSearch(args.query, args.limit);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsGet = tool(
+    'skills_get',
+    'Returns full detail for one skill, whether installed or not. Pass an installed skill\'s name, or a marketplace slug in "owner/repo/skill-id" form (as returned by skills_search). Installed skills include their full SKILL.md content.',
+    {
+      identifier: z.string().describe('An installed skill\'s name, or a marketplace slug like "owner/repo/skill-id"'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onSkillsGet) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_get is not available in this context.' }) }], isError: true };
+        }
+        const detail = await options.onSkillsGet(args.identifier);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(detail, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsListSources = tool(
+    'skills_list_sources',
+    'Lists configured skill sources (GitHub-cloned or local-path plugin sources), plus the built-in skills.sh registry, with their id, name, type, and (for GitHub sources) staleness info.',
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.onSkillsListSources) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_list_sources is not available in this context.' }) }], isError: true };
+        }
+        const sources = options.onSkillsListSources();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(sources, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsCheckUpdates = tool(
+    'skills_check_updates',
+    'Checks every configured GitHub-type skill source for upstream commits it is behind (runs `git fetch` + counts). Returns each source\'s id, name, and either its new behindCount/lastFetched or an error if the check failed.',
+    {},
+    async (_args, _extra) => {
+      try {
+        if (!options.onSkillsCheckUpdates) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_check_updates is not available in this context.' }) }], isError: true };
+        }
+        const results = await options.onSkillsCheckUpdates();
+        return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsInstall = tool(
+    'skills_install',
+    'Installs a skill from the skills.sh marketplace into ~/.claude/skills/. Pass the slug/skillId/source/name exactly as returned by skills_search for the skill you want to install.',
+    {
+      slug: z.string().describe('Full skills.sh id, e.g. "owner/repo/skill-name" (from skills_search results)'),
+      skillId: z.string().describe('Bare skill folder name — the install directory basename (from skills_search results)'),
+      source: z.string().describe('GitHub "owner/repo" the skill is hosted in (from skills_search results)'),
+      name: z.string().describe('Human-readable skill name (from skills_search results)'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onSkillsInstall) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_install is not available in this context.' }) }], isError: true };
+        }
+        const result = await options.onSkillsInstall({
+          slug: args.slug,
+          skillId: args.skillId,
+          source: args.source,
+          name: args.name,
+        });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsUninstall = tool(
+    'skills_uninstall',
+    'Uninstalls (permanently deletes) an installed skill by name from ~/.claude/skills/.',
+    {
+      name: z.string().describe('Name of the installed skill to uninstall (as returned by skills_list_installed)'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onSkillsUninstall) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_uninstall is not available in this context.' }) }], isError: true };
+        }
+        const result = await options.onSkillsUninstall(args.name);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, ...result }, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
+  const boundSkillsUpdate = tool(
+    'skills_update',
+    'Pulls the latest commits for a configured GitHub-type skill source (`git pull` on its local clone), refreshing every skill it provides. Pass the source id from skills_list_sources — not "registry" (skills.sh has no single-source update; reinstall individual skills instead).',
+    {
+      sourceId: z.string().describe('id of the GitHub-type skill source to update, from skills_list_sources'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.onSkillsUpdate) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'skills_update is not available in this context.' }) }], isError: true };
+        }
+        const result = await options.onSkillsUpdate(args.sourceId);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+  );
+
   // ── Secret request tool ──────────────────────────────────────────────────
   // Lets agents ask the user for a credential at runtime without that credential
   // ever appearing in the conversation. The value is stored in the OS keychain
@@ -2084,6 +2278,14 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundCronUpdate,
       boundCronDelete,
       boundRequestSecret,
+      boundSkillsListInstalled,
+      boundSkillsSearch,
+      boundSkillsGet,
+      boundSkillsListSources,
+      boundSkillsCheckUpdates,
+      boundSkillsInstall,
+      boundSkillsUninstall,
+      boundSkillsUpdate,
     ],
     alwaysLoad: true,
   });

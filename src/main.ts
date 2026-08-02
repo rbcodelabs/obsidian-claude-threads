@@ -207,6 +207,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const skillManager = require('./skillManager') as typeof import('./skillManager');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { GitDiffService } = require('./GitDiffService') as typeof import('./GitDiffService');
@@ -405,6 +407,43 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onCronList: () => this.scheduler.listItems(),
           onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
           onCronDelete: (id) => this.scheduler.deleteItem(id),
+          onSkillsListInstalled: async () => {
+            const skills = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            return skills.map(({ content: _content, ...rest }) => rest);
+          },
+          onSkillsSearch: async (query, limit) => {
+            const installed = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            return skillManager.searchMarketplaceSkills(query, limit ?? 15, installed);
+          },
+          onSkillsGet: (identifier) => skillManager.getSkillDetail(identifier, this.settings.skillSources ?? []),
+          onSkillsListSources: () => skillManager.listSkillSources(this.settings.skillSources ?? []),
+          onSkillsCheckUpdates: async () => {
+            const results = await skillManager.checkAllSourcesForUpdates(this.settings.skillSources ?? []);
+            let changed = false;
+            for (const result of results) {
+              if (result.error) continue;
+              const source = (this.settings.skillSources ?? []).find((s) => s.id === result.id);
+              if (!source) continue;
+              source.behindCount = result.behindCount;
+              source.lastFetched = result.lastFetched;
+              changed = true;
+            }
+            if (changed) await this.saveSettings();
+            return results;
+          },
+          onSkillsInstall: (params) => skillManager.installSkillFromMarketplace(params),
+          onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? []),
+          onSkillsUpdate: async (sourceId) => {
+            const source = (this.settings.skillSources ?? []).find((s) => s.id === sourceId);
+            if (!source) {
+              throw new Error(`No skill source configured with id "${sourceId}"`);
+            }
+            const result = await skillManager.pullGithubSourceUpdates(source);
+            source.behindCount = result.behindCount;
+            source.lastFetched = result.lastFetched;
+            await this.saveSettings();
+            return result;
+          },
           onRequestSecret: (secretName: string, reason: string, force?: boolean) => {
             return new Promise<boolean>((resolve) => {
               new RequestSecretModal(this.app, secretName, reason, async (saved) => {

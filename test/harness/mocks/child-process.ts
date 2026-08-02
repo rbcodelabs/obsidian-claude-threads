@@ -17,3 +17,14 @@ export const exec = (
   if (callback) setTimeout(() => callback(null, '', ''), 0);
   return { stdin: { write: () => {}, end: () => {} } };
 };
+
+/**
+ * Stub for the synchronous git-shelling calls in skillManager.ts (staleness
+ * checks, pull-updates, marketplace installs). None of the screenshot tests
+ * click buttons that reach these code paths, so an empty buffer is enough to
+ * satisfy the static `import { execSync } from 'child_process'` binding
+ * without crashing the harness bundle.
+ */
+export const execSync = (_cmd: string, _opts?: unknown): Buffer => Buffer.from('');
+
+export const execFileSync = (_cmd: string, _args?: string[], _opts?: unknown): Buffer => Buffer.from('');

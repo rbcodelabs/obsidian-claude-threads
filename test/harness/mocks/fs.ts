@@ -106,6 +106,11 @@ export const promises = {
   rm: async (_p: string, _opts?: unknown) => {},
   mkdir: async (_p: string, _opts?: unknown) => {},
   cp: async (_src: string, _dst: string, _opts?: unknown) => {},
+  // Used by skillManager.ts's listGithubSourceSkills to check a SKILL.md
+  // exists before reading it. No screenshot test expands a GitHub source
+  // node, so always resolving (never throwing) is enough to satisfy the
+  // static `import * as fsp from 'fs/promises'` binding without crashing.
+  access: async (_p: string) => {},
 };
 
 // Also keep a default export for static `import fs from 'fs'` usage.

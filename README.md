@@ -599,6 +599,21 @@ When an agent edits files inside a bridged repo (rather than the synced vault co
 
 Edits made directly to vault files are unaffected — they don't match any bridge root and behave as before. Note that edits made inside a temporary coding-task worktree only reach the vault after merge plus a normal bridge pull.
 
+### Skills Manager tools
+
+Everything the [Skills Manager](#skills-manager) panel can do — browse the [skills.sh](https://skills.sh) registry, inspect installed skills and configured sources, check for updates, install, uninstall — is also available to agents via MCP, so a thread can manage its own skill packages without a human clicking through the UI.
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `skills_list_installed` | — | Lists skills currently installed in `~/.claude/skills/`: name, description, install path, and which configured skill source (if any) each came from. |
+| `skills_search` | `query`, `limit?` | Searches the skills.sh marketplace registry. Returns each match's name, slug, GitHub source, install count, and whether it's already installed. Default limit: 15. |
+| `skills_get` | `identifier` | Returns full detail for one skill, whether installed or not. Pass an installed skill's name, or a marketplace slug in `owner/repo/skill-id` form (as returned by `skills_search`). Installed skills include their full `SKILL.md` content. |
+| `skills_list_sources` | — | Lists configured skill sources (GitHub-cloned or local-path plugin sources) plus the built-in skills.sh registry, with id, name, type, and (for GitHub sources) staleness info. |
+| `skills_check_updates` | — | Checks every configured GitHub-type skill source for upstream commits it's behind (`git fetch` + count). Returns each source's id, name, and either its refreshed `behindCount`/`lastFetched` or an `error` if the check failed (e.g. offline). |
+| `skills_install` | `slug`, `skillId`, `source`, `name` | Installs a skill from the marketplace into `~/.claude/skills/`. Pass the four fields exactly as returned by `skills_search` for the skill you want. |
+| `skills_uninstall` | `name` | Permanently deletes an installed skill by name. |
+| `skills_update` | `sourceId` | Pulls the latest commits for a configured GitHub-type skill source (`git pull` on its local clone), refreshing every skill it provides. Use the source id from `skills_list_sources` — not `"registry"`, which has no single-source update (reinstall individual skills instead). |
+
 ## Settings
 
 | Setting | Description |
