@@ -1,36 +1,47 @@
-import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, Menu, App, requestUrl } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, Menu, App } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
+import {
+  parseFrontmatter,
+  copySkillFiles,
+  findSkillDir,
+  deriveSkillId,
+  extractZipToDir,
+  importSkillFromPath,
+  listInstalledSkills,
+  uninstallSkillByPath,
+  searchMarketplaceSkills,
+  getPopularMarketplaceSkills,
+  getMarketplaceSkillDescription,
+  checkAllSourcesForUpdates,
+  pullGithubSourceUpdates,
+  listGithubSourceSkills,
+  installSkillFromMarketplace,
+  type InstalledSkillInfo,
+  type MarketplaceSkill,
+} from './skillManager';
+
+// Re-exported so existing unit tests (test/unit/findSkillDir.test.ts,
+// importSkill.test.ts, parseFrontmatter.test.ts) that import these helpers
+// from '../../src/SkillsManagerView' keep working unchanged — skillManager.ts
+// is now their single source of truth.
+export {
+  parseFrontmatter,
+  copySkillFiles,
+  findSkillDir,
+  deriveSkillId,
+  extractZipToDir,
+  importSkillFromPath,
+};
 
 export const SKILLS_VIEW_TYPE = 'claude-threads:skills';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface InstalledSkill {
-  name: string;
-  description: string;
-  /** Path inside ~/.claude/skills/ (may be a symlink) */
-  skillPath: string;
-  /** Resolved real path after following symlinks */
-  realPath: string;
-  isSymlink: boolean;
-  isDirectory: boolean;
-  /** Absolute path to the SKILL.md (or .md file) to read/write */
-  skillMdPath: string;
-  content: string;
-  /** Name of the configured SkillSource this skill's real path belongs to, if any */
-  sourceName?: string;
-}
+/** Alias kept for readability within this file; identical shape to skillManager's InstalledSkillInfo. */
+type InstalledSkill = InstalledSkillInfo;
 
-interface BrowseSkill {
-  name: string;
-  /** Full skills.sh id, e.g. "owner/repo/skill-name". Used as the canonical key. */
-  slug: string;
-  /** Bare skill folder name (last path segment of slug). Used as the install dir basename. */
-  skillId: string;
-  source: string;
-  installs: number;
-  isInstalled: boolean;
-}
+/** Alias kept for readability within this file; identical shape to skillManager's MarketplaceSkill. */
+type BrowseSkill = MarketplaceSkill;
 
 interface LocalSkill {
   id: string;           // subdir name
@@ -60,50 +71,6 @@ interface InstalledAgent {
 type ElectronFile = File & { path: string };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-export function parseFrontmatter(content: string): { name: string; description: string } {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return { name: '', description: '' };
-  const fm = match[1];
-
-  const nameMatch = fm.match(/^name:\s*(.+)$/m);
-  const name = nameMatch?.[1]?.trim() ?? '';
-
-  // Parse description, handling YAML block scalar indicators (>- >  |- |)
-  const descLineMatch = fm.match(/^description:(.*)$/m);
-  if (!descLineMatch) return { name, description: '' };
-
-  const afterColon = descLineMatch[1].trim();
-
-  // Block scalar: value on the key line is just the indicator (> >- | |-), content follows on indented lines
-  if (/^[>|]-?$/.test(afterColon)) {
-    const isFolded = afterColon.startsWith('>');
-    const fmLines = fm.split(/\r?\n/);
-    const keyLineIndex = fmLines.findIndex((l) => /^description:/.test(l));
-    const bodyLines: string[] = [];
-    for (let i = keyLineIndex + 1; i < fmLines.length; i++) {
-      const line = fmLines[i];
-      // Indented lines (at least one space) or blank lines belong to the block
-      if (line === '' || /^\s/.test(line)) {
-        bodyLines.push(line.trim());
-      } else {
-        break;
-      }
-    }
-    // Strip trailing empty lines (chomping)
-    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1] === '') {
-      bodyLines.pop();
-    }
-    const description = isFolded
-      ? bodyLines.join(' ').trim()
-      : bodyLines.join('\n').trim();
-    return { name, description };
-  }
-
-  // Inline value: strip surrounding quotes
-  const description = afterColon.replace(/^["']|["']$/g, '');
-  return { name, description };
-}
 
 function formatInstalls(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M installs`;
@@ -268,45 +235,32 @@ export class SkillsManagerView extends ItemView {
     const sources = (this.plugin.settings.skillSources ?? []).filter(
       (s) => s.type === 'github' && s.clonePath,
     );
-    const results = await Promise.all(sources.map((source) => this.fetchSourceStaleness(source)));
-    const failed = results.filter((r): r is { name: string; error: string } => r !== null);
-    return { checked: sources.length, failed };
-  }
+    const results = await checkAllSourcesForUpdates(sources);
+    const failed: { name: string; error: string }[] = [];
 
-  /** Fetches + computes behind-count for one source. Returns `{ name, error }` on failure, `null` on success. */
-  private async fetchSourceStaleness(
-    source: import('./types').SkillSource,
-  ): Promise<{ name: string; error: string } | null> {
-    if (!source.clonePath) return null;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process');
-    try {
-      execSync(`git -C "${source.clonePath}" fetch --quiet --timeout=15`, {
-        stdio: 'pipe',
-        timeout: 20_000,
-      });
-      const countOutput = execSync(
-        `git -C "${source.clonePath}" rev-list HEAD..origin/HEAD --count`,
-        { stdio: 'pipe', timeout: 5_000 },
-      );
-      const count = parseInt(countOutput.toString().trim(), 10);
-      source.behindCount = isNaN(count) ? 0 : count;
-      source.lastFetched = Date.now();
+    for (const result of results) {
+      const source = sources.find((s) => s.id === result.id);
+      if (!source) continue;
+
+      if (result.error) {
+        // Previously swallowed silently, which made "Check for updates" look like a no-op
+        // whenever git failed (auth prompt, offline, wrong path, etc). Surface it instead.
+        console.error(`[ClaudeThreads] Staleness check failed for "${source.name}":`, result.error);
+        failed.push({ name: source.name, error: result.error });
+        continue;
+      }
+
+      source.behindCount = result.behindCount;
+      source.lastFetched = result.lastFetched;
       await this.plugin.saveSettings();
       // Re-render to reflect updated staleness badges
       this.renderList();
       if (this.selectedGithubSource?.id === source.id) {
         this.renderDetail();
       }
-      return null;
-    } catch (err) {
-      // Previously swallowed silently, which made "Check for updates" look like a no-op
-      // whenever git failed (auth prompt, offline, wrong path, etc). Surface it instead.
-      const stderr = (err as { stderr?: Buffer | string } | undefined)?.stderr;
-      const message = stderr && String(stderr).trim() ? String(stderr).trim() : (err instanceof Error ? err.message : String(err));
-      console.error(`[ClaudeThreads] Staleness check failed for "${source.name}":`, message);
-      return { name: source.name, error: message };
     }
+
+    return { checked: sources.length, failed };
   }
 
   async onClose(): Promise<void> {
@@ -1266,30 +1220,20 @@ export class SkillsManagerView extends ItemView {
     this.renderList();
     if (this.selectedGithubSource?.id === source.id) this.renderDetail();
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
     const { getSkillsDirForSource } = await import('./claudeSettings');
-
     const skillsDir = getSkillsDirForSource(source.clonePath);
-    const skills: LocalSkill[] = [];
+    const sourceSkills = await listGithubSourceSkills(source);
+    const skills: LocalSkill[] = sourceSkills.map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      skillsPath: skillsDir,
+      skillDir: s.skillDir,
+      isLinked: false,
+      isGithubSource: true,
+    }));
 
-    try {
-      const entries = await fs.promises.readdir(skillsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-        const skillDir = path.join(skillsDir, entry.name);
-        const skillMdPath = path.join(skillDir, 'SKILL.md');
-        try { await fs.promises.access(skillMdPath); } catch { continue; }
-        let content = '';
-        try { content = await fs.promises.readFile(skillMdPath, 'utf-8'); } catch { /* empty */ }
-        const { name, description } = parseFrontmatter(content);
-        skills.push({ id: entry.name, name: name || entry.name, description, skillsPath: skillsDir, skillDir, isLinked: false, isGithubSource: true });
-      }
-    } catch { /* ignore */ }
-
-    this.githubSourceSkillsMap.set(source.id, skills.sort((a, b) => a.name.localeCompare(b.name)));
+    this.githubSourceSkillsMap.set(source.id, skills);
     this.githubSourceSkillsLoadingSet.delete(source.id);
     this.renderList();
     if (this.selectedGithubSource?.id === source.id) this.renderDetail();
@@ -1462,12 +1406,10 @@ export class SkillsManagerView extends ItemView {
 
   private async updateGithubSource(source: import('./types').SkillSource): Promise<void> {
     if (!source.clonePath) return;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process');
     try {
-      execSync(`git -C "${source.clonePath}" pull`, { stdio: 'pipe', timeout: 60_000 });
-      source.behindCount = 0;
-      source.lastFetched = Date.now();
+      const { behindCount, lastFetched } = await pullGithubSourceUpdates(source);
+      source.behindCount = behindCount;
+      source.lastFetched = lastFetched;
       await this.plugin.saveSettings();
       new Notice(`Updated ${source.name}`);
       this.githubSourceSkillsMap.delete(source.id);
@@ -1657,42 +1599,7 @@ export class SkillsManagerView extends ItemView {
     this.browseDescLoading.add(skill.slug);
     if (this.selectedBrowse?.slug === skill.slug) this.renderDetail();
 
-    // Derive the skill's own ID (last path segment after removing the source prefix)
-    const skillId = skill.slug.startsWith(skill.source + '/')
-      ? skill.slug.slice(skill.source.length + 1)
-      : skill.slug;
-
-    // Try common SKILL.md locations in the repo, in order
-    const candidates = [
-      `https://raw.githubusercontent.com/${skill.source}/main/skills/${skillId}/SKILL.md`,
-      `https://raw.githubusercontent.com/${skill.source}/main/${skillId}/SKILL.md`,
-      `https://raw.githubusercontent.com/${skill.source}/main/SKILL.md`,
-    ];
-
-    let description: string | null = null;
-    for (const url of candidates) {
-      try {
-        const res = await requestUrl({ url, method: 'GET', throw: false });
-        if (res.status === 200 && res.text) {
-          const { description: fm } = parseFrontmatter(res.text);
-          if (fm) {
-            description = fm.replace(/^["']|["']$/g, '');
-            break;
-          }
-          // No frontmatter description — try first non-heading, non-empty paragraph
-          const lines = res.text.split('\n');
-          const start = lines.findIndex((l) => l.startsWith('---')) >= 0
-            ? lines.findIndex((l, i) => i > 0 && l.startsWith('---')) + 1
-            : 0;
-          const body = lines.slice(start).join('\n');
-          const para = body.match(/(?:^|\n)(?!#|\s*```)[^\n]{20,}/m);
-          if (para) {
-            description = para[0].trim();
-            break;
-          }
-        }
-      } catch { /* try next */ }
-    }
+    const description = await getMarketplaceSkillDescription(skill.slug, skill.source);
 
     this.browseDescLoading.delete(skill.slug);
     this.browseDescriptions.set(skill.slug, description);
@@ -1702,98 +1609,8 @@ export class SkillsManagerView extends ItemView {
   // ── Data Loading ──────────────────────────────────────────────────────────
 
   async loadInstalledSkills(): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
-
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-
-    let entries: import('fs').Dirent[];
-    try {
-      entries = await fs.promises.readdir(skillsDir, { withFileTypes: true });
-    } catch (err) {
-      console.warn('[ClaudeThreads] Could not read skills dir:', err);
-      this.installedSkills = [];
-      this.renderList();
-      this.renderDetail();
-      return;
-    }
-
-    const skills: InstalledSkill[] = [];
-
-    for (const entry of entries) {
-      const skillPath = path.join(skillsDir, entry.name);
-
-      try {
-        const isSymlink = entry.isSymbolicLink();
-        let realPath = skillPath;
-        if (isSymlink) {
-          try {
-            realPath = await fs.promises.realpath(skillPath);
-          } catch {
-            realPath = skillPath;
-          }
-        }
-
-        const stat = await fs.promises.stat(skillPath);
-        const isDirectory = stat.isDirectory();
-
-        // Determine where SKILL.md lives
-        let skillMdPath: string;
-        if (isDirectory) {
-          skillMdPath = path.join(realPath, 'SKILL.md');
-        } else if (entry.name.endsWith('.md')) {
-          skillMdPath = realPath;
-        } else {
-          continue; // skip non-.md non-directory entries
-        }
-
-        let content = '';
-        try {
-          content = await fs.promises.readFile(skillMdPath, 'utf-8');
-        } catch {
-          // SKILL.md missing — keep empty content
-        }
-
-        const { name, description } = parseFrontmatter(content);
-
-        skills.push({
-          name: name || entry.name.replace(/\.md$/, ''),
-          description,
-          skillPath,
-          realPath,
-          isSymlink,
-          isDirectory,
-          skillMdPath,
-          content,
-        });
-      } catch (err) {
-        console.warn(`[ClaudeThreads] Skipping skill entry "${entry.name}":`, err);
-      }
-    }
-
-    this.installedSkills = skills.sort((a, b) => a.name.localeCompare(b.name));
-
-    // Compute sourceName for symlinked skills by matching against configured SkillSources
     const skillSources = this.plugin.settings.skillSources ?? [];
-    if (skillSources.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const osModule = require('os') as typeof import('os');
-      for (const skill of this.installedSkills) {
-        if (!skill.isSymlink) continue;
-        for (const source of skillSources) {
-          const sourcePath = source.type === 'github' ? source.clonePath : (source.skillsPath ?? '');
-          const expandedSourcePath = (sourcePath ?? '').replace(/^~/, osModule.homedir());
-          if (expandedSourcePath && skill.realPath.startsWith(expandedSourcePath)) {
-            skill.sourceName = source.name;
-            break;
-          }
-        }
-      }
-    }
+    this.installedSkills = await listInstalledSkills(skillSources);
 
     // Keep selected skill in sync after reload
     if (this.selectedInstalled) {
@@ -1863,34 +1680,7 @@ export class SkillsManagerView extends ItemView {
     }
 
     try {
-      const res = await requestUrl({
-        url: `https://skills.sh/api/search?q=${encodeURIComponent(this.browseQuery)}&limit=15`,
-        method: 'GET',
-      });
-      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-
-      const data = res.json as {
-        skills: Array<{ id: string; skillId?: string; name: string; installs: number; source: string }>;
-      };
-
-      const installedNames = new Set(this.installedSkills.map((s) => s.name));
-      const installedSlugs = new Set(
-        this.installedSkills.map((s) => s.skillPath.split('/').pop() ?? ''),
-      );
-
-      this.browseResults = (data.skills ?? [])
-        .map((s) => {
-          const skillId = s.skillId || s.id.split('/').pop() || s.id;
-          return {
-            name: s.name,
-            slug: s.id,
-            skillId,
-            source: s.source ?? '',
-            installs: s.installs ?? 0,
-            isInstalled: installedNames.has(s.name) || installedSlugs.has(skillId),
-          };
-        })
-        .sort((a, b) => b.installs - a.installs);
+      this.browseResults = await searchMarketplaceSkills(this.browseQuery, 15, this.installedSkills);
     } catch (err) {
       console.error('[ClaudeThreads] Skills search error:', err);
       this.browseResults = [];
@@ -1906,34 +1696,7 @@ export class SkillsManagerView extends ItemView {
     this.renderList();
 
     try {
-      const res = await requestUrl({
-        url: 'https://skills.sh/api/search?q=er&limit=30',
-        method: 'GET',
-      });
-      if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
-
-      const data = res.json as {
-        skills: Array<{ id: string; skillId?: string; name: string; installs: number; source: string }>;
-      };
-
-      const installedNames = new Set(this.installedSkills.map((s) => s.name));
-      const installedSlugs = new Set(
-        this.installedSkills.map((s) => s.skillPath.split('/').pop() ?? ''),
-      );
-
-      this.browsePopularResults = (data.skills ?? [])
-        .map((s) => {
-          const skillId = s.skillId || s.id.split('/').pop() || s.id;
-          return {
-            name: s.name,
-            slug: s.id,
-            skillId,
-            source: s.source ?? '',
-            installs: s.installs ?? 0,
-            isInstalled: installedNames.has(s.name) || installedSlugs.has(skillId),
-          };
-        })
-        .sort((a, b) => b.installs - a.installs);
+      this.browsePopularResults = await getPopularMarketplaceSkills(this.installedSkills, 30);
     } catch (err) {
       console.error('[ClaudeThreads] Skills popular fetch error:', err);
       this.browsePopularResults = [];
@@ -1985,10 +1748,8 @@ export class SkillsManagerView extends ItemView {
   }
 
   private async doUninstall(skill: InstalledSkill): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
     try {
-      await fs.promises.rm(skill.skillPath, { recursive: true, force: true });
+      await uninstallSkillByPath(skill.skillPath);
       new Notice(`Uninstalled ${skill.name}`);
       this.installedSkills = this.installedSkills.filter((s) => s.name !== skill.name);
       if (this.selectedInstalled?.name === skill.name) {
@@ -2013,52 +1774,14 @@ export class SkillsManagerView extends ItemView {
     this.installOutput = '';
     this.renderDetail();
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
-
-    const tmpDir = path.join(os.tmpdir(), `ct-skill-${Date.now()}`);
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
-    const targetDir = path.join(skillsDir, skill.skillId);
-
     try {
-      await fs.promises.mkdir(skillsDir, { recursive: true });
-
-      if (fs.existsSync(targetDir)) {
-        throw new Error(`A skill named "${skill.skillId}" is already installed`);
-      }
-
-      this.installOutput = `Cloning ${skill.source}…`;
-      this.renderDetail();
-
-      execSync(
-        `git clone --depth 1 "https://github.com/${skill.source}.git" "${tmpDir}"`,
-        { stdio: 'pipe', timeout: 60_000 },
+      await installSkillFromMarketplace(
+        { slug: skill.slug, skillId: skill.skillId, name: skill.name, source: skill.source },
+        (message) => {
+          this.installOutput = message;
+          this.renderDetail();
+        },
       );
-
-      this.installOutput = 'Locating skill files…';
-      this.renderDetail();
-
-      const skillSrcDir = await findSkillDir(tmpDir, skill.skillId, skill.name, fs, path);
-      if (!skillSrcDir) {
-        throw new Error(`Skill "${skill.skillId}" not found in ${skill.source}`);
-      }
-
-      this.installOutput = 'Copying files…';
-      this.renderDetail();
-
-      await copySkillFiles(skillSrcDir, targetDir);
-
-      // Remove .git and other dev-only artifacts from root-level installs
-      const dotGit = path.join(targetDir, '.git');
-      if (fs.existsSync(dotGit)) {
-        await fs.promises.rm(dotGit, { recursive: true, force: true });
-      }
 
       new Notice(`Installed ${skill.name}`);
 
@@ -2073,14 +1796,6 @@ export class SkillsManagerView extends ItemView {
       new Notice(`Install failed: ${msg}`);
       console.error('[ClaudeThreads] Skill install failed:', err);
     } finally {
-      // Clean up temp dir (best-effort)
-      try {
-        const fs2 = require('fs') as typeof import('fs');
-        if (fs2.existsSync(tmpDir)) {
-          await fs2.promises.rm(tmpDir, { recursive: true, force: true });
-        }
-      } catch { /* ignore */ }
-
       this.installingSlug = null;
       this.installOutput = '';
       this.renderDetail();
@@ -2158,173 +1873,4 @@ export class SkillsManagerView extends ItemView {
     }
   }
 
-}
-
-// ── Skill Install Helpers ────────────────────────────────────────────────────
-
-/**
- * Copy a skill's source directory to the target install path.
- *
- * `dereference: true` is critical: some skill repos (e.g. nextlevelbuilder/ui-ux-pro-max-skill)
- * contain `data/` and `scripts/` as intra-repo symlinks. Without dereferencing, those symlinks
- * would be copied as-is, pointing into the now-deleted temp clone directory and leaving the
- * installed skill permanently broken.
- *
- * Exported so it can be unit-tested without instantiating the full ItemView.
- */
-export async function copySkillFiles(src: string, dest: string): Promise<void> {
-  const { cp } = await import('fs/promises');
-  await cp(src, dest, { recursive: true, dereference: true });
-}
-
-// ── Skill Discovery ──────────────────────────────────────────────────────────
-
-/**
- * Find the directory inside a cloned repo that contains the target skill's SKILL.md.
- * Exported so it can be unit-tested without instantiating the full ItemView.
- */
-export async function findSkillDir(
-  repoDir: string,
-  skillId: string,
-  name: string,
-  fs: typeof import('fs'),
-  path: typeof import('path'),
-): Promise<string | null> {
-  // 1. Repo root is the skill itself
-  if (fs.existsSync(path.join(repoDir, 'SKILL.md'))) {
-    return repoDir;
-  }
-
-  // 2. Scan for SKILL.md files up to 4 levels deep.
-  //    Skip git/CI/dependency junk only — not all dotfile dirs, since some repos
-  //    nest skills under `.claude/skills/<skill-id>/` (e.g. the Claude plugin layout).
-  const SKIP = new Set(['.git', '.github', '.gitlab', '.vscode', '.idea', 'node_modules']);
-  const candidates: string[] = [];
-  const scan = (dir: string, depth: number): void => {
-    if (depth > 4) return;
-    let entries: import('fs').Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      if (SKIP.has(ent.name)) continue;
-      if (!ent.isDirectory()) continue;
-      const sub = path.join(dir, ent.name);
-      if (fs.existsSync(path.join(sub, 'SKILL.md'))) {
-        candidates.push(sub);
-      } else {
-        scan(sub, depth + 1);
-      }
-    }
-  };
-  scan(repoDir, 0);
-
-  if (candidates.length === 0) return null;
-  if (candidates.length === 1) return candidates[0];
-
-  // 3. Multiple candidates: match by directory basename
-  const byDir = candidates.find(
-    (d) => path.basename(d) === skillId || path.basename(d) === name,
-  );
-  if (byDir) return byDir;
-
-  // 4. Match by SKILL.md name frontmatter
-  for (const dir of candidates) {
-    try {
-      const raw = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf-8');
-      const { name: skillName } = parseFrontmatter(raw);
-      if (skillName === skillId || skillName === name) return dir;
-    } catch { /* skip */ }
-  }
-
-  // 5. Fallback: first found
-  return candidates[0] ?? null;
-}
-
-// ── Skill Import (folder / .skill archive) Helpers ────────────────────────────
-
-/**
- * Slugify a skill's display name into an install-directory-safe id: lowercase,
- * runs of non-alphanumeric characters collapsed to a single hyphen, and
- * leading/trailing hyphens trimmed.
- *
- * Used for manually-imported skills (folder or .skill/.zip file), which have no
- * canonical registry `skillId` the way skills.sh browse results do.
- */
-export function deriveSkillId(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/**
- * Extract a zip archive to `destDir` using the pure-JS `adm-zip` library (no
- * shelling out to `unzip`/`tar`/`ditto`).
- *
- * Even though adm-zip sanitizes entry paths internally before writing, this
- * wrapper adds an explicit zip-slip guard as defense-in-depth for user-supplied
- * archives: every entry's resolved absolute path is checked to stay under
- * `destDir` *before* any extraction happens. If any entry would escape, the
- * whole extraction is aborted (nothing is written).
- */
-export async function extractZipToDir(zipPath: string, destDir: string): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const AdmZip = require('adm-zip') as typeof import('adm-zip');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('path') as typeof import('path');
-
-  const zip = new AdmZip(zipPath);
-  const resolvedDest = path.resolve(destDir);
-
-  for (const entry of zip.getEntries()) {
-    const resolvedEntry = path.resolve(resolvedDest, entry.entryName);
-    if (resolvedEntry !== resolvedDest && !resolvedEntry.startsWith(resolvedDest + path.sep)) {
-      throw new Error(`Zip entry "${entry.entryName}" would extract outside the destination directory`);
-    }
-  }
-
-  await zip.extractAllToAsync(destDir, true, false);
-}
-
-/**
- * Shared core of both manual-import flows (folder picker and .skill/.zip file
- * picker). `sourceDir` is a directory already on disk (either the user-picked
- * folder, or a tmpdir a zip was already extracted into) that is expected to
- * contain a SKILL.md somewhere inside it.
- *
- * Exported so it can be unit-tested without instantiating the full ItemView.
- */
-export async function importSkillFromPath(
-  sourceDir: string,
-  skillsDir: string,
-  fs: typeof import('fs'),
-  path: typeof import('path'),
-  fallbackName?: string,
-): Promise<{ id: string; name: string; targetDir: string }> {
-  const locatedDir = await findSkillDir(sourceDir, '', '', fs, path);
-  if (!locatedDir) {
-    throw new Error('No SKILL.md found in the selected folder/file');
-  }
-
-  let name = fallbackName ?? path.basename(locatedDir);
-  try {
-    const raw = fs.readFileSync(path.join(locatedDir, 'SKILL.md'), 'utf-8');
-    const { name: frontmatterName } = parseFrontmatter(raw);
-    if (frontmatterName) name = frontmatterName;
-  } catch { /* fall back to fallbackName / dir basename */ }
-
-  const id = deriveSkillId(name);
-  const targetDir = path.join(skillsDir, id);
-
-  if (fs.existsSync(targetDir)) {
-    throw new Error(`A skill named "${id}" is already installed`);
-  }
-
-  await fs.promises.mkdir(skillsDir, { recursive: true });
-  await copySkillFiles(locatedDir, targetDir);
-
-  return { id, name, targetDir };
 }

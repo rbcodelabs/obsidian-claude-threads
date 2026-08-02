@@ -6,4 +6,5 @@ export const basename = (p: string, ext?: string) => {
   return ext && b.endsWith(ext) ? b.slice(0, -ext.length) : b;
 };
 export const resolve = (...args: string[]) => args.join('/');
-export default { join, dirname, basename, resolve };
+export const sep = '/';
+export default { join, dirname, basename, resolve, sep };

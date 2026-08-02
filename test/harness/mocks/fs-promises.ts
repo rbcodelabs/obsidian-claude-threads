@@ -17,3 +17,4 @@ export const writeFile = promises.writeFile;
 export const rm = promises.rm;
 export const mkdir = promises.mkdir;
 export const cp = promises.cp;
+export const access = promises.access;

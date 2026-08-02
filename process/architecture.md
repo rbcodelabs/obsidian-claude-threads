@@ -11,6 +11,8 @@
 | `src/AgentDashboard.ts` | Agent dashboard sidebar panel |
 | `src/KanbanView.ts` | Kanban board view |
 | `src/ObsidianTools.ts` | All MCP tool definitions and TypeScript interfaces |
+| `src/skillManager.ts` | Headless list/search/install/uninstall/update logic for `~/.claude/skills/` and configured `SkillSource`s — single source of truth for both `SkillsManagerView.ts` (UI) and the `skills_*` MCP tools in `ObsidianTools.ts` |
+| `src/SkillsManagerView.ts` | Skills Manager panel UI — delegates all list/search/install/uninstall/update logic to `src/skillManager.ts` |
 | `src/VaultPersistence.ts` | Vault note save/load/archive |
 | `src/types.ts` | Shared TypeScript types (`Thread`, `ThreadStatus`, etc.) |
 | `src/DispatchInput.ts` | Reusable dispatch textarea component used across all panels |
