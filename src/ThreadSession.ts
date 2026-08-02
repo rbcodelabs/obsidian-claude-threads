@@ -576,7 +576,7 @@ export class ThreadSession {
                 }
               }
             }
-            if (parts.length > 0) {
+            if (parts.length > 0 || pendingToolCalls.length > 0) {
               const content = parts.join('\n');
               callbacks.onMessage(content, [...pendingToolCalls]);
             }
@@ -909,6 +909,10 @@ export class ThreadSession {
       }
     } finally {
       this.interrupted = false;
+      if (pendingToolCalls.length > 0) {
+        callbacks.onMessage('', [...pendingToolCalls]);
+        pendingToolCalls.length = 0;
+      }
       if (!supersededByRestart) {
         // This generation ended on its own (not via an internal restart,
         // which already closed/reopened this.query) — tear the whole session
