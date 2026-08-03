@@ -284,6 +284,59 @@ const thread6Messages: ChatMessage[] = [
   },
 ];
 
+// ─── Thread 7: Fragmented tool-only messages (post-7b7d4fb regression shape) ──
+// Used by test/screenshots/tool-call-grouping.spec.ts to reproduce the ACTUAL
+// bug shape: a Read → Edit → Bash → Read → Edit agentic chain persisted as 5
+// SEPARATE ChatMessage objects (role: 'assistant', content: '', exactly one
+// toolCall each) — one per real SDK turn, per the 7b7d4fb tool-only-message
+// persistence fix. This is distinct from thread6Messages above, which has ONE
+// message carrying many tool calls — that shape was never broken by the
+// regression this fixture targets (mergeAdjacentToolOnlyMessages).
+
+const thread7Messages: ChatMessage[] = [
+  {
+    id: 'msg-t7-1',
+    role: 'user',
+    content: 'Rename the legacy `fetchUser` helper to `getUserById` everywhere.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-t7-2',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 1000,
+    toolCalls: [{ name: 'Read', summary: 'Read: src/api/user.ts', toolUseId: 't7-1', timestamp: T3 + 1000, status: 'success' }],
+  },
+  {
+    id: 'msg-t7-3',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 2000,
+    toolCalls: [{ name: 'Grep', summary: "Grep: 'fetchUser' across src/", toolUseId: 't7-2', timestamp: T3 + 2000, status: 'success' }],
+  },
+  {
+    id: 'msg-t7-4',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 3000,
+    toolCalls: [{ name: 'Edit', summary: 'Edit: src/api/user.ts — rename fetchUser', toolUseId: 't7-3', timestamp: T3 + 3000, status: 'success' }],
+  },
+  {
+    id: 'msg-t7-5',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 4000,
+    toolCalls: [{ name: 'Edit', summary: 'Edit: src/api/userController.ts — update call site', toolUseId: 't7-4', timestamp: T3 + 4000, status: 'success' }],
+  },
+  {
+    id: 'msg-t7-6',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 5000,
+    toolCalls: [{ name: 'Bash', summary: 'npm run lint', toolUseId: 't7-5', timestamp: T3 + 5000, status: 'success' }],
+  },
+];
+
 // ─── Exported fixtures ────────────────────────────────────────────────────────
 
 export const fixtureThreads: Thread[] = [
@@ -369,6 +422,14 @@ export const fixtureThreads: Thread[] = [
     messages: [],
     createdAt: T3 - 30000,
     updatedAt: T3 - 30000,
+  },
+  {
+    id: 'thread-fragmented-tool-calls',
+    title: 'Rename fetchUser helper',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread7Messages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 5000,
   },
 ];
 

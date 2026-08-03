@@ -66,6 +66,45 @@ test.describe('Tool-call grouping', () => {
   });
 });
 
+// ─── Fragmented tool-only messages (post-7b7d4fb regression shape) ─────────
+// Fixture: 'thread-fragmented-tool-calls' (test/harness/fixtures.ts) — 5
+// SEPARATE ChatMessage objects (role: 'assistant', content: '', exactly one
+// toolCall each: Read, Grep, Edit, Edit, Bash), reproducing the actual
+// persisted shape after 7b7d4fb ("fix: persist tool-only assistant messages
+// instead of silently dropping them"). Before mergeAdjacentToolOnlyMessages,
+// this rendered as 5 separate full-height `.ct-message` rows — one per raw
+// persisted turn — instead of a couple of collapsible activity groups.
+
+test.describe('Fragmented tool-only messages (view-layer merge)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+  });
+
+  test('renderMessages() merges 5 separate tool-only ChatMessages into a compact grouped view, not one row per message', async ({ page }) => {
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fragmented-tool-calls'));
+    await page.waitForSelector('.ct-tool-group');
+    await page.waitForTimeout(200);
+
+    // Fixture has 1 user message + 5 separate tool-only assistant messages.
+    // Post-merge (mergeAdjacentToolOnlyMessages) those 5 collapse into ONE
+    // assistant row, so the total `.ct-message` count must be far below the
+    // 6 raw fixture messages — specifically 1 user bubble + 1 merged row.
+    await expect(page.locator('.ct-message')).toHaveCount(2);
+
+    // Read+Grep (both 'exploring') and Edit+Edit (both 'editing') each form a
+    // group; the trailing Bash is isolated (not adjacent to another
+    // 'exploring' call in the concatenated tool list) — 2 groups total.
+    await expect(page.locator('.ct-tool-group')).toHaveCount(2);
+
+    await expect(page).toHaveScreenshot('tool-call-grouping-fragmented-merged.png', { fullPage: true });
+  });
+});
+
 // ─── Live (in-progress turn) tool-call grouping ─────────────────────────────
 // Drives real ThreadEvents via window.__emitEvent (test/harness/index.ts) into
 // an empty thread (fixture 'thread-live-tool-grouping') to exercise the LIVE
@@ -239,5 +278,71 @@ test.describe('Live tool-call grouping', () => {
     await expect(page.locator('.ct-tools > *')).toHaveCount(1);
     const group = page.locator('.ct-tool-group').first();
     await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (6)');
+  });
+
+  // Regression guard for the actual bug shape: post-7b7d4fb, each tool-only
+  // SDK turn arrives as its OWN 'message' event (not as tool_use events
+  // accumulating into one flush at turn end — that path was covered by the
+  // tests above and was never broken). This drives that exact sequence —
+  // one 'message' event per raw tool-only ChatMessage, mirroring what
+  // ThreadManager.onMessage really does — and confirms mergeAdjacentToolOnlyMessages
+  // + the in-place tail-row rebuild (R3) keep the DOM bounded instead of
+  // fragmenting 1:1 with events, and that R4's live keying keeps a mid-run
+  // expand alive across further extensions of the SAME row.
+  test('a sequence of per-turn "message" events (post-7b7d4fb persisted shape) merges into one bounded row and survives a mid-run expand', async ({ page }) => {
+    const pushToolOnlyMessage = async (id: string, toolName: string, toolUseId: string) => {
+      await page.evaluate(({ id, toolName, toolUseId }) => {
+        const manager = (window as any).__manager;
+        const threadId = 'thread-live-tool-grouping';
+        const message = {
+          id,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          toolCalls: [{ name: toolName, summary: `call ${id}`, toolUseId, status: 'success' }],
+        };
+        manager.getThread(threadId).messages.push(message);
+        (window as any).__emitEvent(threadId, { type: 'message', message });
+      }, { id, toolName, toolUseId });
+    };
+
+    await page.evaluate(() => {
+      (window as any).__emitEvent('thread-live-tool-grouping', { type: 'streaming_start' });
+    });
+    await pushToolOnlyMessage('frag-1', 'Read', 'frag-tu-1');
+    await pushToolOnlyMessage('frag-2', 'Read', 'frag-tu-2');
+    await page.waitForTimeout(200);
+
+    // Two separate raw messages, one Read call each — merged into ONE row
+    // with ONE grouped tool entry, not two `.ct-message` rows.
+    await expect(page.locator('.ct-message')).toHaveCount(2); // seeded user bubble + 1 merged assistant row
+    const group = page.locator('.ct-tool-group').first();
+    await expect(group).toBeVisible();
+    await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (2)');
+
+    // Expand the group mid-run.
+    await group.locator('.ct-expand-btn').click();
+    await expect(group.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
+
+    const messageCountBefore = await page.locator('.ct-message').count();
+
+    // Three more tool-only turns arrive, each its own 'message' event.
+    await pushToolOnlyMessage('frag-3', 'Grep', 'frag-tu-3');
+    await pushToolOnlyMessage('frag-4', 'Bash', 'frag-tu-4');
+    await pushToolOnlyMessage('frag-5', 'Read', 'frag-tu-5');
+    await page.waitForTimeout(200);
+
+    // DOM element count stays bounded rather than growing 1:1 with the 5
+    // 'message' events fired in this test — exactly the regression this fix
+    // closes (previously one full-height `.ct-message` per raw event).
+    await expect(page.locator('.ct-message')).toHaveCount(messageCountBefore);
+
+    // The group expanded mid-sequence must STILL be expanded after the run
+    // extended further — regression guard for R4 (liveToolGroupKey keying).
+    const groupAfter = page.locator('.ct-tool-group').first();
+    await expect(groupAfter.locator('.ct-compressed-summary')).toHaveText('Exploring (5)');
+    await expect(groupAfter.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
+
+    await expect(page).toHaveScreenshot('tool-call-grouping-fragmented-live-merged.png', { fullPage: true });
   });
 });
