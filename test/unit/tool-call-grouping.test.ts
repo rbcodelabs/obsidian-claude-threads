@@ -1,9 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { getActivityKind, groupToolCalls, liveToolGroupKey, type ActivityKind } from '../../src/toolNameUtils';
-import type { ToolCallRecord } from '../../src/types';
+import { getActivityKind, groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, type ActivityKind } from '../../src/toolNameUtils';
+import type { ChatMessage, ToolCallRecord } from '../../src/types';
 
 function tool(name: string, extra: Partial<ToolCallRecord> = {}): ToolCallRecord {
   return { name, summary: '', timestamp: 1000, ...extra };
+}
+
+function toolOnlyMsg(id: string, toolName: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+  return {
+    id,
+    role: 'assistant',
+    content: '',
+    timestamp: 1000,
+    toolCalls: [tool(toolName, { toolUseId: id })],
+    ...extra,
+  };
 }
 
 // ─── getActivityKind ───────────────────────────────────────────────────────
@@ -175,5 +186,115 @@ describe('liveToolGroupKey', () => {
   it('falls back to timestamp when the first call has no toolUseId', () => {
     const tools = [tool('Read', { toolUseId: undefined, timestamp: 5000 })];
     expect(liveToolGroupKey(tools)).toBe('5000:exploring');
+  });
+});
+
+// ─── mergeAdjacentToolOnlyMessages ─────────────────────────────────────────
+// Regression coverage for the tool-call-fragmentation bug: a commit fixing
+// silent data loss in ThreadSession.pumpMessages now persists every tool-only
+// SDK assistant message as its own ChatMessage, so a Read → Edit → Bash chain
+// produces one separate persisted message per step. This helper re-merges
+// adjacent tool-only rows back into one for rendering, without ever touching
+// thread.messages itself.
+
+describe('mergeAdjacentToolOnlyMessages', () => {
+  it('returns [] for an empty array', () => {
+    expect(mergeAdjacentToolOnlyMessages([])).toEqual([]);
+  });
+
+  it('returns a single tool-only assistant message as-is (reference equality)', () => {
+    const msg = toolOnlyMsg('m1', 'Read');
+    const result = mergeAdjacentToolOnlyMessages([msg]);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(msg);
+  });
+
+  it('merges two consecutive tool-only assistant messages into one row with concatenated toolCalls', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Edit');
+    const result = mergeAdjacentToolOnlyMessages([m1, m2]);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('m1');
+    expect(result[0].timestamp).toBe(m1.timestamp);
+    expect(result[0].role).toBe('assistant');
+    expect(result[0].content).toBe('');
+    expect(result[0].toolCalls).toEqual([...m1.toolCalls!, ...m2.toolCalls!]);
+  });
+
+  it('concatenates toolResultImages in order, skipping messages with none, across 3+ merged messages', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Read', {
+      toolResultImages: [{ mediaType: 'image/png', data: 'aaa' }],
+    });
+    const m3 = toolOnlyMsg('m3', 'Bash');
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, m3]);
+    expect(result).toHaveLength(1);
+    expect(result[0].toolResultImages).toEqual(m2.toolResultImages);
+    expect(result[0].toolCalls).toEqual([
+      ...m1.toolCalls!,
+      ...m2.toolCalls!,
+      ...m3.toolCalls!,
+    ]);
+  });
+
+  it('takes the last non-undefined cost value found in the run', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Edit');
+    const m3 = toolOnlyMsg('m3', 'Bash', { cost: 0.0042 });
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, m3]);
+    expect(result).toHaveLength(1);
+    expect(result[0].cost).toBe(0.0042);
+  });
+
+  it('breaks a run at a narrated message that itself carries tool calls', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Edit');
+    const m3 = toolOnlyMsg('m3', 'Bash', { content: 'Here is what I found.' });
+    const m4 = toolOnlyMsg('m4', 'Grep');
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, m3, m4]);
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe('m1');
+    expect(result[0].toolCalls).toEqual([...m1.toolCalls!, ...m2.toolCalls!]);
+    expect(result[1]).toBe(m3);
+    expect(result[2]).toBe(m4);
+  });
+
+  it('breaks a run at a user message', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Edit');
+    const userMsg: ChatMessage = { id: 'u1', role: 'user', content: 'go on', timestamp: 1000 };
+    const m3 = toolOnlyMsg('m3', 'Bash');
+    const m4 = toolOnlyMsg('m4', 'Grep');
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, userMsg, m3, m4]);
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe('m1');
+    expect(result[1]).toBe(userMsg);
+    expect(result[2].id).toBe('m3');
+  });
+
+  it('breaks a run at a role: compact divider the same way', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2 = toolOnlyMsg('m2', 'Edit');
+    const compactMsg: ChatMessage = { id: 'c1', role: 'compact', content: '', timestamp: 1000 };
+    const m3 = toolOnlyMsg('m3', 'Bash');
+    const m4 = toolOnlyMsg('m4', 'Grep');
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, compactMsg, m3, m4]);
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe('m1');
+    expect(result[1]).toBe(compactMsg);
+    expect(result[2].id).toBe('m3');
+  });
+
+  it('passes through all messages unmerged when kinds fully alternate with no adjacency', () => {
+    const m1 = toolOnlyMsg('m1', 'Read');
+    const m2: ChatMessage = { id: 'm2', role: 'assistant', content: 'narration', timestamp: 1000 };
+    const m3 = toolOnlyMsg('m3', 'Bash');
+    const m4: ChatMessage = { id: 'm4', role: 'assistant', content: 'more narration', timestamp: 1000 };
+    const result = mergeAdjacentToolOnlyMessages([m1, m2, m3, m4]);
+    expect(result).toHaveLength(4);
+    expect(result[0]).toBe(m1);
+    expect(result[1]).toBe(m2);
+    expect(result[2]).toBe(m3);
+    expect(result[3]).toBe(m4);
   });
 });

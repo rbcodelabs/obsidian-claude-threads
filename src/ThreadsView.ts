@@ -12,7 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { groupToolCalls, liveToolGroupKey, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
+import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -183,6 +183,15 @@ export class ThreadsView extends ItemView {
   // (groupToolCalls only ever extends a run at the tail, never reinterprets an
   // earlier boundary). Cleared alongside expandedToolGroups.
   private liveExpandedToolGroups: Set<string> = new Set();
+  // Tracks the most recently appended row (post-merge, see
+  // mergeAdjacentToolOnlyMessages) in the live 'message' event handler, so a
+  // subsequent tool-only step in the SAME run can extend that row's tools
+  // in-place instead of fragmenting into a new `.ct-message`. Reset to null
+  // whenever a 'compact' divider is appended (a hard run boundary), and
+  // re-seeded by renderMessages() when restoring a thread that is still
+  // actively running (see the isRunning branch at the end of renderMessages).
+  private lastAppendedRowId: string | null = null;
+  private lastAppendedRowEl: HTMLElement | null = null;
   // Serial queue for compress-view summary generation — prevents spawning N concurrent Claude processes.
   // Incrementing summaryGeneration acts as a cancellation token: queued jobs check it before starting
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
@@ -1763,12 +1772,11 @@ export class ThreadsView extends ItemView {
    * A single-message group falls through to the normal appendMessage path so that
    * the existing per-message summary/expand logic is reused.
    */
-  private async appendAssistantGroup(group: ChatMessage[]): Promise<void> {
-    if (group.length === 0) return;
+  private async appendAssistantGroup(group: ChatMessage[]): Promise<HTMLElement | null> {
+    if (group.length === 0) return null;
     if (group.length === 1) {
       // Single message — reuse normal compressed rendering
-      await this.appendMessage(group[0]);
-      return;
+      return await this.appendMessage(group[0]);
     }
 
     const groupKey = group.map(m => m.id).join(':');
@@ -1789,6 +1797,7 @@ export class ThreadsView extends ItemView {
 
     // Full content (hidden) — render each sub-message with its tool calls
     const fullContent = content.createDiv('ct-full-content ct-hidden');
+    let lastMsgEl: HTMLElement | null = null;
     for (const msg of group) {
       const msgEl = fullContent.createDiv('ct-message ct-message-assistant');
       if (msg.toolCalls && msg.toolCalls.length > 0) {
@@ -1796,6 +1805,7 @@ export class ThreadsView extends ItemView {
       }
       const msgContent = msgEl.createDiv('ct-message-content');
       await this.renderMarkdown(msg.content, msgContent);
+      lastMsgEl = msgEl;
     }
 
     let expanded = false;
@@ -1815,6 +1825,8 @@ export class ThreadsView extends ItemView {
     if (!cachedSummary) {
       this.generateGroupSummary(group, groupKey, summaryTextEl);
     }
+
+    return lastMsgEl;
   }
 
   /** Generate a single summary for a group of consecutive assistant messages. */
@@ -1959,30 +1971,48 @@ export class ThreadsView extends ItemView {
       return;
     }
 
+    // Re-merge adjacent tool-only assistant messages (one per real SDK turn,
+    // see mergeAdjacentToolOnlyMessages doc comment) into single rows so the
+    // finalized-message rendering path below has multi-call arrays to group
+    // via groupToolCalls() again, instead of fragmenting into one `.ct-message`
+    // per raw persisted turn. Purely a view-layer transform — thread.messages
+    // itself is untouched.
+    const rows = mergeAdjacentToolOnlyMessages(thread.messages);
+    let lastRenderedRowEl: HTMLElement | null = null;
+
     if (this.compressedView) {
-      // In compressed view, consecutive assistant messages (between user/compact turns)
+      // In compressed view, consecutive assistant rows (between user/compact turns)
       // are grouped into a single collapsible block so agentic runs collapse as one unit.
       let i = 0;
-      while (i < thread.messages.length) {
-        const msg = thread.messages[i];
+      while (i < rows.length) {
+        const msg = rows[i];
         if (msg.role === 'assistant') {
           const group: ChatMessage[] = [];
-          while (i < thread.messages.length && thread.messages[i].role === 'assistant') {
-            group.push(thread.messages[i++]);
+          while (i < rows.length && rows[i].role === 'assistant') {
+            group.push(rows[i++]);
           }
-          await this.appendAssistantGroup(group);
+          lastRenderedRowEl = await this.appendAssistantGroup(group);
         } else {
-          await this.appendMessage(msg);
+          lastRenderedRowEl = await this.appendMessage(msg);
           i++;
         }
       }
     } else {
-      for (const msg of thread.messages) {
-        await this.appendMessage(msg);
+      for (const msg of rows) {
+        lastRenderedRowEl = await this.appendMessage(msg);
       }
     }
 
     if (this.manager.isRunning(this.activeThreadId)) {
+      // The tail row (post-merge) may still be an open, growing run — seed the
+      // in-place-extension tracking fields so the next live 'message' event
+      // recognizes it as "extend this row" rather than fragmenting a fresh one.
+      // See the case 'message' handler in handleEvent().
+      const lastRow = rows[rows.length - 1];
+      if (lastRow && lastRenderedRowEl) {
+        this.lastAppendedRowId = lastRow.id;
+        this.lastAppendedRowEl = lastRenderedRowEl;
+      }
       const buf = this.streamingBuffers.get(this.activeThreadId!);
       // Use the sub-agent label if the thread is waiting on a sub-agent, otherwise
       // the default "Claude is thinking" placeholder.
@@ -2021,7 +2051,7 @@ export class ThreadsView extends ItemView {
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
 
-  private async appendMessage(msg: ChatMessage): Promise<void> {
+  private async appendMessage(msg: ChatMessage): Promise<HTMLElement | null> {
     if (msg.role === 'compact') {
       const divider = this.messagesEl.createDiv('ct-compact-divider');
       const label = msg.compactTrigger === 'manual' ? 'Context compacted' : 'Context auto-compacted';
@@ -2029,7 +2059,7 @@ export class ThreadsView extends ItemView {
       if (msg.preTokens && msg.preTokens > 0) {
         divider.createSpan({ cls: 'ct-compact-tokens', text: `${(msg.preTokens / 1000).toFixed(0)}k tokens` });
       }
-      return;
+      return null;
     }
 
     const el = this.messagesEl.createDiv(`ct-message ct-message-${msg.role}`);
@@ -2126,6 +2156,8 @@ export class ThreadsView extends ItemView {
         footer.createSpan({ cls: 'ct-cost', text: `$${msg.cost!.toFixed(4)}` });
       }
     }
+
+    return el;
   }
 
   /**
@@ -2157,15 +2189,52 @@ export class ThreadsView extends ItemView {
   }
 
 
-  private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[]): void {
+  /**
+   * @param opts.live When true, groups are keyed/expand-tracked the same way
+   *   the live-streaming path (renderLiveToolCalls) does — via liveToolGroupKey
+   *   + liveExpandedToolGroups instead of the stable id-hash keying used by
+   *   default. Needed by the R3 in-place tail-row rebuild: that row's member
+   *   list keeps growing as the still-open run receives more tool-only steps,
+   *   so a stable-hash key would change on every extension and silently
+   *   re-collapse a group the user had expanded. Only that call site should
+   *   pass `live: true` — first-time append of a settled row and the full
+   *   renderMessages() rebuild both keep the default (stable) keying.
+   */
+  private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], opts?: { live?: boolean }): HTMLElement {
     const wrapper = parent.createDiv('ct-tools');
     for (const entry of groupToolCalls(tools)) {
       if (entry.kind === 'single') {
         this.renderToolPill(wrapper, entry.tool);
+      } else if (opts?.live) {
+        this.renderToolGroup(wrapper, entry, {
+          keyOverride: liveToolGroupKey(entry.tools),
+          expandedSet: this.liveExpandedToolGroups,
+        });
       } else {
         this.renderToolGroup(wrapper, entry);
       }
     }
+    return wrapper;
+  }
+
+  /**
+   * Rebuilds the `.ct-tools` child of an already-rendered row element in
+   * place, given the row's freshly-merged toolCalls array. Used by the case
+   * 'message' handler in handleEvent() to extend the currently-open tail row
+   * of a live tool-only run without tearing down and recreating the whole
+   * `.ct-message` (which would lose scroll position / cause a visible flash
+   * on every step). Passes `{ live: true }` so a group the user expanded
+   * mid-run stays expanded as it grows (see renderToolCalls' doc comment).
+   */
+  private rebuildRowToolsInPlace(rowEl: HTMLElement, toolCalls: ToolCallRecord[]): void {
+    const existing = rowEl.querySelector(':scope > .ct-tools');
+    existing?.remove();
+    if (!toolCalls || toolCalls.length === 0) return;
+    const wrapper = this.renderToolCalls(rowEl, toolCalls, { live: true });
+    // renderToolCalls appends via createDiv (last child) — move it to the
+    // front so tools stay above the message content, matching the layout
+    // appendMessage produces when a row is first created.
+    rowEl.prepend(wrapper);
   }
 
   /**
@@ -2987,7 +3056,31 @@ export class ThreadsView extends ItemView {
           this.streamingEl = null;
           this.streamingContentEl = null;
         }
-        this.appendMessage(event.message).then(() => this.scrollToBottom());
+        // ThreadManager.onMessage has already pushed event.message onto
+        // thread.messages by the time this fires. Recompute the merged rows
+        // and either extend the still-open tail row in place (this event is
+        // just another tool-only step in the same run) or append a new row —
+        // see mergeAdjacentToolOnlyMessages/rebuildRowToolsInPlace.
+        const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : undefined;
+        const rows = thread ? mergeAdjacentToolOnlyMessages(thread.messages) : [];
+        const newRow = rows[rows.length - 1];
+        if (
+          newRow &&
+          newRow.id === this.lastAppendedRowId &&
+          this.lastAppendedRowEl &&
+          this.lastAppendedRowEl.isConnected
+        ) {
+          this.rebuildRowToolsInPlace(this.lastAppendedRowEl, newRow.toolCalls ?? []);
+          this.scrollToBottom();
+        } else if (newRow) {
+          this.appendMessage(newRow).then((el) => {
+            if (el) {
+              this.lastAppendedRowId = newRow.id;
+              this.lastAppendedRowEl = el;
+            }
+            this.scrollToBottom();
+          });
+        }
         this.scrollToBottom();
         // If this message invoked the Agent tool, create a "Sub-agent working…"
         // placeholder immediately so there's a visible indicator while the
@@ -3126,6 +3219,11 @@ export class ThreadsView extends ItemView {
       case 'compact': {
         this.appendMessage(event.message).then(() => this.scrollToBottom());
         this.plugin.saveSettings();
+        // A compact divider is a hard run boundary — not strictly required
+        // since it also changes the next merged row's id (mergeAdjacentToolOnlyMessages
+        // never merges across a role: 'compact' message), but reset for hygiene.
+        this.lastAppendedRowId = null;
+        this.lastAppendedRowEl = null;
         break;
       }
 

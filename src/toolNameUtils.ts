@@ -204,3 +204,80 @@ export function liveToolGroupKey(tools: import('./types').ToolCallRecord[]): str
   const first = tools[0];
   return `${first.toolUseId ?? first.timestamp ?? ''}:${getActivityKind(first.name)}`;
 }
+
+/**
+ * Merges adjacent tool-only assistant messages into single synthetic rows for
+ * RENDERING purposes only — it never touches `thread.messages` itself.
+ *
+ * Context: a fix to ThreadSession.pumpMessages (see commit 7b7d4fb) now
+ * persists every tool-only SDK assistant message (no narration text) as its
+ * own `ChatMessage` in `thread.messages`, one per real SDK turn — correct for
+ * data integrity, but it means a typical Read → Edit → Bash agentic chain
+ * produces a separate persisted message per step. groupToolCalls() only ever
+ * collapses calls *within* one message's `toolCalls` array, so with one call
+ * per message there's nothing for it to group, and the view fragments into a
+ * full-height `.ct-message` row per tool call.
+ *
+ * This function re-merges those adjacent single-tool-call rows back into one
+ * row for display, so groupToolCalls() has a multi-call array to work with
+ * again — a run of tool-only assistant messages renders as it did before the
+ * persistence fix: a handful of collapsible activity groups, not one row per
+ * step.
+ *
+ * A run boundary is any message where `role !== 'assistant' || content !== ''`
+ * — real narration, user messages, and `role: 'compact'` dividers all break a
+ * run, so merging never spans a real turn boundary or a message that
+ * legitimately carries both text and tool calls.
+ *
+ * Pure and side-effect free: call fresh on every render, never cache the
+ * output. Runs of length 1 pass through as the *original object reference*
+ * (a true no-op) so callers can rely on `===` identity for those rows; runs of
+ * length >= 2 collapse into one freshly-allocated synthetic `ChatMessage`
+ * whose `id`/`timestamp` come from the first message in the run, so a merged
+ * row's identity stays stable across re-renders as long as the run's first
+ * message stays the same — which is exactly how a live run grows (new tool
+ * calls append at the tail, the first message in the run never changes).
+ */
+export function mergeAdjacentToolOnlyMessages(
+  messages: import('./types').ChatMessage[],
+): import('./types').ChatMessage[] {
+  const result: import('./types').ChatMessage[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (msg.role !== 'assistant' || msg.content !== '') {
+      result.push(msg);
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < messages.length && messages[j].role === 'assistant' && messages[j].content === '') {
+      j++;
+    }
+    const run = messages.slice(i, j);
+    if (run.length === 1) {
+      result.push(run[0]);
+    } else {
+      const toolCalls: import('./types').ToolCallRecord[] = [];
+      const toolResultImages: NonNullable<import('./types').ChatMessage['toolResultImages']> = [];
+      let cost: number | undefined;
+      for (const m of run) {
+        if (m.toolCalls && m.toolCalls.length > 0) toolCalls.push(...m.toolCalls);
+        if (m.toolResultImages && m.toolResultImages.length > 0) toolResultImages.push(...m.toolResultImages);
+        if (m.cost !== undefined) cost = m.cost;
+      }
+      const merged: import('./types').ChatMessage = {
+        id: run[0].id,
+        timestamp: run[0].timestamp,
+        role: 'assistant',
+        content: '',
+        toolCalls,
+      };
+      if (toolResultImages.length > 0) merged.toolResultImages = toolResultImages;
+      if (cost !== undefined) merged.cost = cost;
+      result.push(merged);
+    }
+    i = j;
+  }
+  return result;
+}
