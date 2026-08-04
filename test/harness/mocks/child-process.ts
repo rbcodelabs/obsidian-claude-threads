@@ -42,9 +42,6 @@ export const exec = (
   return stubProcess();
 };
 
-/** Browser-harness stand-in for sessions that launch a local agent process. */
-export const spawn = (_command: string, _args?: string[], _options?: Record<string, unknown>): StubChildProcess => stubProcess();
-
 function stubProcess(): StubChildProcess {
   const stream = { on: () => {} };
   return {
