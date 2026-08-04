@@ -216,6 +216,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
 
     this.detectClaudeBinary();
+    this.detectCodexBinary();
     this.migrateGithubSourcesIntoVault();
 
     this.manager = new ThreadManager(this.settings);
@@ -1511,6 +1512,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     console.warn('[Claude Threads] claude binary not found, using "claude" from PATH');
     this.settings.claudeBinaryPath = 'claude';
+  }
+
+  private detectCodexBinary(): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    if (this.settings.codexBinaryPath && fs.existsSync(this.settings.codexBinaryPath)) return;
+    for (const candidate of [
+      '/Applications/ChatGPT.app/Contents/Resources/codex',
+      '/opt/homebrew/bin/codex',
+      '/usr/local/bin/codex',
+      `${process.env.HOME}/.local/bin/codex`,
+    ]) {
+      if (fs.existsSync(candidate)) {
+        this.settings.codexBinaryPath = candidate;
+        return;
+      }
+    }
+    // `codex` on PATH is the CLI's documented/default invocation.
+    this.settings.codexBinaryPath = 'codex';
   }
 
   async activateView(): Promise<void> {

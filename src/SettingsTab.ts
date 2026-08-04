@@ -871,7 +871,7 @@ type SettingsTabId = 'general' | 'claude' | 'tools' | 'vault' | 'features' | 're
 
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'general', label: 'General' },
-  { id: 'claude', label: 'Claude' },
+  { id: 'claude', label: 'Agent' },
   { id: 'tools', label: 'Tools' },
   { id: 'vault', label: 'Vault' },
   { id: 'features', label: 'Features' },
@@ -1033,9 +1033,38 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
   }
 
-  // ── Claude ──────────────────────────────────────────────────────────────
+  // ── Agent harness ───────────────────────────────────────────────────────
 
   private renderClaudeTab(containerEl: HTMLElement): void {
+    new Setting(containerEl)
+      .setName('Agent harness')
+      .setDesc('New threads use this local coding agent. Existing threads retain the harness that created them.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('claude', 'Claude Code')
+          .addOption('codex', 'OpenAI Codex')
+          .setValue(this.plugin.settings.agentHarness ?? 'claude')
+          .onChange(async (value) => {
+            this.plugin.settings.agentHarness = value as 'claude' | 'codex';
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Codex binary path')
+      .setDesc('Path to the codex executable. Codex threads use its local app-server for streaming, approvals, and durable sessions.')
+      .addText((text) =>
+        text
+          .setPlaceholder('codex')
+          .setValue(this.plugin.settings.codexBinaryPath ?? 'codex')
+          .onChange(async (value) => {
+            this.plugin.settings.codexBinaryPath = value || 'codex';
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
     new Setting(containerEl)
       .setName('Claude binary path')
       .setDesc('Path to the claude executable. Leave empty to find it on $PATH.')
