@@ -50,8 +50,10 @@ export class CodexSession {
     });
 
     await this.request('initialize', {
-      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.22.1' },
-      capabilities: null,
+      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.23.2' },
+      // runtimeWorkspaceRoots and dynamicTools are currently gated by the
+      // app-server's experimental protocol capability.
+      capabilities: { experimentalApi: true },
     });
     // The app-server follows the LSP-style two-phase handshake: it does not
     // accept thread requests until the client confirms initialization.
