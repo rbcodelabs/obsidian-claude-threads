@@ -922,14 +922,20 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     if (opts.includeCliDefault) {
       dropdown.addOption('', 'CLI default');
     }
-    // Family aliases — always track the latest version of each family
-    dropdown.addOption('fable', 'Fable (latest)');
-    dropdown.addOption('opus', 'Opus (latest)');
-    dropdown.addOption('sonnet', 'Sonnet (latest)');
-    dropdown.addOption('haiku', 'Haiku (latest)');
-    // Pinned model IDs from the SDK, or the hardcoded fallback list
-    const pinned =
-      this.plugin.discoveredModels.length > 0 ? this.plugin.discoveredModels : FALLBACK_MODELS;
+    const harness = this.plugin.settings.agentHarness ?? 'claude';
+    if (harness === 'claude') {
+      // Family aliases are Claude Code-specific and must not be sent to Codex.
+      dropdown.addOption('fable', 'Fable (latest)');
+      dropdown.addOption('opus', 'Opus (latest)');
+      dropdown.addOption('sonnet', 'Sonnet (latest)');
+      dropdown.addOption('haiku', 'Haiku (latest)');
+    }
+    const discovered = this.plugin.discoveredModelsByHarness[harness];
+    // Codex intentionally has no guessed fallback: wait for model/list so we
+    // never offer a model unavailable to the signed-in Codex account.
+    const pinned = harness === 'claude'
+      ? (discovered.length > 0 ? discovered : FALLBACK_MODELS)
+      : discovered;
     for (const m of pinned) {
       dropdown.addOption(m.value, m.displayName);
     }

@@ -84,6 +84,7 @@ export class CodexSession {
       });
     }
     this.codexThreadId = result.thread.id;
+    this.discoverModels();
   }
 
   async setModel(model: string | undefined): Promise<void> {
@@ -137,6 +138,17 @@ export class CodexSession {
   }
 
   async getContextUsage(): Promise<null> { return null; }
+
+  private discoverModels(): void {
+    this.request('model/list', { limit: 100 })
+      .then((result: { data?: Array<{ id?: string; displayName?: string; model?: string }> }) => {
+        const models = (result.data ?? [])
+          .map((model) => ({ value: model.id ?? model.model ?? '', displayName: model.displayName ?? model.id ?? model.model ?? '' }))
+          .filter((model) => model.value && model.displayName);
+        if (models.length > 0) this.options?.callbacks.onCapabilitiesDiscovered?.(models as any, []);
+      })
+      .catch((error) => console.warn('[ClaudeThreads] Could not list Codex models:', error));
+  }
 
   private sandboxPolicy(sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'): Record<string, unknown> {
     if (sandbox === 'read-only') return { type: 'readOnly', networkAccess: false };
