@@ -81,6 +81,12 @@ export class CodexSession {
         approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
         sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: options.appendSystemPrompt || null,
+        dynamicTools: options.codex?.dynamicTools?.map((tool) => ({
+          type: 'function',
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        })),
       });
     }
     this.codexThreadId = result.thread.id;
@@ -230,6 +236,23 @@ export class CodexSession {
   private handleServerRequest(message: any): void {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
+    if (message.method === 'item/tool/call') {
+      const dynamicTool = this.options?.codex?.dynamicTools?.find((tool) => tool.name === params.tool);
+      if (!dynamicTool) {
+        this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Unknown Obsidian tool: ${params.tool}` }] });
+        return;
+      }
+      dynamicTool.invoke((params.arguments ?? {}) as Record<string, unknown>)
+        .then((result) => this.respond(message.id, {
+          success: result.success,
+          contentItems: [{ type: 'inputText', text: result.text }],
+        }))
+        .catch((error) => this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: error instanceof Error ? error.message : String(error) }],
+        }));
+      return;
+    }
     const isApproval = /requestApproval$/.test(message.method);
     if (!callbacks || !isApproval) { this.respond(message.id, {}); return; }
     const detail = String(params.command ?? params.reason ?? 'Codex requests permission to continue');

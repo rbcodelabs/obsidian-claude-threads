@@ -1046,6 +1046,10 @@ export class ThreadManager {
       .filter(Boolean)
       .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, thread.cwd) : this.mcpServers;
+    // The Obsidian MCP server exposes the same canonical tool definitions to
+    // Codex through its app-server dynamic-tool adapter. External MCP servers
+    // remain Claude-owned until they have a corresponding Codex configuration.
+    const codexDynamicTools = (sessionMcpServers?.obsidian as unknown as { harnessTools?: import('./HarnessSession').HarnessDynamicTool[] } | undefined)?.harnessTools;
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
     return {
@@ -1078,7 +1082,10 @@ export class ThreadManager {
         disallowedTools: this.settings.disallowedTools,
         sessionOptions: this.buildSessionOptions(thread),
       },
-      codex: resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
+      codex: {
+        ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
+        dynamicTools: codexDynamicTools,
+      },
     };
   }
 

@@ -51,6 +51,15 @@ export interface ClaudeHarnessOptions {
 export interface CodexHarnessOptions {
   approvalPolicy: 'untrusted' | 'on-request' | 'never';
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+  dynamicTools?: HarnessDynamicTool[];
+}
+
+/** A host-owned capability exposed through a harness's native tool protocol. */
+export interface HarnessDynamicTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  invoke(args: Record<string, unknown>): Promise<{ success: boolean; text: string }>;
 }
 
 /**
