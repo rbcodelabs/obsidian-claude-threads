@@ -10,6 +10,26 @@ interface StubChildProcess {
   kill: () => void;
 }
 
+/**
+ * Minimal browser-safe stand-in for the Codex app-server process. The harness
+ * does not create a Codex session, but esbuild still needs the named export
+ * that CodexSession imports from Node's child_process module.
+ */
+interface StubSpawnedProcess extends StubChildProcess {
+  stdout: { on: (_event: string, _listener: (_chunk: Buffer) => void) => void };
+  stderr: { on: (_event: string, _listener: (_chunk: Buffer) => void) => void };
+  on: (_event: string, _listener: (...args: unknown[]) => void) => void;
+  kill: () => boolean;
+}
+
+export const spawn = (_command: string, _args?: string[], _options?: unknown): StubSpawnedProcess => ({
+  stdin: { write: () => {}, end: () => {} },
+  stdout: { on: () => {} },
+  stderr: { on: () => {} },
+  on: () => {},
+  kill: () => true,
+});
+
 export const exec = (
   _cmd: string,
   _optsOrCb?: Record<string, unknown> | ExecCallback,

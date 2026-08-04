@@ -25,6 +25,12 @@ import { ConfirmModal } from './SkillsManagerView';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
+// Rendering a streamed response means repeatedly parsing all text received so
+// far and replacing the bubble's DOM. Keep this comfortably below the display
+// refresh rate: at 80ms, a long response could trigger 12.5 complete Markdown
+// parses (plus DOM rebuilds) per second.
+const STREAMING_RENDER_INTERVAL_MS = 250;
+
 export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
@@ -33,6 +39,12 @@ export class ThreadsView extends ItemView {
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
   private streamingRenderTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A render is queued whenever new streamed text arrives. */
+  private streamingRenderDirty = false;
+  /** Prevent async Markdown parses from overlapping on long responses. */
+  private streamingRenderInFlight = false;
+  /** Invalidates an async render after its streaming bubble has been removed. */
+  private streamingRenderGeneration = 0;
   // Lazily-created wrapper for the live (in-progress) turn's tool-call pills/groups.
   // Only created the first time there's an actual tool call to show (see
   // ensureStreamingToolsEl) — .ct-tools carries a non-zero margin-bottom, so
@@ -2003,7 +2015,11 @@ export class ThreadsView extends ItemView {
       }
     }
 
-    if (this.manager.isRunning(this.activeThreadId)) {
+    const streamingBuffer = this.streamingBuffers.get(this.activeThreadId);
+    // A buffered token/tool event is also evidence of a live turn. The session
+    // registry can briefly report idle while a view switch is in flight, and
+    // gating solely on isRunning() would drop that turn's restored tool UI.
+    if (this.manager.isRunning(this.activeThreadId) || streamingBuffer) {
       // The tail row (post-merge) may still be an open, growing run — seed the
       // in-place-extension tracking fields so the next live 'message' event
       // recognizes it as "extend this row" rather than fragmenting a fresh one.
@@ -2013,7 +2029,7 @@ export class ThreadsView extends ItemView {
         this.lastAppendedRowId = lastRow.id;
         this.lastAppendedRowEl = lastRenderedRowEl;
       }
-      const buf = this.streamingBuffers.get(this.activeThreadId!);
+      const buf = streamingBuffer;
       // Use the sub-agent label if the thread is waiting on a sub-agent, otherwise
       // the default "Claude is thinking" placeholder.
       this.createStreamingEl(buf?.subagentLabel ?? 'Claude is thinking');
@@ -2028,7 +2044,7 @@ export class ThreadsView extends ItemView {
         // Restore accumulated text and re-render it into the streaming bubble.
         if (buf.content) {
           this.streamingContent = buf.content;
-          void this.renderStreamingContent();
+          this.scheduleStreamingRender();
         }
       }
     }
@@ -2911,27 +2927,44 @@ export class ThreadsView extends ItemView {
       clearTimeout(this.liveToolsRenderTimer);
       this.liveToolsRenderTimer = null;
     }
+    this.streamingRenderGeneration++;
+    this.streamingRenderDirty = false;
     this.streamingContent = '';
     this.streamingContentEl = null;
     this.streamingToolsEl = null;
   }
 
   private scheduleStreamingRender(): void {
-    if (this.streamingRenderTimer !== null) clearTimeout(this.streamingRenderTimer);
+    this.streamingRenderDirty = true;
+    if (this.streamingRenderTimer !== null || this.streamingRenderInFlight) return;
     this.streamingRenderTimer = setTimeout(() => {
       this.streamingRenderTimer = null;
-      this.renderStreamingContent();
-    }, 80);
+      void this.renderStreamingContent();
+    }, STREAMING_RENDER_INTERVAL_MS);
   }
 
   private async renderStreamingContent(): Promise<void> {
-    if (!this.streamingEl || !this.streamingContentEl) return;
+    if (this.streamingRenderInFlight || !this.streamingRenderDirty || !this.streamingEl || !this.streamingContentEl) return;
+    this.streamingRenderDirty = false;
+    this.streamingRenderInFlight = true;
+    const generation = this.streamingRenderGeneration;
+    const contentEl = this.streamingContentEl;
     const content = this.streamingContent;
-    this.streamingContentEl.empty();
-    await this.renderMarkdown(content, this.streamingContentEl);
-    // Keep cursor inside the bubble after each re-render
-    this.streamingContentEl.createSpan({ cls: 'ct-cursor' });
-    this.scrollToBottom();
+    try {
+      contentEl.empty();
+      await this.renderMarkdown(content, contentEl);
+      // The user may have switched threads or the turn may have completed
+      // while marked.parse() was pending. Never update or scroll a stale view.
+      if (generation !== this.streamingRenderGeneration || contentEl !== this.streamingContentEl) return;
+      // Keep cursor inside the bubble after each re-render.
+      contentEl.createSpan({ cls: 'ct-cursor' });
+      this.scrollToBottom();
+    } finally {
+      this.streamingRenderInFlight = false;
+      // Tokens that arrived during the async parse are rendered in the next
+      // throttled pass, rather than starting a competing full DOM rebuild.
+      if (this.streamingRenderDirty) this.scheduleStreamingRender();
+    }
   }
 
   private handleEvent(event: ThreadEvent): void {
@@ -4764,6 +4797,3 @@ class ForkModal extends Modal {
     this.contentEl.empty();
   }
 }
-
-
-
