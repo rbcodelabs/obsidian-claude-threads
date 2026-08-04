@@ -49,5 +49,27 @@ export interface ClaudeHarnessOptions {
 
 /** Codex-specific transport settings; kept separate as its app-server grows. */
 export interface CodexHarnessOptions {
-  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  approvalPolicy: 'untrusted' | 'on-request' | 'never';
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+}
+
+/**
+ * Translate the plugin's shared permission vocabulary to Codex app-server
+ * controls. Plan mode is enforced by a read-only sandbox; Claude retains its
+ * richer native plan-mode protocol in its own adapter.
+ */
+export function resolveCodexPermissions(mode: Options['permissionMode']): CodexHarnessOptions {
+  switch (mode) {
+    case 'default':
+      return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' };
+    case 'plan':
+      return { approvalPolicy: 'on-request', sandbox: 'read-only' };
+    case 'bypassPermissions':
+    case 'dontAsk':
+      return { approvalPolicy: 'never', sandbox: 'workspace-write' };
+    case 'acceptEdits':
+    case 'auto':
+    default:
+      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' };
+  }
 }

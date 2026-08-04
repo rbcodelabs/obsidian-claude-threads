@@ -1,6 +1,6 @@
 import { type SessionCallbacks, type TaskTrackerEvent } from './ThreadSession';
 import { createHarnessSession } from './HarnessFactory';
-import type { HarnessSession, HarnessSessionOptions } from './HarnessSession';
+import { resolveCodexPermissions, type HarnessSession, type HarnessSessionOptions } from './HarnessSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
@@ -1078,7 +1078,7 @@ export class ThreadManager {
         disallowedTools: this.settings.disallowedTools,
         sessionOptions: this.buildSessionOptions(thread),
       },
-      codex: { sandbox: 'workspace-write' },
+      codex: resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
     };
   }
 

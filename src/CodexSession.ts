@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import type { ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
-import type { HarnessSessionOptions } from './HarnessSession';
+import { resolveCodexPermissions, type HarnessSessionOptions } from './HarnessSession';
 
 /**
  * Thin JSON-RPC client for `codex app-server --stdio`.
@@ -66,8 +66,8 @@ export class CodexSession {
           cwd: options.cwd,
           runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
           model: options.model ?? null,
-          approvalPolicy: this.approvalPolicy(options.permissionMode),
-          sandbox: options.codex?.sandbox ?? 'workspace-write',
+          approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
+          sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         });
       } catch (error) {
         console.warn('[ClaudeThreads] Could not resume Codex thread; starting a new one:', error);
@@ -78,8 +78,8 @@ export class CodexSession {
         cwd: options.cwd,
         runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
         model: options.model ?? null,
-        approvalPolicy: this.approvalPolicy(options.permissionMode),
-        sandbox: options.codex?.sandbox ?? 'workspace-write',
+        approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
+        sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: options.appendSystemPrompt || null,
       });
     }
@@ -93,7 +93,12 @@ export class CodexSession {
 
   async setPermissionMode(mode: any): Promise<void> {
     if (!this.codexThreadId) return;
-    await this.request('thread/settings/update', { threadId: this.codexThreadId, approvalPolicy: this.approvalPolicy(mode) });
+    const permissions = resolveCodexPermissions(mode);
+    await this.request('thread/settings/update', {
+      threadId: this.codexThreadId,
+      approvalPolicy: permissions.approvalPolicy,
+      sandboxPolicy: this.sandboxPolicy(permissions.sandbox),
+    });
   }
 
   send(text: string, images?: ImageAttachment[]): void {
@@ -133,8 +138,16 @@ export class CodexSession {
 
   async getContextUsage(): Promise<null> { return null; }
 
-  private approvalPolicy(mode: string | undefined): 'on-request' | 'never' {
-    return mode === 'bypassPermissions' || mode === 'dontAsk' ? 'never' : 'on-request';
+  private sandboxPolicy(sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'): Record<string, unknown> {
+    if (sandbox === 'read-only') return { type: 'readOnly', networkAccess: false };
+    if (sandbox === 'danger-full-access') return { type: 'dangerFullAccess' };
+    return {
+      type: 'workspaceWrite',
+      writableRoots: this.options?.additionalDirectories ?? (this.options?.cwd ? [this.options.cwd] : []),
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    };
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<any> {
