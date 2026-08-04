@@ -4,7 +4,6 @@ import {
   type Query,
   type CanUseTool,
   type SDKUserMessage,
-  type McpServerConfig,
   type PermissionMode,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ToolCallRecord, ImageAttachment } from './types';
@@ -19,6 +18,7 @@ import { formatToolName, getToolIcon } from './toolNameUtils';
 import { type SessionCallbacks, type TaskTrackerEvent } from './ClaudeSession';
 export { formatToolName, getToolIcon };
 export type { SessionCallbacks, TaskTrackerEvent };
+import type { HarnessSessionOptions } from './HarnessSession';
 import {
   isTransportClosedError,
   shouldAutoRetryTransportError,
@@ -39,30 +39,8 @@ import {
  * generator is safe unconditionally, mid-turn or not, so there is no
  * per-turn "build a new prompt" step the way `ClaudeSession.run()` had one).
  */
-export interface ThreadSessionOptions {
-  claudePath: string;
-  cwd: string;
-  permissionMode: Options['permissionMode'];
-  extraEnvRaw: string;
-  /** SDK session id to resume, if any (e.g. a previously-persisted `thread.sessionId`). */
-  resume?: string;
-  callbacks: SessionCallbacks;
-  additionalDirectories?: string[];
-  model?: string;
-  appendSystemPrompt?: string;
-  mcpServers?: Record<string, McpServerConfig>;
-  secretEnv?: Record<string, string>;
-  disallowedTools?: string[];
-  sessionOptions?: {
-    thinking?: Options['thinking'];
-    effort?: Options['effort'];
-    agentProgressSummaries?: boolean;
-    betas?: import('@anthropic-ai/claude-agent-sdk').SdkBeta[];
-    persistSession?: boolean;
-    plugins?: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[];
-    agents?: Record<string, import('@anthropic-ai/claude-agent-sdk').AgentDefinition>;
-  };
-}
+/** @deprecated Use HarnessSessionOptions for harness-neutral callers. */
+export type ThreadSessionOptions = HarnessSessionOptions;
 
 export type RestartReason = 'cwd-change' | 'transport-error' | 'init-options-change' | 'rate-limit';
 
@@ -303,9 +281,10 @@ export class ThreadSession {
     if (options.additionalDirectories?.length) sdkOptions.additionalDirectories = options.additionalDirectories;
     if (options.model) sdkOptions.model = options.model;
     if (options.appendSystemPrompt) sdkOptions.extraArgs = { 'append-system-prompt': options.appendSystemPrompt };
-    if (options.mcpServers && Object.keys(options.mcpServers).length) {
-      sdkOptions.mcpServers = options.mcpServers;
-      const mcpDebug = Object.entries(options.mcpServers).map(([k, v]) => ({
+    const claude = options.claude;
+    if (claude?.mcpServers && Object.keys(claude.mcpServers).length) {
+      sdkOptions.mcpServers = claude.mcpServers;
+      const mcpDebug = Object.entries(claude.mcpServers).map(([k, v]) => ({
         serverName: k,
         type: (v as unknown as Record<string, unknown>).type,
         hasInstance: 'instance' in v,
@@ -314,15 +293,15 @@ export class ThreadSession {
     } else {
       console.warn('[ClaudeThreads] No MCP servers for this thread session — Obsidian tools will be unavailable');
     }
-    if (options.disallowedTools?.length) sdkOptions.disallowedTools = options.disallowedTools;
-    if (options.sessionOptions?.thinking) sdkOptions.thinking = options.sessionOptions.thinking;
-    if (options.sessionOptions?.effort) sdkOptions.effort = options.sessionOptions.effort;
-    if (options.sessionOptions?.agentProgressSummaries !== undefined) sdkOptions.agentProgressSummaries = options.sessionOptions.agentProgressSummaries;
-    if (options.sessionOptions?.betas?.length) sdkOptions.betas = options.sessionOptions.betas;
-    if (options.sessionOptions?.persistSession === false) sdkOptions.persistSession = false;
-    if (options.sessionOptions?.plugins?.length) sdkOptions.plugins = options.sessionOptions.plugins;
-    if (options.sessionOptions?.agents && Object.keys(options.sessionOptions.agents).length > 0) {
-      sdkOptions.agents = { ...sdkOptions.agents, ...options.sessionOptions.agents };
+    if (claude?.disallowedTools?.length) sdkOptions.disallowedTools = claude.disallowedTools;
+    if (claude?.sessionOptions?.thinking) sdkOptions.thinking = claude.sessionOptions.thinking;
+    if (claude?.sessionOptions?.effort) sdkOptions.effort = claude.sessionOptions.effort;
+    if (claude?.sessionOptions?.agentProgressSummaries !== undefined) sdkOptions.agentProgressSummaries = claude.sessionOptions.agentProgressSummaries;
+    if (claude?.sessionOptions?.betas?.length) sdkOptions.betas = claude.sessionOptions.betas;
+    if (claude?.sessionOptions?.persistSession === false) sdkOptions.persistSession = false;
+    if (claude?.sessionOptions?.plugins?.length) sdkOptions.plugins = claude.sessionOptions.plugins;
+    if (claude?.sessionOptions?.agents && Object.keys(claude.sessionOptions.agents).length > 0) {
+      sdkOptions.agents = { ...sdkOptions.agents, ...claude.sessionOptions.agents };
     }
     if (callbacks.onElicitation) {
       sdkOptions.onElicitation = (request, opts) => callbacks.onElicitation!(request, opts.signal);

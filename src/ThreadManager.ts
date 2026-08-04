@@ -1,5 +1,6 @@
-import { ThreadSession, type SessionCallbacks, type TaskTrackerEvent, type ThreadSessionOptions } from './ThreadSession';
-import { CodexSession } from './CodexSession';
+import { type SessionCallbacks, type TaskTrackerEvent } from './ThreadSession';
+import { createHarnessSession } from './HarnessFactory';
+import type { HarnessSession, HarnessSessionOptions } from './HarnessSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
@@ -114,7 +115,7 @@ export class ThreadManager {
    * down — `session.turnInFlight` (see `isRunning()`) is what distinguishes
    * "busy right now" from "warm but idle."
    */
-  private sessions: Map<string, ThreadSession | CodexSession> = new Map();
+  private sessions: Map<string, HarnessSession> = new Map();
   /**
    * Per-thread accumulator for inline images returned by a tool result,
    * flushed onto the next assistant message. Previously a local variable
@@ -867,9 +868,7 @@ export class ThreadManager {
     }
     const isNewSession = !session;
     if (!session) {
-      session = thread.agentHarness === 'codex'
-        ? new CodexSession(this.settings.codexBinaryPath)
-        : new ThreadSession(this.settings.claudeBinaryPath);
+      session = createHarnessSession(thread, this.settings);
       this.sessions.set(threadId, session);
     }
 
@@ -1019,7 +1018,7 @@ export class ThreadManager {
    * null if the thread's cwd is missing and couldn't be repaired (an
    * 'error' event has already been emitted in that case).
    */
-  private buildThreadSessionOptions(threadId: string, thread: Thread, modelOverride?: string): ThreadSessionOptions | null {
+  private buildThreadSessionOptions(threadId: string, thread: Thread, modelOverride?: string): HarnessSessionOptions | null {
     if (!this.ensureCwdExists(threadId, thread)) return null;
 
     const additionalDirs = [...new Set([this.vaultRoot, thread.cwd].filter(Boolean))];
@@ -1050,7 +1049,6 @@ export class ThreadManager {
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
     return {
-      claudePath: this.settings.claudeBinaryPath,
       cwd: thread.cwd,
       permissionMode: thread.permissionMode ?? this.settings.permissionMode,
       extraEnvRaw: effectiveExtraEnv(this.settings),
@@ -1074,10 +1072,13 @@ export class ThreadManager {
       // keyword to apply.
       model: modelOverride ?? thread.model ?? (this.settings.defaultModel || undefined),
       appendSystemPrompt,
-      mcpServers: sessionMcpServers,
       secretEnv: resolvedSecretEnv,
-      disallowedTools: this.settings.disallowedTools,
-      sessionOptions: this.buildSessionOptions(thread),
+      claude: {
+        mcpServers: sessionMcpServers,
+        disallowedTools: this.settings.disallowedTools,
+        sessionOptions: this.buildSessionOptions(thread),
+      },
+      codex: { sandbox: 'workspace-write' },
     };
   }
 
@@ -1533,7 +1534,7 @@ export class ThreadManager {
   }
 
   /** Build the sessionOptions object from plugin settings (and thread-level overrides). */
-  private buildSessionOptions(thread: Thread): ThreadSessionOptions['sessionOptions'] {
+  private buildSessionOptions(thread: Thread): NonNullable<HarnessSessionOptions['claude']>['sessionOptions'] {
     const s = this.settings;
     const opts: {
       thinking?: Options['thinking'];

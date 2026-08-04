@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import type { ImageAttachment } from './types';
+import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
-import type { ThreadSessionOptions } from './ThreadSession';
+import type { HarnessSessionOptions } from './HarnessSession';
 
 /**
  * Thin JSON-RPC client for `codex app-server --stdio`.
@@ -17,7 +18,7 @@ export class CodexSession {
   private buffer = '';
   private nextId = 1;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
-  private options: ThreadSessionOptions | null = null;
+  private options: HarnessSessionOptions | null = null;
   private codexThreadId: string | undefined;
   private _turnInFlight = false;
   private closed = true;
@@ -31,13 +32,13 @@ export class CodexSession {
   get hasPendingPermission(): boolean { return false; }
   canIdleReap(): boolean { return !this._turnInFlight; }
 
-  async start(options: ThreadSessionOptions): Promise<void> {
+  async start(options: HarnessSessionOptions): Promise<void> {
     this.close();
     this.options = options;
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
-      env: { ...process.env },
+      env: { ...process.env, ...parseExtraEnv(options.extraEnvRaw), ...(options.secretEnv ?? {}) },
       stdio: 'pipe',
     });
     this.process.stdout.on('data', (chunk: Buffer) => this.consume(chunk.toString()));
@@ -63,9 +64,10 @@ export class CodexSession {
         result = await this.request('thread/resume', {
           threadId: savedCodexThread,
           cwd: options.cwd,
+          runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
           model: options.model ?? null,
           approvalPolicy: this.approvalPolicy(options.permissionMode),
-          sandbox: 'workspace-write',
+          sandbox: options.codex?.sandbox ?? 'workspace-write',
         });
       } catch (error) {
         console.warn('[ClaudeThreads] Could not resume Codex thread; starting a new one:', error);
@@ -74,9 +76,10 @@ export class CodexSession {
     if (!result) {
       result = await this.request('thread/start', {
         cwd: options.cwd,
+        runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
         model: options.model ?? null,
         approvalPolicy: this.approvalPolicy(options.permissionMode),
-        sandbox: 'workspace-write',
+        sandbox: options.codex?.sandbox ?? 'workspace-write',
         developerInstructions: options.appendSystemPrompt || null,
       });
     }

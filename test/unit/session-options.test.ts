@@ -10,7 +10,7 @@
  *
  * Strategy: ThreadManager.buildSessionOptions is private, so we test it
  * indirectly by spying on ThreadSession.start and capturing the
- * options.sessionOptions object.
+ * options.claude.sessionOptions object.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -38,7 +38,7 @@ vi.mock('../../src/ThreadSession', () => ({
     async start(options: ThreadSessionOptions): Promise<void> {
       mock.startCallCount += 1;
       mock.lastKnownSessionId = options.resume;
-      mock.sessionOptions = (options.sessionOptions as Record<string, unknown>) ?? null;
+      mock.sessionOptions = (options.claude?.sessionOptions as Record<string, unknown>) ?? null;
       mock.permissionMode = options.permissionMode as string;
       const raw = options.callbacks;
       mock.callbacks = {
@@ -94,7 +94,7 @@ beforeEach(() => {
 
 // ─── thinkingMode ─────────────────────────────────────────────────────────────
 
-describe('thinkingMode → sessionOptions.thinking', () => {
+describe('thinkingMode → claude.sessionOptions.thinking', () => {
   it("'disabled' does NOT pass thinking key", async () => {
     const manager = makeManager({ thinkingMode: 'disabled' });
     const thread = manager.createThread('T');
@@ -135,7 +135,7 @@ describe('thinkingMode → sessionOptions.thinking', () => {
 
 // ─── effort ──────────────────────────────────────────────────────────────────
 
-describe('effort → sessionOptions.effort', () => {
+describe('effort → claude.sessionOptions.effort', () => {
   it("'default' does NOT pass effort key", async () => {
     const manager = makeManager({ effort: 'default' });
     const thread = manager.createThread('T');
@@ -171,7 +171,7 @@ describe('effort → sessionOptions.effort', () => {
 
 // ─── agentProgressSummaries ───────────────────────────────────────────────────
 
-describe('agentProgressSummaries → sessionOptions', () => {
+describe('agentProgressSummaries → claude.sessionOptions', () => {
   it('passes agentProgressSummaries: true when enabled', async () => {
     const manager = makeManager({ agentProgressSummaries: true });
     const thread = manager.createThread('T');
@@ -191,7 +191,7 @@ describe('agentProgressSummaries → sessionOptions', () => {
 
 // ─── enable1MContext ──────────────────────────────────────────────────────────
 
-describe('enable1MContext → sessionOptions.betas', () => {
+describe('enable1MContext → claude.sessionOptions.betas', () => {
   it("passes betas: ['context-1m-2025-08-07'] when enable1MContext is true", async () => {
     const manager = makeManager({ enable1MContext: true });
     const thread = manager.createThread('T');
@@ -211,7 +211,7 @@ describe('enable1MContext → sessionOptions.betas', () => {
 
 // ─── ephemeral thread ─────────────────────────────────────────────────────────
 
-describe('Thread.ephemeral → sessionOptions.persistSession', () => {
+describe('Thread.ephemeral → claude.sessionOptions.persistSession', () => {
   it('passes persistSession: false when thread.ephemeral is true', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T');
