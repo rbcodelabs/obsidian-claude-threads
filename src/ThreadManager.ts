@@ -1,4 +1,5 @@
 import { ThreadSession, type SessionCallbacks, type TaskTrackerEvent, type ThreadSessionOptions } from './ThreadSession';
+import { CodexSession } from './CodexSession';
 import { RawLogWriter } from './RawLogWriter';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
@@ -113,7 +114,7 @@ export class ThreadManager {
    * down — `session.turnInFlight` (see `isRunning()`) is what distinguishes
    * "busy right now" from "warm but idle."
    */
-  private sessions: Map<string, ThreadSession> = new Map();
+  private sessions: Map<string, ThreadSession | CodexSession> = new Map();
   /**
    * Per-thread accumulator for inline images returned by a tool result,
    * flushed onto the next assistant message. Previously a local variable
@@ -280,6 +281,8 @@ export class ThreadManager {
 
   loadThreads(threads: Thread[]): void {
     for (const t of threads) {
+      // Threads saved before multi-harness support are Claude sessions.
+      if (!t.agentHarness) t.agentHarness = 'claude';
       // Migrate threads persisted before status was introduced.
       if (!t.status) t.status = 'waiting';
       // Migrate threads persisted before updatedAt was introduced so that the
@@ -313,6 +316,7 @@ export class ThreadManager {
       updatedAt: Date.now(),
       projectId,
       status: 'waiting',
+      agentHarness: this.settings.agentHarness,
     };
     this.threads.set(thread.id, thread);
     this.emit(thread.id, { type: 'thread_created' });
@@ -863,7 +867,9 @@ export class ThreadManager {
     }
     const isNewSession = !session;
     if (!session) {
-      session = new ThreadSession(this.settings.claudeBinaryPath);
+      session = thread.agentHarness === 'codex'
+        ? new CodexSession(this.settings.codexBinaryPath)
+        : new ThreadSession(this.settings.claudeBinaryPath);
       this.sessions.set(threadId, session);
     }
 
@@ -904,7 +910,16 @@ export class ThreadManager {
     }
 
     if (isNewSession) {
-      await session.start(options);
+      try {
+        await session.start(options);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        thread.status = 'error';
+        thread.lastError = error.message;
+        this.emit(threadId, { type: 'error', error });
+        this.sessions.delete(threadId);
+        return;
+      }
     } else {
       // ADR-0002 §2: model/permission-mode changes are a direct
       // control-request on the live Query instead of a full session
@@ -1039,6 +1054,8 @@ export class ThreadManager {
       cwd: thread.cwd,
       permissionMode: thread.permissionMode ?? this.settings.permissionMode,
       extraEnvRaw: effectiveExtraEnv(this.settings),
+      // Session IDs are harness-specific. Existing threads predate the field
+      // and are Claude threads, so they never get passed to Codex.
       resume: thread.sessionId,
       callbacks: this.buildSessionCallbacks(threadId, thread),
       additionalDirectories: additionalDirs,
@@ -1842,4 +1859,3 @@ function buildEnvironmentSystemPrompt(
 
   return lines.join('\n');
 }
-

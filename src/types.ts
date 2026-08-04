@@ -130,6 +130,9 @@ export interface GitDiffInfo {
 export interface Thread {
   id: string;
   sessionId?: string;
+  /** Harness that owns this thread's persisted session ID. Kept per-thread so
+   * switching the default never attempts to resume a Claude session in Codex. */
+  agentHarness?: 'claude' | 'codex';
   title: string;
   cwd: string;
   /**
@@ -430,6 +433,10 @@ export type ProviderMode = 'claude' | 'bedrock';
 
 export interface PluginSettings {
   claudeBinaryPath: string;
+  /** Which local coding-agent harness new threads use. */
+  agentHarness: 'claude' | 'codex';
+  /** Path to the Codex CLI executable (the app-server is launched from it). */
+  codexBinaryPath: string;
   defaultCwd: string;
   saveThreadsToVault: boolean;
   /**
@@ -558,6 +565,8 @@ export interface PluginSettings {
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   claudeBinaryPath: '/opt/homebrew/bin/claude',
+  agentHarness: 'claude',
+  codexBinaryPath: 'codex',
   defaultCwd: '',
   saveThreadsToVault: true,
   saveRawLogs: true,

@@ -2,7 +2,7 @@
 
 A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.22.1-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.23.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -64,6 +64,8 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
   - The plugin auto-detects `claude` at `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, or `~/.local/bin/claude`
   - AWS Bedrock / SSO users: set `AWS_PROFILE` and `AWS_REGION` in the plugin's Extra Environment Variables setting
+- Or [OpenAI Codex CLI](https://developers.openai.com/codex/cli/) installed and authenticated
+  - Select **OpenAI Codex** in Settings → Agent → Agent harness. The plugin launches Codex's local app-server, so its threads retain Codex session history, streaming output, tool visibility, interruption, and approval prompts.
 
 ## Roadmap
 
@@ -87,6 +89,10 @@ Vote on upcoming features and see what's in progress at the [public roadmap](htt
 ## Usage
 
 Click the **message-square** icon in the left ribbon, or run **Open Claude Threads** from the command palette.
+
+### Agent harnesses
+
+New threads use the harness selected in **Settings → Agent → Agent harness**. A thread remembers the harness that created it, so changing the default never mixes Claude and Codex session IDs. Codex uses the `codex` executable on your PATH by default; set a custom path in the same settings panel when needed. Claude-only features that depend on the Claude Agent SDK (such as Claude skills and Claude-specific task boards) remain available to Claude threads.
 
 ### Tabs
 

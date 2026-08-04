@@ -3,7 +3,11 @@
 type ExecCallback = (err: Error | null, stdout: string, stderr: string) => void;
 
 interface StubChildProcess {
-  stdin: { write: (_data: string) => void; end: () => void };
+  stdin: { writable: boolean; write: (_data: string) => void; end: () => void };
+  stdout: { on: (_event: string, _listener: (...args: unknown[]) => void) => void };
+  stderr: { on: (_event: string, _listener: (...args: unknown[]) => void) => void };
+  on: (_event: string, _listener: (...args: unknown[]) => void) => void;
+  kill: () => void;
 }
 
 export const exec = (
@@ -15,8 +19,22 @@ export const exec = (
   const callback = typeof _optsOrCb === 'function' ? _optsOrCb : _cb;
   // Invoke asynchronously so callers can chain .stdin before the callback fires
   if (callback) setTimeout(() => callback(null, '', ''), 0);
-  return { stdin: { write: () => {}, end: () => {} } };
+  return stubProcess();
 };
+
+/** Browser-harness stand-in for sessions that launch a local agent process. */
+export const spawn = (_command: string, _args?: string[], _options?: Record<string, unknown>): StubChildProcess => stubProcess();
+
+function stubProcess(): StubChildProcess {
+  const stream = { on: () => {} };
+  return {
+    stdin: { writable: true, write: () => {}, end: () => {} },
+    stdout: stream,
+    stderr: stream,
+    on: () => {},
+    kill: () => {},
+  };
+}
 
 /**
  * Stub for the synchronous git-shelling calls in skillManager.ts (staleness
