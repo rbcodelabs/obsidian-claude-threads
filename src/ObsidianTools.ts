@@ -2301,22 +2301,23 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
 /** Adapts the canonical Obsidian MCP definitions to host-native tool calls. */
 function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynamicTool[] {
-  // Codex receives the safe discovery/read subset by default. Mutating tools
-  // require a dedicated approval boundary before they can be exposed through
-  // a non-MCP host callback.
-  const safeToolNames = new Set([
+  // Reuse the canonical MCP definitions for every harness. The conservative
+  // read-only set bypasses prompts; every other operation is presented through
+  // the same SessionCallbacks.onPermissionRequest UI Claude already uses.
+  const readOnlyToolNames = new Set([
     'obsidian_get_open_tabs', 'obsidian_get_active_file', 'obsidian_search_vault',
     'obsidian_get_backlinks', 'obsidian_get_outgoing_links', 'obsidian_get_note_metadata',
     'obsidian_list_commands', 'obsidian_get_current_thread', 'obsidian_list_threads',
     'obsidian_list_projects', 'obsidian_get_thread_messages', 'obsidian_get_thread_log',
-    'obsidian_list_vault_bridges', 'obsidian_get_file_history', 'cron_list',
+    'obsidian_list_vault_bridges', 'obsidian_get_file_history', 'CronList',
     'skills_list_installed', 'skills_search', 'skills_get', 'skills_list_sources',
     'skills_check_updates',
   ]);
-  return tools.filter((toolDefinition) => safeToolNames.has(toolDefinition.name)).map((toolDefinition) => ({
+  return tools.map((toolDefinition) => ({
     name: toolDefinition.name,
     description: toolDefinition.description,
     inputSchema: z.toJSONSchema(z.object(toolDefinition.inputSchema)) as Record<string, unknown>,
+    requiresApproval: !readOnlyToolNames.has(toolDefinition.name),
     async invoke(args: Record<string, unknown>) {
       try {
         const result = await toolDefinition.handler(args as never, {});

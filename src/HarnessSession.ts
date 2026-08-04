@@ -59,7 +59,29 @@ export interface HarnessDynamicTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Whether this host operation changes state or needs an explicit user decision. */
+  requiresApproval: boolean;
   invoke(args: Record<string, unknown>): Promise<{ success: boolean; text: string }>;
+}
+
+/** The shared permission-mode behavior for host-owned dynamic tools. */
+export function resolveDynamicToolApproval(
+  mode: Options['permissionMode'],
+  requiresApproval: boolean,
+): 'allow' | 'deny' | 'prompt' {
+  if (!requiresApproval) return 'allow';
+  switch (mode) {
+    case 'plan':
+    case 'dontAsk':
+      return 'deny';
+    case 'bypassPermissions':
+    case 'auto':
+      return 'allow';
+    case 'default':
+    case 'acceptEdits':
+    default:
+      return 'prompt';
+  }
 }
 
 /**

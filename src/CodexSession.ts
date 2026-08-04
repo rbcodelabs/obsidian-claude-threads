@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import type { ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
-import { resolveCodexPermissions, type HarnessSessionOptions } from './HarnessSession';
+import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
 
 /**
  * Thin JSON-RPC client for `codex app-server --stdio`.
@@ -242,7 +242,16 @@ export class CodexSession {
         this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Unknown Obsidian tool: ${params.tool}` }] });
         return;
       }
-      dynamicTool.invoke((params.arguments ?? {}) as Record<string, unknown>)
+      const args = (params.arguments ?? {}) as Record<string, unknown>;
+      const approval = resolveDynamicToolApproval(this.options?.permissionMode ?? 'default', dynamicTool.requiresApproval);
+      if (approval === 'deny') {
+        this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: `${dynamicTool.name} is unavailable in the current permission mode.` }],
+        });
+        return;
+      }
+      const invoke = () => dynamicTool.invoke(args)
         .then((result) => this.respond(message.id, {
           success: result.success,
           contentItems: [{ type: 'inputText', text: result.text }],
@@ -251,6 +260,21 @@ export class CodexSession {
           success: false,
           contentItems: [{ type: 'inputText', text: error instanceof Error ? error.message : String(error) }],
         }));
+      if (approval === 'prompt') {
+        const detail = `${dynamicTool.description}\n\nArguments:\n${JSON.stringify(args, null, 2)}`;
+        if (!callbacks) {
+          this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });
+          return;
+        }
+        callbacks.onPermissionRequest(`Obsidian: ${dynamicTool.name}`, detail)
+          .then((allow) => {
+            if (allow) invoke();
+            else this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });
+          })
+          .catch(() => this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] }));
+      } else {
+        invoke();
+      }
       return;
     }
     const isApproval = /requestApproval$/.test(message.method);
