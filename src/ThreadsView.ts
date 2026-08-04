@@ -251,7 +251,7 @@ export class ThreadsView extends ItemView {
 
   // Ordered list for the footer model switcher menu. `value: undefined` means
   // "use the global default" (clears the per-thread override).
-  private static readonly MODEL_OPTIONS: Array<{ label: string; value: string | undefined }> = [
+  private static readonly CLAUDE_MODEL_OPTIONS: Array<{ label: string; value: string | undefined }> = [
     { label: 'Default', value: undefined },
     { label: 'Opus', value: 'opus' },
     { label: 'Sonnet', value: 'sonnet' },
@@ -1565,7 +1565,11 @@ export class ThreadsView extends ItemView {
     if (!this.activeThreadId) return;
     const current = this.currentModel();
     const menu = new Menu();
-    for (const opt of ThreadsView.MODEL_OPTIONS) {
+    const thread = this.manager.getThread(this.activeThreadId);
+    const options = thread?.agentHarness === 'codex'
+      ? [{ label: 'Default', value: undefined }, ...this.plugin.discoveredModelsByHarness.codex.map((m) => ({ label: m.displayName, value: m.value }))]
+      : ThreadsView.CLAUDE_MODEL_OPTIONS;
+    for (const opt of options) {
       menu.addItem(item => {
         item
           .setTitle(opt.label)
@@ -3576,10 +3580,14 @@ export class ThreadsView extends ItemView {
         // Merge into the plugin-level list (deduplicated by value) so that
         // SettingsTab can build dynamic model dropdowns from discovered models.
         if (event.models.length > 0) {
-          const existing = new Set(this.plugin.discoveredModels.map((m) => m.value));
+          const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : undefined;
+          const harness = thread?.agentHarness ?? 'claude';
+          const harnessModels = this.plugin.discoveredModelsByHarness[harness];
+          const existing = new Set(harnessModels.map((m) => m.value));
           for (const m of event.models) {
             if (!existing.has(m.value)) {
-              this.plugin.discoveredModels.push(m);
+              harnessModels.push(m);
+              if (harness === 'claude') this.plugin.discoveredModels.push(m);
               existing.add(m.value);
             }
           }
@@ -4312,13 +4320,25 @@ export class ThreadsView extends ItemView {
         this.scrollToBottom();
         return;
       }
-      if (!(arg in MODEL_ALIASES)) {
+      const activeThread = this.manager.getThread(this.activeThreadId);
+      const isCodex = activeThread?.agentHarness === 'codex';
+      const codexModel = isCodex
+        ? this.plugin.discoveredModelsByHarness.codex.find((model) => model.value.toLowerCase() === arg)
+        : undefined;
+      if (isCodex && arg !== 'default' && !codexModel) {
+        const errEl = this.messagesEl.createDiv('ct-message ct-error');
+        const available = this.plugin.discoveredModelsByHarness.codex.map((model) => model.value).join(', ') || 'the Codex default (start a Codex thread to load its catalog)';
+        errEl.createEl('p', { text: `Unknown Codex model "${arg}". Available: ${available}` });
+        this.scrollToBottom();
+        return;
+      }
+      if (!isCodex && !(arg in MODEL_ALIASES)) {
         const errEl = this.messagesEl.createDiv('ct-message ct-error');
         errEl.createEl('p', { text: `Unknown model "${arg}". Use: fable, opus, sonnet, haiku, default` });
         this.scrollToBottom();
         return;
       }
-      const resolved = MODEL_ALIASES[arg];
+      const resolved = isCodex ? (arg === 'default' ? undefined : codexModel!.value) : MODEL_ALIASES[arg];
       this.manager.setThreadModel(this.activeThreadId, resolved);
       await this.plugin.saveSettings();
       const label = resolved ? `Model set to ${resolved}` : 'Model reset to default';

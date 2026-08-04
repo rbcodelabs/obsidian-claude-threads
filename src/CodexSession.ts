@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import type { ImageAttachment } from './types';
+import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
-import type { ThreadSessionOptions } from './ThreadSession';
+import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
 
 /**
  * Thin JSON-RPC client for `codex app-server --stdio`.
@@ -17,7 +18,7 @@ export class CodexSession {
   private buffer = '';
   private nextId = 1;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
-  private options: ThreadSessionOptions | null = null;
+  private options: HarnessSessionOptions | null = null;
   private codexThreadId: string | undefined;
   private _turnInFlight = false;
   private closed = true;
@@ -31,13 +32,13 @@ export class CodexSession {
   get hasPendingPermission(): boolean { return false; }
   canIdleReap(): boolean { return !this._turnInFlight; }
 
-  async start(options: ThreadSessionOptions): Promise<void> {
+  async start(options: HarnessSessionOptions): Promise<void> {
     this.close();
     this.options = options;
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
-      env: { ...process.env },
+      env: { ...process.env, ...parseExtraEnv(options.extraEnvRaw), ...(options.secretEnv ?? {}) },
       stdio: 'pipe',
     });
     this.process.stdout.on('data', (chunk: Buffer) => this.consume(chunk.toString()));
@@ -63,9 +64,10 @@ export class CodexSession {
         result = await this.request('thread/resume', {
           threadId: savedCodexThread,
           cwd: options.cwd,
+          runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
           model: options.model ?? null,
-          approvalPolicy: this.approvalPolicy(options.permissionMode),
-          sandbox: 'workspace-write',
+          approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
+          sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         });
       } catch (error) {
         console.warn('[ClaudeThreads] Could not resume Codex thread; starting a new one:', error);
@@ -74,13 +76,21 @@ export class CodexSession {
     if (!result) {
       result = await this.request('thread/start', {
         cwd: options.cwd,
+        runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
         model: options.model ?? null,
-        approvalPolicy: this.approvalPolicy(options.permissionMode),
-        sandbox: 'workspace-write',
+        approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
+        sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: options.appendSystemPrompt || null,
+        dynamicTools: options.codex?.dynamicTools?.map((tool) => ({
+          type: 'function',
+          name: tool.name,
+          description: tool.description,
+          inputSchema: tool.inputSchema,
+        })),
       });
     }
     this.codexThreadId = result.thread.id;
+    this.discoverModels();
   }
 
   async setModel(model: string | undefined): Promise<void> {
@@ -90,7 +100,12 @@ export class CodexSession {
 
   async setPermissionMode(mode: any): Promise<void> {
     if (!this.codexThreadId) return;
-    await this.request('thread/settings/update', { threadId: this.codexThreadId, approvalPolicy: this.approvalPolicy(mode) });
+    const permissions = resolveCodexPermissions(mode);
+    await this.request('thread/settings/update', {
+      threadId: this.codexThreadId,
+      approvalPolicy: permissions.approvalPolicy,
+      sandboxPolicy: this.sandboxPolicy(permissions.sandbox),
+    });
   }
 
   send(text: string, images?: ImageAttachment[]): void {
@@ -130,8 +145,27 @@ export class CodexSession {
 
   async getContextUsage(): Promise<null> { return null; }
 
-  private approvalPolicy(mode: string | undefined): 'on-request' | 'never' {
-    return mode === 'bypassPermissions' || mode === 'dontAsk' ? 'never' : 'on-request';
+  private discoverModels(): void {
+    this.request('model/list', { limit: 100 })
+      .then((result: { data?: Array<{ id?: string; displayName?: string; model?: string }> }) => {
+        const models = (result.data ?? [])
+          .map((model) => ({ value: model.id ?? model.model ?? '', displayName: model.displayName ?? model.id ?? model.model ?? '' }))
+          .filter((model) => model.value && model.displayName);
+        if (models.length > 0) this.options?.callbacks.onCapabilitiesDiscovered?.(models as any, []);
+      })
+      .catch((error) => console.warn('[ClaudeThreads] Could not list Codex models:', error));
+  }
+
+  private sandboxPolicy(sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'): Record<string, unknown> {
+    if (sandbox === 'read-only') return { type: 'readOnly', networkAccess: false };
+    if (sandbox === 'danger-full-access') return { type: 'dangerFullAccess' };
+    return {
+      type: 'workspaceWrite',
+      writableRoots: this.options?.additionalDirectories ?? (this.options?.cwd ? [this.options.cwd] : []),
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
+    };
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<any> {
@@ -202,6 +236,47 @@ export class CodexSession {
   private handleServerRequest(message: any): void {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
+    if (message.method === 'item/tool/call') {
+      const dynamicTool = this.options?.codex?.dynamicTools?.find((tool) => tool.name === params.tool);
+      if (!dynamicTool) {
+        this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Unknown Obsidian tool: ${params.tool}` }] });
+        return;
+      }
+      const args = (params.arguments ?? {}) as Record<string, unknown>;
+      const approval = resolveDynamicToolApproval(this.options?.permissionMode ?? 'default', dynamicTool.requiresApproval);
+      if (approval === 'deny') {
+        this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: `${dynamicTool.name} is unavailable in the current permission mode.` }],
+        });
+        return;
+      }
+      const invoke = () => dynamicTool.invoke(args)
+        .then((result) => this.respond(message.id, {
+          success: result.success,
+          contentItems: [{ type: 'inputText', text: result.text }],
+        }))
+        .catch((error) => this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: error instanceof Error ? error.message : String(error) }],
+        }));
+      if (approval === 'prompt') {
+        const detail = `${dynamicTool.description}\n\nArguments:\n${JSON.stringify(args, null, 2)}`;
+        if (!callbacks) {
+          this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });
+          return;
+        }
+        callbacks.onPermissionRequest(`Obsidian: ${dynamicTool.name}`, detail)
+          .then((allow) => {
+            if (allow) invoke();
+            else this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });
+          })
+          .catch(() => this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] }));
+      } else {
+        invoke();
+      }
+      return;
+    }
     const isApproval = /requestApproval$/.test(message.method);
     if (!callbacks || !isApproval) { this.respond(message.id, {}); return; }
     const detail = String(params.command ?? params.reason ?? 'Codex requests permission to continue');

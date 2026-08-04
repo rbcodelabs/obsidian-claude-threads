@@ -130,6 +130,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
    * dynamic model dropdowns. Deduplicated by model value across sessions.
    */
   discoveredModels: import('@anthropic-ai/claude-agent-sdk').ModelInfo[] = [];
+  /** Model catalogs are distinct: a Codex model ID must never populate a Claude picker (or vice versa). */
+  discoveredModelsByHarness: Record<'claude' | 'codex', import('@anthropic-ai/claude-agent-sdk').ModelInfo[]> = {
+    claude: [],
+    codex: [],
+  };
 
 
   // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).

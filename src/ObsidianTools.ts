@@ -3,6 +3,8 @@ import { z } from 'zod';
 // that crash in Electron's renderer context.
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk/browser';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import type { SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
+import type { HarnessDynamicTool } from './HarnessSession';
 import { App, TFile, normalizePath } from 'obsidian';
 import type { ScheduledItem } from './types';
 import type { SchedulerItemPatch } from './Scheduler';
@@ -305,7 +307,11 @@ export type CronUpdatePatch = SchedulerItemPatch;
  * Creates an MCP server config with Obsidian-specific tools bound to the given App instance.
  * Pass the result as `{ obsidian: createObsidianMcpServer(this.app) }` in the `mcpServers` option.
  */
-export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): McpSdkServerConfigWithInstance {
+export type ObsidianMcpServerWithHarnessTools = McpSdkServerConfigWithInstance & {
+  harnessTools?: HarnessDynamicTool[];
+};
+
+export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): ObsidianMcpServerWithHarnessTools {
   // ── In-session cwd tracking ────────────────────────────────────────────────
   // Unlike cwdAtStart in ThreadManager (which is frozen in the subprocess),
   // effectiveCwd is updated immediately by set_working_directory so worktree
@@ -2237,9 +2243,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     { alwaysLoad: true },
   );
 
-  return createSdkMcpServer({
-    name: 'obsidian',
-    tools: [
+  const tools: SdkMcpToolDefinition<any>[] = [
       boundGetOpenTabs,
       boundGetActiveFile,
       boundNavigateToFile,
@@ -2286,7 +2290,44 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundSkillsInstall,
       boundSkillsUninstall,
       boundSkillsUpdate,
-    ],
+    ];
+  const server = createSdkMcpServer({
+    name: 'obsidian',
+    tools,
     alwaysLoad: true,
   });
+  return Object.assign(server, { harnessTools: toHarnessDynamicTools(tools) });
+}
+
+/** Adapts the canonical Obsidian MCP definitions to host-native tool calls. */
+function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynamicTool[] {
+  // Reuse the canonical MCP definitions for every harness. The conservative
+  // read-only set bypasses prompts; every other operation is presented through
+  // the same SessionCallbacks.onPermissionRequest UI Claude already uses.
+  const readOnlyToolNames = new Set([
+    'obsidian_get_open_tabs', 'obsidian_get_active_file', 'obsidian_search_vault',
+    'obsidian_get_backlinks', 'obsidian_get_outgoing_links', 'obsidian_get_note_metadata',
+    'obsidian_list_commands', 'obsidian_get_current_thread', 'obsidian_list_threads',
+    'obsidian_list_projects', 'obsidian_get_thread_messages', 'obsidian_get_thread_log',
+    'obsidian_list_vault_bridges', 'obsidian_get_file_history', 'CronList',
+    'skills_list_installed', 'skills_search', 'skills_get', 'skills_list_sources',
+    'skills_check_updates',
+  ]);
+  return tools.map((toolDefinition) => ({
+    name: toolDefinition.name,
+    description: toolDefinition.description,
+    inputSchema: z.toJSONSchema(z.object(toolDefinition.inputSchema)) as Record<string, unknown>,
+    requiresApproval: !readOnlyToolNames.has(toolDefinition.name),
+    async invoke(args: Record<string, unknown>) {
+      try {
+        const result = await toolDefinition.handler(args as never, {});
+        const text = result.content
+          .map((item) => item.type === 'text' ? item.text : JSON.stringify(item))
+          .join('\n');
+        return { success: !result.isError, text };
+      } catch (error) {
+        return { success: false, text: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  }));
 }
