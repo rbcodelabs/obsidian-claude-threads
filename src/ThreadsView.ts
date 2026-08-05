@@ -347,6 +347,13 @@ export class ThreadsView extends ItemView {
         } else {
           this.pendingQuestions.set(threadId, { questions, resolve: done, cardEl: null });
         }
+
+        // pending_question_changed is emitted just before questionHandler is
+        // entered, so hasPendingQuestion() was still false when that event was
+        // rendered. Refresh once the resolver is registered to expose Send.
+        if (threadId === this.activeThreadId) {
+          this.setRunningState(this.manager.isRunning(threadId));
+        }
       });
 
     this.manager.openNewTabHandler = async (title?: string, initialPrompt?: string) => {
@@ -3044,6 +3051,14 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'pending_question_changed': {
+        // While AskUserQuestion is waiting, keep Send available alongside
+        // Stop so a typed response can act as a free-form answer. When the
+        // answer resolves, return to the normal running (Stop-only) state.
+        this.setRunningState(this.manager.isRunning(this.activeThreadId!));
+        break;
+      }
+
       case 'escalated': {
         this.showModelEscalationTip(`⚡ Using ${event.model} for this turn`);
         break;
@@ -3882,7 +3897,10 @@ export class ThreadsView extends ItemView {
   }
 
   private setRunningState(running: boolean): void {
-    this.dispatchInput?.setStreaming(running);
+    this.dispatchInput?.setStreaming(
+      running,
+      !!this.activeThreadId && this.manager.hasPendingQuestion(this.activeThreadId),
+    );
     if (!running) {
       this.clearStatusCard('active');
     }
@@ -4282,6 +4300,19 @@ export class ThreadsView extends ItemView {
       if (fileContextParts.length > 0) {
         text = text + '\n\n---\nReferenced files:\n\n' + fileContextParts.join('\n\n');
       }
+    }
+
+    // A normal composer submission while AskUserQuestion is open is the
+    // user's free-form answer to that prompt. Resolve the blocking callback
+    // directly instead of queueing a second turn behind it. For a multi-part
+    // question card, apply the free-form response to each unanswered prompt;
+    // the structured card remains available when distinct answers are needed.
+    const pendingQuestions = thread?.pendingQuestions;
+    if (pendingQuestions && this.manager.hasPendingQuestion(this.activeThreadId)) {
+      const answer = text || (images.length > 0 ? '[See attached image]' : '');
+      const answers = Object.fromEntries(pendingQuestions.map(q => [q.question, answer]));
+      this.manager.resolveQuestion(this.activeThreadId, answers);
+      return;
     }
 
     if (!this.manager.isRunning(this.activeThreadId)) {

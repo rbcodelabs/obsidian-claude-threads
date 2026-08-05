@@ -246,6 +246,25 @@ describe('pendingQuestions — resolveQuestion clears it and returns answers', (
   });
 });
 
+describe('pendingQuestions — interrupt cleanup', () => {
+  it('releases and clears a pending question before interrupting the session', async () => {
+    const manager = makeManager();
+    wireQuestionHandler(manager);
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Ask me something');
+    const answerPromise = mock.callbacks!.onAskUserQuestion(SAMPLE_QUESTIONS);
+    expect(manager.hasPendingQuestion(thread.id)).toBe(true);
+
+    await manager.interrupt(thread.id);
+    expect(await answerPromise).toEqual({});
+    await Promise.resolve();
+
+    expect(thread.pendingQuestions).toBeUndefined();
+    expect(manager.hasPendingQuestion(thread.id)).toBe(false);
+  });
+});
+
 // ─── onDone safety-net ────────────────────────────────────────────────────────
 
 describe('pendingQuestions — onDone safety-net', () => {
