@@ -336,10 +336,10 @@ export class DispatchInput {
     this.maybeConvertCommandPill();
   }
 
-  setStreaming(v: boolean): void {
+  setStreaming(v: boolean, allowSend = false): void {
     if (!this.options.showStopBtn) return;
     if (v) {
-      this.sendBtn.addClass('ct-hidden');
+      this.sendBtn.toggleClass('ct-hidden', !allowSend);
       this.stopBtn?.removeClass('ct-hidden');
     } else {
       this.sendBtn.removeClass('ct-hidden');

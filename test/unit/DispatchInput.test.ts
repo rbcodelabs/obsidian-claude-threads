@@ -193,3 +193,19 @@ describe('DispatchInput — dynamic builtinCommands', () => {
     expect(di.getValue()).toBe('/escalate ');
   });
 });
+
+describe('DispatchInput — interactive wait controls', () => {
+  it('keeps both Send and Stop visible when sending is allowed during a stream', () => {
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend: vi.fn(),
+      showStopBtn: true,
+    });
+    const root = di.mount(makeContainer());
+
+    di.setStreaming(true, true);
+
+    expect(root.querySelector('.ct-send-btn')?.classList.contains('ct-hidden')).toBe(false);
+    expect(root.querySelector('.ct-stop-btn')?.classList.contains('ct-hidden')).toBe(false);
+  });
+});

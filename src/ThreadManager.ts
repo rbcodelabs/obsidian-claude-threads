@@ -1679,6 +1679,10 @@ export class ThreadManager {
     // the same session that would otherwise have "lingered."
     const session = this.sessions.get(threadId);
     if (session) {
+      // AskUserQuestion blocks inside canUseTool until its answer promise
+      // resolves. Release that promise before interrupting the query so the
+      // question card and resolver cannot survive into later turns.
+      this.pendingQuestionResolvers.get(threadId)?.({});
       await session.interrupt();
     }
   }
