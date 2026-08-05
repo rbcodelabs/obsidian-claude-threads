@@ -215,3 +215,70 @@ describe('VaultPersistence.archiveOrphanedNotes', () => {
     expect(updated).toContain('# Test Thread');
   });
 });
+
+describe('VaultPersistence.loadAllThreads', () => {
+  const FOLDER = 'Claude';
+
+  it('uses only the newest note when stale title snapshots share a thread_id', async () => {
+    const olderWaiting = threadNote(
+      'same-thread',
+      'waiting',
+      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z',
+    );
+    const newerArchived = threadNote(
+      'same-thread',
+      'archived',
+      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-03T00:00:00.000Z',
+    );
+    const app = makeApp({
+      [`${FOLDER}/2026-01-01-old-title.md`]: olderWaiting,
+      [`${FOLDER}/2026-01-01-new-title.md`]: newerArchived,
+    });
+    const vp = new VaultPersistence(app as any, FOLDER);
+
+    const loaded = await vp.loadAllThreads();
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].id).toBe('same-thread');
+    expect(loaded[0].status).toBe('archived');
+    expect(loaded[0].noteFile).toBe(`${FOLDER}/2026-01-01-new-title.md`);
+  });
+
+  it('prefers archived when duplicate snapshots have the same updated time', async () => {
+    const timestamp = 'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z';
+    const app = makeApp({
+      [`${FOLDER}/waiting.md`]: threadNote('same-thread', 'waiting', timestamp),
+      [`${FOLDER}/archived.md`]: threadNote('same-thread', 'archived', timestamp),
+    });
+    const vp = new VaultPersistence(app as any, FOLDER);
+
+    const loaded = await vp.loadAllThreads();
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].status).toBe('archived');
+  });
+
+  it('prefers a newer waiting snapshot over an older archived snapshot', async () => {
+    const olderArchived = threadNote(
+      'same-thread',
+      'archived',
+      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z',
+    );
+    const newerWaiting = threadNote(
+      'same-thread',
+      'waiting',
+      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-03T00:00:00.000Z',
+    );
+    const app = makeApp({
+      [`${FOLDER}/archived.md`]: olderArchived,
+      [`${FOLDER}/waiting.md`]: newerWaiting,
+    });
+    const vp = new VaultPersistence(app as any, FOLDER);
+
+    const loaded = await vp.loadAllThreads();
+
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].status).toBe('waiting');
+    expect(loaded[0].noteFile).toBe(`${FOLDER}/waiting.md`);
+  });
+});

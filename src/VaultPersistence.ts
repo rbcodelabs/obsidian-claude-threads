@@ -90,7 +90,12 @@ export class VaultPersistence {
   }
 
   async loadAllThreads(): Promise<Thread[]> {
-    const threads: Thread[] = [];
+    // A thread's title can change over its lifetime, and older plugin versions
+    // could leave the pre-rename note behind. Treat those files as snapshots of
+    // one thread, not as independent threads. In particular, an old `waiting`
+    // snapshot must never override a newer `archived` snapshot and resurrect a
+    // thread during startup recovery.
+    const threadsById = new Map<string, Thread>();
     const files = this.app.vault.getMarkdownFiles().filter(
       (f) => f.path.startsWith(this.folder + '/'),
     );
@@ -104,12 +109,23 @@ export class VaultPersistence {
       try {
         const content = await this.app.vault.read(file);
         const thread = this.markdownToThread(content, file.path);
-        if (thread) threads.push(thread);
+        if (thread) {
+          const current = threadsById.get(thread.id);
+          if (
+            !current
+            || thread.updatedAt > current.updatedAt
+            || (thread.updatedAt === current.updatedAt
+              && thread.status === 'archived'
+              && current.status !== 'archived')
+          ) {
+            threadsById.set(thread.id, thread);
+          }
+        }
       } catch {
         // skip malformed files
       }
     }
-    return threads.sort((a, b) => b.updatedAt - a.updatedAt);
+    return [...threadsById.values()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   private async ensureFolder(): Promise<void> {
