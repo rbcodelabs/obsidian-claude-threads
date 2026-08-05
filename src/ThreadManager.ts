@@ -937,6 +937,7 @@ export class ThreadManager {
     }
 
     try {
+      await session.prepareForSend?.(effectivePrompt, images);
       session.send(effectivePrompt, images);
     } catch (err) {
       // The ThreadSession's Query had already been torn down (a prior
