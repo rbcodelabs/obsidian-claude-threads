@@ -127,6 +127,7 @@ interface Generation {
 const sdk = vi.hoisted(() => ({
   generations: [] as Generation[],
   nextIterable: null as AsyncIterable<Record<string, unknown>> | null,
+  contextUsage: null as Record<string, unknown> | null,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => {
@@ -146,7 +147,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         interrupt: async () => {},
         supportedModels: async () => [],
         supportedAgents: async () => [],
-        getContextUsage: async () => null,
+        getContextUsage: async () => sdk.contextUsage,
         setPermissionMode: gen.setPermissionMode,
         setModel: async () => {},
       };
@@ -229,6 +230,55 @@ describe('ThreadSession — push-channel content shape', () => {
     expect(msg.message.content[1]).toMatchObject({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
 
     session.close();
+  });
+});
+
+describe('ThreadSession — proactive compaction guard', () => {
+  it('finishes an internal /compact turn before allowing the next user turn', async () => {
+    sdk.generations = [];
+    sdk.contextUsage = {
+      totalTokens: 925_000,
+      autoCompactThreshold: 934_000,
+      isAutoCompactEnabled: true,
+    };
+    const out = makeChannel();
+    sdk.nextIterable = out;
+    const onDone = vi.fn();
+    const onCompact = vi.fn();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({ onDone, onCompact })));
+
+    const iter = sdk.generations[0].promptArg[Symbol.asyncIterator]();
+    const preparing = session.prepareForSend('next user message');
+    const maintenance = await iter.next();
+    expect((maintenance.value as { message: { content: string } }).message.content).toBe('/compact');
+
+    out.push({
+      type: 'system', subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', pre_tokens: 925_000 },
+    });
+    out.push(successResult('compacted-session'));
+    await preparing;
+
+    expect(onCompact).toHaveBeenCalledWith('auto', 925_000);
+    expect(onDone).not.toHaveBeenCalled();
+    session.send('next user message');
+    const userTurn = await iter.next();
+    expect((userTurn.value as { message: { content: string } }).message.content).toBe('next user message');
+    session.close();
+    sdk.contextUsage = null;
+  });
+
+  it('does nothing while comfortably below the SDK threshold', async () => {
+    sdk.generations = [];
+    sdk.contextUsage = { totalTokens: 100_000, autoCompactThreshold: 934_000 };
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
+    await session.prepareForSend('small turn');
+    expect(session.turnInFlight).toBe(false);
+    session.close();
+    sdk.contextUsage = null;
   });
 });
 

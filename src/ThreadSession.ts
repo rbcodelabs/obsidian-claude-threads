@@ -79,6 +79,8 @@ export class ThreadSession {
    */
   private lastUserTurn: { text: string; images?: ImageAttachment[] } | null = null;
   private recapEmitted = false;
+  /** Resolves the plugin-initiated /compact maintenance turn, if one is active. */
+  private internalCompactionResolve: ((completed: boolean) => void) | null = null;
 
   // --- state surface for a reaper / UI, per ADR-0002 §3 ---
   private _turnInFlight = false;
@@ -403,6 +405,42 @@ export class ThreadSession {
     this._lastActivityAt = Date.now();
   }
 
+  /**
+   * The CLI currently fails to schedule automatic compaction reliably for a
+   * long-lived streaming-input Query. Guard the next user turn with the SDK's
+   * own context telemetry and run /compact explicitly when the projected
+   * input is close to its advertised auto-compact threshold.
+   *
+   * This remains a separate maintenance turn so the user's message cannot be
+   * coalesced into the generation that performs compaction. Its result is
+   * intentionally hidden from ThreadManager; the compact boundary itself is
+   * still surfaced normally through onCompact.
+   */
+  async prepareForSend(text: string, images?: ImageAttachment[]): Promise<void> {
+    if (!this.query || this._turnInFlight || this.internalCompactionResolve) return;
+    const usage = await this.getContextUsage();
+    if (!usage?.autoCompactThreshold) return;
+
+    // Text tokens are conservatively estimated at three characters each;
+    // reserve a further 16k tokens for system/tool growth during the turn.
+    const projectedTokens = usage.totalTokens
+      + Math.ceil(text.length / 3)
+      + ((images?.length ?? 0) * 2_000);
+    if (projectedTokens < usage.autoCompactThreshold - 16_000) return;
+
+    const completed = new Promise<boolean>((resolve) => {
+      this.internalCompactionResolve = resolve;
+    });
+    this.pushToChannel({
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: '/compact' },
+    });
+    this._turnInFlight = true;
+    this._lastActivityAt = Date.now();
+    await completed;
+  }
+
   async interrupt(): Promise<void> {
     this.interrupted = true;
     if (this.query) {
@@ -470,6 +508,11 @@ export class ThreadSession {
 
   /** Completes the channel and closes the live Query, if any. Idempotent. */
   close(): void {
+    if (this.internalCompactionResolve) {
+      const resolve = this.internalCompactionResolve;
+      this.internalCompactionResolve = null;
+      resolve(false);
+    }
     this.endChannel();
     if (this.query) {
       try {
@@ -585,9 +628,19 @@ export class ThreadSession {
                 const names = [...new Set(allToolCalls.map(t => formatToolName(t.name)))];
                 callbacks.onRecap(`Used ${names.join(', ')} (${allToolCalls.length} call${allToolCalls.length > 1 ? 's' : ''})`);
               }
-              callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+              if (this.internalCompactionResolve) {
+                const resolve = this.internalCompactionResolve;
+                this.internalCompactionResolve = null;
+                resolve(true);
+              } else {
+                callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+              }
             } else if (this.interrupted) {
               callbacks.onInterrupted(this.lastKnownSessionId ?? '');
+            } else if (this.internalCompactionResolve) {
+              const resolve = this.internalCompactionResolve;
+              this.internalCompactionResolve = null;
+              resolve(false);
             } else {
               callbacks.onError(
                 new Error(`Claude session ended: ${(msg as { subtype: string }).subtype}`),
@@ -608,7 +661,9 @@ export class ThreadSession {
                 break;
               case 'compact_boundary': {
                 const meta = sys.compact_metadata as { trigger: 'auto' | 'manual'; pre_tokens: number } | undefined;
-                callbacks.onCompact?.(meta?.trigger ?? 'auto', meta?.pre_tokens ?? 0);
+                // The guard invokes /compact manually on the user's behalf,
+                // but it is still automatic from the product's perspective.
+                callbacks.onCompact?.(this.internalCompactionResolve ? 'auto' : (meta?.trigger ?? 'auto'), meta?.pre_tokens ?? 0);
                 break;
               }
               case 'task_started':
@@ -821,6 +876,11 @@ export class ThreadSession {
         }
       }
     } catch (err) {
+      if (this.internalCompactionResolve) {
+        const resolve = this.internalCompactionResolve;
+        this.internalCompactionResolve = null;
+        resolve(false);
+      }
       if (this.interrupted) {
         callbacks.onInterrupted(this.lastKnownSessionId ?? '');
       } else {

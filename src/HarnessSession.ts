@@ -9,6 +9,8 @@ export interface HarnessSession {
   readonly hasPendingPermission: boolean;
   canIdleReap(): boolean;
   start(options: HarnessSessionOptions): Promise<void>;
+  /** Optional harness-specific maintenance before a user turn is submitted. */
+  prepareForSend?(text: string, images?: ImageAttachment[]): Promise<void>;
   send(text: string, images?: ImageAttachment[]): void;
   interrupt(): Promise<void>;
   close(): void;
