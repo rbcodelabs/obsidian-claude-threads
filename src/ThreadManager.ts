@@ -6,6 +6,7 @@ import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
 import { debugLog } from './logger';
+import { codexSkillRoots } from './skillManager';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -1088,6 +1089,12 @@ export class ThreadManager {
       },
       codex: {
         ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
+        skillRoots: codexSkillRoots(
+          this.settings.skillSources ?? [],
+          this.pluginResourceDir
+            ? require('path').join(this.pluginResourceDir, 'resources', 'skills')
+            : undefined,
+        ),
         dynamicTools: codexDynamicTools,
         mcpServers: codexMcpServers,
       },
