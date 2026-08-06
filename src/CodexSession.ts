@@ -134,7 +134,7 @@ export class CodexSession {
     });
 
     await this.request('initialize', {
-      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.23.6' },
+      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.24.0' },
       // runtimeWorkspaceRoots and dynamicTools are currently gated by the
       // app-server's experimental protocol capability.
       capabilities: { experimentalApi: true },
