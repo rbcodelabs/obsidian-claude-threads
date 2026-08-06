@@ -17,6 +17,20 @@ import { execSync } from 'child_process';
 import type { SkillSource } from './types';
 import { getSkillsDirForSource } from './claudeSettings';
 
+/** Resolve configured sources to roots containing Codex skill directories. */
+export function codexSkillRoots(skillSources: SkillSource[] = [], bundledSkillsRoot?: string): string[] {
+  const roots: string[] = [];
+  for (const source of skillSources) {
+    if (source.type === 'github' && source.clonePath) {
+      roots.push(getSkillsDirForSource(source.clonePath));
+    } else if (source.type === 'local' && source.skillsPath) {
+      roots.push(source.skillsPath.replace(/^~/, os.homedir()));
+    }
+  }
+  if (bundledSkillsRoot) roots.push(bundledSkillsRoot);
+  return [...new Set(roots.map((root) => path.resolve(root)))];
+}
+
 // ── Frontmatter parsing ───────────────────────────────────────────────────────
 
 /** Parses `name`/`description` out of a SKILL.md's YAML frontmatter block. */

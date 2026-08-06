@@ -143,6 +143,8 @@ export class CodexSession {
     // accept thread requests until the client confirms initialization.
     this.notify('initialized');
 
+    await this.registerSkillRoots();
+
     const savedCodexThread = options.resume;
     const mcpServers = codexMcpServers(options.codex?.mcpServers);
     const threadConfig = Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : undefined;
@@ -183,6 +185,19 @@ export class CodexSession {
     this.activeModel = result.model ?? this.activeModel;
     this.discoverModels();
     this.discoverSkills();
+  }
+
+  private async registerSkillRoots(): Promise<void> {
+    const skillRoots = this.options?.codex?.skillRoots ?? [];
+    if (skillRoots.length > 0) {
+      try {
+        await this.request('skills/extraRoots/set', { extraRoots: skillRoots });
+      } catch (error) {
+        // Registration is additive. Older app-servers can continue with their
+        // normally discovered skills when this runtime API is unavailable.
+        console.warn('[ClaudeThreads] Could not register Codex skill roots:', error);
+      }
+    }
   }
 
   async setModel(model: string | undefined): Promise<void> {
@@ -262,7 +277,10 @@ export class CodexSession {
   }
 
   private discoverSkills(): void {
-    this.request('skills/list', { cwds: this.options?.cwd ? [this.options.cwd] : [] })
+    this.request('skills/list', {
+      cwds: this.options?.cwd ? [this.options.cwd] : [],
+      forceReload: true,
+    })
       .then((result: { data?: Array<{ skills?: Array<{ name?: string; description?: string; shortDescription?: string; enabled?: boolean }> }> }) => {
         const commands = (result.data ?? [])
           .flatMap((entry) => entry.skills ?? [])

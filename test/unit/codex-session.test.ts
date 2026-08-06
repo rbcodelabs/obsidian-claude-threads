@@ -257,9 +257,22 @@ describe('CodexSession protocol notifications', () => {
 
     internal.discoverSkills();
     await vi.waitFor(() => expect(onCommandsChanged).toHaveBeenCalled());
-    expect(internal.request).toHaveBeenCalledWith('skills/list', { cwds: ['/project'] });
+    expect(internal.request).toHaveBeenCalledWith('skills/list', { cwds: ['/project'], forceReload: true });
     expect(onCommandsChanged).toHaveBeenCalledWith([
       { name: 'review', description: 'Review changes', argumentHint: '' },
     ]);
+  });
+
+  it('registers configured skill roots with the app-server', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.options = { codex: { skillRoots: ['/skills/source', '/skills/bundled'] } };
+    vi.spyOn(internal, 'request').mockResolvedValue({});
+
+    await internal.registerSkillRoots();
+
+    expect(internal.request).toHaveBeenCalledWith('skills/extraRoots/set', {
+      extraRoots: ['/skills/source', '/skills/bundled'],
+    });
   });
 });

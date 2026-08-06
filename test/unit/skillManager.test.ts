@@ -40,6 +40,7 @@ import {
   pullGithubSourceUpdates,
   listGithubSourceSkills,
   installSkillFromMarketplace,
+  codexSkillRoots,
 } from '../../src/skillManager';
 
 // ── Home dir sandbox ──────────────────────────────────────────────────────────
@@ -69,6 +70,26 @@ function writeInstalledSkill(name: string, description = 'a test skill', dirName
   );
   return skillDir;
 }
+
+describe('codexSkillRoots', () => {
+  it('resolves GitHub, local, and bundled roots for app-server discovery', () => {
+    const cloneRoot = path.join(tmpHome, 'source');
+    fs.mkdirSync(path.join(cloneRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(cloneRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'test-source', skills: './custom-skills' }),
+    );
+
+    expect(codexSkillRoots([
+      { id: 'github', name: 'GitHub', type: 'github', clonePath: cloneRoot },
+      { id: 'local', name: 'Local', type: 'local', skillsPath: '~/local-skills' },
+    ], path.join(tmpHome, 'bundled'))).toEqual([
+      path.resolve(cloneRoot, 'custom-skills'),
+      path.resolve(tmpHome, 'local-skills'),
+      path.resolve(tmpHome, 'bundled'),
+    ]);
+  });
+});
 
 // ── listInstalledSkills ────────────────────────────────────────────────────
 
