@@ -1048,9 +1048,12 @@ export class ThreadManager {
       .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, thread.cwd) : this.mcpServers;
     // The Obsidian MCP server exposes the same canonical tool definitions to
-    // Codex through its app-server dynamic-tool adapter. External MCP servers
-    // remain Claude-owned until they have a corresponding Codex configuration.
+    // Codex through its app-server dynamic-tool adapter. Serializable external
+    // stdio/HTTP/SSE servers are mirrored into Codex's per-thread config.
     const codexDynamicTools = (sessionMcpServers?.obsidian as unknown as { harnessTools?: import('./HarnessSession').HarnessDynamicTool[] } | undefined)?.harnessTools;
+    const codexMcpServers = Object.fromEntries(
+      Object.entries(sessionMcpServers ?? {}).filter(([name, server]) => name !== 'obsidian' && (server as { type?: string }).type !== 'sdk'),
+    );
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
     return {
@@ -1086,6 +1089,7 @@ export class ThreadManager {
       codex: {
         ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
         dynamicTools: codexDynamicTools,
+        mcpServers: codexMcpServers,
       },
     };
   }
@@ -1452,6 +1456,10 @@ export class ThreadManager {
           thread.updatedAt = Date.now();
           this.pendingPlanResolvers.delete(threadId);
           this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+          // Both harnesses leave plan mode on approval. Persist that transition
+          // as well as applying it to the live session so the toolbar and any
+          // later session restart agree with the active harness state.
+          this.setThreadPermissionMode(threadId, 'default');
           approve(editedPlan);
         };
         const wrappedReject = () => {

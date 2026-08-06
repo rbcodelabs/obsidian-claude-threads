@@ -4,6 +4,83 @@ import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
 import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
 
+type CodexTokenUsageBreakdown = {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+};
+
+type CodexThreadTokenUsage = {
+  total: CodexTokenUsageBreakdown;
+  last: CodexTokenUsageBreakdown;
+  modelContextWindow: number | null;
+};
+
+type ContextUsage = import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse;
+
+/** Convert Claude's process-transport MCP shapes to Codex config.toml keys. */
+export function codexMcpServers(servers: NonNullable<HarnessSessionOptions['codex']>['mcpServers']): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers ?? {})) {
+    if (!server || server.type === 'sdk') continue;
+    if (server.type === 'http' || server.type === 'sse') {
+      result[name] = {
+        url: server.url,
+        ...(server.headers ? { http_headers: server.headers } : {}),
+        ...(server.timeout ? { tool_timeout_sec: server.timeout / 1000 } : {}),
+      };
+      continue;
+    }
+    result[name] = {
+      command: server.command,
+      ...(server.args ? { args: server.args } : {}),
+      ...(server.env ? { env: server.env } : {}),
+      ...(server.timeout ? { tool_timeout_sec: server.timeout / 1000 } : {}),
+    };
+  }
+  return result;
+}
+
+/** Translate Codex's cumulative token notification to the shared context card model. */
+export function codexContextUsage(tokenUsage: CodexThreadTokenUsage, model: string): ContextUsage | null {
+  const maxTokens = tokenUsage.modelContextWindow ?? 0;
+  if (maxTokens <= 0) return null;
+  const usage = tokenUsage.total;
+  const cached = Math.max(0, usage.cachedInputTokens ?? 0);
+  const uncachedInput = Math.max(0, usage.inputTokens - cached);
+  const output = Math.max(0, usage.outputTokens - (usage.reasoningOutputTokens ?? 0));
+  const reasoning = Math.max(0, usage.reasoningOutputTokens ?? 0);
+  const categories = [
+    { name: 'Input', tokens: uncachedInput, color: '#4b9cd3' },
+    { name: 'Cached input', tokens: cached, color: '#7cb9e8' },
+    { name: 'Output', tokens: output, color: '#97c1e8' },
+    { name: 'Reasoning', tokens: reasoning, color: '#b0cfe8' },
+  ];
+  const totalTokens = Math.max(0, usage.totalTokens);
+  return {
+    categories,
+    totalTokens,
+    maxTokens,
+    rawMaxTokens: maxTokens,
+    percentage: Math.min(100, (totalTokens / maxTokens) * 100),
+    gridRows: [],
+    model,
+    memoryFiles: [],
+    mcpTools: [],
+    agents: [],
+    isAutoCompactEnabled: true,
+    apiUsage: {
+      input_tokens: usage.inputTokens,
+      output_tokens: usage.outputTokens,
+      cache_creation_input_tokens: usage.cacheWriteInputTokens ?? 0,
+      cache_read_input_tokens: cached,
+    },
+  };
+}
+
 /**
  * Thin JSON-RPC client for `codex app-server --stdio`.
  *
@@ -24,6 +101,10 @@ export class CodexSession {
   private closed = true;
   /** App-server has one active turn per thread; retain follow-ups locally. */
   private queuedTurns: Array<{ text: string; images?: ImageAttachment[] }> = [];
+  private latestContextUsage: ContextUsage | null = null;
+  private activeModel = '';
+  private pendingPlanText: string | null = null;
+  private announcedSubagents = new Set<string>();
 
   constructor(private codexPath: string) {}
 
@@ -35,6 +116,9 @@ export class CodexSession {
   async start(options: HarnessSessionOptions): Promise<void> {
     this.close();
     this.options = options;
+    this.activeModel = options.model ?? '';
+    this.latestContextUsage = null;
+    this.announcedSubagents.clear();
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
@@ -50,7 +134,7 @@ export class CodexSession {
     });
 
     await this.request('initialize', {
-      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.23.2' },
+      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.23.6' },
       // runtimeWorkspaceRoots and dynamicTools are currently gated by the
       // app-server's experimental protocol capability.
       capabilities: { experimentalApi: true },
@@ -60,6 +144,8 @@ export class CodexSession {
     this.notify('initialized');
 
     const savedCodexThread = options.resume;
+    const mcpServers = codexMcpServers(options.codex?.mcpServers);
+    const threadConfig = Object.keys(mcpServers).length > 0 ? { mcp_servers: mcpServers } : undefined;
     let result: any;
     if (savedCodexThread) {
       try {
@@ -70,6 +156,7 @@ export class CodexSession {
           model: options.model ?? null,
           approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
           sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
+          config: threadConfig,
         });
       } catch (error) {
         console.warn('[ClaudeThreads] Could not resume Codex thread; starting a new one:', error);
@@ -83,6 +170,7 @@ export class CodexSession {
         approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
         sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: options.appendSystemPrompt || null,
+        config: threadConfig,
         dynamicTools: options.codex?.dynamicTools?.map((tool) => ({
           type: 'function',
           name: tool.name,
@@ -92,12 +180,15 @@ export class CodexSession {
       });
     }
     this.codexThreadId = result.thread.id;
+    this.activeModel = result.model ?? this.activeModel;
     this.discoverModels();
+    this.discoverSkills();
   }
 
   async setModel(model: string | undefined): Promise<void> {
     if (!this.codexThreadId) return;
     await this.request('thread/settings/update', { threadId: this.codexThreadId, model: model ?? null });
+    this.activeModel = model ?? '';
   }
 
   async setPermissionMode(mode: any): Promise<void> {
@@ -121,9 +212,21 @@ export class CodexSession {
 
   private startTurn(text: string, images?: ImageAttachment[]): void {
     this._turnInFlight = true;
+    this.pendingPlanText = null;
+    const isPlanMode = this.options?.permissionMode === 'plan';
+    if (isPlanMode) this.options?.callbacks.onEnterPlanMode?.();
     const input: any[] = [{ type: 'text', text, text_elements: [] }];
     for (const image of images ?? []) input.push({ type: 'image', url: `data:${image.mediaType};base64,${image.base64}` });
-    this.request('turn/start', { threadId: this.codexThreadId, input })
+    this.request('turn/start', {
+      threadId: this.codexThreadId,
+      input,
+      ...(isPlanMode ? {
+        collaborationMode: {
+          mode: 'plan',
+          settings: { model: this.activeModel, reasoning_effort: null, developer_instructions: null },
+        },
+      } : {}),
+    })
       .catch((error) => {
         this._turnInFlight = false;
         this.options?.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
@@ -145,7 +248,7 @@ export class CodexSession {
     this.failAll(new Error('Codex session closed'));
   }
 
-  async getContextUsage(): Promise<null> { return null; }
+  async getContextUsage(): Promise<ContextUsage | null> { return this.latestContextUsage; }
 
   private discoverModels(): void {
     this.request('model/list', { limit: 100 })
@@ -156,6 +259,22 @@ export class CodexSession {
         if (models.length > 0) this.options?.callbacks.onCapabilitiesDiscovered?.(models as any, []);
       })
       .catch((error) => console.warn('[ClaudeThreads] Could not list Codex models:', error));
+  }
+
+  private discoverSkills(): void {
+    this.request('skills/list', { cwds: this.options?.cwd ? [this.options.cwd] : [] })
+      .then((result: { data?: Array<{ skills?: Array<{ name?: string; description?: string; shortDescription?: string; enabled?: boolean }> }> }) => {
+        const commands = (result.data ?? [])
+          .flatMap((entry) => entry.skills ?? [])
+          .filter((skill) => skill.enabled !== false && !!skill.name)
+          .map((skill) => ({
+            name: String(skill.name),
+            description: String(skill.description ?? skill.shortDescription ?? ''),
+            argumentHint: '',
+          }));
+        if (commands.length > 0) this.options?.callbacks.onCommandsChanged?.(commands);
+      })
+      .catch((error) => console.warn('[ClaudeThreads] Could not list Codex skills:', error));
   }
 
   private sandboxPolicy(sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'): Record<string, unknown> {
@@ -177,7 +296,7 @@ export class CodexSession {
     return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
   }
 
-  private respond(id: number, result: Record<string, unknown>): void {
+  private respond(id: string | number, result: Record<string, unknown>): void {
     this.process?.stdin.write(`${JSON.stringify({ id, result })}\n`);
   }
 
@@ -203,22 +322,33 @@ export class CodexSession {
       else pending.resolve(message.result);
       return;
     }
-    if (typeof message.id === 'number' && message.method) { this.handleServerRequest(message); return; }
+    if ((typeof message.id === 'number' || typeof message.id === 'string') && message.method) { this.handleServerRequest(message); return; }
     const callbacks = this.options?.callbacks; if (!callbacks) return;
     const params = message.params ?? {};
+    // Match Claude's raw-log behavior: persist complete protocol events but
+    // omit high-volume text deltas that are reconstructed by agentMessage.
+    if (message.method !== 'item/agentMessage/delta') {
+      callbacks.onRawEvent?.({ type: String(message.method ?? 'codex/event'), ...message });
+    }
     switch (message.method) {
       case 'item/agentMessage/delta': callbacks.onToken(String(params.delta ?? '')); break;
       case 'item/started': {
         const item = params.item;
-        if (item?.type === 'commandExecution' || item?.type === 'fileChange' || item?.type === 'mcpToolCall') {
-          callbacks.onToolUse({ toolUseId: item.id, name: item.type, summary: this.toolSummary(item), status: 'pending' });
+        if (this.isToolItem(item)) {
+          callbacks.onToolUse({ toolUseId: item.id, name: this.toolName(item), summary: this.toolSummary(item), status: 'pending' });
         }
+        this.handleCollaborationItem(item, callbacks, false);
         break;
       }
       case 'item/completed': {
         const item = params.item;
         if (item?.type === 'agentMessage' && item.text) callbacks.onMessage(item.text, []);
-        if (item?.id && item?.type !== 'agentMessage') callbacks.onToolResult?.(item.id, item.status === 'failed' ? 'error' : 'success');
+        if (item?.type === 'plan' && item.text) this.pendingPlanText = String(item.text);
+        if (item?.type === 'contextCompaction') callbacks.onCompact?.('auto', this.latestContextUsage?.totalTokens ?? 0);
+        this.handleCollaborationItem(item, callbacks, true);
+        if (item?.id && this.isToolItem(item)) {
+          callbacks.onToolResult?.(item.id, this.itemFailed(item) ? 'error' : 'success', item.durationMs ?? undefined);
+        }
         break;
       }
       case 'turn/completed': {
@@ -226,11 +356,58 @@ export class CodexSession {
         const turn = params.turn ?? {};
         if (turn.status === 'interrupted') callbacks.onInterrupted(this.codexThreadId ?? '');
         else if (turn.status === 'failed') callbacks.onError(new Error(turn.error?.message ?? 'Codex turn failed'));
-        else callbacks.onDone(this.codexThreadId ?? '', 0, 0);
+        else {
+          callbacks.onDone(this.codexThreadId ?? '', 0, 1);
+          const planText = this.pendingPlanText;
+          if (planText && this.options?.permissionMode === 'plan' && callbacks.onPlanReady) {
+            // Codex plan turns settle before user approval. Emit the card after
+            // onDone so ThreadManager's terminal safety-net cannot discard it.
+            callbacks.onPlanReady(
+              planText,
+              (editedPlan) => {
+                if (this.options) this.options.permissionMode = 'default';
+                const implementationPrompt = editedPlan !== undefined && editedPlan !== planText
+                  ? `The plan was approved with these edits. Implement it now:\n\n${editedPlan}`
+                  : 'The plan is approved. Implement it now.';
+                void this.setPermissionMode('default')
+                  .then(() => this.send(implementationPrompt))
+                  .catch((error) => callbacks.onError(error instanceof Error ? error : new Error(String(error))));
+              },
+              () => { /* The shared plan card sends a rejection follow-up. */ },
+            );
+          }
+        }
+        this.pendingPlanText = null;
         const next = this.queuedTurns.shift();
         if (next && !this.closed) this.startTurn(next.text, next.images);
         break;
       }
+      case 'thread/tokenUsage/updated':
+        this.latestContextUsage = codexContextUsage(params.tokenUsage as CodexThreadTokenUsage, this.activeModel);
+        break;
+      case 'model/rerouted':
+        this.activeModel = String(params.toModel ?? this.activeModel);
+        callbacks.onModelFallback?.(String(params.reason ?? 'rerouted'), String(params.fromModel ?? ''), this.activeModel);
+        break;
+      case 'warning':
+      case 'guardianWarning':
+      case 'deprecationNotice':
+      case 'configWarning':
+        callbacks.onNotification?.(String(params.message ?? params.warning ?? 'Codex warning'), 'medium');
+        break;
+      case 'account/rateLimits/updated': {
+        const window = params.rateLimits?.primary ?? params.rateLimits?.secondary;
+        const used = Number(window?.usedPercent ?? 0);
+        const status = used >= 100 || params.rateLimits?.rateLimitReachedType ? 'rejected'
+          : used >= 80 ? 'allowed_warning'
+          : 'allowed';
+        const resetsAt = typeof window?.resetsAt === 'number' ? window.resetsAt * 1000 : undefined;
+        callbacks.onRateLimit?.(status, resetsAt);
+        break;
+      }
+      case 'skills/changed':
+        this.discoverSkills();
+        break;
       case 'thread/compacted': callbacks.onCompact?.('auto', 0); break;
     }
   }
@@ -238,6 +415,34 @@ export class CodexSession {
   private handleServerRequest(message: any): void {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
+    if (message.method === 'mcpServer/elicitation/request') {
+      if (!callbacks?.onElicitation) {
+        this.respond(message.id, { action: 'cancel', content: null, _meta: null });
+        return;
+      }
+      const request = params.mode === 'url'
+        ? {
+            serverName: String(params.serverName ?? ''),
+            message: String(params.message ?? ''),
+            mode: 'url' as const,
+            url: String(params.url ?? ''),
+            elicitationId: String(params.elicitationId ?? ''),
+          }
+        : {
+            serverName: String(params.serverName ?? ''),
+            message: String(params.message ?? ''),
+            mode: 'form' as const,
+            requestedSchema: (params.requestedSchema ?? {}) as Record<string, unknown>,
+          };
+      callbacks.onElicitation(request, new AbortController().signal)
+        .then((result) => this.respond(message.id, {
+          action: result.action,
+          content: result.action === 'accept' ? (result.content ?? {}) : null,
+          _meta: null,
+        }))
+        .catch(() => this.respond(message.id, { action: 'cancel', content: null, _meta: null }));
+      return;
+    }
     if (message.method === 'item/tool/call') {
       const dynamicTool = this.options?.codex?.dynamicTools?.find((tool) => tool.name === params.tool);
       if (!dynamicTool) {
@@ -289,7 +494,57 @@ export class CodexSession {
   }
 
   private toolSummary(item: any): string {
-    return String(item.command ?? item.path ?? item.server ?? item.type);
+    return String(item.command ?? item.path ?? item.prompt ?? item.tool ?? item.server ?? item.query ?? item.type);
+  }
+
+  private toolName(item: any): string {
+    if (item.type === 'collabAgentToolCall') return 'Agent';
+    if (item.type === 'dynamicToolCall') return String(item.tool ?? 'dynamicToolCall');
+    if (item.type === 'mcpToolCall') return `${item.server ?? 'mcp'}:${item.tool ?? 'tool'}`;
+    return String(item.type);
+  }
+
+  private isToolItem(item: any): boolean {
+    return ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'collabAgentToolCall', 'webSearch', 'imageGeneration', 'imageView'].includes(item?.type);
+  }
+
+  private itemFailed(item: any): boolean {
+    return item?.status === 'failed' || item?.status === 'errored' || item?.success === false || !!item?.error;
+  }
+
+  private handleCollaborationItem(item: any, callbacks: SessionCallbacks, completed: boolean): void {
+    if (!item) return;
+    if (item.type === 'collabAgentToolCall') {
+      const ids: string[] = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds.map(String) : [];
+      if (item.tool === 'spawnAgent') {
+        for (const id of ids) {
+          if (!this.announcedSubagents.has(id)) {
+            this.announcedSubagents.add(id);
+            callbacks.onTaskStarted?.(id, String(item.prompt ?? 'Codex sub-agent'), false, 'subagent', undefined, item.model ?? undefined);
+          }
+          if (completed) {
+            const state = item.agentsStates?.[id];
+            const status = state?.status === 'errored' ? 'failed'
+              : state?.status === 'interrupted' || state?.status === 'shutdown' ? 'killed'
+              : state?.status === 'completed' ? 'completed'
+              : undefined;
+            if (status) callbacks.onTaskUpdated?.(id, { status, error: state?.status === 'errored' ? state?.message ?? undefined : undefined });
+          }
+        }
+      } else if (completed) {
+        for (const id of ids) callbacks.onTaskProgress?.(id, item.prompt ? String(item.prompt) : `Agent ${item.tool}`, item.tool);
+      }
+      return;
+    }
+    if (item.type === 'subAgentActivity') {
+      const id = String(item.agentThreadId ?? item.id);
+      if (!this.announcedSubagents.has(id)) {
+        this.announcedSubagents.add(id);
+        callbacks.onTaskStarted?.(id, `Codex sub-agent ${id}`, false, 'subagent');
+      }
+      if (item.kind === 'interrupted') callbacks.onTaskUpdated?.(id, { status: 'killed' });
+      else callbacks.onTaskProgress?.(id, `Sub-agent ${item.kind}`, item.kind);
+    }
   }
 
   private failAll(error: Error): void {
