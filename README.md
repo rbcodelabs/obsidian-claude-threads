@@ -92,7 +92,19 @@ Click the **message-square** icon in the left ribbon, or run **Open Claude Threa
 
 ### Agent harnesses
 
-New threads use the harness selected in **Settings → Agent → Agent harness**. A thread remembers the harness that created it, so changing the default never mixes Claude and Codex session IDs. Codex uses the `codex` executable on your PATH by default; set a custom path in the same settings panel when needed. Claude-only features that depend on the Claude Agent SDK (such as Claude skills and Claude-specific task boards) remain available to Claude threads.
+New threads use the harness selected in **Settings → Agent → Agent harness**. A thread remembers the harness that created it, so changing the default never mixes Claude and Codex session IDs. Codex uses the `codex` executable on your PATH by default; set a custom path in the same settings panel when needed.
+
+| Capability | Claude Code | OpenAI Codex |
+|---|---:|---:|
+| Persistent sessions, streaming, tools, images, interruption | ✓ | ✓ |
+| Models, permission modes, approvals, and plan review | ✓ | ✓ |
+| Obsidian tools and external stdio/HTTP/SSE MCP servers | ✓ | ✓ |
+| MCP form/URL elicitation | ✓ | ✓ |
+| Context usage, compaction, and raw event logs | ✓ | ✓ |
+| Skills and sub-agent/task activity | ✓ Claude-native | ✓ Codex-native |
+| Monetary API cost attribution | ✓ | — protocol does not report cost |
+
+Harness-native skills and sub-agents use their respective CLI's definitions and event protocol; they are presented through the same slash-command and task UI where the protocols expose equivalent data.
 
 ### Tabs
 
@@ -499,7 +511,7 @@ Use **Claude Threads: Reload plugin (safe)** from the command palette instead of
 
 ## Agent tools reference
 
-Every Claude thread runs with a built-in MCP server that exposes tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. These tools are available automatically; no configuration is required.
+Every thread runs with built-in tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. Claude receives them through its built-in MCP server; Codex receives the same canonical definitions through its dynamic-tool protocol. No configuration is required.
 
 ### Vault tools
 

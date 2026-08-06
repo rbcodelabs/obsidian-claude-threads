@@ -54,6 +54,8 @@ export interface CodexHarnessOptions {
   approvalPolicy: 'untrusted' | 'on-request' | 'never';
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   dynamicTools?: HarnessDynamicTool[];
+  /** Serializable external MCP servers to mirror into Codex's thread config. */
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 /** A host-owned capability exposed through a harness's native tool protocol. */
