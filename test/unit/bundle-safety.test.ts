@@ -209,3 +209,82 @@ describe('src/main.ts source safety', () => {
     }
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Always-loaded module safety
+//
+// main.ts is not the only entry into the eager bundle graph. Any module that
+// main.ts value-imports at the top level (not `import type`) is also executed
+// at bundle-init on EVERY platform — so it is bound by the same rule: it must
+// not statically value-import a desktop-only module, or that module's Node
+// built-in / Claude Agent SDK dependency chain is pulled into eager scope and
+// crashes Obsidian Mobile before onload() runs.
+//
+// SettingsTab.ts is the canonical example: main.ts does
+// `import { ClaudeThreadsSettingTab, ... } from './SettingsTab'` and calls
+// `this.addSettingTab(new ClaudeThreadsSettingTab(...))` unconditionally.
+// PR #328 reintroduced the mobile crash precisely by adding value imports of
+// KANBAN_VIEW_TYPE/AGENT_VIEW_TYPE from KanbanView/AgentDashboard into this
+// file — a vector the main.ts-only checks above cannot see. This block closes
+// that gap: it treats every always-loaded module the same way as main.ts.
+// ───────────────────────────────────────────────────────────────────────────
+describe('always-loaded module source safety', () => {
+  // Modules main.ts value-imports at the top level → executed at bundle-init on
+  // every platform. Keep in sync with the runtime (non-type) imports in main.ts.
+  const ALWAYS_LOADED_MODULES = ['SettingsTab'];
+
+  // Desktop-only modules that transitively require Node built-ins / the Claude
+  // Agent SDK. An always-loaded module must reference these by `import type`
+  // only — never a value import.
+  const DESKTOP_ONLY_MODULES = [
+    'ThreadsView',
+    'AgentDashboard',
+    'KanbanView',
+    'ThreadManager',
+    'VaultPersistence',
+    'InProcessSummarizer',
+    'WakeLockService',
+    'ObsidianTools',
+    'ClaudeSession',
+    'SkillsManagerView',
+    'DispatchInput',
+  ];
+
+  for (const alwaysLoaded of ALWAYS_LOADED_MODULES) {
+    it(`src/${alwaysLoaded}.ts uses "import type" for all desktop-only modules`, () => {
+      const path = resolve(__dirname, `../../src/${alwaysLoaded}.ts`);
+      if (!existsSync(path)) {
+        throw new Error(
+          `Expected always-loaded module src/${alwaysLoaded}.ts not found. ` +
+            `If it was renamed, update ALWAYS_LOADED_MODULES in this test.`,
+        );
+      }
+      const source = readFileSync(path, 'utf8');
+
+      for (const mod of DESKTOP_ONLY_MODULES) {
+        // Match a runtime (non-type) static import of the module in any form:
+        //   import { Foo } from './Foo'
+        //   import { Foo, type Bar } from './Foo'   ← still a runtime import
+        //   import Foo from './Foo'
+        //   import * as Foo from './Foo'
+        // Allow ONLY: import type { ... } from './Foo'  /  import type Foo from './Foo'
+        const runtimeImportRegex = new RegExp(
+          `^import\\s+(?!type\\s)(?:[A-Za-z0-9_$]+\\s*,\\s*)?(?:\\{[^}]*\\}|\\*\\s+as\\s+[A-Za-z0-9_$]+|[A-Za-z0-9_$]+)\\s+from\\s+['"][^'"]*\\b${mod}['"]`,
+          'm',
+        );
+
+        if (runtimeImportRegex.test(source)) {
+          throw new Error(
+            `src/${alwaysLoaded}.ts has a runtime (non-type) static import of the ` +
+              `desktop-only module '${mod}'.\n` +
+              `${alwaysLoaded}.ts is loaded at bundle-init on every platform (main.ts ` +
+              `value-imports it), so this pulls '${mod}' and its Node built-in / Claude ` +
+              `Agent SDK dependency chain into eager scope and crashes Obsidian Mobile.\n` +
+              `Fix: use \`import type { ... } from './${mod}'\` and mirror any needed ` +
+              `runtime values (e.g. view-type strings) as local literal constants.`,
+          );
+        }
+      }
+    });
+  }
+});
