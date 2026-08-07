@@ -269,6 +269,8 @@ This combination means you can dispatch several threads in parallel, switch to o
 
 You can also send messages to any thread directly from the dashboard without switching tabs.
 
+**Background tasks stay "Working."** A thread that spawns a background subagent (`Agent(..., run_in_background: true)`) or runs the `Workflow` tool can have its own turn finish — and its activity line stop updating — before that spawned work actually completes server-side. Rather than misclassifying the thread as New/Reviewed/Ready the moment the outer turn ends, the dashboard (and the [Kanban board](#kanban-board)) keeps it under **Working** until the background task or workflow reports back, so you don't have to stumble onto a stray notification to realize something is still running.
+
 **Scheduled Jobs.** An hourly (or more frequent) recurring cron task (see `CronCreate` / `ScheduleWakeup` below) can produce dozens of quiet threads a day, burying the manually-created ones you actually need to triage. When a run created by the scheduler is unreviewed, reviewed, or empty — never one that's running, awaiting a permission/question, or errored — it's pulled out of its normal group into a **Scheduled Jobs** section at the bottom of the dashboard, one collapsed row per job showing its name, run count, and the latest run's time. Click a row to expand it into the individual runs. Disable via **Settings → Features → Stack scheduled job threads**.
 
 ### Inline workflow progress
@@ -287,7 +289,7 @@ The block is rendered entirely from the SDK event stream (no extra API calls), s
 
 ### Kanban board
 
-Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working**, **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
+Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working** (also covers a thread whose own turn has ended but a background subagent or `Workflow` task it spawned hasn't reported back yet — see [Agent dashboard](#agent-dashboard)), **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
 
 **Task list on cards.** When a thread has an active `TodoWrite` / `TaskCreate` checklist, its kanban card shows a compact task list: up to 5 items with status icons (✔ completed, ■ in-progress, ○ pending), a "X / Y done" progress line, and "+N more" when there are additional tasks. The list updates live as the agent ticks items off.
 

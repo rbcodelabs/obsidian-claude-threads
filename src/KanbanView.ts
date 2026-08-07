@@ -10,6 +10,7 @@ import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { appendOrchestratorBadge } from './orchestrator-badge';
+import { partitionThreads } from './threadRowState';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -382,38 +383,24 @@ export class KanbanView extends ItemView {
    * Shared by both the status board and each folder swimlane.
    */
   private bucketize(threads: Thread[]): ColDef[] {
-    const running: Thread[] = [];
-    const permReqs: Thread[] = [];
-    const waiting: Thread[] = [];
-    const unreviewed: Thread[] = [];
-    const reviewed: Thread[] = [];
-    const errors: Thread[] = [];
-    const empty: Thread[] = [];
-
-    for (const t of threads) {
-      if (this.manager.isRunning(t.id)) {
-        if (this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id)) permReqs.push(t);
-        else running.push(t);
-      } else if (this.plugin.hasPendingWakeup(t.id)) {
-        waiting.push(t);
-      } else if (t.lastError) {
-        errors.push(t);
-      } else if (t.messages.length > 0) {
-        if (t.reviewed) reviewed.push(t);
-        else unreviewed.push(t);
-      } else {
-        empty.push(t);
-      }
-    }
+    const buckets = partitionThreads(threads, (t) => ({
+      isRunning: this.manager.isRunning(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
+      lastError: t.lastError,
+      messageCount: t.messages.length,
+      reviewed: t.reviewed,
+    }));
 
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
-    running.sort(byRecency);
-    permReqs.sort(byRecency);
-    waiting.sort(byRecency);
-    unreviewed.sort(byRecency);
-    reviewed.sort(byRecency);
-    errors.sort(byRecency);
-    empty.sort(byRecency);
+    const running = buckets.running.sort(byRecency);
+    const permReqs = buckets.awaiting.sort(byRecency);
+    const waiting = buckets.waiting.sort(byRecency);
+    const unreviewed = buckets['idle-new'].sort(byRecency);
+    const reviewed = buckets['idle-reviewed'].sort(byRecency);
+    const errors = buckets.error.sort(byRecency);
+    const empty = buckets.empty.sort(byRecency);
 
     return [
       { label: 'Working', threads: running, state: 'running' },
@@ -917,6 +904,17 @@ export class KanbanView extends ItemView {
       this.scheduleRender();
       return;
     }
+    // A background (skipTranscript) task — a `run_in_background: true` Agent
+    // call, or a Workflow-tool task — resolved. This is the only place a
+    // thread that's sitting in "Working" purely because of an outstanding
+    // background task moves back out once that task's last one finishes;
+    // `done`/`run_state_settled` already correctly move it INTO that state
+    // (scheduleRender() re-reads hasActiveBackgroundTasks live), but nothing
+    // previously re-checked when the background side of things settled.
+    if (event.type === 'task_notification') {
+      this.scheduleRender();
+      return;
+    }
     if (
       event.type === 'tool_use' ||
       event.type === 'task_started' ||
@@ -951,7 +949,10 @@ export class KanbanView extends ItemView {
     this.activityTimer = setTimeout(() => {
       this.activityTimer = null;
       const el = this.activityEls.get(threadId);
-      if (el && this.manager.isRunning(threadId)) {
+      // Keep the activity line updating from subagent/workflow progress even
+      // after the outer turn's own isRunning() has gone false — onTaskProgress
+      // writes into threadActivity regardless of foreground/background state.
+      if (el && (this.manager.isRunning(threadId) || this.manager.hasActiveBackgroundTasks(threadId))) {
         const thread = this.manager.getThread(threadId);
         if (thread) el.setText(this.getActivityText(thread, 'running'));
       }

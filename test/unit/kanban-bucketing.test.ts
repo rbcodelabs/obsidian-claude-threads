@@ -1,25 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import type { Thread } from '../../src/types';
+import { partitionThreads, type ThreadClassificationFlags } from '../../src/threadRowState';
 
 /**
- * Mirrors the exact bucketing logic from KanbanView.render() (lines 159–179).
+ * Exercises KanbanView's actual bucketing algorithm (`bucketize()` in
+ * KanbanView.ts) via the real, shared `partitionThreads`/`classifyThreadRow`
+ * from src/threadRowState.ts — no more hand-mirrored inline copy to drift
+ * out of sync with the implementation.
  *
- * The real view reaches into `this.manager.isRunning()` and
- * `this.manager.hasPendingPermission()`, which are Obsidian-coupled.  Here we
- * accept plain boolean flags so the pure algorithm can be tested without a DOM
- * or a real ThreadManager.
- *
- * If the implementation changes, update the for-loop below to match.
+ * KanbanView keeps 'awaiting' as its own column (unlike AgentDashboard/the
+ * thread switcher, which fold it into 'running'), so this harness maps the
+ * partition result 1:1 onto Kanban's column names.
  */
 interface ThreadWithFlags {
   thread: Thread;
   isRunning: boolean;
   hasPendingPermission: boolean;
   hasPendingWakeup: boolean;
+  hasActiveBackgroundTasks?: boolean;
 }
 
 interface BucketedResult {
-  working: Thread[];    // running, no pending permission
+  working: Thread[];    // running, no pending permission, no active bg task
   awaiting: Thread[];   // running + pending permission
   waiting: Thread[];    // not running, has a pending ScheduleWakeup
   newThreads: Thread[]; // idle, messages.length > 0, !reviewed
@@ -29,47 +31,27 @@ interface BucketedResult {
 }
 
 function bucketThreads(items: ThreadWithFlags[]): BucketedResult {
-  const running: Thread[] = [];
-  const permReqs: Thread[] = [];
-  const waiting: Thread[] = [];
-  const unreviewed: Thread[] = [];
-  const reviewed: Thread[] = [];
-  const errors: Thread[] = [];
-  const empty: Thread[] = [];
+  const buckets = partitionThreads<ThreadWithFlags>(items, (item): ThreadClassificationFlags => ({
+    isRunning: item.isRunning,
+    hasPendingPermission: item.hasPendingPermission,
+    hasActiveBackgroundTasks: item.hasActiveBackgroundTasks ?? false,
+    hasPendingWakeup: item.hasPendingWakeup,
+    lastError: item.thread.lastError,
+    messageCount: item.thread.messages.length,
+    reviewed: item.thread.reviewed,
+  }));
 
-  for (const { thread: t, isRunning, hasPendingPermission, hasPendingWakeup } of items) {
-    if (isRunning) {
-      if (hasPendingPermission) permReqs.push(t);
-      else running.push(t);
-    } else if (hasPendingWakeup) {
-      waiting.push(t);
-    } else if (t.lastError) {
-      errors.push(t);
-    } else if (t.messages.length > 0) {
-      if (t.reviewed) reviewed.push(t);
-      else unreviewed.push(t);
-    } else {
-      empty.push(t);
-    }
-  }
-
-  const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
-  running.sort(byRecency);
-  permReqs.sort(byRecency);
-  waiting.sort(byRecency);
-  unreviewed.sort(byRecency);
-  reviewed.sort(byRecency);
-  errors.sort(byRecency);
-  empty.sort(byRecency);
+  const byRecency = (a: ThreadWithFlags, b: ThreadWithFlags) => b.thread.updatedAt - a.thread.updatedAt;
+  const sortThreads = (arr: ThreadWithFlags[]) => arr.sort(byRecency).map(i => i.thread);
 
   return {
-    working: running,
-    awaiting: permReqs,
-    waiting,
-    newThreads: unreviewed,
-    done: reviewed,
-    failed: errors,
-    ready: empty,
+    working: sortThreads(buckets.running),
+    awaiting: sortThreads(buckets.awaiting),
+    waiting: sortThreads(buckets.waiting),
+    newThreads: sortThreads(buckets['idle-new']),
+    done: sortThreads(buckets['idle-reviewed']),
+    failed: sortThreads(buckets.error),
+    ready: sortThreads(buckets.empty),
   };
 }
 
@@ -96,8 +78,9 @@ function withFlags(
   isRunning: boolean,
   hasPendingPermission = false,
   hasPendingWakeup = false,
+  hasActiveBackgroundTasks = false,
 ): ThreadWithFlags {
-  return { thread, isRunning, hasPendingPermission, hasPendingWakeup };
+  return { thread, isRunning, hasPendingPermission, hasPendingWakeup, hasActiveBackgroundTasks };
 }
 
 // ── single-thread bucket assignment ───────────────────────────────────────────
@@ -207,6 +190,40 @@ describe('KanbanView bucketing — single-thread placement', () => {
     const { working, failed } = bucketThreads([withFlags(t, true, false)]);
     expect(working).toContain(t);
     expect(failed).not.toContain(t);
+  });
+
+  // ── Background-task scenario (the fix this PR ships) ───────────────────────
+
+  it('not running but with an active background task → Working, not New/Reviewed/Ready', () => {
+    const t = makeThread('t10', 1_000, {
+      messages: [{ id: 'm1', role: 'assistant', content: 'hi', timestamp: 1_000 }],
+    });
+    const { working, newThreads, done, ready } = bucketThreads([withFlags(t, false, false, false, true)]);
+    expect(working).toContain(t);
+    expect(newThreads).not.toContain(t);
+    expect(done).not.toContain(t);
+    expect(ready).not.toContain(t);
+  });
+
+  it('active background task takes priority over a pending wakeup (Working, not Waiting)', () => {
+    const t = makeThread('t11', 1_000);
+    const { working, waiting } = bucketThreads([withFlags(t, false, false, true, true)]);
+    expect(working).toContain(t);
+    expect(waiting).not.toContain(t);
+  });
+
+  it('active background task takes priority over lastError (Working, not Failed)', () => {
+    const t = makeThread('t12', 1_000, { lastError: 'stale error' });
+    const { working, failed } = bucketThreads([withFlags(t, false, false, false, true)]);
+    expect(working).toContain(t);
+    expect(failed).not.toContain(t);
+  });
+
+  it('isRunning still wins over hasActiveBackgroundTasks for the Awaiting split', () => {
+    const t = makeThread('t13', 1_000);
+    const { working, awaiting } = bucketThreads([withFlags(t, true, true, false, true)]);
+    expect(awaiting).toContain(t);
+    expect(working).not.toContain(t);
   });
 });
 

@@ -1,0 +1,92 @@
+/**
+ * threadRowState.ts
+ *
+ * Shared classification for "what bucket does this thread belong in" —
+ * extracted so AgentDashboard, KanbanView, and the ThreadsView thread
+ * switcher panel (previously three independently hand-rolled partition
+ * loops) agree on the exact same precedence rules.
+ *
+ * This does NOT replace `computeUiStatus` in ObsidianTools.ts — that's a
+ * separate, coarser, external-facing vocabulary (5 states, no
+ * waiting/awaiting distinction) with its own vocabulary-consistency test.
+ * This module is strictly for the three view-layer duplicates.
+ *
+ * Priority order (highest first), matching the precedent already present in
+ * the pre-refactor inline implementations (see kanban-bucketing.test.ts —
+ * "waiting" is already checked before "error", etc.):
+ *
+ *   1. isRunning            → 'awaiting' if hasPendingPermission, else 'running'
+ *   2. hasActiveBackgroundTasks → 'running' (folds into the existing Working
+ *      bucket per product decision — a thread with no active foreground turn
+ *      but an outstanding background task/subagent/workflow is still "doing
+ *      something," it just isn't the caller's own turn anymore)
+ *   3. hasPendingWakeup     → 'waiting'
+ *   4. lastError            → 'error'
+ *   5. messageCount > 0     → 'idle-reviewed' if reviewed, else 'idle-new'
+ *   6. else                 → 'empty'
+ */
+
+export type ThreadRowState =
+  | 'running'
+  | 'awaiting'
+  | 'waiting'
+  | 'idle-new'
+  | 'idle-reviewed'
+  | 'error'
+  | 'empty';
+
+export interface ThreadClassificationFlags {
+  isRunning: boolean;
+  /** Permission request OR pending AskUserQuestion. */
+  hasPendingPermission: boolean;
+  hasActiveBackgroundTasks: boolean;
+  hasPendingWakeup: boolean;
+  lastError?: string;
+  messageCount: number;
+  reviewed?: boolean;
+}
+
+export function classifyThreadRow(flags: ThreadClassificationFlags): ThreadRowState {
+  if (flags.isRunning) {
+    return flags.hasPendingPermission ? 'awaiting' : 'running';
+  }
+  if (flags.hasActiveBackgroundTasks) {
+    return 'running';
+  }
+  if (flags.hasPendingWakeup) {
+    return 'waiting';
+  }
+  if (flags.lastError) {
+    return 'error';
+  }
+  if (flags.messageCount > 0) {
+    return flags.reviewed ? 'idle-reviewed' : 'idle-new';
+  }
+  return 'empty';
+}
+
+/**
+ * Buckets a list of threads (or any per-thread value `T`) by `classifyThreadRow`.
+ * Callers merge/split buckets to fit their own layout — e.g. AgentDashboard
+ * folds 'awaiting' into 'running' (no separate Awaiting column there), while
+ * KanbanView keeps them distinct (it renders a dedicated Awaiting column).
+ */
+export function partitionThreads<T>(
+  threads: T[],
+  getFlags: (t: T) => ThreadClassificationFlags,
+): Record<ThreadRowState, T[]> {
+  const result: Record<ThreadRowState, T[]> = {
+    running: [],
+    awaiting: [],
+    waiting: [],
+    'idle-new': [],
+    'idle-reviewed': [],
+    error: [],
+    empty: [],
+  };
+  for (const t of threads) {
+    const state = classifyThreadRow(getFlags(t));
+    result[state].push(t);
+  }
+  return result;
+}

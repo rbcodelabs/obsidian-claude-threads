@@ -9,6 +9,7 @@ import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
+import { partitionThreads } from './threadRowState';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -268,6 +269,17 @@ export class AgentDashboard extends ItemView {
       this.scheduleRender();
       return;
     }
+    // A background (skipTranscript) task — a `run_in_background: true` Agent
+    // call, or a Workflow-tool task — resolved. This is the only place a
+    // thread that's sitting in "Working" purely because of an outstanding
+    // background task moves back out once that task's last one finishes;
+    // `done`/`run_state_settled` already correctly move it INTO that state
+    // (scheduleRender() re-reads hasActiveBackgroundTasks live), but nothing
+    // previously re-checked when the background side of things settled.
+    if (event.type === 'task_notification') {
+      this.scheduleRender();
+      return;
+    }
     if (
       event.type === 'tool_use' ||
       event.type === 'task_started' ||
@@ -300,7 +312,10 @@ export class AgentDashboard extends ItemView {
     this.activityTimer = setTimeout(() => {
       this.activityTimer = null;
       const el = this.activityEls.get(threadId);
-      if (el && this.manager.isRunning(threadId)) {
+      // Keep the activity line updating from subagent/workflow progress even
+      // after the outer turn's own isRunning() has gone false — onTaskProgress
+      // writes into threadActivity regardless of foreground/background state.
+      if (el && (this.manager.isRunning(threadId) || this.manager.hasActiveBackgroundTasks(threadId))) {
         const thread = this.manager.getThread(threadId);
         if (thread) el.setText(this.getActivityText(thread, 'running'));
       }
@@ -322,24 +337,25 @@ export class AgentDashboard extends ItemView {
           (t.recap ?? '').toLowerCase().includes(q)
         )
       : allThreads;
-    const running: Thread[] = [];
-    const waiting: Thread[] = [];
-    let unreviewed: Thread[] = [];
-    let reviewed: Thread[] = [];
-    const errors: Thread[] = [];
-    let empty: Thread[] = [];
-
-    for (const t of threads) {
-      if (this.manager.isRunning(t.id)) running.push(t);
-      // A thread that has ended its turn but scheduled a wake-up isn't "done" —
-      // surface it distinctly so it doesn't look completed.
-      else if (this.plugin.hasPendingWakeup(t.id)) waiting.push(t);
-      else if (t.lastError) errors.push(t);
-      else if (t.messages.length > 0) {
-        if (t.reviewed) reviewed.push(t);
-        else unreviewed.push(t);
-      } else empty.push(t);
-    }
+    const buckets = partitionThreads(threads, (t) => ({
+      isRunning: this.manager.isRunning(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
+      lastError: t.lastError,
+      messageCount: t.messages.length,
+      reviewed: t.reviewed,
+    }));
+    // No separate "Awaiting" column exists on this dashboard (unlike Kanban) —
+    // a permission/question request keeps the row under "Working" and is
+    // surfaced instead via the per-row "?" treatment inside renderRow(),
+    // which checks hasPendingPermission/hasPendingQuestion live at render time.
+    const running: Thread[] = [...buckets.running, ...buckets.awaiting];
+    const waiting: Thread[] = buckets.waiting;
+    let unreviewed: Thread[] = buckets['idle-new'];
+    let reviewed: Thread[] = buckets['idle-reviewed'];
+    const errors: Thread[] = buckets.error;
+    let empty: Thread[] = buckets.empty;
 
     // Sort each group by most recently updated first
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;

@@ -636,6 +636,46 @@ export class ThreadManager {
     return this.pendingQuestionResolvers.has(threadId);
   }
 
+  /**
+   * True while a `skipTranscript` task (a `run_in_background: true` Agent
+   * call, or any Workflow-tool task — both go through the same
+   * `task_started`/`task_notification` protocol) has started but not yet
+   * reported completion for this thread. This is what lets the UI keep a
+   * thread in "Working" even after the outer turn's own `isRunning()` has
+   * already flipped to false, since the outer turn's result can land before
+   * a spawned subagent or workflow finishes server-side.
+   */
+  hasActiveBackgroundTasks(threadId: string): boolean {
+    const live = this.activeBgTasks.get(threadId);
+    if (live && live.size > 0) return true;
+    return (this.threads.get(threadId)?.pendingBackgroundTasks?.length ?? 0) > 0;
+  }
+
+  /**
+   * Merges the live `activeBgTasks` map (populated from `onTaskStarted`,
+   * cleared on `onTaskNotification`) with `thread.pendingBackgroundTasks`
+   * (the snapshot persisted in `onDone` for poll-recovery after a reload).
+   * The persisted array matters for the brief window right after an
+   * Obsidian reload, before `scheduleBgTaskPoll` has re-confirmed status —
+   * without merging it in, a reload would briefly flash the thread back to
+   * New/Reviewed until the first poll lands. Dedup by taskId; live entries
+   * win on conflict since they reflect the current session's state.
+   */
+  getActiveBackgroundTasks(threadId: string): PendingBackgroundTask[] {
+    const live = this.activeBgTasks.get(threadId);
+    const persisted = this.threads.get(threadId)?.pendingBackgroundTasks ?? [];
+    const result = new Map<string, PendingBackgroundTask>();
+    for (const task of persisted) {
+      result.set(task.taskId, task);
+    }
+    if (live) {
+      for (const [taskId, { description, startedAt }] of live.entries()) {
+        result.set(taskId, { taskId, description, startedAt, pollCount: result.get(taskId)?.pollCount ?? 0 });
+      }
+    }
+    return Array.from(result.values());
+  }
+
   registerQuestionResolver(threadId: string, resolver: (answers: Record<string, string>) => void): void {
     this.pendingQuestionResolvers.set(threadId, resolver);
   }

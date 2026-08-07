@@ -300,6 +300,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               status: t.status ?? 'waiting',
               uiStatus: computeUiStatus({
                 isRunning,
+                hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(id),
                 lastError: t.lastError,
                 messageCount: nonCompact.length,
                 reviewed: t.reviewed,
@@ -336,6 +337,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               status: t.status ?? 'waiting',
               uiStatus: computeUiStatus({
                 isRunning,
+                hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
                 lastError: t.lastError,
                 messageCount,
                 reviewed: t.reviewed,

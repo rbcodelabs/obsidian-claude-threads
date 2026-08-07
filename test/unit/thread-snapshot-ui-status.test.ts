@@ -80,6 +80,40 @@ describe('computeUiStatus — UI/API status consistency', () => {
     expect(computeUiStatus({ isRunning: false, messageCount: 1, reviewed: true })).toBe('reviewed');
   });
 
+  // ── hasActiveBackgroundTasks (a run_in_background Agent call or Workflow-tool
+  // task that hasn't reported completion yet keeps the thread 'working' even
+  // after the outer turn's own isRunning() has gone false) ────────────────────
+
+  it("not running, but hasActiveBackgroundTasks: true → 'working'", () => {
+    expect(computeUiStatus({ isRunning: false, hasActiveBackgroundTasks: true, messageCount: 5 })).toBe('working');
+  });
+
+  it('hasActiveBackgroundTasks wins over a stale lastError (same as the isRunning-wins case above)', () => {
+    expect(computeUiStatus({
+      isRunning: false,
+      hasActiveBackgroundTasks: true,
+      lastError: 'stale error from a prior run',
+      messageCount: 3,
+    })).toBe('working');
+  });
+
+  it("hasActiveBackgroundTasks wins over reviewed: true (does not fall through to 'reviewed')", () => {
+    expect(computeUiStatus({
+      isRunning: false,
+      hasActiveBackgroundTasks: true,
+      messageCount: 4,
+      reviewed: true,
+    })).toBe('working');
+  });
+
+  it('hasActiveBackgroundTasks: false and not running behaves exactly as before (no regression)', () => {
+    expect(computeUiStatus({ isRunning: false, hasActiveBackgroundTasks: false, messageCount: 0 })).toBe('ready');
+  });
+
+  it('hasActiveBackgroundTasks omitted entirely behaves exactly as before (backward compatible)', () => {
+    expect(computeUiStatus({ isRunning: false, messageCount: 2, reviewed: false })).toBe('new');
+  });
+
   // ── Vocabulary consistency ──────────────────────────────────────────────────
 
   it('all 5 UiStatus values match lowercased Agent Dashboard group labels', () => {
