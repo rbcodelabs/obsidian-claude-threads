@@ -15,6 +15,12 @@ export interface SchedulerItemPatch {
   lastRun?: number;
   nextRun?: number;
   lastThreadId?: string;
+  /**
+   * The gate is a top-level field (not nested under `schedule`), so it merges
+   * via `updateItem`'s plain spread of `restPatch` over the item — no special
+   * nested-merge handling needed. Set to `undefined` to clear an existing gate.
+   */
+  gate?: ScheduledItem['gate'] | undefined;
 }
 
 export interface SchedulerOptions {
@@ -64,7 +70,38 @@ export interface SchedulerOptions {
    * point, e.g. for logging a warning to run "Open Thread Orchestrator" again.
    */
   onOrchestratorHeartbeatStale?: (item: ScheduledItem) => void;
+  /**
+   * Runs an item's gate command (see ScheduledItem.gate). Injected — like
+   * createThread/sendMessage — so this module stays free of direct node
+   * imports and remains unit-testable. Resolves with the command's exit code
+   * and stdout; `timedOut` is true when the command exceeded `timeoutMs` and
+   * was killed, and `spawnError` is set when the command could not be launched
+   * at all (e.g. command-not-found). Both of those are "could not evaluate"
+   * conditions handled by the fail-open logic in fire(); a clean non-zero
+   * `exitCode` is a deliberate "skip this cycle" signal. When this option is
+   * absent (e.g. on mobile), a configured gate fails open (fires).
+   */
+  runGate?: (
+    command: string,
+    opts: { cwd: string; timeoutMs: number; env: Record<string, string | undefined> },
+  ) => Promise<{ exitCode: number | null; stdout: string; timedOut: boolean; spawnError?: string }>;
+  /**
+   * Supplies the base environment for gate commands (typically execEnv() from
+   * dashboardUtils, which augments PATH so tools like `gh`/`jq` resolve). fire()
+   * layers CRON_LAST_RUN_MS / CRON_ITEM_ID / CRON_ITEM_NAME on top. Keeping the
+   * PATH-augmentation in the caller keeps this module node-free.
+   */
+  getGateBaseEnv?: () => NodeJS.ProcessEnv;
 }
+
+/** Default gate timeout when an item doesn't specify one. */
+const GATE_DEFAULT_TIMEOUT_SECONDS = 30;
+/** Hard ceiling on a gate's timeout so a misconfigured item can't hang a cycle indefinitely. */
+const GATE_MAX_TIMEOUT_SECONDS = 120;
+/** Max bytes of gate stdout interpolated into the prompt (~8 KB). */
+const GATE_STDOUT_MAX_BYTES = 8 * 1024;
+/** Placeholder replaced with the gate's stdout when present in the prompt. */
+const GATE_OUTPUT_PLACEHOLDER = '{{gateOutput}}';
 
 // Internal: compute next fire time from an item.
 // fromNow=true resets the base to Date.now() (used after a fired run).
@@ -127,6 +164,32 @@ export function isWithinActiveHours(schedule: ScheduledItemSchedule, atMs: numbe
   }
   // Overnight window: active from start through midnight, then midnight through end.
   return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
+
+// Truncate the gate's stdout to a byte cap so a runaway command can't stuff the
+// prompt (and the transcript) with megabytes of output. Cuts on a UTF-8 code
+// unit boundary via Buffer, then appends a marker so the truncation is visible.
+function truncateGateStdout(stdout: string): string {
+  const buf = Buffer.from(stdout, 'utf8');
+  if (buf.length <= GATE_STDOUT_MAX_BYTES) return stdout;
+  const truncated = buf.subarray(0, GATE_STDOUT_MAX_BYTES).toString('utf8');
+  return `${truncated}\n… [gate output truncated]`;
+}
+
+// Fold a gate's stdout into the prompt sent to the agent on a fire. If the
+// prompt contains the {{gateOutput}} placeholder, replace every occurrence with
+// the (truncated) stdout. Otherwise, when stdout is non-empty, append it as a
+// clearly delimited block so the agent still gets the context. An empty stdout
+// with no placeholder leaves the prompt unchanged; a placeholder is always
+// substituted (with empty string) so the literal token never reaches the agent.
+export function interpolateGateOutput(prompt: string, stdout: string): string {
+  const trimmed = stdout.trim();
+  const capped = trimmed ? truncateGateStdout(trimmed) : '';
+  if (prompt.includes(GATE_OUTPUT_PLACEHOLDER)) {
+    return prompt.split(GATE_OUTPUT_PLACEHOLDER).join(capped);
+  }
+  if (!capped) return prompt;
+  return `${prompt}\n\n---\nGate output:\n${capped}`;
 }
 
 function parseHHMM(timeOfDay: string): number {
@@ -358,21 +421,87 @@ export class Scheduler {
           }
         }
 
-        if (reuseTarget) {
-          await this.options.sendMessage(reuseTarget, current.prompt);
-          current.lastThreadId = reuseTarget;
-        } else if (current.isOrchestratorHeartbeat) {
-          // The orchestrator's own heartbeat backstop, but its target thread
-          // no longer resolves (deleted/archived out from under it). Do NOT
-          // fall back to creating a stray generic replacement thread — just
-          // notify so the caller can prompt the user to recreate it. lastRun/
-          // nextRun still advance below so this doesn't spin retrying every cycle.
-          this.options.onOrchestratorHeartbeatStale?.(current);
-        } else {
-          const cwd = current.cwd || this.options.getDefaultCwd();
-          const thread = this.options.createThread(current.name, cwd, current.projectId, current.id);
-          await this.options.sendMessage(thread.id, current.prompt);
-          current.lastThreadId = thread.id;
+        // Deterministic pre-check gate: run the item's gate command (if any)
+        // before creating a thread or sending a message, so cycles with
+        // "nothing to do" are skipped without burning an agent turn. Placed
+        // after claimFire so the gate runs at most once per cycle even in the
+        // rare dual-instance reload race, and a skip reuses the normal
+        // post-fire bookkeeping below. A skipped gate cycle IS a completed
+        // cycle (the check ran), so lastRun/nextRun advance normally — which
+        // also gives the next gate run a natural "since last check" cursor via
+        // CRON_LAST_RUN_MS.
+        let promptToSend = current.prompt;
+        let gateSkip = false;
+        if (current.gate?.command) {
+          const gate = current.gate;
+          if (!this.options.runGate) {
+            // Gate can't be evaluated in this environment (e.g. mobile, or not
+            // wired). Fail open: fire unconditionally rather than blackhole a
+            // real cron. Clear any stale error from a prior desktop run.
+            current.lastGateError = undefined;
+          } else {
+            const timeoutMs =
+              Math.min(
+                Math.max(gate.timeoutSeconds ?? GATE_DEFAULT_TIMEOUT_SECONDS, 1),
+                GATE_MAX_TIMEOUT_SECONDS,
+              ) * 1000;
+            const env: Record<string, string | undefined> = {
+              ...(this.options.getGateBaseEnv?.() ?? {}),
+              CRON_LAST_RUN_MS: current.lastRun !== undefined ? String(current.lastRun) : '',
+              CRON_ITEM_ID: current.id,
+              CRON_ITEM_NAME: current.name,
+            };
+            const gateCwd = current.cwd || this.options.getDefaultCwd();
+            const result = await this.options.runGate(gate.command, { cwd: gateCwd, timeoutMs, env });
+
+            if (result.timedOut || result.spawnError) {
+              // Could not evaluate the gate. Fail open by default so a broken
+              // check never silently stops a real cron; failOpen:false opts
+              // into fail-closed (skip) instead. A clean non-zero exit is a
+              // different case handled below — that IS a deliberate skip.
+              current.lastGateError = result.timedOut
+                ? `Gate timed out after ${timeoutMs}ms`
+                : result.spawnError ?? 'Gate failed to run';
+              current.lastGateExitCode = undefined;
+              gateSkip = gate.failOpen === false;
+            } else if (result.exitCode === 0) {
+              // Fire: fold the gate's stdout into the prompt so the agent has
+              // the context the check already gathered.
+              current.lastGateExitCode = 0;
+              current.lastGateError = undefined;
+              promptToSend = interpolateGateOutput(current.prompt, result.stdout);
+            } else {
+              // Clean non-zero exit: a deliberate "nothing to do". Skip this
+              // cycle regardless of failOpen.
+              current.lastGateExitCode = result.exitCode ?? undefined;
+              current.lastGateError = undefined;
+              gateSkip = true;
+            }
+          }
+
+          // Record why this cycle was (or wasn't) skipped for CronList
+          // observability. On a fire, clear a stale 'gate' skip reason.
+          if (gateSkip) current.lastSkipReason = 'gate';
+          else if (current.lastSkipReason === 'gate') current.lastSkipReason = undefined;
+        }
+
+        if (!gateSkip) {
+          if (reuseTarget) {
+            await this.options.sendMessage(reuseTarget, promptToSend);
+            current.lastThreadId = reuseTarget;
+          } else if (current.isOrchestratorHeartbeat) {
+            // The orchestrator's own heartbeat backstop, but its target thread
+            // no longer resolves (deleted/archived out from under it). Do NOT
+            // fall back to creating a stray generic replacement thread — just
+            // notify so the caller can prompt the user to recreate it. lastRun/
+            // nextRun still advance below so this doesn't spin retrying every cycle.
+            this.options.onOrchestratorHeartbeatStale?.(current);
+          } else {
+            const cwd = current.cwd || this.options.getDefaultCwd();
+            const thread = this.options.createThread(current.name, cwd, current.projectId, current.id);
+            await this.options.sendMessage(thread.id, promptToSend);
+            current.lastThreadId = thread.id;
+          }
         }
       } catch (err) {
         console.error(`[Scheduler] Failed to fire scheduled item "${current.name}" (${current.id}):`, err);

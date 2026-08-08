@@ -304,6 +304,7 @@ export interface CronCreateParams {
   enabled: boolean;
   cwd?: string;
   projectId?: string;
+  gate?: import('./types').ScheduledItem['gate'];
 }
 
 export type CronUpdatePatch = SchedulerItemPatch;
@@ -1826,16 +1827,32 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundCronCreate = tool(
     'CronCreate',
-    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week. Optionally scope it to a local-time active-hours window (e.g. business hours) with activeHoursStart/activeHoursEnd so cycles outside that window are skipped automatically — no thread created, no message sent — instead of firing a thread just to check the clock and bail.",
+    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week. Optionally scope it to a local-time active-hours window (e.g. business hours) with activeHoursStart/activeHoursEnd so cycles outside that window are skipped automatically — no thread created, no message sent — instead of firing a thread just to check the clock and bail. Optionally add a deterministic gate command (gateCommand) that runs before each cycle fires: exit 0 fires the agent, any clean non-zero exit skips the cycle entirely (no thread, no LLM turn), so mechanical 'is there anything to do?' checks don't burn a turn. On a fire, the gate's stdout is fed into the prompt — it replaces a {{gateOutput}} placeholder if present, otherwise it's appended as a 'Gate output:' block. The gate env includes CRON_LAST_RUN_MS, CRON_ITEM_ID, and CRON_ITEM_NAME.",
     {
       name: z.string().describe('Human-readable name for this scheduled task'),
-      prompt: z.string().describe('The prompt to send when this item fires'),
+      prompt: z.string().describe('The prompt to send when this item fires. May contain a {{gateOutput}} placeholder that is replaced with the gate command stdout on a fire.'),
       scheduleType: z.enum(['interval', 'daily', 'weekly']).describe("Schedule type: 'interval', 'daily', or 'weekly'"),
       intervalSeconds: z.number().optional().describe("Required for 'interval': seconds between runs (e.g. 3600 = hourly)"),
       timeOfDay: z.string().optional().describe("HH:MM time string, required for 'daily' and 'weekly'"),
       daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("For 'weekly': day numbers 0=Sun through 6=Sat"),
       cwd: z.string().optional().describe('Working directory override for spawned threads'),
       projectId: z.string().optional().describe('Project ID to assign to new threads'),
+      gateCommand: z
+        .string()
+        .optional()
+        .describe(
+          "Optional deterministic pre-check shell command run before each cycle fires (runs in the item's cwd). Exit 0 = fire the agent; any clean non-zero exit = skip this cycle entirely (no thread, no LLM turn). On a fire, stdout is interpolated into the prompt ({{gateOutput}} placeholder, else appended). Env includes CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.",
+        ),
+      gateTimeoutSeconds: z
+        .number()
+        .optional()
+        .describe('Max seconds the gate command may run before it is killed. Defaults to 30, capped at 120.'),
+      gateFailOpen: z
+        .boolean()
+        .optional()
+        .describe(
+          'When the gate cannot be evaluated (timeout or spawn failure such as command-not-found), whether to fire anyway. Defaults to true so a broken check never silently stops a real cron. A clean non-zero exit is always a deliberate skip regardless of this flag.',
+        ),
       activeHoursStart: z
         .string()
         .optional()
@@ -1881,6 +1898,9 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
           enabled: true,
           cwd: args.cwd,
           projectId: args.projectId,
+          gate: args.gateCommand
+            ? { command: args.gateCommand, timeoutSeconds: args.gateTimeoutSeconds, failOpen: args.gateFailOpen }
+            : undefined,
         });
         return { content: [{ type: 'text' as const, text: JSON.stringify(item, null, 2) }] };
       } catch (err: unknown) {
@@ -1912,7 +1932,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundCronUpdate = tool(
     'CronUpdate',
-    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true. Use activeHoursStart/activeHoursEnd to set or change the local-time window this item is allowed to fire in (cycles outside it are skipped automatically); use clearActiveHours to remove that restriction entirely.',
+    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true. Use activeHoursStart/activeHoursEnd to set or change the local-time window this item is allowed to fire in (cycles outside it are skipped automatically); use clearActiveHours to remove that restriction entirely. Use gateCommand/gateTimeoutSeconds/gateFailOpen to set or change the deterministic pre-check that runs before each cycle fires (exit 0 = fire, any clean non-zero exit = skip the cycle with no thread or LLM turn; stdout is interpolated into the prompt via {{gateOutput}}); use clearGate to remove the gate entirely.',
     {
       id: z.string().describe('ID of the scheduled item to update'),
       name: z.string().optional().describe('New human-readable name'),
@@ -1923,6 +1943,21 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       daysOfWeek: z.array(z.number().int().min(0).max(6)).optional().describe("New days of week (for 'weekly')"),
       cwd: z.string().optional().describe('New working directory override'),
       projectId: z.string().optional().describe('New project ID'),
+      gateCommand: z
+        .string()
+        .optional()
+        .describe(
+          'New deterministic pre-check shell command run before each cycle fires. Exit 0 = fire; any clean non-zero exit = skip the cycle (no thread, no LLM turn). On a fire, stdout is interpolated into the prompt via {{gateOutput}} (else appended). Env includes CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.',
+        ),
+      gateTimeoutSeconds: z
+        .number()
+        .optional()
+        .describe('New max seconds the gate command may run before it is killed (default 30, capped at 120). Only applied when a gate command is or becomes set.'),
+      gateFailOpen: z
+        .boolean()
+        .optional()
+        .describe('New fail-open behavior: when the gate cannot be evaluated (timeout/spawn failure), whether to fire anyway (default true). Only applied when a gate command is or becomes set.'),
+      clearGate: z.boolean().optional().describe('Set to true to remove the gate entirely, so this item fires every cycle without a pre-check.'),
       activeHoursStart: z
         .string()
         .optional()
@@ -1942,7 +1977,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         if (!options.onCronUpdate) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronUpdate is not available in this context.' }) }], isError: true };
         }
-        const { id, name, prompt, enabled, intervalSeconds, timeOfDay, daysOfWeek, cwd, projectId, activeHoursStart, activeHoursEnd, clearActiveHours } = args;
+        const { id, name, prompt, enabled, intervalSeconds, timeOfDay, daysOfWeek, cwd, projectId, activeHoursStart, activeHoursEnd, clearActiveHours, gateCommand, gateTimeoutSeconds, gateFailOpen, clearGate } = args;
         const patch: CronUpdatePatch = {};
         if (name !== undefined) patch.name = name;
         if (prompt !== undefined) patch.prompt = prompt;
@@ -1980,6 +2015,38 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             };
           }
           patch.schedule = { ...patch.schedule, activeHours: { start, end } };
+        }
+        if (clearGate) {
+          // gate is a top-level field (not nested under schedule), so clearing
+          // it is a plain patch.gate = undefined — no schedule interaction.
+          patch.gate = undefined;
+        } else if (gateCommand !== undefined || gateTimeoutSeconds !== undefined || gateFailOpen !== undefined) {
+          // Like the activeHours branch above, gate is an object, so a partial
+          // update (e.g. only changing the timeout) needs the other sub-fields
+          // filled in from the existing item — updateItem replaces the whole
+          // gate object via a shallow spread and would otherwise drop them.
+          const existing = options.onCronList?.().find((i) => i.id === id);
+          const existingGate = existing?.gate;
+          const command = gateCommand ?? existingGate?.command;
+          if (!command) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({
+                    error:
+                      'Cannot set gateTimeoutSeconds/gateFailOpen without a gate command. Provide gateCommand, or the item must already have a gate.',
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          patch.gate = {
+            command,
+            timeoutSeconds: gateTimeoutSeconds ?? existingGate?.timeoutSeconds,
+            failOpen: gateFailOpen ?? existingGate?.failOpen,
+          };
         }
         if (cwd !== undefined) patch.cwd = cwd;
         if (projectId !== undefined) patch.projectId = projectId;

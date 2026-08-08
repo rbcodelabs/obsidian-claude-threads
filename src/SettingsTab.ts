@@ -43,10 +43,13 @@ function maskOpenAiKey(key: string | null | undefined): string {
   return key.slice(0, 8) + '…' + key.slice(-4);
 }
 
-function formatScheduleDescription(schedule: ScheduledItemSchedule): string {
+function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = false): string {
   const activeHoursSuffix = schedule.activeHours
     ? ` (${schedule.activeHours.start}-${schedule.activeHours.end} only)`
     : '';
+  // Flag items with a deterministic pre-check gate so it's visible at a glance
+  // which scheduled tasks may skip a cycle without spawning a thread.
+  const gatedSuffix = gated ? ' · gated' : '';
 
   if (schedule.type === 'interval') {
     const secs = schedule.intervalSeconds ?? 0;
@@ -55,13 +58,13 @@ function formatScheduleDescription(schedule: ScheduledItemSchedule): string {
     else if (secs >= 3600) base = `Every ${Math.round(secs / 3600)} hour(s)`;
     else if (secs >= 60) base = `Every ${Math.round(secs / 60)} minute(s)`;
     else base = `Every ${secs}s`;
-    return base + activeHoursSuffix;
+    return base + activeHoursSuffix + gatedSuffix;
   }
-  if (schedule.type === 'daily') return `Daily at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix;
+  if (schedule.type === 'daily') return `Daily at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix + gatedSuffix;
   if (schedule.type === 'weekly') {
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const days = (schedule.daysOfWeek ?? []).map((d) => dayNames[d] ?? d).join(', ');
-    return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix;
+    return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix + gatedSuffix;
   }
   return 'Unknown schedule';
 }
@@ -1784,7 +1787,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         return;
       }
       for (const item of items) {
-        const desc = formatScheduleDescription(item.schedule);
+        const desc = formatScheduleDescription(item.schedule, !!item.gate?.command);
         const lastRunStr = item.lastRun ? `Last run: ${new Date(item.lastRun).toLocaleString()}` : 'Never run';
         const nextRunStr = item.enabled && item.nextRun ? `Next: ${new Date(item.nextRun).toLocaleString()}` : '';
         new Setting(scheduledList)

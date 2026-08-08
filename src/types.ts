@@ -387,6 +387,39 @@ export interface ScheduledItem {
    * new-thread behavior other targetThreadId items use.
    */
   isOrchestratorHeartbeat?: boolean;
+  /**
+   * Optional deterministic pre-check run before firing (see Scheduler.fire()).
+   * A shell command evaluated at fire time: exit 0 means "fire the agent",
+   * any clean non-zero exit means "nothing to do, skip this cycle" (matching
+   * the convention of `test -s file` / `grep -q`). On a fire, the gate's
+   * stdout is interpolated into the prompt so the agent doesn't have to
+   * re-derive what changed. Runs at fire time regardless of schedule type, so
+   * it lives at the top level rather than on `schedule`.
+   */
+  gate?: {
+    /** Shell command; exit 0 = fire, any clean non-zero exit = skip this cycle. */
+    command: string;
+    /** Max seconds the gate may run before it's killed. Defaults to 30. */
+    timeoutSeconds?: number;
+    /**
+     * When the gate cannot be evaluated (timeout, or a spawn failure such as
+     * command-not-found), whether to fire anyway. Defaults to true so a broken
+     * check never silently blackholes a real cron. A clean non-zero exit is
+     * always a deliberate skip regardless of this flag.
+     */
+    failOpen?: boolean;
+  };
+  /**
+   * Observability written by Scheduler.fire() and surfaced in CronList. Records
+   * why the most recent due cycle was skipped, if it was: 'gate' (the gate
+   * command returned a clean non-zero exit) or 'active-hours' (the cycle came
+   * due outside the configured window).
+   */
+  lastSkipReason?: 'gate' | 'active-hours';
+  /** Exit code of the most recent gate evaluation (0 on a fire, non-zero on a gated skip). */
+  lastGateExitCode?: number;
+  /** Set when the most recent gate could not be evaluated (timeout or spawn failure). */
+  lastGateError?: string;
 }
 
 export interface SkillSource {
@@ -528,12 +561,14 @@ export interface PluginSettings {
    */
   orchestratorThreadId?: string;
   /**
-   * How the Kanban board groups threads. 'status' (default) renders the six
+   * How the Kanban board groups threads. 'status' (default) renders the seven
    * status columns. 'folder' renders one horizontal swimlane per app/project
    * (by assigned Project, falling back to working-directory label), with the
-   * status columns nested inside each lane.
+   * status columns nested inside each lane. 'project' renders one vertical
+   * column per app/project, with threads inside each column grouped under
+   * status section headers (matching the Agent Dashboard sidebar's grouping).
    */
-  kanbanGroupBy?: 'status' | 'folder';
+  kanbanGroupBy?: 'status' | 'folder' | 'project';
   /**
    * Which sidebar panel(s) to auto-collapse when the Kanban board tab is
    * opened, and restore when it is closed. Defaults to 'none' (no change).
