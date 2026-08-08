@@ -100,7 +100,11 @@ const mgrInternals = manager as unknown as {
   emit(threadId: string, event: { type: string }): void;
 };
 (window as any).__setThreadRunning = (threadId: string, running: boolean) => {
-  if (running) mgrInternals.sessions.set(threadId, {});
+  // `isRunning()` reads `session.turnInFlight` (the unified long-lived-session
+  // model — see ThreadManager.sessions), so a bare `{}` reads as NOT running.
+  // Seed the flag so Working/Awaiting classification and the wake-up banner's
+  // isRunning() gate behave as they do against a real busy session.
+  if (running) mgrInternals.sessions.set(threadId, { turnInFlight: true });
   else mgrInternals.sessions.delete(threadId);
 };
 (window as any).__fireRunStateSettled = (threadId: string) => {

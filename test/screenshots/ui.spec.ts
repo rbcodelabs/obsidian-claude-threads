@@ -488,7 +488,10 @@ test.describe('Claude Threads UI', () => {
     await page.setViewportSize({ width: 860, height: 820 });
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
-    await page.click('.ct-settings-tab-btn:has-text("Claude")');
+    // The tab whose id is 'claude' is now labelled "Agent" (harness-agnostic
+    // naming since the Codex harness landed); the screenshot keeps the historical
+    // settings-claude.png name to match the tab id.
+    await page.click('.ct-settings-tab-btn:has-text("Agent")');
     await page.waitForTimeout(200);
     await expect(page).toHaveScreenshot('settings-claude.png', { fullPage: true });
   });
