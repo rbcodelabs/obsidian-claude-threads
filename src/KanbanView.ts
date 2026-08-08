@@ -25,8 +25,13 @@ const UNASSIGNED_GROUP = 'Unassigned';
  * Kanban column labels eligible for scheduled-thread stacking. These are the
  * "quiet" columns — a run that's running, awaiting a permission/question, or
  * errored always renders as its own card and is never a candidate.
+ *
+ * 'Reviewed' is the project-columns mode's sidebar-style label for what the
+ * status board calls 'Done' (see sectionsForColumn()) — included here so
+ * stacking still applies to that section under its own name. It never
+ * collides with status-board rendering, which always uses 'Done'.
  */
-const QUIET_COLUMN_LABELS = new Set(['New', 'Done', 'Ready']);
+const QUIET_COLUMN_LABELS = new Set(['New', 'Done', 'Ready', 'Reviewed']);
 
 export class KanbanView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
@@ -287,21 +292,36 @@ export class KanbanView extends ItemView {
     this.render();
   }
 
-  private get groupBy(): 'status' | 'folder' {
+  private get groupBy(): 'status' | 'folder' | 'project' {
     return this.plugin.settings.kanbanGroupBy ?? 'status';
   }
 
   private updateGroupByBtn(): void {
-    const byFolder = this.groupBy === 'folder';
-    setIcon(this.groupByBtn, byFolder ? 'folder-tree' : 'columns-3');
-    this.groupByBtn.toggleClass('ct-kanban-groupby-active', byFolder);
-    const label = byFolder ? 'Grouping by folder — click to group by status' : 'Group by folder';
+    const mode = this.groupBy;
+    const ICONS: Record<'status' | 'folder' | 'project', string> = {
+      status: 'columns-3',
+      folder: 'folder-tree',
+      project: 'layout-panel-left',
+    };
+    const LABELS: Record<'status' | 'folder' | 'project', string> = {
+      status: 'Group by folder',
+      folder: 'Grouping by folder — click to group by project',
+      project: 'Grouping by project — click to group by status',
+    };
+    setIcon(this.groupByBtn, ICONS[mode]);
+    this.groupByBtn.toggleClass('ct-kanban-groupby-active', mode !== 'status');
+    const label = LABELS[mode];
     this.groupByBtn.setAttribute('title', label);
     this.groupByBtn.setAttribute('aria-label', label);
   }
 
   private async toggleGroupBy(): Promise<void> {
-    this.plugin.settings.kanbanGroupBy = this.groupBy === 'folder' ? 'status' : 'folder';
+    const NEXT: Record<'status' | 'folder' | 'project', 'status' | 'folder' | 'project'> = {
+      status: 'folder',
+      folder: 'project',
+      project: 'status',
+    };
+    this.plugin.settings.kanbanGroupBy = NEXT[this.groupBy];
     await this.plugin.saveSettings();
     this.updateGroupByBtn();
     this.render();
@@ -340,6 +360,8 @@ export class KanbanView extends ItemView {
 
     if (this.groupBy === 'folder') {
       this.renderFolderBoard(threads);
+    } else if (this.groupBy === 'project') {
+      this.renderProjectColumnsBoard(threads);
     } else {
       this.renderStatusBoard(threads);
     }
@@ -445,11 +467,7 @@ export class KanbanView extends ItemView {
     // Sort lanes alphabetically (case-insensitive) so they stay put as threads
     // update — the last-modified sort happens WITHIN each lane (per status column
     // in bucketize), not across lanes. The catch-all group always sinks last.
-    const lanes = Array.from(groups.entries()).sort((a, b) => {
-      if (a[0] === UNASSIGNED_GROUP) return 1;
-      if (b[0] === UNASSIGNED_GROUP) return -1;
-      return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
-    });
+    const lanes = this.sortGroupEntries(Array.from(groups.entries()));
 
     for (const [label, laneThreads] of lanes) {
       const lane = board.createDiv('ct-kanban-lane');
@@ -469,6 +487,116 @@ export class KanbanView extends ItemView {
         this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge, `${label}::${col.label}`);
       }
     }
+  }
+
+  /**
+   * Sorts group entries (folder-swimlane lanes or project columns) alphabetically
+   * (case-insensitive) by label, with the `Unassigned` catch-all always sinking
+   * last regardless of name. Shared by renderFolderBoard() and
+   * renderProjectColumnsBoard() so both grouping modes agree on lane/column order.
+   */
+  private sortGroupEntries(entries: [string, Thread[]][]): [string, Thread[]][] {
+    return entries.slice().sort((a, b) => {
+      if (a[0] === UNASSIGNED_GROUP) return 1;
+      if (b[0] === UNASSIGNED_GROUP) return -1;
+      return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+    });
+  }
+
+  /**
+   * Groups threads by app/project (via groupLabel(), same resolution as folder
+   * swimlanes) and renders one vertical column per project — alphabetically
+   * sorted, Unassigned last. Unlike renderFolderBoard()'s nested per-lane status
+   * columns, each project column here stacks status SECTIONS vertically inside
+   * a single scrolling body (see renderProjectColumn()/sectionsForColumn()),
+   * matching the Agent Dashboard sidebar's grouping.
+   */
+  private renderProjectColumnsBoard(threads: Thread[]): void {
+    const board = this.boardEl.createDiv('ct-kanban-board');
+    board.dataset.scrollKey = '__board__';
+
+    const groups = new Map<string, Thread[]>();
+    for (const t of threads) {
+      const key = this.groupLabel(t);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(t);
+      else groups.set(key, [t]);
+    }
+
+    const columns = this.sortGroupEntries(Array.from(groups.entries()));
+    for (const [label, colThreads] of columns) {
+      this.renderProjectColumn(board, label, colThreads);
+    }
+  }
+
+  /**
+   * Renders one project column: header (project name + count, matching
+   * renderColumn()'s header) plus a body containing one subsection per
+   * non-empty status bucket from sectionsForColumn().
+   */
+  private renderProjectColumn(board: HTMLElement, label: string, threads: Thread[]): void {
+    const col = board.createDiv('ct-kanban-col ct-kanban-project-col');
+
+    const header = col.createDiv('ct-kanban-col-header');
+    const headerLeft = header.createDiv('ct-kanban-col-header-left');
+    headerLeft.createSpan({ cls: 'ct-kanban-col-label', text: label });
+    header.createSpan({ cls: 'ct-kanban-col-count', text: String(threads.length) });
+
+    const body = col.createDiv('ct-kanban-col-body');
+    body.dataset.scrollKey = `project::${label}`;
+
+    const sections = this.sectionsForColumn(threads);
+    if (sections.length === 0) {
+      body.createDiv({ cls: 'ct-kanban-col-empty', text: 'Nothing here' });
+      return;
+    }
+
+    for (const section of sections) {
+      const sectionEl = body.createDiv('ct-kanban-project-section');
+      const labelEl = sectionEl.createDiv('ct-kanban-project-section-label');
+      labelEl.createSpan({ cls: 'ct-kanban-project-section-name', text: section.label });
+      if (section.badge !== undefined) {
+        labelEl.createSpan({ cls: 'ct-agents-group-badge ct-kanban-badge', text: String(section.badge) });
+      }
+      this.populateCardBody(sectionEl, section.threads, section.state, section.label, `${label}::${section.label}`);
+    }
+  }
+
+  /**
+   * Buckets threads for a single project column into fixed-order status
+   * sections, mirroring AgentDashboard.render()'s sidebar grouping exactly:
+   * 'awaiting' folds into 'Working' (no separate Awaiting section here, unlike
+   * the status board), each section sorted by recency, empty sections omitted.
+   * 'New' carries a badge with its thread count, matching the status board.
+   */
+  private sectionsForColumn(threads: Thread[]): ColDef[] {
+    const buckets = partitionThreads(threads, (t) => ({
+      isRunning: this.manager.isRunning(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
+      lastError: t.lastError,
+      messageCount: t.messages.length,
+      reviewed: t.reviewed,
+    }));
+
+    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
+    const working = [...buckets.running, ...buckets.awaiting].sort(byRecency);
+    const waiting = buckets.waiting.sort(byRecency);
+    const unreviewed = buckets['idle-new'].sort(byRecency);
+    const reviewed = buckets['idle-reviewed'].sort(byRecency);
+    const errors = buckets.error.sort(byRecency);
+    const empty = buckets.empty.sort(byRecency);
+
+    const all: ColDef[] = [
+      { label: 'Working', threads: working, state: 'running' },
+      { label: 'Waiting', threads: waiting, state: 'waiting' },
+      { label: 'New', threads: unreviewed, state: 'idle', badge: unreviewed.length > 0 ? unreviewed.length : undefined },
+      { label: 'Reviewed', threads: reviewed, state: 'idle' },
+      { label: 'Failed', threads: errors, state: 'error' },
+      { label: 'Ready', threads: empty, state: 'empty' },
+    ];
+    return all.filter(section => section.threads.length > 0);
   }
 
   /**
@@ -523,6 +651,17 @@ export class KanbanView extends ItemView {
 
     const body = col.createDiv('ct-kanban-col-body');
     if (scrollKey) body.dataset.scrollKey = scrollKey;
+    this.populateCardBody(body, threads, state, label, scrollKey ?? label);
+  }
+
+  /**
+   * (Re)populates a column/section body with its cards: standalone cards
+   * always; quiet-column labels additionally interleave collapsed job-stack
+   * rollups with standalone cards by recency. Shared by renderColumn() (one
+   * call per status/folder-swimlane column) and renderProjectColumn() (one
+   * call per status section within a project column) so both stay in sync.
+   */
+  private populateCardBody(body: HTMLElement, threads: Thread[], state: RowState, label: string, scopeKey: string): void {
     if (threads.length === 0) {
       body.createDiv({ cls: 'ct-kanban-col-empty', text: 'Nothing here' });
       return;
@@ -549,7 +688,6 @@ export class KanbanView extends ItemView {
     ];
     items.sort((a, b) => b.ts - a.ts);
 
-    const scopeKey = scrollKey ?? label;
     for (const item of items) {
       if (item.kind === 'card') this.renderCard(item.thread, state, body);
       else this.renderStackCard(item.stack, state, body, scopeKey);
