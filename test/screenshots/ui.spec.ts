@@ -849,6 +849,59 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('kanban-folder-swimlanes.png', { fullPage: true });
   });
 
+  test('kanban board — group by project columns', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+    await page.evaluate(() => (window as any).__setGroupBy('project'));
+    await page.waitForSelector('.ct-kanban-project-col');
+
+    // One vertical column per app/project — same alphabetical (case-insensitive),
+    // Unassigned-last ordering as folder swimlanes (both share sortGroupEntries()).
+    // (CSS text-transform uppercases .ct-kanban-col-label, same as the status board —
+    // compare case-insensitively, same pattern as the "group by status" test above.)
+    const columns = (await page.locator('.ct-kanban-project-col .ct-kanban-col-label').allInnerTexts()).map(s => s.toUpperCase());
+    const expected = ['acme-api', 'Claude Threads', 'HipTrip', 'Unassigned'].map(s => s.toUpperCase());
+    if (JSON.stringify(columns) !== JSON.stringify(expected)) {
+      throw new Error(`Unexpected project column order. Expected ${expected.join(', ')} — got ${columns.join(', ')}`);
+    }
+
+    // HipTrip: threads are grouped under sidebar-style status SECTIONS, not the
+    // status board's 7 columns — there is never a separate Awaiting section
+    // anywhere on this board (it always folds into Working; see the
+    // "awaiting folds into Working" unit tests in kanban-project-columns.test.ts
+    // for the bucketing logic itself — the harness's seeded running/awaiting
+    // threads don't actually flip ThreadManager.isRunning() true, so this
+    // screenshot test sticks to what's reliably observable: Waiting/New/Reviewed).
+    const hiptripCol = page.locator('.ct-kanban-project-col').filter({
+      has: page.locator('.ct-kanban-col-label', { hasText: 'HipTrip' }),
+    });
+    const hiptripSections = (await hiptripCol.locator('.ct-kanban-project-section-name').allInnerTexts()).map(s => s.toUpperCase());
+    for (const expectedLabel of ['Waiting', 'New', 'Reviewed']) {
+      if (!hiptripSections.includes(expectedLabel.toUpperCase())) {
+        throw new Error(`HipTrip column missing the "${expectedLabel}" section. Got: ${hiptripSections.join(', ')}`);
+      }
+    }
+    if (hiptripSections.includes('AWAITING')) {
+      throw new Error('Project-columns mode must fold Awaiting into Working, not render a separate Awaiting section');
+    }
+
+    // Claude Threads surfaces a non-default section (Failed).
+    const threadsCol = page.locator('.ct-kanban-project-col').filter({
+      has: page.locator('.ct-kanban-col-label', { hasText: 'Claude Threads' }),
+    });
+    await expect(threadsCol.locator('.ct-kanban-project-section-name', { hasText: 'Failed' })).toHaveCount(1);
+
+    // New section carries a badge with its thread count.
+    const hiptripNewLabel = hiptripCol.locator('.ct-kanban-project-section-label').filter({
+      has: page.locator('.ct-kanban-project-section-name', { hasText: 'New' }),
+    });
+    await expect(hiptripNewLabel.locator('.ct-kanban-badge')).toHaveCount(1);
+
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('kanban-project-columns.png', { fullPage: true });
+  });
+
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {
     // Same root-cause bug as the wake-up banner test above, on the dashboard
     // side: KanbanView.handleEvent's isStateChange didn't include

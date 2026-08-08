@@ -5022,6 +5022,33 @@
   max-height: 460px;
 }
 
+/* ── Project columns ───────────────────────────────────────────────────── */
+/* .ct-kanban-project-col renders in the plain (non-swimlane) .ct-kanban-board,
+   so it already gets full-height sizing for free from the base .ct-kanban-col
+   rule above (flex: 1 1 230px; min-width: 230px; max-width: 380px; max-height: 100%) —
+   no override needed. */
+
+.ct-kanban-project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ct-kanban-project-section + .ct-kanban-project-section {
+  margin-top: 10px;
+}
+
+.ct-kanban-project-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+
 .ct-agents-list:has(.ct-kanban-board) {
   overflow: hidden;
 }

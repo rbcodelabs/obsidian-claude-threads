@@ -528,12 +528,14 @@ export interface PluginSettings {
    */
   orchestratorThreadId?: string;
   /**
-   * How the Kanban board groups threads. 'status' (default) renders the six
+   * How the Kanban board groups threads. 'status' (default) renders the seven
    * status columns. 'folder' renders one horizontal swimlane per app/project
    * (by assigned Project, falling back to working-directory label), with the
-   * status columns nested inside each lane.
+   * status columns nested inside each lane. 'project' renders one vertical
+   * column per app/project, with threads inside each column grouped under
+   * status section headers (matching the Agent Dashboard sidebar's grouping).
    */
-  kanbanGroupBy?: 'status' | 'folder';
+  kanbanGroupBy?: 'status' | 'folder' | 'project';
   /**
    * Which sidebar panel(s) to auto-collapse when the Kanban board tab is
    * opened, and restore when it is closed. Defaults to 'none' (no change).

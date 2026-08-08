@@ -61,7 +61,7 @@ view.onOpen();
 // Expose for Playwright
 (window as any).__kanban = view;
 (window as any).__manager = manager;
-(window as any).__setGroupBy = (mode: 'status' | 'folder') => {
+(window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   settings.kanbanGroupBy = mode;
   view.render();
   // Keep the toggle button glyph/state in sync with the forced mode.
