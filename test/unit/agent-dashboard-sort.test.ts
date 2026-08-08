@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Thread } from '../../src/types';
+import { partitionThreads, type ThreadClassificationFlags } from '../../src/threadRowState';
 
 /**
  * Mirrors the byRecency comparator in AgentDashboard.render().
@@ -63,5 +64,103 @@ describe('AgentDashboard — sort groups by recency', () => {
 
   it('handles an empty array without throwing', () => {
     expect(([] as Thread[]).sort(byRecency)).toEqual([]);
+  });
+});
+
+// ── AgentDashboard's fold of partitionThreads buckets into its own 5 groups ──
+//
+// AgentDashboard has no separate "Awaiting" column (unlike Kanban) — its
+// render() merges the shared classifyThreadRow's 'awaiting' bucket into
+// 'running' before rendering. It also has no distinct bucket for
+// background-task-only threads: those land in 'running' (Working) directly,
+// via classifyThreadRow itself, per the product decision that a thread with
+// no active foreground turn but an outstanding background task folds into
+// the existing Working bucket rather than getting its own UI state.
+
+interface ThreadWithFlags {
+  thread: Thread;
+  isRunning: boolean;
+  hasPendingPermission: boolean;
+  hasActiveBackgroundTasks: boolean;
+  hasPendingWakeup: boolean;
+}
+
+function withFlags(
+  thread: Thread,
+  isRunning: boolean,
+  hasPendingPermission = false,
+  hasActiveBackgroundTasks = false,
+  hasPendingWakeup = false,
+): ThreadWithFlags {
+  return { thread, isRunning, hasPendingPermission, hasActiveBackgroundTasks, hasPendingWakeup };
+}
+
+/** Mirrors AgentDashboard.render()'s merge: running = partition.running ∪ partition.awaiting. */
+function agentDashboardGroups(items: ThreadWithFlags[]) {
+  const buckets = partitionThreads<ThreadWithFlags>(items, (item): ThreadClassificationFlags => ({
+    isRunning: item.isRunning,
+    hasPendingPermission: item.hasPendingPermission,
+    hasActiveBackgroundTasks: item.hasActiveBackgroundTasks,
+    hasPendingWakeup: item.hasPendingWakeup,
+    lastError: item.thread.lastError,
+    messageCount: item.thread.messages.length,
+    reviewed: item.thread.reviewed,
+  }));
+  return {
+    working: [...buckets.running, ...buckets.awaiting].map(i => i.thread),
+    waiting: buckets.waiting.map(i => i.thread),
+    unreviewed: buckets['idle-new'].map(i => i.thread),
+    reviewed: buckets['idle-reviewed'].map(i => i.thread),
+    failed: buckets.error.map(i => i.thread),
+    ready: buckets.empty.map(i => i.thread),
+  };
+}
+
+describe('AgentDashboard — background-task-only thread folds into Working', () => {
+  it('not running, but has an active background task → Working, not New/Reviewed/Ready', () => {
+    const t = makeThread('bg-1', 1_000, true);
+    const { working, unreviewed, reviewed, ready } = agentDashboardGroups([
+      withFlags(t, false, false, true),
+    ]);
+    expect(working).toContain(t);
+    expect(unreviewed).not.toContain(t);
+    expect(reviewed).not.toContain(t);
+    expect(ready).not.toContain(t);
+  });
+
+  it('active background task takes priority over a pending wakeup (Working, not Waiting)', () => {
+    const t = makeThread('bg-2', 1_000);
+    const { working, waiting } = agentDashboardGroups([withFlags(t, false, false, true, true)]);
+    expect(working).toContain(t);
+    expect(waiting).not.toContain(t);
+  });
+
+  it('active background task takes priority over a stale lastError (Working, not Failed)', () => {
+    const t = makeThread('bg-3', 1_000, false, true);
+    const { working, failed } = agentDashboardGroups([withFlags(t, false, false, true)]);
+    expect(working).toContain(t);
+    expect(failed).not.toContain(t);
+  });
+
+  it('a running thread with a pending permission still folds into Working (no separate Awaiting group)', () => {
+    const t = makeThread('awaiting-1', 1_000);
+    const { working } = agentDashboardGroups([withFlags(t, true, true)]);
+    expect(working).toContain(t);
+  });
+
+  it('a thread with no background task and no other active state still lands in New/Reviewed/Ready as before', () => {
+    const unreviewedThread = makeThread('u', 1_000, true);
+    const reviewedThread = { ...makeThread('r', 1_000, true), reviewed: true } as Thread;
+    const readyThread = makeThread('rd', 1_000);
+
+    const result = agentDashboardGroups([
+      withFlags(unreviewedThread, false, false, false),
+      withFlags(reviewedThread, false, false, false),
+      withFlags(readyThread, false, false, false),
+    ]);
+    expect(result.unreviewed).toContain(unreviewedThread);
+    expect(result.reviewed).toContain(reviewedThread);
+    expect(result.ready).toContain(readyThread);
+    expect(result.working).toHaveLength(0);
   });
 });

@@ -22,6 +22,7 @@ import { openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
+import { partitionThreads } from './threadRowState';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -4416,23 +4417,27 @@ export class ThreadsView extends ItemView {
     this.switcherPanelEl = panel;
 
     const allThreads = this.manager.getThreads();
-    const running: Thread[] = [];
-    const unreviewed: Thread[] = [];
-    const reviewed: Thread[] = [];
-    const errors: Thread[] = [];
-    const empty: Thread[] = [];
-
-    for (const t of allThreads) {
-      if (this.manager.isRunning(t.id)) running.push(t);
-      else if (t.lastError) errors.push(t);
-      else if (t.messages.length > 0) {
-        if (t.reviewed) reviewed.push(t);
-        else unreviewed.push(t);
-      } else empty.push(t);
-    }
+    const buckets = partitionThreads(allThreads, (t) => ({
+      isRunning: this.manager.isRunning(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
+      lastError: t.lastError,
+      messageCount: t.messages.length,
+      reviewed: t.reviewed,
+    }));
+    // No separate "Awaiting" group in this panel (matches AgentDashboard) —
+    // fold permission/question-pending threads into "Working".
+    const running: Thread[] = [...buckets.running, ...buckets.awaiting];
+    const waiting: Thread[] = buckets.waiting;
+    const unreviewed: Thread[] = buckets['idle-new'];
+    const reviewed: Thread[] = buckets['idle-reviewed'];
+    const errors: Thread[] = buckets.error;
+    const empty: Thread[] = buckets.empty;
 
     const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
     running.sort(byRecency);
+    waiting.sort(byRecency);
     unreviewed.sort(byRecency);
     reviewed.sort(byRecency);
     errors.sort(byRecency);
@@ -4459,6 +4464,7 @@ export class ThreadsView extends ItemView {
         const iconEl = row.createDiv('ct-agents-icon');
         switch (state) {
           case 'running': iconEl.addClass('ct-agents-icon-running'); iconEl.setText('✽'); break;
+          case 'waiting': iconEl.addClass('ct-agents-icon-waiting'); iconEl.setText('⏳'); break;
           case 'error':   iconEl.addClass('ct-agents-icon-error');   iconEl.setText('✗'); break;
           case 'empty':   iconEl.addClass('ct-agents-icon-empty');   iconEl.setText('○'); break;
           default:        iconEl.addClass('ct-agents-icon-idle');    iconEl.setText('✓'); break;
@@ -4478,6 +4484,13 @@ export class ThreadsView extends ItemView {
         let activityText = '';
         if (state === 'running') {
           activityText = this.manager.getThreadActivity(thread.id) || 'Working...';
+        } else if (state === 'waiting') {
+          const next = this.plugin.getPendingWakeups(thread.id)[0];
+          if (!next) activityText = 'Waiting to resume';
+          else {
+            const when = formatWakeupCountdown(next.fireAt);
+            activityText = next.reason ? `Resumes ${when} — ${next.reason}` : `Resumes ${when}`;
+          }
         } else if (state === 'error') {
           activityText = thread.lastError ?? 'Error occurred';
         } else if (state === 'empty') {
@@ -4505,6 +4518,7 @@ export class ThreadsView extends ItemView {
     };
 
     if (running.length > 0)   renderSwitcherGroup('Working',  running,    'running');
+    if (waiting.length > 0)   renderSwitcherGroup('Waiting',  waiting,    'waiting');
     if (unreviewed.length > 0) renderSwitcherGroup('New',      unreviewed, 'idle');
     if (reviewed.length > 0)  renderSwitcherGroup('Reviewed', reviewed,   'idle');
     if (errors.length > 0)    renderSwitcherGroup('Failed',   errors,     'error');

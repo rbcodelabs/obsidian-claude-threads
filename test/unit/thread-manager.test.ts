@@ -389,3 +389,109 @@ describe('ThreadManager — backfillLegacyProjectNames', () => {
     expect(manager.getThread(t.id)!.projectNameOverride).toBe('obsidian-claude-threads');
   });
 });
+
+// ─── hasActiveBackgroundTasks / getActiveBackgroundTasks ─────────────────────
+//
+// These read `activeBgTasks` (populated by onTaskStarted for skipTranscript
+// tasks, cleared by onTaskNotification — see background-task-notifications.test.ts
+// for coverage of that full event-driven lifecycle) merged with
+// `thread.pendingBackgroundTasks` (the onDone snapshot used for poll-recovery
+// after a reload). Following this file's existing style (see
+// getRunningThreads's `sessions` injection above), the live map is poked
+// directly rather than re-standing-up the ThreadSession mock scaffold from
+// background-task-notifications.test.ts.
+
+function getActiveBgTasksMap(manager: ThreadManager): Map<string, Map<string, { description: string; startedAt: number }>> {
+  return (manager as unknown as { activeBgTasks: Map<string, Map<string, { description: string; startedAt: number }>> }).activeBgTasks;
+}
+
+describe('ThreadManager — hasActiveBackgroundTasks / getActiveBackgroundTasks', () => {
+  let manager: ThreadManager;
+  beforeEach(() => { manager = makeManager(); });
+
+  it('hasActiveBackgroundTasks is false for a thread with no tracked tasks', () => {
+    const t = manager.createThread('T');
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(false);
+    expect(manager.getActiveBackgroundTasks(t.id)).toEqual([]);
+  });
+
+  it('hasActiveBackgroundTasks is true while a skipTranscript task is live (via the activeBgTasks map onTaskStarted populates)', () => {
+    const t = manager.createThread('T');
+    const activeBgTasks = getActiveBgTasksMap(manager);
+    activeBgTasks.set(t.id, new Map([['task-1', { description: 'Run linter', startedAt: Date.now() }]]));
+
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(true);
+    const tasks = manager.getActiveBackgroundTasks(t.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].taskId).toBe('task-1');
+    expect(tasks[0].description).toBe('Run linter');
+  });
+
+  it('hasActiveBackgroundTasks becomes false after the matching entry is cleared (mirrors onTaskNotification)', () => {
+    const t = manager.createThread('T');
+    const activeBgTasks = getActiveBgTasksMap(manager);
+    const perThread = new Map([['task-1', { description: 'Run linter', startedAt: Date.now() }]]);
+    activeBgTasks.set(t.id, perThread);
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(true);
+
+    // onTaskNotification's cleanup: this.activeBgTasks.get(threadId)?.delete(taskId)
+    perThread.delete('task-1');
+
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(false);
+    expect(manager.getActiveBackgroundTasks(t.id)).toEqual([]);
+  });
+
+  it('a task present only in thread.pendingBackgroundTasks (post-reload, before the live map repopulates) still counts as active', () => {
+    const t = manager.createThread('T');
+    t.pendingBackgroundTasks = [{ taskId: 'persisted-1', description: 'Slow job', startedAt: 1_000, pollCount: 2 }];
+
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(true);
+    const tasks = manager.getActiveBackgroundTasks(t.id);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toEqual({ taskId: 'persisted-1', description: 'Slow job', startedAt: 1_000, pollCount: 2 });
+  });
+
+  it('merges live and persisted tasks by taskId, live entry wins on conflict', () => {
+    const t = manager.createThread('T');
+    t.pendingBackgroundTasks = [
+      { taskId: 'task-1', description: 'Stale description', startedAt: 1_000, pollCount: 5 },
+      { taskId: 'task-2', description: 'Persisted only', startedAt: 2_000, pollCount: 1 },
+    ];
+    const activeBgTasks = getActiveBgTasksMap(manager);
+    activeBgTasks.set(t.id, new Map([['task-1', { description: 'Fresh description', startedAt: 9_999 }]]));
+
+    const tasks = manager.getActiveBackgroundTasks(t.id);
+    expect(tasks).toHaveLength(2);
+
+    const task1 = tasks.find(task => task.taskId === 'task-1')!;
+    // Live wins: description/startedAt come from the live map...
+    expect(task1.description).toBe('Fresh description');
+    expect(task1.startedAt).toBe(9_999);
+    // ...but pollCount (a field the live map doesn't track) is preserved from the persisted entry.
+    expect(task1.pollCount).toBe(5);
+
+    const task2 = tasks.find(task => task.taskId === 'task-2')!;
+    expect(task2.description).toBe('Persisted only');
+    expect(task2.pollCount).toBe(1);
+  });
+
+  it('a task present in neither map does not appear, and unrelated threads are unaffected', () => {
+    const t1 = manager.createThread('T1');
+    const t2 = manager.createThread('T2');
+    const activeBgTasks = getActiveBgTasksMap(manager);
+    activeBgTasks.set(t1.id, new Map([['task-1', { description: 'Job', startedAt: Date.now() }]]));
+
+    expect(manager.hasActiveBackgroundTasks(t1.id)).toBe(true);
+    expect(manager.hasActiveBackgroundTasks(t2.id)).toBe(false);
+    expect(manager.getActiveBackgroundTasks(t2.id)).toEqual([]);
+  });
+
+  it('an empty (but present) live map for a thread is treated as no active tasks', () => {
+    const t = manager.createThread('T');
+    const activeBgTasks = getActiveBgTasksMap(manager);
+    activeBgTasks.set(t.id, new Map());
+
+    expect(manager.hasActiveBackgroundTasks(t.id)).toBe(false);
+    expect(manager.getActiveBackgroundTasks(t.id)).toEqual([]);
+  });
+});

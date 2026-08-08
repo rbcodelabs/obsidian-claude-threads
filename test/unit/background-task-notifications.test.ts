@@ -415,3 +415,102 @@ describe('incrementPendingTaskPollCount', () => {
     expect(thread.pendingBackgroundTasks).toBeUndefined();
   });
 });
+
+// ─── hasActiveBackgroundTasks — driven through the real event flow ───────────
+//
+// This is the exact bug scenario the fix targets: the outer turn's onDone
+// lands (isRunning() flips false) while a run_in_background Agent call or
+// Workflow-tool task (both skipTranscript: true, same task_started/
+// task_notification protocol) is still running server-side.
+
+describe('hasActiveBackgroundTasks — event-driven lifecycle', () => {
+  // NOTE on ordering: sendMessage() resolves once session.send() has been
+  // called (turnInFlight flips true), NOT once onDone fires — mirroring
+  // run-state-settled.test.ts's canonical pattern, we `await` the send
+  // first so turnInFlight is definitely true before driving onDone
+  // ourselves. Interleaving onDone before the send() continuation has run
+  // (as some of the other tests above do, since they never assert on
+  // isRunning()) races turnInFlight in the opposite, misleading direction.
+
+  it('is true immediately after onTaskStarted, before the outer turn even settles', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    await manager.sendMessage(thread.id, 'Hi');
+    expect(manager.isRunning(thread.id)).toBe(true);
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(false);
+
+    mock.callbacks!.onTaskStarted!('bg-task-1', 'Spawn subagent', true);
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(true);
+
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+  });
+
+  it('stays true after the outer turn settles (onDone) if the bg task is still unresolved — the bug this fix targets', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskStarted!('bg-task-1', 'Spawn subagent', true);
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+    // isRunning() settles asynchronously via a queueMicrotask deferral in
+    // emitRunStateSettledWhenIdle (see run-state-settled.test.ts) — it is
+    // NOT yet false on the synchronous tick right after onDone.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The outer turn is done — isRunning() is now false — but the background
+    // task never notified completion, so the thread must still read as active.
+    expect(manager.isRunning(thread.id)).toBe(false);
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(true);
+  });
+
+  it('becomes false once onTaskNotification reports the background task resolved', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskStarted!('bg-task-1', 'Spawn subagent', true);
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(true);
+
+    mock.callbacks!.onTaskNotification!('bg-task-1', 'completed', 'Subagent finished');
+
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(false);
+    expect(manager.getActiveBackgroundTasks(thread.id)).toEqual([]);
+  });
+
+  it('a foreground-only task (skipTranscript: false) never registers as an active background task', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskStarted!('fg-task-1', 'Foreground task', false);
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(false);
+  });
+
+  it('with two unresolved background tasks, only fully resolves once BOTH notify', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    await manager.sendMessage(thread.id, 'Hi');
+    mock.callbacks!.onTaskStarted!('bg-task-1', 'Job one', true);
+    mock.callbacks!.onTaskStarted!('bg-task-2', 'Job two', true);
+    mock.callbacks!.onDone('sess-1', 0.001, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(true);
+    mock.callbacks!.onTaskNotification!('bg-task-1', 'completed', 'Done');
+    // Still true — bg-task-2 hasn't notified yet.
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(true);
+    mock.callbacks!.onTaskNotification!('bg-task-2', 'completed', 'Done');
+    expect(manager.hasActiveBackgroundTasks(thread.id)).toBe(false);
+  });
+});

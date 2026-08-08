@@ -72,7 +72,11 @@ export type UiStatus = 'working' | 'new' | 'reviewed' | 'failed' | 'ready';
  * Returns the Agent Dashboard UI bucket label for a thread.
  *
  * Mirrors the exact bucketing logic in AgentDashboard.render():
- *   - working  — thread is actively running
+ *   - working  — thread is actively running, OR has no active foreground
+ *                turn but still has an outstanding background task (a
+ *                `run_in_background: true` Agent call or Workflow-tool task
+ *                that hasn't reported completion yet — see ThreadManager's
+ *                `hasActiveBackgroundTasks`)
  *   - failed   — idle, lastError is set
  *   - new      — idle, has messages, not yet reviewed
  *   - reviewed — idle, has messages, reviewed by user
@@ -83,11 +87,12 @@ export type UiStatus = 'working' | 'new' | 'reviewed' | 'failed' | 'ready';
  */
 export function computeUiStatus(params: {
   isRunning: boolean;
+  hasActiveBackgroundTasks?: boolean;
   lastError?: string;
   messageCount: number;
   reviewed?: boolean;
 }): UiStatus {
-  if (params.isRunning) return 'working';
+  if (params.isRunning || params.hasActiveBackgroundTasks) return 'working';
   if (params.lastError) return 'failed';
   if (params.messageCount > 0) return params.reviewed ? 'reviewed' : 'new';
   return 'ready';
