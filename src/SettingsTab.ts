@@ -4,9 +4,17 @@ import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledIte
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { secretStorageKey } from './secretUtils';
-import { KANBAN_VIEW_TYPE, type KanbanView } from './KanbanView';
-import { AGENT_VIEW_TYPE, type AgentDashboard } from './AgentDashboard';
+import type { KanbanView } from './KanbanView';
+import type { AgentDashboard } from './AgentDashboard';
 import type { RawMcpServer } from './claudeSettingsMcpEditor';
+
+// View-type string constants, mirrored as local literals (see main.ts) so referencing
+// them never triggers a static import of the desktop-only KanbanView/AgentDashboard
+// modules, which transitively pull in Node built-ins and the Claude Agent SDK. A value
+// import here loads those modules at bundle-init on every platform, bypassing the
+// Platform.isMobile guard in main.ts and crashing the plugin on Obsidian Mobile.
+const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
+const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
