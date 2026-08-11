@@ -5519,6 +5519,58 @@
   margin: 4px 0 12px;
 }
 
+/* Per-scheduled-item run history (collapsible under each item's settings row) */
+.ct-run-history {
+  margin: -4px 0 14px;
+  padding-left: 2px;
+}
+.ct-run-history-summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  list-style: revert;
+}
+.ct-run-history-summary:hover {
+  color: var(--text-normal);
+}
+.ct-run-history-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 6px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+.ct-run-history-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.7;
+}
+.ct-run-when {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ct-run-detail {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* Outcome badge — small colored pill so fired vs skipped vs error scan fast */
+.ct-run-outcome {
+  flex: 0 0 auto;
+  min-width: 118px;
+  font-weight: 600;
+}
+.ct-run-outcome-fired {
+  color: var(--color-green, var(--text-success));
+}
+.ct-run-outcome-skipped-gate,
+.ct-run-outcome-skipped-active-hours {
+  color: var(--text-muted);
+}
+.ct-run-outcome-error {
+  color: var(--text-error);
+}
+
 /* Full-width text inputs / textareas in settings rows */
 input.ct-settings-wide-input,
 textarea.ct-settings-wide-input {
