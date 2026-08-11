@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { getActivityKind, groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, type ActivityKind } from '../../src/toolNameUtils';
+import {
+  getActivityKind,
+  groupToolCalls,
+  liveToolGroupKey,
+  mergeAdjacentToolOnlyMessages,
+  smoothToolGroups,
+  pickCurrentTool,
+  shouldWrapOuter,
+  OUTER_WRAP_ENTRY_THRESHOLD,
+  type ActivityKind,
+} from '../../src/toolNameUtils';
 import type { ChatMessage, ToolCallRecord } from '../../src/types';
 
 function tool(name: string, extra: Partial<ToolCallRecord> = {}): ToolCallRecord {
@@ -132,6 +142,167 @@ describe('groupToolCalls', () => {
     ];
     const result = groupToolCalls(tools);
     expect(result).toEqual([{ kind: 'group', activityKind: 'editing', tools }]);
+  });
+});
+
+// ─── smoothToolGroups ──────────────────────────────────────────────────────
+// Folds short off-kind interruptions back into their surrounding same-kind
+// groups so a normal Read→Edit→Read→TaskUpdate→Bash-style coding loop doesn't
+// render as a wall of short flat entries. See the function's doc comment in
+// toolNameUtils.ts for the full merge-rule rationale.
+
+describe('smoothToolGroups', () => {
+  it('returns [] for an empty array', () => {
+    expect(smoothToolGroups([])).toEqual([]);
+  });
+
+  it('returns the EXACT SAME array reference as groupToolCalls() when no triple is mergeable (fully alternating kinds)', () => {
+    const tools = [tool('Bash'), tool('Edit'), tool('Bash'), tool('Edit')];
+    const grouped = groupToolCalls(tools);
+    const result = smoothToolGroups(grouped);
+    expect(result).toBe(grouped);
+  });
+
+  it('merges a single-tool interstitial sandwiched between two same-kind groups', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskUpdate'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(3); // group(exploring,2), single(TaskUpdate), group(exploring,2)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual([{ kind: 'group', activityKind: 'exploring', tools }]);
+  });
+
+  it('merges a 2-tool-group interstitial sandwiched between two same-kind groups', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskCreate'), tool('TaskUpdate'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(3); // group(exploring,2), group(planning,2), group(exploring,2)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual([{ kind: 'group', activityKind: 'exploring', tools }]);
+  });
+
+  it('does NOT merge when the interstitial is 3+ tools', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskCreate'), tool('TaskUpdate'), tool('TaskCreate'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(3);
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual(grouped);
+  });
+
+  it('does NOT merge when the two surrounding groups have different activity kinds', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskUpdate'),
+      tool('Edit'), tool('Edit'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(3); // group(exploring,2), single(TaskUpdate), group(editing,2)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual(grouped);
+  });
+
+  it('does NOT merge a short entry with only one neighbor (start-of-array boundary)', () => {
+    const tools = [
+      tool('TaskUpdate'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(2); // single(TaskUpdate), group(exploring,2)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual(grouped);
+  });
+
+  it('does NOT merge a short entry with only one neighbor (end-of-array boundary)', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskUpdate'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(2); // group(exploring,2), single(TaskUpdate)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual(grouped);
+  });
+
+  it('cascades merges across the fixed-point loop: two separate mergeable interstitials both fold into one final group', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskUpdate'),
+      tool('Read'), tool('Read'),
+      tool('TaskCreate'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(5);
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual([{ kind: 'group', activityKind: 'exploring', tools }]);
+  });
+
+  it('documented v1 limitation: two CONSECUTIVE short interstitials between same-kind groups do NOT merge', () => {
+    const tools = [
+      tool('Read'), tool('Read'),
+      tool('TaskUpdate'),
+      tool('WebFetch'),
+      tool('Read'), tool('Read'),
+    ];
+    const grouped = groupToolCalls(tools);
+    expect(grouped).toHaveLength(4); // group(exploring,2), single(TaskUpdate), single(WebFetch), group(exploring,2)
+    const result = smoothToolGroups(grouped);
+    expect(result).toEqual(grouped);
+    expect(result).toHaveLength(4);
+  });
+});
+
+// ─── pickCurrentTool ───────────────────────────────────────────────────────
+
+describe('pickCurrentTool', () => {
+  it('returns null for an empty array', () => {
+    expect(pickCurrentTool([])).toBeNull();
+  });
+
+  it('returns the LAST pending tool, not the first', () => {
+    const tools = [
+      tool('Read', { toolUseId: 't1', status: 'pending' }),
+      tool('Bash', { toolUseId: 't2', status: 'success' }),
+      tool('Edit', { toolUseId: 't3', status: 'pending' }),
+    ];
+    expect(pickCurrentTool(tools)).toBe(tools[2]);
+  });
+
+  it('falls back to the last tool overall when none are pending', () => {
+    const tools = [
+      tool('Read', { toolUseId: 't1', status: 'success' }),
+      tool('Bash', { toolUseId: 't2', status: 'error' }),
+    ];
+    expect(pickCurrentTool(tools)).toBe(tools[1]);
+  });
+
+  it('returns the single element regardless of status', () => {
+    const tools = [tool('Read', { toolUseId: 't1', status: 'success' })];
+    expect(pickCurrentTool(tools)).toBe(tools[0]);
+  });
+});
+
+// ─── shouldWrapOuter ───────────────────────────────────────────────────────
+
+describe('shouldWrapOuter', () => {
+  it(`returns false at exactly the threshold (${OUTER_WRAP_ENTRY_THRESHOLD} entries)`, () => {
+    const entries = Array.from({ length: OUTER_WRAP_ENTRY_THRESHOLD }, () => ({ kind: 'single' as const, tool: tool('Read') }));
+    expect(shouldWrapOuter(entries)).toBe(false);
+  });
+
+  it(`returns true just above the threshold (${OUTER_WRAP_ENTRY_THRESHOLD + 1} entries)`, () => {
+    const entries = Array.from({ length: OUTER_WRAP_ENTRY_THRESHOLD + 1 }, () => ({ kind: 'single' as const, tool: tool('Read') }));
+    expect(shouldWrapOuter(entries)).toBe(true);
   });
 });
 

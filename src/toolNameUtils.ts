@@ -206,6 +206,108 @@ export function liveToolGroupKey(tools: import('./types').ToolCallRecord[]): str
 }
 
 /**
+ * Smooths groupToolCalls()'s output by folding short off-kind interruptions
+ * back into their surrounding same-kind groups. A normal coding loop
+ * (Read→Edit→Read→TaskUpdate→Bash→...) flips activity kind constantly, so
+ * groupToolCalls() alone produces many short runs rendered as flat sibling
+ * entries — collapsed-but-numerous is still visual clutter. This folds a
+ * short (<=2 tool) interstitial entry into one merged group when it's
+ * sandwiched between two 'group' entries of the SAME activity kind, then
+ * repeats until no more merges apply (a fixed-point loop), since one merge
+ * can expose a new mergeable triple next door.
+ *
+ * Notes on the merge rule (see trySingleMerge):
+ *
+ * 1. Checking only `left.activityKind === right.activityKind` (not `mid`'s
+ *    kind) is sufficient: groupToolCalls()'s own output never has two
+ *    adjacent same-kind entries — by construction, it chunks the flattest
+ *    consecutive run of one activity kind into a single entry before moving
+ *    on — so `mid` can never already equal both its neighbors' kind. There's
+ *    nothing to additionally exclude by inspecting `mid`.
+ *
+ * 2. v1 limitation: only a SINGLE short interstitial entry merges per step.
+ *    Two consecutive short entries between two same-kind groups
+ *    (`group, single, single, group`) do NOT merge — neither individually
+ *    satisfies "sandwiched between two `kind:'group'` entries" until the
+ *    other one is gone first, and trySingleMerge only removes one interstitial
+ *    per call. This is a deliberate, documented scope boundary, not a bug.
+ *
+ * 3. Termination: each successful merge shrinks the array by exactly 2 (the
+ *    interstitial entry and one of its neighboring group entries collapse
+ *    into the single merged group). So the fixed-point loop terminates in at
+ *    most ⌊(n-1)/2⌋ iterations for an input of length n.
+ *
+ * When no merge applies, returns the ORIGINAL `entries` reference unchanged
+ * (a true no-op) so callers can rely on `===` identity.
+ */
+export function smoothToolGroups(entries: ToolCallGroup[]): ToolCallGroup[] {
+  let current = entries;
+  while (true) {
+    const merged = trySingleMerge(current);
+    if (merged === null) return current; // fixed point — return ORIGINAL reference, true no-op
+    current = merged;
+  }
+}
+
+function trySingleMerge(entries: ToolCallGroup[]): ToolCallGroup[] | null {
+  for (let i = 1; i < entries.length - 1; i++) {
+    const left = entries[i - 1];
+    const mid = entries[i];
+    const right = entries[i + 1];
+    if (left.kind !== 'group' || right.kind !== 'group') continue;
+    if (left.activityKind !== right.activityKind) continue;
+    const midTools = mid.kind === 'single' ? [mid.tool] : mid.tools;
+    if (midTools.length > 2) continue;
+    const mergedGroup: ToolCallGroup = {
+      kind: 'group',
+      activityKind: left.activityKind,
+      tools: [...left.tools, ...midTools, ...right.tools],
+    };
+    return [...entries.slice(0, i - 1), mergedGroup, ...entries.slice(i + 2)];
+  }
+  return null;
+}
+
+/**
+ * Picks the tool call to show as "currently executing" in a live-updating
+ * header (see ThreadsView.renderOuterToolWrap). The last still-`pending` call
+ * is the actual in-flight one; if nothing is pending (e.g. the burst has
+ * fully resolved but the turn hasn't finalized yet), falls back to the last
+ * call overall so the header still shows something relevant.
+ */
+export function pickCurrentTool(tools: import('./types').ToolCallRecord[]): import('./types').ToolCallRecord | null {
+  if (tools.length === 0) return null;
+  for (let i = tools.length - 1; i >= 0; i--) {
+    if (tools[i].status === 'pending') return tools[i];
+  }
+  return tools[tools.length - 1];
+}
+
+/**
+ * Entry-count threshold above which the finalized/live tool-call list gets a
+ * second collapsible "outer wrap" tier (see ThreadsView.renderOuterToolWrap),
+ * wrapping the whole post-smoothing entry list instead of leaving it as many
+ * flat sibling groups/pills. `> 7` is deliberately calibrated to leave every
+ * existing screenshot scene in test/screenshots/tool-call-grouping.spec.ts
+ * unchanged: the `thread-tool-grouping` fixture produces exactly 7 entries
+ * after groupToolCalls/smoothToolGroups and must stay in the flat
+ * (non-wrapped) render path, while the 50-call live-burst fixture collapses
+ * to exactly 1 entry via groupToolCalls alone and was never a candidate for
+ * wrapping in the first place.
+ *
+ * Deliberately NOT combined with a raw-tool-count OR-clause — that was
+ * considered and rejected because it would force the 50-call single-group
+ * fixture behind a redundant second collapse with nothing new to show; entry
+ * count (not raw tool count) is the only signal that matters for "is this
+ * list itself too long to scan."
+ */
+export const OUTER_WRAP_ENTRY_THRESHOLD = 7;
+
+export function shouldWrapOuter(entries: ToolCallGroup[]): boolean {
+  return entries.length > OUTER_WRAP_ENTRY_THRESHOLD;
+}
+
+/**
  * Merges adjacent tool-only assistant messages into single synthetic rows for
  * RENDERING purposes only — it never touches `thread.messages` itself.
  *

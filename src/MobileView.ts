@@ -14,7 +14,7 @@ import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
 import type { SerializedThread, SerializedMessage, PendingPermission, PendingQuestion } from './relay-protocol';
 import type { ToolCallRecord, ImageAttachment } from './types';
-import { formatToolName, getToolIcon, groupToolCalls, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
+import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
@@ -669,7 +669,14 @@ export class MobileView extends ItemView {
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], active: boolean): void {
     const wrapper = parent.createDiv('ct-tools');
     let index = 0;
-    for (const entry of groupToolCalls(tools)) {
+    // Smoothing only (see toolNameUtils.smoothToolGroups) — the two-tier
+    // outer wrap and live-current-tool header from the desktop view are
+    // deliberately NOT ported here: mobile ToolCallRecords carry no
+    // status/toolUseId (see the renderToolGroup doc comment below), so there's
+    // no pending state to key a live header off, and this view's positional
+    // `${startIndex}:${activityKind}` expand-key isn't a stable enough
+    // identity for the outer-wrap's live-identity requirement.
+    for (const entry of smoothToolGroups(groupToolCalls(tools))) {
       if (entry.kind === 'single') {
         this.renderToolPill(wrapper, entry.tool, active);
         index += 1;

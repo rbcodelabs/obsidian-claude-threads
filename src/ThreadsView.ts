@@ -12,7 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
-import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
+import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVITY_LABELS, smoothToolGroups, pickCurrentTool, shouldWrapOuter, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
@@ -196,6 +196,18 @@ export class ThreadsView extends ItemView {
   // (groupToolCalls only ever extends a run at the tail, never reinterprets an
   // earlier boundary). Cleared alongside expandedToolGroups.
   private liveExpandedToolGroups: Set<string> = new Set();
+  // Expand/collapse state for the second-tier "outer wrap" that kicks in when
+  // a tool-call list is still too long after smoothToolGroups (see
+  // renderOuterToolWrap/shouldWrapOuter). Keyed by outerToolWrapKey (a
+  // toolGroupKey hash of the FULL flat tool list, not the grouped entries).
+  // Cleared alongside expandedToolGroups.
+  private expandedOuterToolWrap: Set<string> = new Set();
+  // LIVE counterpart to expandedOuterToolWrap, keyed by outerLiveToolWrapKey
+  // (liveToolGroupKey of the full flat tool list) for the same reason
+  // liveExpandedToolGroups exists — the tool list keeps growing mid-turn, so
+  // a stable-hash key would re-collapse it on every extension. Cleared
+  // alongside liveExpandedToolGroups.
+  private liveExpandedOuterToolWrap: Set<string> = new Set();
   // Tracks the most recently appended row (post-merge, see
   // mergeAdjacentToolOnlyMessages) in the live 'message' event handler, so a
   // subsequent tool-only step in the SAME run can extend that row's tools
@@ -791,6 +803,8 @@ export class ThreadsView extends ItemView {
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();
     this.liveExpandedToolGroups.clear();
+    this.expandedOuterToolWrap.clear();
+    this.liveExpandedOuterToolWrap.clear();
     if (!this.titleEl) return; // buildUI hasn't run yet; onOpen will call us again with the right id
     this.manager.notifyActiveThreadChanged(id);
     this.renderTitleBar();
@@ -1636,6 +1650,8 @@ export class ThreadsView extends ItemView {
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();
     this.liveExpandedToolGroups.clear();
+    this.expandedOuterToolWrap.clear();
+    this.liveExpandedOuterToolWrap.clear();
     void this.renderMessages();
   }
 
@@ -2216,6 +2232,23 @@ export class ThreadsView extends ItemView {
     return tools.map(t => t.toolUseId ?? t.timestamp ?? '').join(':');
   }
 
+  /**
+   * Deterministic key for a FINALIZED outer-wrap's expand/collapse state.
+   * Thin wrapper over toolGroupKey — hashes the FULL flat tool list (not the
+   * post-smoothing grouped entries), matching toolGroupKey's own convention.
+   */
+  private outerToolWrapKey(tools: ToolCallRecord[]): string {
+    return this.toolGroupKey(tools);
+  }
+
+  /**
+   * LIVE counterpart to outerToolWrapKey — thin wrapper over liveToolGroupKey
+   * for the same "member list keeps growing mid-turn" reason liveToolGroupKey
+   * exists at the group level (see that function's doc comment).
+   */
+  private outerLiveToolWrapKey(tools: ToolCallRecord[]): string {
+    return liveToolGroupKey(tools); // already imported from toolNameUtils
+  }
 
   /**
    * @param opts.live When true, groups are keyed/expand-tracked the same way
@@ -2230,19 +2263,125 @@ export class ThreadsView extends ItemView {
    */
   private renderToolCalls(parent: HTMLElement, tools: ToolCallRecord[], opts?: { live?: boolean }): HTMLElement {
     const wrapper = parent.createDiv('ct-tools');
-    for (const entry of groupToolCalls(tools)) {
+    this.populateToolCallsWrapper(wrapper, tools, { live: opts?.live ?? false });
+    return wrapper;
+  }
+
+  /**
+   * Renders one layer of tool-call entries (singles and groups) into
+   * `container` — the exact per-entry loop shared by the flat (non-wrapped)
+   * render path AND the expanded body of the outer wrap (renderOuterToolWrap),
+   * so the two structurally match. `opts.onPillRendered` is threaded through
+   * to renderToolGroup so live-mode pill registration (toolPillsByUseId, for
+   * per-pill tool_progress heartbeat updates) keeps working even when a group
+   * ends up nested inside the outer wrap.
+   */
+  private renderGroupedEntries(
+    container: HTMLElement,
+    grouped: ToolCallGroup[],
+    opts: { live: boolean; onPillRendered?: (tool: ToolCallRecord, pill: HTMLElement) => void },
+  ): void {
+    for (const entry of grouped) {
       if (entry.kind === 'single') {
-        this.renderToolPill(wrapper, entry.tool);
-      } else if (opts?.live) {
-        this.renderToolGroup(wrapper, entry, {
+        const pill = this.renderToolPill(container, entry.tool);
+        opts.onPillRendered?.(entry.tool, pill);
+      } else if (opts.live) {
+        this.renderToolGroup(container, entry, {
           keyOverride: liveToolGroupKey(entry.tools),
           expandedSet: this.liveExpandedToolGroups,
+          onPillRendered: opts.onPillRendered,
         });
       } else {
-        this.renderToolGroup(wrapper, entry);
+        this.renderToolGroup(container, entry);
       }
     }
-    return wrapper;
+  }
+
+  /**
+   * Second collapsible tier, wrapping the ENTIRE post-smoothing entry list
+   * when it's still too long to render flat (see shouldWrapOuter). Mirrors
+   * renderToolGroup's collapse/expand pattern one level up: collapsed by
+   * default, auto-expands through BOTH tiers if any descendant tool errored,
+   * and — while live — shows a live-updating "currently executing tool"
+   * header instead of a static count so a long collapsed run doesn't read as
+   * frozen.
+   */
+  private renderOuterToolWrap(
+    wrapper: HTMLElement,
+    tools: ToolCallRecord[],
+    grouped: ToolCallGroup[],
+    opts: { live: boolean; onPillRendered?: (tool: ToolCallRecord, pill: HTMLElement) => void },
+  ): void {
+    const hasError = tools.some(t => t.status === 'error');
+    const hasPending = tools.some(t => t.status === 'pending');
+
+    const groupEl = wrapper.createDiv('ct-tool-outer-wrap');
+    const headerRow = groupEl.createDiv('ct-tool-outer-wrap-header ct-compressed-row');
+    if (hasError) headerRow.addClass('ct-tool-error');
+
+    if (opts.live && hasPending) {
+      headerRow.addClass('ct-tool-active');
+      const current = pickCurrentTool(tools);
+      const summaryEl = headerRow.createSpan({ cls: 'ct-tool-outer-wrap-live-summary' });
+      if (current) {
+        const iconEl = summaryEl.createSpan({ cls: 'ct-tool-pill-icon' });
+        setIcon(iconEl, getToolIcon(current.name));
+        summaryEl.createSpan({ cls: 'ct-tool-pill-name', text: formatToolName(current.name) });
+        if (current.summary) summaryEl.createSpan({ cls: 'ct-tool-pill-text', text: current.summary });
+      }
+    } else {
+      // 'list-tree' reads as "a nested list of steps," matching what the
+      // outer wrap actually contains (a list of groups, each a list of pills).
+      const iconEl = headerRow.createSpan({ cls: 'ct-tool-pill-icon' });
+      setIcon(iconEl, 'list-tree');
+      headerRow.createSpan({
+        cls: 'ct-compressed-summary',
+        text: `${tools.length} tool calls, ${grouped.length} steps`,
+      });
+    }
+
+    const expandBtn = headerRow.createEl('button', { cls: 'ct-expand-btn', attr: { title: 'Expand' } });
+
+    const fullContent = groupEl.createDiv('ct-full-content');
+    this.renderGroupedEntries(fullContent, grouped, opts);
+
+    const expandedSet = opts.live ? this.liveExpandedOuterToolWrap : this.expandedOuterToolWrap;
+    const key = opts.live ? this.outerLiveToolWrapKey(tools) : this.outerToolWrapKey(tools);
+    let expanded = hasError || expandedSet.has(key);
+    if (!expanded) fullContent.addClass('ct-hidden');
+    setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+
+    expandBtn.addEventListener('click', () => {
+      expanded = !expanded;
+      if (expanded) {
+        fullContent.removeClass('ct-hidden');
+        expandedSet.add(key);
+      } else {
+        fullContent.addClass('ct-hidden');
+        expandedSet.delete(key);
+      }
+      setIcon(expandBtn, expanded ? 'chevron-up' : 'chevron-down');
+    });
+  }
+
+  /**
+   * The one place "smooth + decide + render" policy for a tool-call list
+   * lives. Groups the raw tools, smooths short off-kind interruptions back
+   * into their surrounding groups, then either renders flat (the common
+   * case) or wraps the whole list in a second collapsible tier once it's
+   * still too long after smoothing (see shouldWrapOuter/OUTER_WRAP_ENTRY_THRESHOLD).
+   */
+  private populateToolCallsWrapper(
+    wrapper: HTMLElement,
+    tools: ToolCallRecord[],
+    opts: { live: boolean; onPillRendered?: (tool: ToolCallRecord, pill: HTMLElement) => void },
+  ): void {
+    const grouped = smoothToolGroups(groupToolCalls(tools));
+    if (shouldWrapOuter(grouped)) {
+      this.renderOuterToolWrap(wrapper, tools, grouped, opts);
+    } else {
+      this.renderGroupedEntries(wrapper, grouped, opts);
+    }
   }
 
   /**
@@ -2367,24 +2506,14 @@ export class ThreadsView extends ItemView {
     }
     const wrapper = this.ensureStreamingToolsEl();
     wrapper.empty();
-    for (const entry of groupToolCalls(visible)) {
-      if (entry.kind === 'single') {
-        const pill = this.renderToolPill(wrapper, entry.tool);
-        if (entry.tool.status === 'pending' && entry.tool.toolUseId) {
-          this.toolPillsByUseId.set(entry.tool.toolUseId, pill);
+    this.populateToolCallsWrapper(wrapper, visible, {
+      live: true,
+      onPillRendered: (tool, pill) => {
+        if (tool.status === 'pending' && tool.toolUseId) {
+          this.toolPillsByUseId.set(tool.toolUseId, pill);
         }
-      } else {
-        this.renderToolGroup(wrapper, entry, {
-          keyOverride: liveToolGroupKey(entry.tools),
-          expandedSet: this.liveExpandedToolGroups,
-          onPillRendered: (tool, pill) => {
-            if (tool.status === 'pending' && tool.toolUseId) {
-              this.toolPillsByUseId.set(tool.toolUseId, pill);
-            }
-          },
-        });
-      }
-    }
+      },
+    });
   }
 
   /**

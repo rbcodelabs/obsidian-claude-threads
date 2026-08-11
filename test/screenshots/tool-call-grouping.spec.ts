@@ -66,6 +66,78 @@ test.describe('Tool-call grouping', () => {
   });
 });
 
+// ─── Outer-wrap tier (post-smoothing entry count > OUTER_WRAP_ENTRY_THRESHOLD) ──
+// Fixture: 'thread-outer-wrap-tool-calls' (test/harness/fixtures.ts) — TWO
+// assistant messages, each with enough tool calls that
+// groupToolCalls()+smoothToolGroups() puts them comfortably above the
+// threshold (7), so ThreadsView.renderOuterToolWrap wraps each one in its
+// own second collapsible tier:
+//   - msg-t8-2 (22 raw -> 10 entries, no error) -> .ct-tool-outer-wrap nth(0)
+//   - msg-t8-3 (13 raw -> 8 entries, one buried error) -> nth(1)
+// Split into two messages deliberately — see the fixture's own doc comment
+// for why "collapsed by default" and "auto-expands due to a buried error"
+// can't both be demonstrated from a single tool list (hasError is computed
+// over the WHOLE flat list passed to the outer wrap, same rule
+// renderToolGroup already applies one level up).
+
+test.describe('Outer-wrap tool-call grouping (finalized)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => (window as any).__view.focusThread('thread-outer-wrap-tool-calls'));
+    await page.waitForSelector('.ct-tool-outer-wrap');
+    await page.waitForTimeout(200);
+  });
+
+  test('outer wrap is collapsed by default (no error)', async ({ page }) => {
+    const outerWraps = page.locator('.ct-tool-outer-wrap');
+    await expect(outerWraps).toHaveCount(2);
+    const outerWrap = outerWraps.nth(0); // msg-t8-2 — no error
+    await expect(outerWrap.locator(':scope > .ct-full-content')).toHaveClass(/ct-hidden/);
+    await expect(outerWrap.locator('.ct-tool-outer-wrap-header .ct-compressed-summary')).toHaveText('22 tool calls, 10 steps');
+    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-collapsed.png', { fullPage: true });
+  });
+
+  test('clicking the outer expand button reveals content structurally identical to the flat path', async ({ page }) => {
+    const outerWrap = page.locator('.ct-tool-outer-wrap').nth(0); // msg-t8-2 — no error
+    await outerWrap.locator(':scope > .ct-tool-outer-wrap-header > .ct-expand-btn').click();
+    await expect(outerWrap.locator(':scope > .ct-full-content')).not.toHaveClass(/ct-hidden/);
+
+    // 10 post-smoothing entries: 7 groups, 3 isolated singles rendered
+    // directly as .ct-tool-pill children of .ct-full-content — exactly what
+    // the flat (non-wrapped) render path produces for the identical
+    // post-smoothing entry list (see renderGroupedEntries, shared by both).
+    const fullContent = outerWrap.locator(':scope > .ct-full-content');
+    await expect(fullContent.locator(':scope > .ct-tool-group')).toHaveCount(7);
+    await expect(fullContent.locator(':scope > .ct-tool-pill')).toHaveCount(3);
+
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-expanded.png', { fullPage: true });
+  });
+
+  test('a buried error auto-expands BOTH the outer wrap and the inner group containing it', async ({ page }) => {
+    const outerWrap = page.locator('.ct-tool-outer-wrap').nth(1); // msg-t8-3 — buried error
+    // No click needed — hasError on the full flat tool list forces both tiers open.
+    await expect(outerWrap.locator(':scope > .ct-tool-outer-wrap-header')).toHaveClass(/ct-tool-error/);
+    await expect(outerWrap.locator(':scope > .ct-full-content')).not.toHaveClass(/ct-hidden/);
+
+    // The editing group (buried error) is the 2nd .ct-tool-group in DOM order
+    // — see the fixture's doc comment for msg-t8-3: entry 0 (exploring,2) is
+    // a group, entry 1 (TaskCreate) is a single, entry 2 (editing,3, has the
+    // error) is the next group.
+    const editingGroup = outerWrap.locator('.ct-tool-group').nth(1);
+    await expect(editingGroup.locator('.ct-tool-group-header')).toHaveClass(/ct-tool-error/);
+    await expect(editingGroup.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
+    await expect(editingGroup.locator('.ct-tool-pill.ct-tool-error')).toHaveCount(1);
+
+    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-error-auto-expanded.png', { fullPage: true });
+  });
+});
+
 // ─── Fragmented tool-only messages (post-7b7d4fb regression shape) ─────────
 // Fixture: 'thread-fragmented-tool-calls' (test/harness/fixtures.ts) — 5
 // SEPARATE ChatMessage objects (role: 'assistant', content: '', exactly one
@@ -344,5 +416,110 @@ test.describe('Live tool-call grouping', () => {
     await expect(groupAfter.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
 
     await expect(page).toHaveScreenshot('tool-call-grouping-fragmented-live-merged.png', { fullPage: true });
+  });
+
+  // ─── Outer-wrap tier while LIVE — the live-updating "current tool" header ──
+  // Fires 8 alternating-activity-kind tool_use events (each its own isolated
+  // 'single' entry post-groupToolCalls/smoothToolGroups — alternating kinds
+  // never merge, so this is a direct, simple way to push the post-smoothing
+  // entry count past OUTER_WRAP_ENTRY_THRESHOLD without needing same-kind
+  // runs) so the LIVE outer wrap kicks in, then proves its header text
+  // actually tracks pickCurrentTool as new calls arrive — not just a
+  // snapshot taken once at initial render.
+  test('the outer wrap shows a live-updating current-tool header while calls are still pending, past the threshold', async ({ page }) => {
+    await page.evaluate(() => {
+      const emit = (window as any).__emitEvent;
+      const threadId = 'thread-live-tool-grouping';
+      emit(threadId, { type: 'streaming_start' });
+      // 8 raw calls, each a different activity kind from its predecessor ->
+      // 8 isolated 'single' entries, all still pending (no group entries to
+      // sandwich, so smoothToolGroups is a no-op here) -> 8 > 7 -> wraps.
+      const names = ['Read', 'Edit', 'TaskCreate', 'WebFetch', 'ToolSearch', 'Skill', 'Read', 'Edit'];
+      names.forEach((name, i) => {
+        emit(threadId, {
+          type: 'tool_use',
+          record: { name, summary: `call #${i}`, timestamp: Date.now(), toolUseId: `live-ow-${i}`, status: 'pending' },
+        });
+      });
+    });
+    await page.waitForTimeout(300);
+
+    await expect(page.locator('.ct-tools > *')).toHaveCount(1);
+    const outerWrap = page.locator('.ct-tool-outer-wrap').first();
+    await expect(outerWrap).toBeVisible();
+    const header = outerWrap.locator('.ct-tool-outer-wrap-header');
+    await expect(header).toHaveClass(/ct-tool-active/);
+    // Last call (index 7) is 'Edit' and still pending -> pickCurrentTool picks it.
+    await expect(header.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-name')).toHaveText('Edit');
+    await expect(header.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-text')).toHaveText('call #7');
+
+    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-live-current-command.png', { fullPage: true });
+
+    // Fire one more tool_use event for a DIFFERENT tool — concrete proof the
+    // header live-updates rather than freezing at its first render.
+    await page.evaluate(() => {
+      (window as any).__emitEvent('thread-live-tool-grouping', {
+        type: 'tool_use',
+        record: { name: 'Bash', summary: 'call #8', timestamp: Date.now(), toolUseId: 'live-ow-8', status: 'pending' },
+      });
+    });
+    await page.waitForTimeout(300);
+
+    const headerAfter = page.locator('.ct-tool-outer-wrap-header').first();
+    await expect(headerAfter.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-name')).toHaveText('Bash');
+    await expect(headerAfter.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-text')).toHaveText('call #8');
+  });
+
+  // Proves the live outer-wrap header cleanly reverts to the static
+  // "N tool calls, M steps" format once the turn finalizes — no stale
+  // "currently running" text or duplicated header left behind. Mirrors the
+  // "per-turn 'message' events" test above's finalization pattern: push a
+  // real ChatMessage onto thread.messages and fire a 'message' event, which
+  // is what actually settles a live run into the finalized render path.
+  test('the outer wrap header reverts to the static format with no stale text after the turn finalizes', async ({ page }) => {
+    const names = ['Read', 'Edit', 'TaskCreate', 'WebFetch', 'ToolSearch', 'Skill', 'Read', 'Edit', 'Bash'];
+    await page.evaluate((names) => {
+      const emit = (window as any).__emitEvent;
+      const threadId = 'thread-live-tool-grouping';
+      emit(threadId, { type: 'streaming_start' });
+      names.forEach((name: string, i: number) => {
+        emit(threadId, {
+          type: 'tool_use',
+          record: { name, summary: `call #${i}`, timestamp: Date.now(), toolUseId: `live-fin-${i}`, status: 'pending' },
+        });
+      });
+    }, names);
+    await page.waitForTimeout(300);
+    await expect(page.locator('.ct-tool-outer-wrap-header')).toHaveCount(1);
+    await expect(page.locator('.ct-tool-outer-wrap-header')).toHaveClass(/ct-tool-active/);
+
+    await page.evaluate((names) => {
+      const manager = (window as any).__manager;
+      const threadId = 'thread-live-tool-grouping';
+      const message = {
+        id: 'live-fin-msg',
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        toolCalls: names.map((name: string, i: number) => ({
+          name,
+          summary: `call #${i}`,
+          toolUseId: `live-fin-${i}`,
+          status: 'success',
+        })),
+      };
+      manager.getThread(threadId).messages.push(message);
+      (window as any).__emitEvent(threadId, { type: 'message', message });
+    }, names);
+    await page.waitForTimeout(300);
+
+    // Exactly one outer-wrap header survives finalization — no duplicate from
+    // the live view lingering alongside the newly-appended finalized row.
+    const headers = page.locator('.ct-tool-outer-wrap-header');
+    await expect(headers).toHaveCount(1);
+    await expect(headers).not.toHaveClass(/ct-tool-active/);
+    // 9 raw calls, all isolated singles (alternating kinds) -> 9 entries, 9 steps.
+    await expect(headers.locator('.ct-compressed-summary')).toHaveText('9 tool calls, 9 steps');
+    await expect(headers.locator('.ct-tool-outer-wrap-live-summary')).toHaveCount(0);
   });
 });
