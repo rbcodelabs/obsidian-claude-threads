@@ -420,6 +420,44 @@ export interface ScheduledItem {
   lastGateExitCode?: number;
   /** Set when the most recent gate could not be evaluated (timeout or spawn failure). */
   lastGateError?: string;
+  /**
+   * Bounded ring buffer of recent cycle outcomes (oldest first, most recent
+   * last), written by Scheduler.fire() on every completed cycle — a fire, a
+   * gate skip, an active-hours skip, or an error. Unlike the `last*` fields
+   * above (which only reflect the single most recent cycle), this gives a
+   * durable run history so the Settings view can show whether a gated job has
+   * been firing or skipping over time. Capped at RUN_HISTORY_MAX entries; older
+   * events are dropped. Absent until the item has fired at least once.
+   */
+  runHistory?: RunEvent[];
+}
+
+/**
+ * A single entry in a ScheduledItem's run history — one completed scheduler
+ * cycle. Written by Scheduler.fire(). Kept intentionally small since many of
+ * these are persisted per item.
+ */
+export interface RunEvent {
+  /** Epoch ms at which the cycle was evaluated. */
+  ts: number;
+  /**
+   * What happened on this cycle:
+   * - 'fired'                 → a thread was created or reused and the prompt sent
+   * - 'skipped-gate'          → the gate command returned a clean non-zero exit
+   * - 'skipped-active-hours'  → the cycle came due outside the active-hours window
+   * - 'error'                 → thread creation / send threw (see `note`)
+   */
+  outcome: 'fired' | 'skipped-gate' | 'skipped-active-hours' | 'error';
+  /** For 'fired': the thread the prompt was sent to (absent for a stale heartbeat). */
+  threadId?: string;
+  /** For 'skipped-gate': the gate command's exit code. */
+  gateExitCode?: number;
+  /**
+   * Optional short human-readable detail — an error message for 'error', or a
+   * "fired open despite a gate error" note when a gate could not be evaluated
+   * but failOpen let the cycle fire anyway.
+   */
+  note?: string;
 }
 
 export interface SkillSource {
