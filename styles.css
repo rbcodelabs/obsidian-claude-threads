@@ -1073,11 +1073,13 @@
    same-activity-kind tool calls. Reuses .ct-compressed-row/.ct-expand-btn/
    .ct-full-content/.ct-hidden from the compressed-view assistant grouping so
    this reads as "one more row in the list," not a new visual language. */
-.ct-tool-group {
+.ct-tool-group,
+.ct-tool-outer-wrap {
   margin-bottom: 2px;
 }
 
-.ct-tool-group-header {
+.ct-tool-group-header,
+.ct-tool-outer-wrap-header {
   padding: 3px 8px 3px 6px;
   border-left: 2px solid var(--background-modifier-border);
   cursor: default;
@@ -1091,9 +1093,21 @@
   margin-right: 36px;
 }
 
-.ct-tool-group .ct-full-content {
+.ct-tool-group .ct-full-content,
+.ct-tool-outer-wrap .ct-full-content {
   margin-top: 2px;
   margin-left: 8px;
+}
+
+/* Icon + name + summary of the "currently executing tool" shown in a LIVE
+   outer-wrap header (see ThreadsView.renderOuterToolWrap). Flex row so the
+   three pieces lay out inline instead of stacking. */
+.ct-tool-outer-wrap-live-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  min-width: 0;
 }
 
 /* Per-pill and group-header status tint. Reused across both the finalized
@@ -1117,7 +1131,8 @@
    shares that class structure; this adds the equivalent pulsing dot for
    `.ct-compressed-summary`, since a group header has no `.ct-tool-pill-name`
    of its own to hang the ct-tool-active::before rule off of. */
-.ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+.ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
+.ct-tool-outer-wrap-header.ct-tool-active .ct-compressed-summary::before {
   content: '● ';
   font-size: 0.65em;
   vertical-align: middle;
@@ -1125,7 +1140,8 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before {
+  .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
+  .ct-tool-outer-wrap-header.ct-tool-active .ct-compressed-summary::before {
     animation: ct-dot-pulse 1.2s ease-in-out infinite;
   }
 }

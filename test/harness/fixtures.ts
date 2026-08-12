@@ -337,6 +337,154 @@ const thread7Messages: ChatMessage[] = [
   },
 ];
 
+// ─── Thread 8: Outer-wrap tool calls (post-smoothing entry count > 7) ────────
+// Used by test/screenshots/tool-call-grouping.spec.ts's outer-wrap scenes.
+// Split across TWO assistant messages rather than one, for a structural
+// reason: renderOuterToolWrap's hasError is computed over the ENTIRE flat
+// tool list passed to it (mirroring renderToolGroup's own per-group rule,
+// just one level up — see that function's doc comment), so a tool list that
+// contains ANY error forces the outer wrap to start expanded. That makes
+// "collapsed by default" and "auto-expands because of a buried error"
+// mutually exclusive outcomes for the SAME tool list — they can't both be
+// demonstrated from one message the way two independent .ct-tool-group
+// elements can each have their own collapse state within one message (as
+// thread6Messages does above). So:
+//   - msg-t8-2 (22 raw tool calls, no error) drives the collapsed-by-default
+//     and click-to-expand scenes, AND covers the smoothing/isolated-single
+//     composition requirements.
+//   - msg-t8-3 (13 raw tool calls, one buried error) drives the
+//     auto-expand-through-both-tiers scene.
+// Both independently exceed OUTER_WRAP_ENTRY_THRESHOLD (7) post-smoothing,
+// so each renders its own .ct-tool-outer-wrap — nth(0) and nth(1) in DOM order.
+//
+// msg-t8-2 expected entry composition (0-indexed among the post-smoothing
+// entries msg-t8-2's outer wrap renders) — 22 raw tool calls -> 10 entries:
+//   0 = group(exploring, 6)   — Read,Read,Bash,[TaskUpdate interstitial],Read,Read
+//                                merged by smoothToolGroups: raw groupToolCalls
+//                                output here is 3 SEPARATE entries
+//                                (group(exploring,3), single(TaskUpdate),
+//                                group(exploring,2)) that fold into one —
+//                                this is the "smoothing visibly does
+//                                something" case.
+//   1 = single(WebFetch)       — researching, isolated: flanked by an
+//                                exploring group and an editing group (both
+//                                different kinds), so it does NOT merge —
+//                                the "genuinely non-mergeable isolated
+//                                single" case.
+//   2 = group(editing, 3)      — Edit,Edit,Edit
+//   3 = group(planning, 2)     — TaskCreate,TaskUpdate
+//   4 = single(Write)          — editing, isolated (flanked by planning and
+//                                searching groups — different kinds)
+//   5 = group(searching, 2)    — ToolSearch,Agent
+//   6 = single(Read)           — exploring, isolated (flanked by searching
+//                                and researching groups — different kinds)
+//   7 = group(researching, 2)  — WebFetch,WebSearch
+//   8 = group(working, 2)      — Skill,TodoWrite
+//   9 = group(exploring, 2)    — Grep,Glob (trailing, isolated from entry 0's
+//                                exploring group by 8 entries in between)
+// 22 raw in, 10 entries out (12 pre-smoothing groupToolCalls chunks, minus 2
+// from the single merge at index 0) — 7 groups, 3 isolated singles.
+//
+// msg-t8-3 expected entry composition — 13 raw tool calls -> 8 entries, no
+// smoothing opportunities (deliberately, so this message's ONLY job is the
+// buried-error scene):
+//   0 = group(exploring, 2)    — Read,Read
+//   1 = single(TaskCreate)     — planning, isolated
+//   2 = group(editing, 3)      — Edit,Edit,Edit — the MIDDLE Edit has
+//                                 status: 'error', buried inside this inner
+//                                 group, which is itself buried inside the
+//                                 outer wrap — exercises auto-expand through
+//                                 BOTH collapsible tiers.
+//   3 = single(WebFetch)       — researching, isolated
+//   4 = group(searching, 2)    — ToolSearch,Agent
+//   5 = single(Write)          — editing, isolated
+//   6 = group(working, 2)      — Skill,TodoWrite
+//   7 = single(Grep)           — exploring, isolated (trailing)
+// 4 groups, 4 isolated singles — .ct-tool-group index 1 (0-indexed) is the
+// one carrying the buried error.
+
+const thread8Messages: ChatMessage[] = [
+  {
+    id: 'msg-t8-1',
+    role: 'user',
+    content: 'Do a big sweep across the API layer: explore, fix the retry bug, add tests, and search for related callers.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-t8-2',
+    role: 'assistant',
+    content: `Swept the API layer end to end.`,
+    timestamp: T3 + 30000,
+    toolCalls: [
+      // group(exploring, 3) — merges with the two entries below via smoothToolGroups
+      { name: 'Read', summary: 'Read: src/api/client.ts', toolUseId: 't8-1', timestamp: T3 + 1000, status: 'success' },
+      { name: 'Read', summary: 'Read: src/api/types.ts', toolUseId: 't8-2', timestamp: T3 + 2000, status: 'success' },
+      { name: 'Bash', summary: 'npm run lint -- src/api', toolUseId: 't8-3', timestamp: T3 + 3000, status: 'success' },
+      // single(planning) interstitial — merge candidate, folded into the exploring run above
+      { name: 'TaskUpdate', summary: 'Task #1 → in_progress', toolUseId: 't8-4', timestamp: T3 + 4000, status: 'success' },
+      // group(exploring, 2) — merges with the run above via smoothToolGroups
+      { name: 'Read', summary: 'Read: src/api/utils.ts', toolUseId: 't8-5', timestamp: T3 + 5000, status: 'success' },
+      { name: 'Read', summary: 'Read: src/api/retry.ts', toolUseId: 't8-6', timestamp: T3 + 6000, status: 'success' },
+      // isolated single: researching — does NOT merge (neighbors are exploring/editing)
+      { name: 'WebFetch', summary: 'https://http.dev/429 — retry-after semantics', toolUseId: 't8-7', timestamp: T3 + 7000, status: 'success' },
+      // group(editing, 3)
+      { name: 'Edit', summary: 'Edit: src/api/client.ts — add retry-with-backoff', toolUseId: 't8-8', timestamp: T3 + 8000, status: 'success' },
+      { name: 'Edit', summary: 'Edit: src/api/retry.ts — extract backoff helper', toolUseId: 't8-9', timestamp: T3 + 9000, status: 'success' },
+      { name: 'Edit', summary: 'Edit: src/api/types.ts — add RetryOptions type', toolUseId: 't8-10', timestamp: T3 + 10000, status: 'success' },
+      // group(planning, 2)
+      { name: 'TaskCreate', summary: 'Task: Add tests for retry behavior', toolUseId: 't8-11', timestamp: T3 + 11000, status: 'success' },
+      { name: 'TaskUpdate', summary: 'Task #2 → in_progress', toolUseId: 't8-12', timestamp: T3 + 12000, status: 'success' },
+      // isolated single: editing — does NOT merge (neighbors are planning/searching)
+      { name: 'Write', summary: 'Write: tests/api/client.retry.test.ts', toolUseId: 't8-13', timestamp: T3 + 13000, status: 'success' },
+      // group(searching, 2)
+      { name: 'ToolSearch', summary: "ToolSearch: 'retry backoff helper'", toolUseId: 't8-14', timestamp: T3 + 14000, status: 'success' },
+      { name: 'Agent', summary: 'Agent: verify retry backoff against flaky network mocks', toolUseId: 't8-15', timestamp: T3 + 15000, status: 'success' },
+      // isolated single: exploring — does NOT merge (neighbors are searching/researching)
+      { name: 'Read', summary: 'Read: tests/api/client.retry.test.ts', toolUseId: 't8-16', timestamp: T3 + 16000, status: 'success' },
+      // group(researching, 2)
+      { name: 'WebFetch', summary: 'https://http.dev/backoff-jitter', toolUseId: 't8-17', timestamp: T3 + 17000, status: 'success' },
+      { name: 'WebSearch', summary: 'exponential backoff jitter best practices', toolUseId: 't8-18', timestamp: T3 + 18000, status: 'success' },
+      // group(working, 2)
+      { name: 'Skill', summary: 'Skill: pr-checklist', toolUseId: 't8-19', timestamp: T3 + 19000, status: 'success' },
+      { name: 'TodoWrite', summary: 'Updated task list', toolUseId: 't8-20', timestamp: T3 + 20000, status: 'success' },
+      // group(exploring, 2) — trailing, not adjacent to entry 0's exploring group
+      { name: 'Grep', summary: "Grep: 'RetryOptions' across src/api", toolUseId: 't8-21', timestamp: T3 + 21000, status: 'success' },
+      { name: 'Glob', summary: 'Glob: src/api/**/*.test.ts', toolUseId: 't8-22', timestamp: T3 + 22000, status: 'success' },
+    ],
+    summary: 'Swept the API layer: explored, fixed retry-with-backoff, added tests, searched related callers.',
+  },
+  {
+    id: 'msg-t8-3',
+    role: 'assistant',
+    content: `A follow-up sweep turned up one edit that failed to apply cleanly — see below.`,
+    timestamp: T3 + 60000,
+    toolCalls: [
+      // group(exploring, 2)
+      { name: 'Read', summary: 'Read: src/api/backoff.ts', toolUseId: 't8-23', timestamp: T3 + 23000, status: 'success' },
+      { name: 'Read', summary: 'Read: src/api/jitter.ts', toolUseId: 't8-24', timestamp: T3 + 24000, status: 'success' },
+      // isolated single: planning
+      { name: 'TaskCreate', summary: 'Task: Fix jitter overflow', toolUseId: 't8-25', timestamp: T3 + 25000, status: 'success' },
+      // group(editing, 3) — middle Edit errors; buried inside the outer wrap
+      { name: 'Edit', summary: 'Edit: src/api/backoff.ts — cap max delay', toolUseId: 't8-26', timestamp: T3 + 26000, status: 'success' },
+      { name: 'Edit', summary: 'Edit: src/api/jitter.ts — fix overflow', toolUseId: 't8-27', timestamp: T3 + 27000, status: 'error' },
+      { name: 'Edit', summary: 'Edit: src/api/backoff.ts — clamp jitter range', toolUseId: 't8-28', timestamp: T3 + 28000, status: 'success' },
+      // isolated single: researching
+      { name: 'WebFetch', summary: 'https://http.dev/jitter-overflow-cases', toolUseId: 't8-29', timestamp: T3 + 29000, status: 'success' },
+      // group(searching, 2)
+      { name: 'ToolSearch', summary: "ToolSearch: 'jitter overflow'", toolUseId: 't8-30', timestamp: T3 + 30000, status: 'success' },
+      { name: 'Agent', summary: 'Agent: verify jitter fix against edge-case delays', toolUseId: 't8-31', timestamp: T3 + 31000, status: 'success' },
+      // isolated single: editing
+      { name: 'Write', summary: 'Write: tests/api/jitter.overflow.test.ts', toolUseId: 't8-32', timestamp: T3 + 32000, status: 'success' },
+      // group(working, 2)
+      { name: 'Skill', summary: 'Skill: pr-checklist', toolUseId: 't8-33', timestamp: T3 + 33000, status: 'success' },
+      { name: 'TodoWrite', summary: 'Updated task list', toolUseId: 't8-34', timestamp: T3 + 34000, status: 'success' },
+      // isolated single: exploring (trailing)
+      { name: 'Grep', summary: "Grep: 'jitter' across src/api", toolUseId: 't8-35', timestamp: T3 + 35000, status: 'success' },
+    ],
+    summary: 'Follow-up sweep found one edit that failed to apply on the first pass.',
+  },
+];
+
 // ─── Exported fixtures ────────────────────────────────────────────────────────
 
 export const fixtureThreads: Thread[] = [
@@ -430,6 +578,14 @@ export const fixtureThreads: Thread[] = [
     messages: thread7Messages,
     createdAt: T3 - 60000,
     updatedAt: T3 + 5000,
+  },
+  {
+    id: 'thread-outer-wrap-tool-calls',
+    title: 'API layer sweep',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread8Messages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 30000,
   },
 ];
 
