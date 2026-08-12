@@ -1,4 +1,4 @@
-import type { ScheduledItem, ScheduledItemSchedule } from './types';
+import type { ScheduledItem, ScheduledItemSchedule, RunEvent } from './types';
 
 /**
  * Fields that can be updated on a ScheduledItem. The `schedule` field accepts
@@ -102,6 +102,28 @@ const GATE_MAX_TIMEOUT_SECONDS = 120;
 const GATE_STDOUT_MAX_BYTES = 8 * 1024;
 /** Placeholder replaced with the gate's stdout when present in the prompt. */
 const GATE_OUTPUT_PLACEHOLDER = '{{gateOutput}}';
+
+/**
+ * Max number of run-history entries retained per scheduled item. The history is
+ * a ring buffer (oldest dropped first) so a frequently-firing item can't grow
+ * its persisted state without bound. Exported so the Settings UI and tests can
+ * reference the same cap.
+ */
+export const RUN_HISTORY_MAX = 50;
+
+/**
+ * Append a run outcome to an item's bounded history ring buffer, mutating the
+ * item in place. Trims from the front so at most RUN_HISTORY_MAX entries remain,
+ * most recent last. Kept as a free function so it's unit-testable in isolation.
+ */
+export function recordRunEvent(item: ScheduledItem, event: RunEvent): void {
+  const history = item.runHistory ?? [];
+  history.push(event);
+  if (history.length > RUN_HISTORY_MAX) {
+    history.splice(0, history.length - RUN_HISTORY_MAX);
+  }
+  item.runHistory = history;
+}
 
 // Internal: compute next fire time from an item.
 // fromNow=true resets the base to Date.now() (used after a fired run).
@@ -360,6 +382,7 @@ export class Scheduler {
       // creation so a skipped cycle never contends for the fencing token.
       if (current.schedule.activeHours && !isWithinActiveHours(current.schedule, Date.now())) {
         current.nextRun = nextTimeOfDay(current.schedule.activeHours.start, Date.now());
+        recordRunEvent(current, { ts: Date.now(), outcome: 'skipped-active-hours' });
         try {
           await this.options.saveItem({ ...current });
         } catch (err) {
@@ -372,6 +395,15 @@ export class Scheduler {
         return;
       }
 
+      // Captures a fire-path error message so the post-fire bookkeeping below can
+      // record an 'error' run-history event. The inner catch already logs and
+      // swallows the error (this method must not throw — it's fire-and-forget
+      // from a setTimeout), so this is how the outcome survives to the history.
+      let fireError: string | undefined;
+      // Hoisted out of the inner try so the post-fire bookkeeping below (which
+      // lives in the outer scope) can read it when recording the run-history
+      // outcome — a gate skip is not a fire but still a completed cycle.
+      let gateSkip = false;
       try {
         // Loop items target an existing thread; fall back to a new thread if it's gone.
         const reuseTarget =
@@ -431,7 +463,6 @@ export class Scheduler {
         // also gives the next gate run a natural "since last check" cursor via
         // CRON_LAST_RUN_MS.
         let promptToSend = current.prompt;
-        let gateSkip = false;
         if (current.gate?.command) {
           const gate = current.gate;
           if (!this.options.runGate) {
@@ -504,6 +535,7 @@ export class Scheduler {
           }
         }
       } catch (err) {
+        fireError = err instanceof Error ? err.message : String(err);
         console.error(`[Scheduler] Failed to fire scheduled item "${current.name}" (${current.id}):`, err);
       }
 
@@ -525,6 +557,27 @@ export class Scheduler {
       } else {
         current.lastRun = Date.now();
         current.nextRun = computeNextRun(current, true);
+
+        // Record this cycle's outcome in the durable run history. Precedence:
+        // an error firing the thread wins over everything; otherwise a gate
+        // skip; otherwise it fired. A gate that could not be evaluated but
+        // fired open (failOpen) is still a 'fired' outcome, annotated so the
+        // history distinguishes it from a clean fire.
+        const event: RunEvent = {
+          ts: current.lastRun,
+          outcome: fireError ? 'error' : gateSkip ? 'skipped-gate' : 'fired',
+        };
+        if (fireError) {
+          event.note = fireError;
+        } else if (gateSkip) {
+          event.gateExitCode = current.lastGateExitCode;
+        } else {
+          if (current.lastThreadId) event.threadId = current.lastThreadId;
+          if (current.lastGateError) {
+            event.note = `fired open despite gate error: ${current.lastGateError}`;
+          }
+        }
+        recordRunEvent(current, event);
 
         // Await the save so failures are visible, but this method is only ever
         // invoked fire-and-forget from a setTimeout callback (already

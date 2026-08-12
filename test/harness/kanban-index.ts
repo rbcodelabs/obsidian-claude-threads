@@ -28,8 +28,13 @@ const m = manager as unknown as {
   pendingPermissions: Map<string, { toolName: string; detail: string }>;
   threadActivity: Map<string, string>;
 };
-m.sessions.set(kanbanRunningThreadId, {});
-m.sessions.set(kanbanAwaitingThreadId, {});
+// `isRunning()` reads `session.turnInFlight` (the unified long-lived-session
+// model — see ThreadManager.sessions), so a bare `{}` reads as NOT running and
+// the Working/Awaiting columns would never populate. Seed the flag so both
+// the running and the awaiting (running + pending permission) threads classify
+// correctly.
+m.sessions.set(kanbanRunningThreadId, { turnInFlight: true });
+m.sessions.set(kanbanAwaitingThreadId, { turnInFlight: true });
 m.pendingPermissions.set(kanbanAwaitingThreadId, kanbanAwaitingPermission);
 m.threadActivity.set(kanbanRunningThreadId, kanbanRunningActivity);
 
@@ -82,7 +87,8 @@ view.onOpen();
 // view.render() directly (which would trivially pass even if the event wiring
 // were missing).
 (window as any).__setThreadRunning = (threadId: string, running: boolean) => {
-  if (running) m.sessions.set(threadId, {});
+  // Seed `turnInFlight` so isRunning() reports true (see the sessions seeding above).
+  if (running) m.sessions.set(threadId, { turnInFlight: true });
   else m.sessions.delete(threadId);
 };
 (window as any).__addWakeup = (threadId: string, fireAt: number, reason: string) => {

@@ -574,8 +574,7 @@ export async function installSkillFromMarketplace(
  * installed skill permanently broken.
  */
 export async function copySkillFiles(src: string, dest: string): Promise<void> {
-  const { cp } = await import('fs/promises');
-  await cp(src, dest, { recursive: true, dereference: true });
+  await fsp.cp(src, dest, { recursive: true, dereference: true });
 }
 
 // ── Skill Discovery ──────────────────────────────────────────────────────────

@@ -1,12 +1,20 @@
 import { App, Modal, Notice, Platform, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
-import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItemSchedule, SkillSource } from './types';
+import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { secretStorageKey } from './secretUtils';
-import { KANBAN_VIEW_TYPE, type KanbanView } from './KanbanView';
-import { AGENT_VIEW_TYPE, type AgentDashboard } from './AgentDashboard';
+import type { KanbanView } from './KanbanView';
+import type { AgentDashboard } from './AgentDashboard';
 import type { RawMcpServer } from './claudeSettingsMcpEditor';
+
+// View-type string constants, mirrored as local literals (see main.ts) so referencing
+// them never triggers a static import of the desktop-only KanbanView/AgentDashboard
+// modules, which transitively pull in Node built-ins and the Claude Agent SDK. A value
+// import here loads those modules at bundle-init on every platform, bypassing the
+// Platform.isMobile guard in main.ts and crashing the plugin on Obsidian Mobile.
+const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
+const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -67,6 +75,71 @@ function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = fals
     return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix + gatedSuffix;
   }
   return 'Unknown schedule';
+}
+
+/** Short human label for a run-history outcome, used in the Settings history list. */
+function runOutcomeLabel(outcome: RunEvent['outcome']): string {
+  switch (outcome) {
+    case 'fired':
+      return 'Fired';
+    case 'skipped-gate':
+      return 'Skipped (gate)';
+    case 'skipped-active-hours':
+      return 'Skipped (off-hours)';
+    case 'error':
+      return 'Error';
+    default:
+      return outcome;
+  }
+}
+
+/** Optional trailing detail for a run-history entry (gate exit code, error/annotation note). */
+function runOutcomeDetail(event: RunEvent): string {
+  if (event.note) return event.note;
+  if (event.outcome === 'skipped-gate' && event.gateExitCode !== undefined) {
+    return `exit ${event.gateExitCode}`;
+  }
+  return '';
+}
+
+/**
+ * Render a collapsible run-history summary for a scheduled item beneath its
+ * settings row. Shows fired/skipped/error counts over the retained window and,
+ * when expanded, the most recent outcomes newest-first. No-op when the item has
+ * never run.
+ */
+function renderRunHistory(container: HTMLElement, history: RunEvent[]): void {
+  if (history.length === 0) return;
+
+  const fired = history.filter((e) => e.outcome === 'fired').length;
+  const skipped = history.filter(
+    (e) => e.outcome === 'skipped-gate' || e.outcome === 'skipped-active-hours',
+  ).length;
+  const errored = history.filter((e) => e.outcome === 'error').length;
+
+  const parts: string[] = [`${fired} fired`];
+  if (skipped > 0) parts.push(`${skipped} skipped`);
+  if (errored > 0) parts.push(`${errored} error${errored === 1 ? '' : 's'}`);
+
+  const details = container.createEl('details', { cls: 'ct-run-history' });
+  details.createEl('summary', {
+    cls: 'ct-run-history-summary',
+    text: `Run history — ${parts.join(' · ')} (last ${history.length})`,
+  });
+
+  const list = details.createEl('ul', { cls: 'ct-run-history-list' });
+  // Newest first; cap the rendered rows so a long history stays scannable.
+  const recent = history.slice(-20).reverse();
+  for (const event of recent) {
+    const li = list.createEl('li', { cls: 'ct-run-history-entry' });
+    li.createEl('span', {
+      cls: `ct-run-outcome ct-run-outcome-${event.outcome}`,
+      text: runOutcomeLabel(event.outcome),
+    });
+    li.createEl('span', { cls: 'ct-run-when', text: new Date(event.ts).toLocaleString() });
+    const detail = runOutcomeDetail(event);
+    if (detail) li.createEl('span', { cls: 'ct-run-detail', text: detail });
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1805,6 +1878,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
               renderScheduledItems();
             }),
           );
+        renderRunHistory(scheduledList, item.runHistory ?? []);
       }
     };
     renderScheduledItems();
