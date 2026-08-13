@@ -599,14 +599,20 @@ export class MobileView extends ItemView {
         content.createEl('p', { text: msg.content });
       }
 
-      // 3.1 — Copy button for assistant messages
-      const copyBtn = el.createEl('button', { cls: 'ct-mobile-copy-btn', attr: { title: 'Copy response' } });
-      copyBtn.textContent = '⎘';
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(msg.content);
-        copyBtn.textContent = '✓';
-        setTimeout(() => { copyBtn.textContent = '⎘'; }, 1500);
-      });
+      // 3.1 — Copy button for assistant messages. Only render it when there is
+      // actual text to copy — tool-only turns (e.g. TaskCreate, ToolSearch with
+      // no accompanying prose) leave msg.content empty, and an always-visible
+      // mobile button with nothing above it renders as a stray icon-only row
+      // between the tool-call pill and the message footer/timestamp.
+      if (msg.content && msg.content.trim().length > 0) {
+        const copyBtn = el.createEl('button', { cls: 'ct-mobile-copy-btn', attr: { title: 'Copy response' } });
+        copyBtn.textContent = '⎘';
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(msg.content);
+          copyBtn.textContent = '✓';
+          setTimeout(() => { copyBtn.textContent = '⎘'; }, 1500);
+        });
+      }
     } else {
       // Render any attached images above the text
       if (msg.images && msg.images.length > 0) {
