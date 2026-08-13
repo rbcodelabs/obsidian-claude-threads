@@ -1014,6 +1014,94 @@ describe('MobileView — context summary banner', () => {
   });
 });
 
+describe('MobileView — copy button empty-content guard', () => {
+  it('does NOT render a copy button for a tool-only assistant message (empty content)', async () => {
+    const { view, store } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [
+        makeThread({
+          id: 'tid',
+          messages: [
+            makeMessage({
+              id: 'm1',
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ name: 'TaskCreate', summary: 'Create task list', status: 'success' }],
+            }),
+          ],
+        }),
+      ],
+      activeThreadId: 'tid',
+    });
+
+    // Let renderMessage()'s async renderMarkdown() call settle before asserting
+    // absence, so this isn't just a race that happens to pass.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    expect(messagesEl.querySelector('.ct-mobile-copy-btn')).toBeNull();
+
+    await view.onClose();
+  });
+
+  it('renders a working copy button for a normal assistant message with text content', async () => {
+    const { view, store } = await buildView();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [
+        makeThread({
+          id: 'tid',
+          messages: [
+            makeMessage({ id: 'm1', role: 'assistant', content: 'Here is the answer.' }),
+          ],
+        }),
+      ],
+      activeThreadId: 'tid',
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    // renderMessage() awaits renderMarkdown() (mocked as an async marked.parse)
+    // before creating the copy button, so give the microtask queue a chance
+    // to drain before asserting on it.
+    const copyBtn = await vi.waitFor(() => {
+      const btn = messagesEl.querySelector('.ct-mobile-copy-btn') as HTMLButtonElement | null;
+      expect(btn).not.toBeNull();
+      return btn as HTMLButtonElement;
+    });
+
+    copyBtn.click();
+    expect(writeText).toHaveBeenCalledWith('Here is the answer.');
+    expect(copyBtn.textContent).toBe('✓');
+
+    await view.onClose();
+  });
+
+  it('does NOT render a copy button for whitespace-only content', async () => {
+    const { view, store } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [
+        makeThread({
+          id: 'tid',
+          messages: [makeMessage({ id: 'm1', role: 'assistant', content: '   ' })],
+        }),
+      ],
+      activeThreadId: 'tid',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    expect(messagesEl.querySelector('.ct-mobile-copy-btn')).toBeNull();
+
+    await view.onClose();
+  });
+});
+
 describe('MobileView — cleanup', () => {
   it('unsubscribes store listener on close', async () => {
     const { view, store } = await buildView();

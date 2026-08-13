@@ -2164,13 +2164,20 @@ export class ThreadsView extends ItemView {
       } else {
         await this.renderMarkdown(msg.content, content);
       }
-      const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
-      setIcon(copyBtn, 'copy');
-      copyBtn.addEventListener('click', () => {
-        navigator.clipboard.writeText(msg.content);
-        setIcon(copyBtn, 'check');
-        setTimeout(() => setIcon(copyBtn, 'copy'), 1500);
-      });
+      // Only render the copy button when there is actual text to copy. Desktop
+      // hides this button by default (opacity: 0, revealed on hover), so an
+      // empty-content tool-only turn is cosmetically harmless today, but guard
+      // it anyway for correctness/consistency and so it doesn't regress if the
+      // hover-hide CSS ever changes (see the mobile equivalent above).
+      if (msg.content && msg.content.trim().length > 0) {
+        const copyBtn = el.createEl('button', { cls: 'ct-copy-btn', attr: { title: 'Copy response' } });
+        setIcon(copyBtn, 'copy');
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(msg.content);
+          setIcon(copyBtn, 'check');
+          setTimeout(() => setIcon(copyBtn, 'copy'), 1500);
+        });
+      }
     } else {
       content.createEl('p', { text: msg.content });
       // Render image thumbnails attached to user messages (e.g. sent from
