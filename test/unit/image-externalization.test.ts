@@ -4,6 +4,7 @@ import {
   buildAttachmentPath,
   serializeThreadForSave,
   collectPendingImageExternalizations,
+  imageEmbedMarkdown,
 } from '../../src/imageExternalization';
 import type { Thread, ChatMessage } from '../../src/types';
 
@@ -221,5 +222,46 @@ describe('collectPendingImageExternalizations', () => {
     const pending = collectPendingImageExternalizations(threads);
     expect(pending.map((p) => p.index)).toEqual([0, 1]);
     expect(pending.map((p) => p.base64)).toEqual(['A', 'B']);
+  });
+});
+
+describe('imageEmbedMarkdown', () => {
+  it('renders an Obsidian embed for a path-backed user image', () => {
+    const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
+      images: [{ mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/m1-0.png' }],
+    };
+    expect(imageEmbedMarkdown(msg)).toBe('![[Claude/attachments/t1/m1-0.png]]');
+  });
+
+  it('renders an embed for a path-backed tool-result image', () => {
+    const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
+      toolResultImages: [{ mediaType: 'image/png', path: 'Claude/attachments/t1/m2-0.png' }],
+    };
+    expect(imageEmbedMarkdown(msg)).toBe('![[Claude/attachments/t1/m2-0.png]]');
+  });
+
+  it('emits NO embed for a base64-only image (not yet externalized)', () => {
+    const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
+      images: [{ mediaType: 'image/png', name: 'a.png', base64: 'AAAA' }],
+      toolResultImages: [{ mediaType: 'image/png', data: 'BBBB' }],
+    };
+    expect(imageEmbedMarkdown(msg)).toBe('');
+  });
+
+  it('embeds only path-backed images and skips base64-only ones in the same message', () => {
+    const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
+      images: [
+        { mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/m1-0.png' },
+        { mediaType: 'image/png', name: 'b.png', base64: 'CCCC' },
+      ],
+      toolResultImages: [{ mediaType: 'image/png', path: 'Claude/attachments/t1/m1-1.png' }],
+    };
+    expect(imageEmbedMarkdown(msg)).toBe(
+      '![[Claude/attachments/t1/m1-0.png]]\n![[Claude/attachments/t1/m1-1.png]]',
+    );
+  });
+
+  it('returns empty string when the message has no images', () => {
+    expect(imageEmbedMarkdown({})).toBe('');
   });
 });

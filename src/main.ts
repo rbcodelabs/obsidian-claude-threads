@@ -23,6 +23,7 @@ import {
   type ScheduledItem,
 } from './types';
 import { serializeThreadForSave } from './imageExternalization';
+import { selectIdleThreadsForArchive } from './autoArchive';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { execEnv } from './dashboardUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
@@ -382,13 +383,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
           isThreadRunning: (id: string) => this.manager.isRunning(id),
           sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
           archiveThread: async (id: string) => {
-            const thread = this.manager.getThread(id);
-            if (!thread) throw new Error(`Thread not found: ${id}`);
-            if (this.settings.saveThreadsToVault && this.persistence) {
-              thread.status = 'archived';
-              await this.persistence.saveThread(thread);
-            }
-            this.manager.deleteThread(id);
+            await this.archiveThreadById(id);
             await this.saveSettings();
           },
           setThreadNotes: (id: string, notes: string) => {
@@ -966,6 +961,21 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     }
 
+    // Auto-archive idle `waiting` threads so finished threads stop accumulating
+    // in data.json (archival was manual-only before). Run once at startup and on
+    // a low-frequency interval so long-running desktop sessions still sweep. This
+    // is placed AFTER the image-externalization backfill on purpose: the backfill
+    // sets each image's `path`, and the archived note only embeds path-backed
+    // images, so running it first means a first-launch sweep still produces notes
+    // with working image embeds. The sweep self-guards when disabled.
+    await this.sweepIdleThreads();
+    const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+    this.registerInterval(
+      window.setInterval(() => {
+        void this.sweepIdleThreads();
+      }, SWEEP_INTERVAL_MS),
+    );
+
     // Resume background task monitoring for any threads that still had pending
     // tasks when the plugin was last unloaded (e.g. Obsidian restart mid-task).
     for (const thread of this.manager.getThreads()) {
@@ -1489,6 +1499,63 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (this.persistence && this.settings.saveThreadsToVault && this.manager) {
       const threads = this.manager.getThreads().filter((t) => t.status !== 'archived');
       await Promise.all(threads.map((t) => this.persistence!.saveThread(t).catch(console.error)));
+    }
+  }
+
+  // ── Auto-archive idle threads ────────────────────────────────────────────────
+
+  /**
+   * The single archive eviction path, shared by the manual `archiveThread` MCP
+   * handler and the automatic idle sweep so there is exactly one implementation.
+   * Writes the thread to its markdown note (when vault persistence is on), then
+   * removes it from the live thread map so it stops being serialized into
+   * data.json. Does NOT call saveSettings. Each caller persists once (the sweep
+   * saves once after its whole loop rather than per thread).
+   */
+  private async archiveThreadById(id: string): Promise<void> {
+    const thread = this.manager.getThread(id);
+    if (!thread) throw new Error(`Thread not found: ${id}`);
+    if (this.settings.saveThreadsToVault && this.persistence) {
+      thread.status = 'archived';
+      await this.persistence.saveThread(thread);
+    }
+    this.manager.deleteThread(id);
+  }
+
+  /**
+   * Archive threads that have sat idle in the `waiting` state past
+   * `autoArchiveIdleDays`. Reuses `archiveThreadById` (the manual-archive path)
+   * so archived threads are written to their note with images embedded and then
+   * evicted from data.json. Runs once at startup and on a 6-hour interval.
+   *
+   * No-ops on mobile (no `manager`) or when the setting is `0`/falsy. Selection
+   * is delegated to the pure predicate in autoArchive.ts, which also excludes the
+   * orchestrator thread and any thread with a pending plan/question.
+   */
+  async sweepIdleThreads(): Promise<void> {
+    if (!this.manager) return;
+    const days = this.settings.autoArchiveIdleDays;
+    if (!days || days <= 0) return;
+
+    const candidates = selectIdleThreadsForArchive(this.manager.getThreads(), {
+      autoArchiveIdleDays: days,
+      now: Date.now(),
+      orchestratorThreadId: this.settings.orchestratorThreadId,
+    });
+    if (candidates.length === 0) return;
+
+    let archived = 0;
+    for (const thread of candidates) {
+      try {
+        await this.archiveThreadById(thread.id);
+        archived++;
+      } catch (err) {
+        console.error(`[ClaudeThreads] Auto-archive failed for thread ${thread.id}:`, err);
+      }
+    }
+    if (archived > 0) {
+      console.log(`[ClaudeThreads] Auto-archived ${archived} idle thread(s) (idle > ${days}d)`);
+      await this.saveSettings();
     }
   }
 

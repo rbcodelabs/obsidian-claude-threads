@@ -615,6 +615,15 @@ export interface PluginSettings {
    * gates the walk so it doesn't re-run on every startup once complete.
    */
   imageExternalizationComplete?: boolean;
+  /**
+   * Number of days a `waiting` thread must sit idle (no `updatedAt` change)
+   * before the periodic sweep auto-archives it: writes it to its markdown note
+   * (images embedded) and evicts it from the live thread list so data.json stops
+   * growing without bound. Only `waiting` threads qualify. `active`, `reconnecting`,
+   * `error`, the orchestrator thread, and any thread with a pending plan/question
+   * are never swept. `0` disables the sweep entirely. Defaults to 14.
+   */
+  autoArchiveIdleDays?: number;
   /** Recurring scheduled tasks that fire prompts into new threads. */
   scheduledItems: ScheduledItem[];
   /**
@@ -697,6 +706,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   debugLogging: false,
   hasSeenWelcome: false,
   imageExternalizationComplete: false,
+  autoArchiveIdleDays: 14,
   pttKey: 'Alt+Space',
   openAIKey: '',
   secretEnvKeys: [],
