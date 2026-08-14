@@ -1,4 +1,4 @@
-export type MessageRole = 'user' | 'assistant' | 'compact';
+export type MessageRole = 'user' | 'assistant' | 'compact' | 'notice';
 
 export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived' | 'reconnecting';
 
@@ -70,6 +70,8 @@ export interface ChatMessage {
    * to `path`, but kept in the live object for render/relay.
    */
   toolResultImages?: Array<{ mediaType: string; data?: string; path?: string }>;
+  /** For role 'notice': the completion status of the background task, drives the icon. */
+  noticeStatus?: 'completed' | 'failed' | 'stopped';
 }
 
 export interface ThreadDraft {

@@ -200,7 +200,7 @@ export class VaultPersistence {
 
   private threadToMarkdown(thread: Thread): string {
     const status = thread.status ?? 'waiting';
-    const messageCount = thread.messages.filter((m) => m.role !== 'compact').length;
+    const messageCount = thread.messages.filter((m) => m.role !== 'compact' && m.role !== 'notice').length;
     const headerParts = [
       '---',
       `thread_id: ${thread.id}`,
@@ -229,7 +229,7 @@ export class VaultPersistence {
   }
 
   private messageToMarkdown(msg: ChatMessage): string {
-    if (msg.role === 'compact') return '';
+    if (msg.role === 'compact' || msg.role === 'notice') return '';
     const prefix = msg.role === 'user' ? '**You:**' : '**Claude:**';
     let body = `${prefix}\n\n${msg.content}`;
     if (msg.toolCalls && msg.toolCalls.length > 0) {

@@ -235,6 +235,42 @@ You can open any of them directly from here.`,
   },
 ];
 
+// ─── Thread: background-task notice row ──────────────────────────────────────
+// Used by ui.spec.ts's "background task notice row" test. Exercises the
+// persisted `notice` message rendered when a background subagent/Workflow
+// completes on an idle thread (see ThreadsView.ts renderMessage, role === 'notice').
+// One completed (✓) and one failed (✗) notice so both icon states are covered
+// in a single snapshot.
+
+const threadNoticeMessages: ChatMessage[] = [
+  {
+    id: 'msg-tn-1',
+    role: 'user',
+    content: 'Kick off the background lint sweep and the flaky-test hunt while I step away.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-tn-2',
+    role: 'assistant',
+    content: `Both background tasks are running now — I'll post here when they finish.`,
+    timestamp: T3 + 5000,
+  },
+  {
+    id: 'msg-tn-3',
+    role: 'notice',
+    content: 'Background task ✓: Lint sweep — fixed 4 files, 0 remaining warnings',
+    noticeStatus: 'completed',
+    timestamp: T3 + 60000,
+  },
+  {
+    id: 'msg-tn-4',
+    role: 'notice',
+    content: 'Background task ✗: Flaky-test hunt — could not reproduce after 20 runs',
+    noticeStatus: 'failed',
+    timestamp: T3 + 90000,
+  },
+];
+
 // ─── Thread 6: Tool-call grouping ────────────────────────────────────────────
 // Used by test/screenshots/tool-call-grouping.spec.ts. A single assistant
 // message carrying 15 tool calls spanning multiple activity kinds (several
@@ -548,6 +584,14 @@ export const fixtureThreads: Thread[] = [
       { id: '4', content: 'Add hip context to public share view (/i/[slug])', status: 'completed' },
       { id: '5', content: 'Verify: types, unit tests, build, visual check', status: 'in_progress' },
     ],
+  },
+  {
+    id: 'thread-notice',
+    title: 'Background task notice row',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: threadNoticeMessages,
+    createdAt: T3 - 30000,
+    updatedAt: T3 + 90000,
   },
   {
     id: 'thread-tool-grouping',
