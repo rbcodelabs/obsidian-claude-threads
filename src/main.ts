@@ -22,6 +22,7 @@ import {
   type ImageAttachment,
   type ScheduledItem,
 } from './types';
+import { serializeThreadForSave } from './imageExternalization';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { execEnv } from './dashboardUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
@@ -492,6 +493,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // App handle for AttachmentWriter (writes image files through the vault API).
+    this.manager.app = this.app;
     // Absolute path to this plugin's installed dist/ dir, used to resolve the
     // bundled thread-orchestrator skill (see ThreadManager.buildSessionOptions()).
     {
@@ -939,6 +942,27 @@ export default class ClaudeThreadsPlugin extends Plugin {
         } catch (err) {
           console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
         }
+      }
+    }
+
+    // One-time image-externalization backfill (ADR-0003, PR 1). Walk every loaded
+    // thread's inline image bytes, write each to a vault attachment file, and set
+    // its `path`. Desktop-only, idempotent, crash-safe: the file is written before
+    // `path` is set, so a crash just retries next launch. The saveSettings() below
+    // is the write that actually shrinks data.json, because serializeThreadForSave
+    // now drops base64 for any path-backed image. Never deletes base64
+    // destructively. It only leaves data.json via the serialize strip.
+    if (!this.settings.imageExternalizationComplete) {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        try {
+          const n = await this.manager.backfillExternalizeImages();
+          if (n > 0) console.log(`[ClaudeThreads] Externalized ${n} inline image(s) out of data.json`);
+        } catch (err) {
+          console.error('[ClaudeThreads] Image externalization backfill failed:', err);
+        }
+        this.settings.imageExternalizationComplete = true;
+        await this.saveSettings();
       }
     }
 
@@ -1817,19 +1841,51 @@ export default class ClaudeThreadsPlugin extends Plugin {
         // manager is null on mobile — skip thread persistence there
         if (this.manager) {
           this.settings.projects = this.manager.getProjects();
-          // Strip ephemeral statusTags — they are re-derived each poll and must not
-          // bloat data.json or render as stale pills after a restart.
-          this.settings.threads = this.manager.getThreads().map((t) => {
-            if (!t.statusTags) return t;
-            const { statusTags: _omit, ...rest } = t;
-            return rest as typeof t;
-          });
+          // Produce data.json-safe copies: strip ephemeral statusTags (re-derived
+          // each poll) and drop base64/data from any image already externalized to
+          // a `path` file. The live in-memory threads are never mutated.
+          this.settings.threads = this.manager.getThreads().map(serializeThreadForSave);
         }
-        await this.saveData(this.settings);
+        await this.saveDataAtomic();
       } while (this.saveAgainRequested);
     } finally {
       this.savePromise = null;
     }
+  }
+
+  /**
+   * Atomic replacement for Obsidian's non-atomic saveData (ADR-0003, PR 1).
+   * Obsidian's saveData rewrites data.json in place, so any external reader
+   * (Obsidian Sync, a backup job, a script) can catch it mid-write and get a
+   * torn "Unterminated string" read, the corruption vector behind the 17MB
+   * machine. On desktop we write the same JSON to a sibling `.tmp` and
+   * atomically rename it over data.json (rename is atomic on one filesystem),
+   * so a reader sees either the whole old file or the whole new one, never a
+   * partial one. The path and format are identical to what saveData would
+   * write and what loadData() reads.
+   *
+   * Off a FileSystemAdapter (mobile) there is no filesystem to rename on, so we
+   * fall back to the unchanged Obsidian saveData. The existing single-in-flight
+   * savePromise coalescing guarantees only one writer runs at a time.
+   */
+  private async saveDataAtomic(): Promise<void> {
+    // Only the desktop FileSystemAdapter can do a temp-file + rename. Anything
+    // else (mobile, or an instance not fully wired to an App) falls back to
+    // Obsidian's own saveData (same write path as before this change).
+    const adapter = this.app?.vault?.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      await this.saveData(this.settings);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathMod = require('path') as typeof import('path');
+    const dataPath = pathMod.join(adapter.getBasePath(), this.manifest.dir!, 'data.json');
+    const tmpPath = `${dataPath}.tmp`;
+    const json = JSON.stringify(this.settings);
+    await fs.promises.writeFile(tmpPath, json, 'utf8');
+    await fs.promises.rename(tmpPath, dataPath);
   }
 }
 

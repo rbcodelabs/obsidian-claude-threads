@@ -20,8 +20,14 @@ export interface SerializedMessage {
   cost?: number;
   compactTrigger?: 'auto' | 'manual';
   preTokens?: number;
-  /** Images attached to this user message, base64-encoded for display in mobile history. */
-  images?: Array<{ base64: string; mediaType: string; name: string }>;
+  /**
+   * Images attached to this user message. base64 is what mobile renders (it
+   * cannot resolve a desktop attachment `path`), so the desktop always includes
+   * it in the frame from the live in-memory object. `base64` is typed optional
+   * only to mirror ImageAttachment (where it is dropped from the on-disk copy
+   * after externalization); over the relay it is present.
+   */
+  images?: Array<{ base64?: string; mediaType: string; name: string; path?: string }>;
 }
 
 /** JSON-safe version of Thread (no class instances, no functions). */
@@ -75,7 +81,7 @@ export type RelayFrame =
  * The relay forwards them verbatim; the desktop RelayClient dispatches them.
  */
 export type RemoteCommand =
-  | { type: 'send_message'; threadId: string; text: string; images?: Array<{ base64: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string }> }
+  | { type: 'send_message'; threadId: string; text: string; images?: Array<{ base64?: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; name: string; path?: string }> }
   | { type: 'stop_session'; threadId: string }
   | { type: 'resolve_permission'; threadId: string; requestId: string; allow: boolean; alwaysAllow?: boolean }
   | { type: 'resolve_question'; threadId: string; requestId: string; answers: Record<string, string> }
