@@ -1,5 +1,6 @@
 import { App, TFile, normalizePath } from 'obsidian';
 import type { Thread, ChatMessage, ThreadStatus } from './types';
+import { imageEmbedMarkdown } from './imageExternalization';
 
 export class VaultPersistence {
   private folder: string;
@@ -173,6 +174,12 @@ export class VaultPersistence {
       const tools = msg.toolCalls.map((t) => `  - \`${t.summary}\``).join('\n');
       body = `> [!info] Tools used\n${tools}\n\n${body}`;
     }
+    // Embed any externalized images (PR 1 wrote them to vault attachment files
+    // and set `path`). Archived threads then keep their images visibly in the
+    // note. Images with no `path` (not yet externalized) are skipped so we never
+    // emit a broken embed or dump base64 into the markdown.
+    const embeds = imageEmbedMarkdown(msg);
+    if (embeds) body = `${body}\n\n${embeds}`;
     return body;
   }
 

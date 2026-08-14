@@ -129,6 +129,27 @@ export function serializeThreadForSave(thread: Thread): Thread {
 }
 
 /**
+ * Obsidian embed markdown (`![[path]]`, one per line) for every image on a
+ * message that has been externalized to a vault attachment file. Covers both
+ * user-pasted `images` and tool-result `toolResultImages`. Only path-backed
+ * images are embedded: an image still carrying inline base64 with no `path`
+ * (not yet externalized) is skipped so the archived note never emits a broken
+ * embed or dumps base64 into the markdown. Returns '' when nothing to embed.
+ */
+export function imageEmbedMarkdown(
+  msg: Pick<ChatMessage, 'images' | 'toolResultImages'>,
+): string {
+  const paths: string[] = [];
+  msg.images?.forEach((img) => {
+    if (img.path) paths.push(img.path);
+  });
+  msg.toolResultImages?.forEach((img) => {
+    if (img.path) paths.push(img.path);
+  });
+  return paths.map((p) => `![[${p}]]`).join('\n');
+}
+
+/**
  * One image that still needs to be written to disk (base64 present, no `path`).
  * `setPath` writes the resulting vault path back onto the source ref so the next
  * serialize pass drops its base64.

@@ -1542,6 +1542,22 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Auto-archive idle threads after (days)')
+      .setDesc('Automatically archive a waiting thread once it has been idle this many days: it is written to its markdown note (with images embedded) and removed from the live thread list, keeping data.json from growing without bound. Active threads, the orchestrator, and threads awaiting a plan or question are never touched. Set to 0 to disable.')
+      .addText((text) =>
+        text
+          .setPlaceholder('14')
+          .setValue(String(this.plugin.settings.autoArchiveIdleDays ?? 14))
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (!isNaN(n) && n >= 0) {
+              this.plugin.settings.autoArchiveIdleDays = n;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Vault folder')
       .setDesc('Where thread notes are saved, relative to the vault root.')
       .addText((text) =>
