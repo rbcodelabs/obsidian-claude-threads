@@ -42,6 +42,19 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('wikilink-rendering.png', { fullPage: true });
   });
 
+  test('background task notice row', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Switch to the thread with persisted `notice` messages (completed + failed)
+    await page.evaluate(() => (window as any).__view.focusThread('thread-notice'));
+    await page.waitForSelector('.ct-notice-row');
+    await page.waitForTimeout(200);
+    await expect(page).toHaveScreenshot('background-task-notice-row.png', { fullPage: true });
+  });
+
   test('slash command autocomplete', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
