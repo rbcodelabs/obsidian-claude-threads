@@ -1323,6 +1323,36 @@
   letter-spacing: 0;
 }
 
+/* Background-task completion notice — a subtle centered row in the transcript,
+   shown instead of a global toast when a background task finishes on an idle
+   thread. Visually kin to .ct-compact-divider but with a status icon. */
+.ct-notice-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 16px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+.ct-notice-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ct-notice-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-notice-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Error */
 .ct-error {
   background: var(--background-modifier-error-rgb, rgba(200,0,0,0.1));

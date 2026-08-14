@@ -573,11 +573,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
         if (remaining.length === 0) {
           this.cancelBgTaskPoll(threadId);
         }
-        // Show a notice when the notification arrives on an idle thread (the
-        // ThreadsView task-pill handles it when the thread is actively streaming).
+        // Append a persisted notice message to the thread's transcript when the
+        // notification arrives on an idle thread (the ThreadsView task-pill
+        // handles it when the thread is actively streaming). Persisting it into
+        // thread.messages means it survives reload and scroll-back, instead of a
+        // transient global toast.
         if (!this.manager.isRunning(threadId)) {
-          const icon = event.status === 'completed' ? '✓' : '✗';
-          new Notice(`Background task ${icon}: ${event.summary}`, 5000);
+          this.manager.addNoticeMessage(threadId, event.status, event.summary);
         }
         // Persist the updated (cleared) pending task list.
         this.saveSettings().catch(console.error);

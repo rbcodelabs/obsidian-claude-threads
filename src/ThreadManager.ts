@@ -821,6 +821,32 @@ export class ThreadManager {
   }
 
   /**
+   * Append a persisted 'notice' message to a thread's transcript — used when a
+   * background task completes after its parent thread has gone idle. Renders as
+   * a subtle centered row in the chat (see ThreadsView) instead of a global
+   * toast, and survives reload because it lives in thread.messages (persisted
+   * to data.json). Emits a 'message' event so any open view appends it live.
+   */
+  addNoticeMessage(
+    threadId: string,
+    status: 'completed' | 'failed' | 'stopped',
+    summary: string,
+  ): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'notice',
+      content: summary,
+      noticeStatus: status,
+      timestamp: Date.now(),
+    };
+    thread.messages.push(message);
+    thread.updatedAt = Date.now();
+    this.emit(threadId, { type: 'message', message });
+  }
+
+  /**
    * Detect whether the message triggers model escalation. Returns the model
    * string to use for this turn if escalation should occur, or undefined
    * if the default model should be used.
@@ -1870,6 +1896,9 @@ function buildHistoryPreamble(priorMessages: ChatMessage[], newCwd: string): str
       lines.push('[— context compacted here —]', '');
       continue;
     }
+    // 'notice' rows are display-only UI (background-task completions) and must
+    // never enter the model's context — skip them in the resume preamble.
+    if (msg.role === 'notice') continue;
 
     const label = msg.role === 'user' ? 'User' : 'Assistant';
     const toolSuffix =

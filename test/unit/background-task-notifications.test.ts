@@ -266,6 +266,47 @@ describe('background task tracking — activeBgTasks', () => {
   });
 });
 
+// ─── addNoticeMessage ─────────────────────────────────────────────────────────
+
+describe('addNoticeMessage', () => {
+  it('pushes a persisted notice message and emits a message event', () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    manager.addNoticeMessage(thread.id, 'completed', 'Subagent finished');
+
+    // Message pushed onto the transcript with the right shape
+    expect(thread.messages).toHaveLength(1);
+    const msg = thread.messages[0];
+    expect(msg.role).toBe('notice');
+    expect(msg.content).toBe('Subagent finished');
+    expect(msg.noticeStatus).toBe('completed');
+    expect(typeof msg.id).toBe('string');
+    expect(typeof msg.timestamp).toBe('number');
+
+    // A 'message' event carrying that same message was emitted for live views
+    const messageEvt = events.find(e => e.type === 'message') as
+      { type: 'message'; message: import('../../src/types').ChatMessage } | undefined;
+    expect(messageEvt).toBeDefined();
+    expect(messageEvt!.message).toBe(msg);
+  });
+
+  it('carries the failed/stopped status through to the message', () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '/cwd');
+
+    manager.addNoticeMessage(thread.id, 'failed', 'Job crashed');
+    expect(thread.messages[0].noticeStatus).toBe('failed');
+  });
+
+  it('no-ops for an unknown threadId', () => {
+    const manager = makeManager();
+    expect(() => manager.addNoticeMessage('nonexistent', 'completed', 'x')).not.toThrow();
+  });
+});
+
 // ─── getPendingBackgroundTasks ────────────────────────────────────────────────
 
 describe('getPendingBackgroundTasks', () => {

@@ -1938,7 +1938,7 @@ export class ThreadsView extends ItemView {
 
   async forkThread(threadId: string, initialFocus?: string): Promise<void> {
     const thread = this.manager.getThread(threadId);
-    if (!thread || thread.messages.filter(m => m.role !== 'compact').length === 0) {
+    if (!thread || thread.messages.filter(m => m.role !== 'compact' && m.role !== 'notice').length === 0) {
       new Notice('Nothing to fork — thread has no messages yet.');
       return;
     }
@@ -2103,6 +2103,14 @@ export class ThreadsView extends ItemView {
       if (msg.preTokens && msg.preTokens > 0) {
         divider.createSpan({ cls: 'ct-compact-tokens', text: `${(msg.preTokens / 1000).toFixed(0)}k tokens` });
       }
+      return null;
+    }
+
+    if (msg.role === 'notice') {
+      const row = this.messagesEl.createDiv('ct-notice-row');
+      const iconEl = row.createSpan('ct-notice-icon');
+      setIcon(iconEl, msg.noticeStatus === 'completed' ? 'check-circle' : 'x-circle');
+      row.createSpan({ cls: 'ct-notice-text', text: msg.content });
       return null;
     }
 
@@ -3576,7 +3584,9 @@ export class ThreadsView extends ItemView {
         }
         this.subagentWaiting = false;
         // When the thread is idle (no active streaming container / no pill), the
-        // main.ts subscriber shows a Notice. Nothing more needed here.
+        // main.ts subscriber appends a persisted 'notice' message to the
+        // transcript (which renders live via the 'message' event). Nothing more
+        // needed here.
         break;
       }
 
@@ -4782,7 +4792,7 @@ export class ThreadsView extends ItemView {
     }
 
     const thread = this.manager.getThread(id);
-    const hasMessages = thread && thread.messages.some((m) => m.role !== 'compact');
+    const hasMessages = thread && thread.messages.some((m) => m.role !== 'compact' && m.role !== 'notice');
 
     if (hasMessages && this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
       // Archive to vault before removing from memory so the Bases Kanban retains it.
