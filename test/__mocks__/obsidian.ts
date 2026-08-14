@@ -84,6 +84,23 @@ export class TFile {
   }
 }
 
+// FileSystemAdapter is only used via `instanceof` guards in source (desktop
+// detection). The test App mock's adapter is a plain object, so `instanceof
+// FileSystemAdapter` is false, so code takes the mobile/base64 fallback path.
+export class FileSystemAdapter {
+  getBasePath(): string { return ''; }
+  getResourcePath(p: string): string { return p; }
+}
+
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const buf = Buffer.from(base64, 'base64');
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  return Buffer.from(buffer).toString('base64');
+}
+
 export function sanitizeHTMLToDom(html: string): DocumentFragment {
   const frag = document.createDocumentFragment();
   const div = document.createElement('div');

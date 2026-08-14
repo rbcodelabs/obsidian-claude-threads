@@ -7,9 +7,23 @@ export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 export type ImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
 export interface ImageAttachment {
-  base64: string;
+  /**
+   * Inline base64 image bytes. Optional because, once the image is externalized
+   * to a vault attachment file (see `path`), the base64 is dropped from the
+   * serialized data.json copy to keep the file small. It stays in the live
+   * in-memory object so the synchronous render and the mobile relay frame keep
+   * working unchanged. Legacy data (pre-externalization) has base64 and no path.
+   */
+  base64?: string;
   mediaType: ImageMediaType;
   name: string;
+  /**
+   * Vault-relative path to the externalized image file, set once the image has
+   * been written to `<vaultFolder>/attachments/<threadId>/<messageId>-<index>.<ext>`.
+   * When set, the desktop render resolves it via adapter.getResourcePath();
+   * mobile still uses base64 (it cannot resolve a desktop attachment path).
+   */
+  path?: string;
 }
 
 export interface AskQuestionOption {
@@ -49,8 +63,13 @@ export interface ChatMessage {
   images?: ImageAttachment[];
   /** AI-generated 1-sentence summary used in compressed view. */
   summary?: string;
-  /** Images returned by tool results during this turn (e.g. Read on a PNG). */
-  toolResultImages?: Array<{ mediaType: string; data: string }>;
+  /**
+   * Images returned by tool results during this turn (e.g. Read on a PNG).
+   * `data` is optional for the same reason as ImageAttachment.base64: it is
+   * dropped from the serialized data.json copy once the image is externalized
+   * to `path`, but kept in the live object for render/relay.
+   */
+  toolResultImages?: Array<{ mediaType: string; data?: string; path?: string }>;
   /** For role 'notice': the completion status of the background task, drives the icon. */
   noticeStatus?: 'completed' | 'failed' | 'stopped';
 }
@@ -590,6 +609,23 @@ export interface PluginSettings {
    * Reset to false whenever crash recovery restores threads from vault notes.
    */
   orphanArchiveScanComplete?: boolean;
+  /**
+   * Set to true after the one-time image-externalization backfill has run and
+   * shrunk data.json. The backfill walks every message image still stored as
+   * inline base64, writes it to a vault attachment file, and records its `path`
+   * so the serialize step can drop the base64. Idempotent and desktop-only;
+   * gates the walk so it doesn't re-run on every startup once complete.
+   */
+  imageExternalizationComplete?: boolean;
+  /**
+   * Number of days a `waiting` thread must sit idle (no `updatedAt` change)
+   * before the periodic sweep auto-archives it: writes it to its markdown note
+   * (images embedded) and evicts it from the live thread list so data.json stops
+   * growing without bound. Only `waiting` threads qualify. `active`, `reconnecting`,
+   * `error`, the orchestrator thread, and any thread with a pending plan/question
+   * are never swept. `0` disables the sweep entirely. Defaults to 14.
+   */
+  autoArchiveIdleDays?: number;
   /** Recurring scheduled tasks that fire prompts into new threads. */
   scheduledItems: ScheduledItem[];
   /**
@@ -671,6 +707,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   statusLineIntervalMs: 30_000,
   debugLogging: false,
   hasSeenWelcome: false,
+  imageExternalizationComplete: false,
+  autoArchiveIdleDays: 14,
   pttKey: 'Alt+Space',
   openAIKey: '',
   secretEnvKeys: [],

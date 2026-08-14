@@ -388,14 +388,18 @@ export class ThreadSession {
         content: images && images.length > 0
           ? [
               ...(text.trim() ? [{ type: 'text' as const, text }] : []),
-              ...images.map(img => ({
-                type: 'image' as const,
-                source: {
-                  type: 'base64' as const,
-                  media_type: img.mediaType,
-                  data: img.base64,
-                },
-              })),
+              // See ClaudeSession: a live send always carries base64; an image
+              // with only an externalized `path` can't be sent inline.
+              ...images
+                .filter((img): img is ImageAttachment & { base64: string } => img.base64 != null)
+                .map(img => ({
+                  type: 'image' as const,
+                  source: {
+                    type: 'base64' as const,
+                    media_type: img.mediaType,
+                    data: img.base64,
+                  },
+                })),
             ]
           : text,
       },

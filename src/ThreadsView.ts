@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
@@ -1989,6 +1989,28 @@ export class ThreadsView extends ItemView {
     return wrapper;
   }
 
+  /**
+   * Resolve an <img> src for a message image (ADR-0003, PR 1). When the image
+   * has been externalized to a vault file (`path` set) and we're on desktop,
+   * use the synchronous `app://` resource URL so the render stays synchronous
+   * and doesn't depend on the inline base64 (which is stripped from data.json
+   * after a restart). Otherwise fall back to the inline base64 data URL,
+   * including on mobile, where a desktop attachment path can't be resolved.
+   */
+  private imageSrc(ref: { path?: string; mediaType: string }, inlineData: string | undefined): string {
+    if (ref.path) {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        try {
+          return adapter.getResourcePath(ref.path);
+        } catch {
+          // Fall through to base64 if the path can't be resolved.
+        }
+      }
+    }
+    return `data:${ref.mediaType};base64,${inlineData ?? ''}`;
+  }
+
   private async renderMessages(): Promise<void> {
     this.messagesEl.empty();
     this.clearStreamingState();
@@ -2125,7 +2147,7 @@ export class ThreadsView extends ItemView {
       for (const img of msg.toolResultImages) {
         imgWrap.createEl('img', {
           attr: {
-            src: `data:${img.mediaType};base64,${img.data}`,
+            src: this.imageSrc(img, img.data),
             style: 'max-width:100%;border-radius:4px;margin-bottom:6px;display:block;',
           },
         });
@@ -2196,7 +2218,7 @@ export class ThreadsView extends ItemView {
         const imgRow = content.createDiv('ct-message-images');
         for (const img of msg.images) {
           const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
-          thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+          thumb.src = this.imageSrc(img, img.base64);
           thumb.title = img.name;
         }
       }
@@ -3177,7 +3199,7 @@ export class ThreadsView extends ItemView {
             const imgRow = content.createDiv('ct-message-images');
             for (const img of event.message.images) {
               const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
-              thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+              thumb.src = this.imageSrc(img, img.base64);
               thumb.title = img.name;
             }
           }
@@ -3325,7 +3347,7 @@ export class ThreadsView extends ItemView {
           const imgRow = dqContent.createDiv('ct-message-images');
           for (const img of event.images) {
             const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
-            thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+            thumb.src = this.imageSrc(img, img.base64);
             thumb.title = img.name;
           }
         }
@@ -3651,7 +3673,7 @@ export class ThreadsView extends ItemView {
         for (const img of event.images) {
           imgWrap.createEl('img', {
             attr: {
-              src: `data:${img.mediaType};base64,${img.data}`,
+              src: this.imageSrc(img, img.data),
               style: 'max-width:100%;border-radius:4px;margin-top:6px;display:block;',
             },
           });
@@ -4480,7 +4502,7 @@ export class ThreadsView extends ItemView {
         const imgRow = content.createDiv('ct-message-images');
         for (const img of images) {
           const thumb = imgRow.createEl('img', { cls: 'ct-message-img-thumb' });
-          thumb.src = `data:${img.mediaType};base64,${img.base64}`;
+          thumb.src = this.imageSrc(img, img.base64);
           thumb.title = img.name;
         }
       }

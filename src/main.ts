@@ -22,6 +22,8 @@ import {
   type ImageAttachment,
   type ScheduledItem,
 } from './types';
+import { serializeThreadForSave } from './imageExternalization';
+import { selectIdleThreadsForArchive } from './autoArchive';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { execEnv } from './dashboardUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
@@ -381,13 +383,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
           isThreadRunning: (id: string) => this.manager.isRunning(id),
           sendMessageToThread: (id: string, message: string) => this.manager.sendMessage(id, message),
           archiveThread: async (id: string) => {
-            const thread = this.manager.getThread(id);
-            if (!thread) throw new Error(`Thread not found: ${id}`);
-            if (this.settings.saveThreadsToVault && this.persistence) {
-              thread.status = 'archived';
-              await this.persistence.saveThread(thread);
-            }
-            this.manager.deleteThread(id);
+            await this.archiveThreadById(id);
             await this.saveSettings();
           },
           setThreadNotes: (id: string, notes: string) => {
@@ -492,6 +488,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     };
     this.manager.vaultRoot = this.getEffectiveCwd();
+    // App handle for AttachmentWriter (writes image files through the vault API).
+    this.manager.app = this.app;
     // Absolute path to this plugin's installed dist/ dir, used to resolve the
     // bundled thread-orchestrator skill (see ThreadManager.buildSessionOptions()).
     {
@@ -943,6 +941,42 @@ export default class ClaudeThreadsPlugin extends Plugin {
         }
       }
     }
+
+    // One-time image-externalization backfill (ADR-0003, PR 1). Walk every loaded
+    // thread's inline image bytes, write each to a vault attachment file, and set
+    // its `path`. Desktop-only, idempotent, crash-safe: the file is written before
+    // `path` is set, so a crash just retries next launch. The saveSettings() below
+    // is the write that actually shrinks data.json, because serializeThreadForSave
+    // now drops base64 for any path-backed image. Never deletes base64
+    // destructively. It only leaves data.json via the serialize strip.
+    if (!this.settings.imageExternalizationComplete) {
+      const adapter = this.app.vault.adapter;
+      if (adapter instanceof FileSystemAdapter) {
+        try {
+          const n = await this.manager.backfillExternalizeImages();
+          if (n > 0) console.log(`[ClaudeThreads] Externalized ${n} inline image(s) out of data.json`);
+        } catch (err) {
+          console.error('[ClaudeThreads] Image externalization backfill failed:', err);
+        }
+        this.settings.imageExternalizationComplete = true;
+        await this.saveSettings();
+      }
+    }
+
+    // Auto-archive idle `waiting` threads so finished threads stop accumulating
+    // in data.json (archival was manual-only before). Run once at startup and on
+    // a low-frequency interval so long-running desktop sessions still sweep. This
+    // is placed AFTER the image-externalization backfill on purpose: the backfill
+    // sets each image's `path`, and the archived note only embeds path-backed
+    // images, so running it first means a first-launch sweep still produces notes
+    // with working image embeds. The sweep self-guards when disabled.
+    await this.sweepIdleThreads();
+    const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+    this.registerInterval(
+      window.setInterval(() => {
+        void this.sweepIdleThreads();
+      }, SWEEP_INTERVAL_MS),
+    );
 
     // Resume background task monitoring for any threads that still had pending
     // tasks when the plugin was last unloaded (e.g. Obsidian restart mid-task).
@@ -1470,6 +1504,63 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
   }
 
+  // ── Auto-archive idle threads ────────────────────────────────────────────────
+
+  /**
+   * The single archive eviction path, shared by the manual `archiveThread` MCP
+   * handler and the automatic idle sweep so there is exactly one implementation.
+   * Writes the thread to its markdown note (when vault persistence is on), then
+   * removes it from the live thread map so it stops being serialized into
+   * data.json. Does NOT call saveSettings. Each caller persists once (the sweep
+   * saves once after its whole loop rather than per thread).
+   */
+  private async archiveThreadById(id: string): Promise<void> {
+    const thread = this.manager.getThread(id);
+    if (!thread) throw new Error(`Thread not found: ${id}`);
+    if (this.settings.saveThreadsToVault && this.persistence) {
+      thread.status = 'archived';
+      await this.persistence.saveThread(thread);
+    }
+    this.manager.deleteThread(id);
+  }
+
+  /**
+   * Archive threads that have sat idle in the `waiting` state past
+   * `autoArchiveIdleDays`. Reuses `archiveThreadById` (the manual-archive path)
+   * so archived threads are written to their note with images embedded and then
+   * evicted from data.json. Runs once at startup and on a 6-hour interval.
+   *
+   * No-ops on mobile (no `manager`) or when the setting is `0`/falsy. Selection
+   * is delegated to the pure predicate in autoArchive.ts, which also excludes the
+   * orchestrator thread and any thread with a pending plan/question.
+   */
+  async sweepIdleThreads(): Promise<void> {
+    if (!this.manager) return;
+    const days = this.settings.autoArchiveIdleDays;
+    if (!days || days <= 0) return;
+
+    const candidates = selectIdleThreadsForArchive(this.manager.getThreads(), {
+      autoArchiveIdleDays: days,
+      now: Date.now(),
+      orchestratorThreadId: this.settings.orchestratorThreadId,
+    });
+    if (candidates.length === 0) return;
+
+    let archived = 0;
+    for (const thread of candidates) {
+      try {
+        await this.archiveThreadById(thread.id);
+        archived++;
+      } catch (err) {
+        console.error(`[ClaudeThreads] Auto-archive failed for thread ${thread.id}:`, err);
+      }
+    }
+    if (archived > 0) {
+      console.log(`[ClaudeThreads] Auto-archived ${archived} idle thread(s) (idle > ${days}d)`);
+      await this.saveSettings();
+    }
+  }
+
   // ── Background task monitoring ───────────────────────────────────────────────
 
   /**
@@ -1819,19 +1910,51 @@ export default class ClaudeThreadsPlugin extends Plugin {
         // manager is null on mobile — skip thread persistence there
         if (this.manager) {
           this.settings.projects = this.manager.getProjects();
-          // Strip ephemeral statusTags — they are re-derived each poll and must not
-          // bloat data.json or render as stale pills after a restart.
-          this.settings.threads = this.manager.getThreads().map((t) => {
-            if (!t.statusTags) return t;
-            const { statusTags: _omit, ...rest } = t;
-            return rest as typeof t;
-          });
+          // Produce data.json-safe copies: strip ephemeral statusTags (re-derived
+          // each poll) and drop base64/data from any image already externalized to
+          // a `path` file. The live in-memory threads are never mutated.
+          this.settings.threads = this.manager.getThreads().map(serializeThreadForSave);
         }
-        await this.saveData(this.settings);
+        await this.saveDataAtomic();
       } while (this.saveAgainRequested);
     } finally {
       this.savePromise = null;
     }
+  }
+
+  /**
+   * Atomic replacement for Obsidian's non-atomic saveData (ADR-0003, PR 1).
+   * Obsidian's saveData rewrites data.json in place, so any external reader
+   * (Obsidian Sync, a backup job, a script) can catch it mid-write and get a
+   * torn "Unterminated string" read, the corruption vector behind the 17MB
+   * machine. On desktop we write the same JSON to a sibling `.tmp` and
+   * atomically rename it over data.json (rename is atomic on one filesystem),
+   * so a reader sees either the whole old file or the whole new one, never a
+   * partial one. The path and format are identical to what saveData would
+   * write and what loadData() reads.
+   *
+   * Off a FileSystemAdapter (mobile) there is no filesystem to rename on, so we
+   * fall back to the unchanged Obsidian saveData. The existing single-in-flight
+   * savePromise coalescing guarantees only one writer runs at a time.
+   */
+  private async saveDataAtomic(): Promise<void> {
+    // Only the desktop FileSystemAdapter can do a temp-file + rename. Anything
+    // else (mobile, or an instance not fully wired to an App) falls back to
+    // Obsidian's own saveData (same write path as before this change).
+    const adapter = this.app?.vault?.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      await this.saveData(this.settings);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('fs') as typeof import('fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathMod = require('path') as typeof import('path');
+    const dataPath = pathMod.join(adapter.getBasePath(), this.manifest.dir!, 'data.json');
+    const tmpPath = `${dataPath}.tmp`;
+    const json = JSON.stringify(this.settings);
+    await fs.promises.writeFile(tmpPath, json, 'utf8');
+    await fs.promises.rename(tmpPath, dataPath);
   }
 }
 

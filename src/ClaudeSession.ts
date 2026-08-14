@@ -344,14 +344,19 @@ export class ClaudeSession {
           content: images && images.length > 0
             ? [
                 ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
-                ...images.map(img => ({
-                  type: 'image' as const,
-                  source: {
-                    type: 'base64' as const,
-                    media_type: img.mediaType,
-                    data: img.base64,
-                  },
-                })),
+                // An image with only an externalized `path` and no in-memory
+                // base64 can't be sent inline; a live send always has base64, so
+                // this filters nothing in practice but keeps the SDK type honest.
+                ...images
+                  .filter((img): img is ImageAttachment & { base64: string } => img.base64 != null)
+                  .map(img => ({
+                    type: 'image' as const,
+                    source: {
+                      type: 'base64' as const,
+                      media_type: img.mediaType,
+                      data: img.base64,
+                    },
+                  })),
               ]
             : prompt,
         },
