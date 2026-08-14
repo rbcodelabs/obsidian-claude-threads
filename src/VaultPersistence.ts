@@ -12,7 +12,52 @@ export class VaultPersistence {
     this.folder = normalizePath(folder);
   }
 
+  // Serializes saveThread() callers per thread id through a single in-flight
+  // write. Without this, ~5 independent call sites (status-change subscriber,
+  // message-event handler, post-summarize callback, closeThread, archiveThread,
+  // plus a Promise.all on unload) all call saveThread() fire-and-forget. The
+  // target filename is recomputed from `thread.title` on every call, so if a
+  // thread's title changes mid-flight (e.g. auto-summarization renames it)
+  // while two saves are in flight for the same thread, one call's
+  // getAbstractFileByPath -> rename/modify sequence can be invalidated by
+  // another call that already completed its own rename first (a
+  // time-of-check-to-time-of-use race) — surfacing as repeated ENOENT errors,
+  // since a failed rename left `noteFile` pointing at a dead path that the
+  // next autosave would try again. The self-draining loop below guarantees
+  // only one write per thread id is ever in flight, and that every write
+  // reflects the freshest thread state at write time — so a caller that
+  // stacks up behind an in-flight write for the SAME thread is coalesced into
+  // the next pass, while saves for DIFFERENT threads proceed independently
+  // (the lock is keyed per thread id, not global).
+  private savePromises = new Map<string, Promise<string>>();
+  private saveAgainRequested = new Set<string>();
+
   async saveThread(thread: Thread): Promise<string> {
+    const key = thread.id;
+    const inFlight = this.savePromises.get(key);
+    if (inFlight) {
+      this.saveAgainRequested.add(key);
+      return inFlight;
+    }
+    const promise = this.runSaveLoop(thread, key);
+    this.savePromises.set(key, promise);
+    return promise;
+  }
+
+  private async runSaveLoop(thread: Thread, key: string): Promise<string> {
+    let result = '';
+    try {
+      do {
+        this.saveAgainRequested.delete(key);
+        result = await this.doSaveThread(thread);
+      } while (this.saveAgainRequested.has(key));
+    } finally {
+      this.savePromises.delete(key);
+    }
+    return result;
+  }
+
+  private async doSaveThread(thread: Thread): Promise<string> {
     await this.ensureFolder();
     const slug = thread.title
       .toLowerCase()
@@ -25,7 +70,15 @@ export class VaultPersistence {
 
     const existing = this.app.vault.getAbstractFileByPath(fileName);
     if (existing instanceof TFile) {
-      await this.app.vault.modify(existing, content);
+      try {
+        await this.app.vault.modify(existing, content);
+      } catch {
+        // The file the metadata cache told us about a moment ago is gone
+        // (e.g. deleted/moved out from under us by something other than
+        // this plugin's own coalesced writes). Self-heal by creating it
+        // fresh rather than leaving noteFile wedged on a dead path.
+        await this.app.vault.create(fileName, content);
+      }
     } else {
       // If the thread was previously saved under a different filename (e.g. the title
       // changed after auto-summarization), rename the stale note atomically so it
@@ -36,19 +89,28 @@ export class VaultPersistence {
       if (thread.noteFile && thread.noteFile !== fileName) {
         const stale = this.app.vault.getAbstractFileByPath(thread.noteFile);
         if (stale instanceof TFile) {
-          await this.app.vault.rename(stale, fileName);
-          // rename() moves the file; now update its content in place.
-          const renamed = this.app.vault.getAbstractFileByPath(fileName);
-          if (renamed instanceof TFile) {
-            await this.app.vault.modify(renamed, content);
+          try {
+            await this.app.vault.rename(stale, fileName);
+            // rename() moves the file; now update its content in place.
+            const renamed = this.app.vault.getAbstractFileByPath(fileName);
+            if (renamed instanceof TFile) {
+              await this.app.vault.modify(renamed, content);
+            }
+            thread.noteFile = fileName;
+            return fileName;
+          } catch {
+            // The stale file vanished/moved out from under us between the
+            // getAbstractFileByPath check and the rename call. Fall through
+            // to the normal create path below as if `stale` had never been
+            // found — don't propagate, and don't touch thread.noteFile until
+            // we have a filename that actually succeeded.
           }
-          thread.noteFile = fileName;
-          return fileName;
         }
       }
       await this.app.vault.create(fileName, content);
     }
     // Keep noteFile in sync so callers can reference the vault path.
+    // Only reached after a call above that actually succeeded.
     thread.noteFile = fileName;
     return fileName;
   }
