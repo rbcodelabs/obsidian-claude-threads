@@ -619,6 +619,33 @@ export class Notice {
 
 export class FileSystemAdapter {}
 
+export class TFile {
+  path: string;
+  name: string;
+  basename: string;
+  extension: string;
+  constructor(path = '') {
+    this.path = path;
+    this.name = path.split('/').pop() ?? path;
+    this.basename = this.name.replace(/\.[^.]+$/, '');
+    this.extension = this.name.includes('.') ? this.name.split('.').pop() ?? '' : '';
+  }
+}
+
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 /**
  * Mock for Obsidian's MarkdownRenderer — used by ThreadsView and MobileView.
  * In the real plugin this calls into Obsidian's internal Markdown pipeline

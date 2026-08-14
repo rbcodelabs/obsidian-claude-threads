@@ -2,11 +2,14 @@ import { type SessionCallbacks, type TaskTrackerEvent } from './ThreadSession';
 import { createHarnessSession } from './HarnessFactory';
 import { resolveCodexPermissions, type HarnessSession, type HarnessSessionOptions } from './HarnessSession';
 import { RawLogWriter } from './RawLogWriter';
+import { AttachmentWriter } from './AttachmentWriter';
+import { collectPendingImageExternalizations } from './imageExternalization';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
 import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
+import type { App } from 'obsidian';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
@@ -187,6 +190,13 @@ export class ThreadManager {
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
   /**
+   * Obsidian App handle, set once from main.ts alongside `vaultRoot`. Needed by
+   * AttachmentWriter to write image files through the vault API (so they
+   * register with the metadata cache). Null in tests / on mobile, where image
+   * externalization is skipped.
+   */
+  app: App | null = null;
+  /**
    * Absolute filesystem path to this plugin's installed directory (vaultRoot +
    * manifest.dir), set once from main.ts alongside vaultRoot. Used to resolve
    * the bundled thread-orchestrator skill at <pluginResourceDir>/resources/skills/
@@ -202,11 +212,17 @@ export class ThreadManager {
   private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => void }> = new Map();
   /** Appends each thread's raw SDK event stream to a per-thread JSONL log. */
   private rawLogWriter: RawLogWriter;
+  /** Writes message images out to vault attachment files (ADR-0003, PR 1). */
+  private attachmentWriter: AttachmentWriter;
 
   constructor(settings: PluginSettings) {
     this.settings = settings;
     this.rawLogWriter = new RawLogWriter(
       () => this.vaultRoot,
+      () => this.settings.vaultFolder,
+    );
+    this.attachmentWriter = new AttachmentWriter(
+      () => this.app,
       () => this.settings.vaultFolder,
     );
   }
@@ -224,6 +240,62 @@ export class ThreadManager {
     opts?: { limit?: number; type?: string },
   ): Promise<{ path: string; total: number; returned: number; entries: unknown[] } | null> {
     return this.rawLogWriter.read(threadId, opts);
+  }
+
+  /**
+   * Externalize a finalized message's images to vault attachment files, setting
+   * `path` on each ref once written (base64/data stays in the live object for
+   * render + relay). Fire-and-forget: writes run off the session hot path and
+   * the serialize step drops the base64 on the next save. No-op off desktop.
+   */
+  private externalizeMessageImages(threadId: string, message: ChatMessage): void {
+    if (!this.attachmentWriter.isDesktop()) return;
+    message.images?.forEach((img, index) => {
+      if (img.base64 && !img.path) {
+        void this.attachmentWriter
+          .write(threadId, message.id, index, img.mediaType, img.base64)
+          .then((p) => {
+            if (p) img.path = p;
+          });
+      }
+    });
+    message.toolResultImages?.forEach((img, index) => {
+      if (img.data && !img.path) {
+        void this.attachmentWriter
+          .write(threadId, message.id, index, img.mediaType, img.data)
+          .then((p) => {
+            if (p) img.path = p;
+          });
+      }
+    });
+  }
+
+  /**
+   * One-time backfill (ADR-0003, PR 1): walk every loaded thread's inline image
+   * bytes, write each to a vault attachment file, and set its `path`. The file
+   * is written FIRST, then `path` is set, so a crash in between just retries
+   * next launch (idempotent, since an existing correct file is overwritten). Returns
+   * the number of images externalized. No-op off desktop.
+   */
+  async backfillExternalizeImages(): Promise<number> {
+    if (!this.attachmentWriter.isDesktop()) return 0;
+    const pending = collectPendingImageExternalizations(this.getThreads());
+    let count = 0;
+    for (const item of pending) {
+      // eslint-disable-next-line no-await-in-loop
+      const p = await this.attachmentWriter.write(
+        item.threadId,
+        item.messageId,
+        item.index,
+        item.mediaType,
+        item.base64,
+      );
+      if (p) {
+        item.setPath(p);
+        count++;
+      }
+    }
+    return count;
   }
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -326,6 +398,14 @@ export class ThreadManager {
   }
 
   deleteThread(id: string): void {
+    const thread = this.threads.get(id);
+    // Hard-delete of a thread with no markdown note: remove its attachment dir.
+    // On archive the thread has a `noteFile` (persistence.saveThread set it), and
+    // a later PR embeds those images in the note, so keep the directory then.
+    // Fire-and-forget so delete stays synchronous; no-op off desktop.
+    if (thread && !thread.noteFile) {
+      void this.attachmentWriter.removeThreadDir(id);
+    }
     const session = this.sessions.get(id);
     if (session) {
       session.close();
@@ -869,6 +949,9 @@ export class ThreadManager {
     };
     thread.messages.push(userMsg);
     thread.updatedAt = Date.now();
+    // Externalize pasted images to vault files so their base64 leaves data.json
+    // on the next save (keeps base64 in memory for render + relay). Desktop-only.
+    this.externalizeMessageImages(threadId, userMsg);
     this.emit(threadId, { type: 'user_message_added', message: userMsg });
 
     // Track this message as unresolved until the generation it lands in
@@ -1247,6 +1330,8 @@ export class ThreadManager {
         this.pendingToolResultImages.delete(threadId);
         thread.messages.push(assistantMsg);
         thread.updatedAt = Date.now();
+        // Externalize tool-result images to vault files (see sendMessage above).
+        this.externalizeMessageImages(threadId, assistantMsg);
         this.emit(threadId, { type: 'message', message: assistantMsg });
       },
       onDone: (sessionId, cost) => {
