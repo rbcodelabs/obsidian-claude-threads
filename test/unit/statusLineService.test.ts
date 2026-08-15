@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { StatusLineService, type StatusLineExec } from '../../src/StatusLineService';
 import type { ThreadManager } from '../../src/ThreadManager';
 import type { Thread } from '../../src/types';
+import { telemetry } from '../../src/telemetry';
 
 // ── Fake ThreadManager (only the surface StatusLineService touches) ──────────
 
@@ -171,6 +172,30 @@ describe('StatusLineService — stdin contract', () => {
     );
     await svc.pollAll();
     expect(JSON.parse(captured.join('')).provider).toBe('claude');
+  });
+});
+
+describe('StatusLineService — telemetry spawn counter', () => {
+  beforeEach(() => telemetry.reset());
+
+  it('increments spawns.statusline once per real exec', async () => {
+    const threads = [makeThread('a', '/repo'), makeThread('b', '/repo'), makeThread('c', '/other')];
+    const mgr = fakeManager(threads);
+    const { exec, state } = makeExec('[]');
+    const svc = new StatusLineService(mgr as unknown as ThreadManager, config(), baseDeps(exec));
+    await svc.pollAll();
+    // Two distinct cwds → two execs → two spawns recorded.
+    expect(state.calls).toHaveLength(2);
+    expect(telemetry.snapshot().counters.spawns.statusline).toBe(2);
+    expect(telemetry.snapshot().counters.spawns.gitdiff).toBe(0);
+  });
+
+  it('does not record a spawn when the command is empty (no exec)', async () => {
+    const mgr = fakeManager([makeThread('a', '/repo')]);
+    const { exec } = makeExec('[]');
+    const svc = new StatusLineService(mgr as unknown as ThreadManager, config(''), baseDeps(exec));
+    await svc.pollAll();
+    expect(telemetry.snapshot().counters.spawns.statusline).toBe(0);
   });
 });
 

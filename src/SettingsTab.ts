@@ -3,6 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
+import { telemetry } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
 import type { AgentDashboard } from './AgentDashboard';
@@ -1112,6 +1113,28 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           setDebugLogging(value);
           await this.plugin.saveSettings();
         }),
+      );
+
+    new Setting(containerEl)
+      .setName('Diagnostics')
+      .setDesc(
+        'Collect local-only performance counters and renderer CPU/memory samples so a slowdown can be diagnosed. ' +
+        'Nothing ever leaves your machine. Use "Copy diagnostics" (or the "Generate diagnostics report" command) to ' +
+        'save a redacted report to claude-threads-diagnostics/ and copy it to your clipboard for a GitHub issue.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.telemetryEnabled ?? true).onChange(async (value) => {
+          this.plugin.settings.telemetryEnabled = value;
+          telemetry.setEnabled(value);
+          await this.plugin.saveSettings();
+        }),
+      )
+      .addButton((btn) =>
+        btn
+          .setButtonText('Copy diagnostics')
+          .onClick(() => {
+            void this.plugin.runDiagnosticsReport?.();
+          }),
       );
   }
 
