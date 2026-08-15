@@ -64,6 +64,14 @@ export interface SessionCallbacks {
   onTaskNotification?: (taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) => void;
   onNotification?: (text: string, priority: 'low' | 'medium' | 'high' | 'immediate') => void;
   onApiRetry?: (attempt: number, maxRetries: number, error: string) => void;
+  /**
+   * Fired when a tool call is auto-denied WITHOUT an interactive permission
+   * prompt — e.g. the auto-mode classifier, `dontAsk` mode, a headless-agent
+   * auto-deny, or a deny rule. The interactive 'ask' path never reaches here
+   * (it surfaces via canUseTool). Lets the UI render the denial distinctly
+   * instead of the user only seeing an is_error tool_result.
+   */
+  onPermissionDenied?: (toolName: string, toolUseId: string, message: string, agentId?: string, decisionReasonType?: string) => void;
   onRateLimit?: (status: 'allowed' | 'allowed_warning' | 'rejected', resetsAt?: number) => void;
   /** Fired when a tool result contains inline images (e.g. the Read tool reading a PNG). */
   onToolResultImages?: (images: Array<{ mediaType: string; data: string }>) => void;
@@ -282,7 +290,12 @@ export class ClaudeSession {
       cwd,
       includePartialMessages: true,
       canUseTool,
-      env: { ...process.env, ...parseExtraEnv(extraEnvRaw), ...(secretEnv ?? {}) },
+      // Keep task-tracking tools (TaskCreate/TaskUpdate/TaskList/TodoWrite) in the
+      // default tool surface — SDK 0.3.233 drops them on Opus 4.8 / Sonnet 5 / Fable 5
+      // and newer models unless opted back in. The plugin's dashboard depends on them.
+      // Placed after process.env (so a stray inherited value can't disable a core
+      // feature) but before extra/secret env (so explicit plugin config still wins).
+      env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', ...parseExtraEnv(extraEnvRaw), ...(secretEnv ?? {}) },
     };
     if (resumeSessionId) options.resume = resumeSessionId;
     if (additionalDirectories?.length) options.additionalDirectories = additionalDirectories;
@@ -648,6 +661,15 @@ export class ClaudeSession {
                   sys.error as string,
                 );
                 break;
+              case 'permission_denied':
+                callbacks.onPermissionDenied?.(
+                  sys.tool_name as string,
+                  sys.tool_use_id as string,
+                  sys.message as string,
+                  sys.agent_id as string | undefined,
+                  sys.decision_reason_type as string | undefined,
+                );
+                break;
               case 'model_fallback':
                 callbacks.onModelFallback?.(
                   sys.trigger as string,
@@ -803,6 +825,20 @@ export class ClaudeSession {
                 }
               }
             }
+            break;
+          }
+
+          // Known top-level types the plugin does not (yet) act on, handled
+          // explicitly so they are no longer silently dropped by the switch.
+          // Both are already persisted verbatim via onRawEvent above.
+          case 'auth_status': {
+            const as = msg as { isAuthenticating?: boolean; error?: string };
+            debugLog('[ClaudeThreads] auth_status:', { isAuthenticating: as.isAuthenticating, error: as.error });
+            break;
+          }
+          case 'conversation_reset': {
+            const cr = msg as { new_conversation_id?: string };
+            debugLog('[ClaudeThreads] conversation_reset:', cr.new_conversation_id);
             break;
           }
         }

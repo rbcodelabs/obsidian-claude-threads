@@ -7058,3 +7058,32 @@ body.ct-skills-resizing {
   color: var(--text-on-accent);
   opacity: 0.7;
 }
+
+/* Auto-denied tool call (permission_denied system message) — a distinct,
+   muted-warning line rendered inline in the stream so a silent auto-deny
+   (auto/dontAsk mode, deny rule, headless auto-deny) is visible. */
+.ct-permission-denied-annotation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-warning, var(--text-muted));
+  background: var(--background-modifier-error-hover, var(--background-secondary));
+}
+.ct-permission-denied-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.ct-permission-denied-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+.ct-permission-denied-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

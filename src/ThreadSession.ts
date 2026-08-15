@@ -277,7 +277,12 @@ export class ThreadSession {
       cwd: options.cwd,
       includePartialMessages: true,
       canUseTool,
-      env: { ...process.env, ...parseExtraEnv(options.extraEnvRaw), ...(options.secretEnv ?? {}) },
+      // Keep task-tracking tools (TaskCreate/TaskUpdate/TaskList/TodoWrite) in the
+      // default tool surface — SDK 0.3.233 drops them on Opus 4.8 / Sonnet 5 / Fable 5
+      // and newer models unless opted back in. The plugin's dashboard depends on them.
+      // Placed after process.env (so a stray inherited value can't disable a core
+      // feature) but before extra/secret env (so explicit plugin config still wins).
+      env: { ...process.env, CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', ...parseExtraEnv(options.extraEnvRaw), ...(options.secretEnv ?? {}) },
     };
     if (options.resume) sdkOptions.resume = options.resume;
     if (options.additionalDirectories?.length) sdkOptions.additionalDirectories = options.additionalDirectories;
@@ -722,6 +727,15 @@ export class ThreadSession {
                   sys.error as string,
                 );
                 break;
+              case 'permission_denied':
+                callbacks.onPermissionDenied?.(
+                  sys.tool_name as string,
+                  sys.tool_use_id as string,
+                  sys.message as string,
+                  sys.agent_id as string | undefined,
+                  sys.decision_reason_type as string | undefined,
+                );
+                break;
               case 'model_fallback':
                 callbacks.onModelFallback?.(
                   sys.trigger as string,
@@ -875,6 +889,20 @@ export class ThreadSession {
                 }
               }
             }
+            break;
+          }
+
+          // Known top-level types the plugin does not (yet) act on, handled
+          // explicitly so they are no longer silently dropped by the switch.
+          // Both are already persisted verbatim via onRawEvent above.
+          case 'auth_status': {
+            const as = msg as { isAuthenticating?: boolean; error?: string };
+            debugLog('[ClaudeThreads] auth_status:', { isAuthenticating: as.isAuthenticating, error: as.error });
+            break;
+          }
+          case 'conversation_reset': {
+            const cr = msg as { new_conversation_id?: string };
+            debugLog('[ClaudeThreads] conversation_reset:', cr.new_conversation_id);
             break;
           }
         }
