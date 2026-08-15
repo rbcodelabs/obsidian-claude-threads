@@ -30,7 +30,8 @@ import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from 
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
-import { setDebugLogging, debugLog } from './logger';
+import { setDebugLogging, debugLog, getLogRing } from './logger';
+import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 
 // View-type string constants. Must match the values exported by each view module.
@@ -165,6 +166,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Apply debug logging preference before any subsystems start.
     setDebugLogging(this.settings.debugLogging ?? false);
 
+    // Apply the local-only telemetry preference. Counter bumps and the perf
+    // sampler are gated on this (and on desktop). Sampler wiring happens later in
+    // onloadDesktop() once the workspace views exist.
+    telemetry.setEnabled(this.settings.telemetryEnabled ?? true);
+
     // Enable SDK verbose debug logging when debug mode is on.
     // The SDK checks process.env.DEBUG_SDK lazily via a memoized fn — set it before any SDK call.
     // Desktop only: process.env is a Node.js global not available on mobile.
@@ -184,6 +190,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     } else {
       await this.onloadDesktop();
     }
+
+    // Diagnostics command (both platforms). Desktop-gated inside the handler so
+    // it's discoverable on mobile but shows a "desktop only" Notice there.
+    this.addCommand({
+      id: 'generate-diagnostics-report',
+      name: 'Generate diagnostics report',
+      callback: () => {
+        void this.runDiagnosticsReport();
+      },
+    });
 
     // Settings tab (both platforms)
     this.addSettingTab(new ClaudeThreadsSettingTab(this.app, this));
@@ -820,6 +836,20 @@ export default class ClaudeThreadsPlugin extends Plugin {
       );
       this.gitDiff.start();
     }
+
+    // Telemetry perf sampler (desktop only, self-gated on Platform.isMobile and the
+    // telemetry-enabled setting). Samples renderer CPU/mem only while a plugin view
+    // is open, mirroring the status-line/git-diff shouldPoll predicate.
+    telemetry.init({
+      isViewOpen: () => {
+        const ws = this.app.workspace;
+        return (
+          ws.getLeavesOfType(VIEW_TYPE).length > 0 ||
+          ws.getLeavesOfType(AGENT_VIEW_TYPE).length > 0 ||
+          ws.getLeavesOfType(KANBAN_VIEW_TYPE).length > 0
+        );
+      },
+    });
 
     // Event-driven wake-up: pings the thread-orchestrator thread shortly after
     // any other thread finishes a turn, so it feels continuously running
@@ -1474,6 +1504,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.wakeLock?.destroy();
     this.statusLine?.stop();
     this.gitDiff?.stop();
+    telemetry.dispose();
     this.manager?.destroy();
 
     // Note: pending ScheduleWakeup entries are now durable Scheduler items
@@ -1819,6 +1850,103 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return view as AgentDashboard;
   }
 
+  /**
+   * Assemble the local-only, redacted diagnostics bundle, copy the markdown to the
+   * clipboard, and save both .md + .json into `claude-threads-diagnostics/` in the
+   * vault root. Desktop-only; on mobile it shows a "desktop only" Notice and returns.
+   * All host/OS access is behind the desktop guard + lazy require (mobile-safe).
+   */
+  async runDiagnosticsReport(): Promise<void> {
+    if (Platform.isMobile) {
+      new Notice('Diagnostics report is desktop only.');
+      return;
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const os = require('os') as typeof import('os');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const fs = require('fs') as typeof import('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pathMod = require('path') as typeof import('path');
+
+      const snap = telemetry.snapshot();
+
+      // data.json size (best-effort; only meaningful off a real filesystem).
+      let dataJsonSize = 0;
+      try {
+        const adapter = this.app.vault.adapter;
+        if (adapter instanceof FileSystemAdapter) {
+          const dataPath = pathMod.join(adapter.getBasePath(), this.manifest.dir!, 'data.json');
+          dataJsonSize = fs.statSync(dataPath).size;
+        }
+      } catch {
+        /* best-effort */
+      }
+
+      const total = this.manager ? this.manager.getThreads().length : 0;
+      const running = this.manager ? this.manager.getRunningThreads().length : 0;
+
+      // Host detection: Geode exposes window.geode; otherwise assume Obsidian.
+      const w = window as unknown as { geode?: unknown };
+      const hostApp = w.geode ? 'geode' : 'obsidian';
+      const hostVersion =
+        (this.app as unknown as { appVersion?: string }).appVersion ??
+        (globalThis as unknown as { apiVersion?: string }).apiVersion ??
+        '';
+
+      const input: DiagnosticsInput = {
+        pluginVersion: this.manifest.version,
+        host: {
+          app: hostApp,
+          version: String(hostVersion),
+          platform: process.platform,
+          arch: process.arch,
+        },
+        system: {
+          cpuCount: os.cpus().length,
+          totalMemMb: Math.round(os.totalmem() / (1024 * 1024)),
+          loadAvg: os.loadavg().map((n) => Math.round(n * 100) / 100),
+        },
+        vault: {
+          fileCount: this.app.vault.getFiles().length,
+          dataJsonSizeBytes: dataJsonSize,
+        },
+        threads: { total, running },
+        counters: snap.counters,
+        perfSamples: snap.perfSamples,
+        longtask: snap.longtask,
+        logEntries: getLogRing(200),
+        homedir: os.homedir(),
+        generatedAt: Date.now(),
+      };
+
+      const { markdown, json } = buildDiagnosticsReport(input);
+
+      // Save .md + .json to claude-threads-diagnostics/ in the vault root.
+      const folder = 'claude-threads-diagnostics';
+      if (!this.app.vault.getAbstractFileByPath(folder)) {
+        await this.app.vault.createFolder(folder).catch(() => {});
+      }
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const mdPath = `${folder}/diagnostics-${stamp}.md`;
+      const jsonPath = `${folder}/diagnostics-${stamp}.json`;
+      await this.app.vault.create(mdPath, markdown);
+      await this.app.vault.create(jsonPath, json);
+
+      // Primary UX: copy the markdown to the clipboard for pasting into an issue.
+      try {
+        await navigator.clipboard.writeText(markdown);
+      } catch {
+        /* clipboard may be unavailable in some hosts */
+      }
+
+      new Notice(`Diagnostics copied to clipboard and saved to ${mdPath}`, 8000);
+    } catch (err) {
+      console.error('[ClaudeThreads] Failed to generate diagnostics report:', err);
+      new Notice('Failed to generate diagnostics report. See console for details.', 6000);
+    }
+  }
+
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
@@ -1834,6 +1962,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature
     this.settings.remoteAccess = Object.assign({}, DEFAULT_SETTINGS.remoteAccess, this.settings.remoteAccess ?? {});
+    // Default local telemetry ON for installs predating this feature (local-only).
+    this.settings.telemetryEnabled = this.settings.telemetryEnabled ?? true;
     // Migrate pre-v0.15 "Opus escalation" settings to the generic escalation
     // settings (escalationEnabled/escalationKeyword/escalationModel). The old
     // '/opus' default keyword becomes '/escalate'; custom keywords are kept.
@@ -1894,6 +2024,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
   private saveAgainRequested = false;
 
   async saveSettings(): Promise<void> {
+    // Telemetry: every save request (many coalesce into one disk write below).
+    telemetry.recordSaveRequested();
     if (this.savePromise) {
       this.saveAgainRequested = true;
       return this.savePromise;
@@ -1916,6 +2048,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
           this.settings.threads = this.manager.getThreads().map(serializeThreadForSave);
         }
         await this.saveDataAtomic();
+        // Telemetry: an actual disk write (measures coalescing effectiveness vs.
+        // savesRequested).
+        telemetry.recordSaveWritten();
       } while (this.saveAgainRequested);
     } finally {
       this.savePromise = null;

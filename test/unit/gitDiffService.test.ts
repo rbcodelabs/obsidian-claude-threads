@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { GitDiffService, type GitDiffExecFile } from '../../src/GitDiffService';
 import type { ThreadManager } from '../../src/ThreadManager';
 import type { Thread, GitDiffInfo } from '../../src/types';
+import { telemetry } from '../../src/telemetry';
 
 // ── Fake ThreadManager (only the surface GitDiffService touches) ────────────
 
@@ -217,6 +218,30 @@ describe('GitDiffService — cache TTL', () => {
     await svc.pollAll();
     expect(state.calls.length).toBe(callsAfterFirst);
     expect(mgr._applied).toHaveLength(2); // cached result still applied to the thread on each poll
+  });
+});
+
+describe('GitDiffService — telemetry spawn counter', () => {
+  beforeEach(() => telemetry.reset());
+
+  it('increments spawns.gitdiff once per git subcommand (multiple per cycle)', async () => {
+    const mgr = fakeManager([makeThread('a', '/repo')]);
+    const { execFile, state } = makeExecFile(SUCCESS_RESPONSES);
+    const svc = new GitDiffService(mgr as unknown as ThreadManager, baseDeps(execFile));
+    await svc.pollAll();
+    // The full success path fires several git subcommands; each is one spawn.
+    expect(state.calls.length).toBeGreaterThan(1);
+    expect(telemetry.snapshot().counters.spawns.gitdiff).toBe(state.calls.length);
+    expect(telemetry.snapshot().counters.spawns.statusline).toBe(0);
+  });
+
+  it('records exactly one spawn when the cwd is not a repo (single check)', async () => {
+    const mgr = fakeManager([makeThread('a', '/not-a-repo')]);
+    const { execFile, state } = makeExecFile({ 'rev-parse --is-inside-work-tree': null });
+    const svc = new GitDiffService(mgr as unknown as ThreadManager, baseDeps(execFile));
+    await svc.pollAll();
+    expect(state.calls).toHaveLength(1);
+    expect(telemetry.snapshot().counters.spawns.gitdiff).toBe(1);
   });
 });
 

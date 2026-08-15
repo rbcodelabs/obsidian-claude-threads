@@ -18,6 +18,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { GitDiffInfo } from './types';
 import { parseShortStat, parseRemoteToOwnerRepo } from './gitDiffUtils';
 import { execEnv } from './dashboardUtils';
+import { telemetry } from './telemetry';
 
 /** Minimal child_process.execFile signature (callback form) the service depends on. */
 export type GitDiffExecFile = (
@@ -200,6 +201,9 @@ export class GitDiffService {
       let settled = false;
       const done = (v: string | null) => { if (!settled) { settled = true; resolve(v); } };
       try {
+        // Telemetry: each git subcommand is a child-process spawn (EDR-sensitive);
+        // one refresh cycle fires several, so this climbs faster than gitdiff cycles.
+        telemetry.recordSpawn('gitdiff');
         this.deps.execFile(
           'git',
           args,

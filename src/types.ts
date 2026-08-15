@@ -587,6 +587,13 @@ export interface PluginSettings {
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
+  /**
+   * When true (default), the always-on local telemetry layer records counters and
+   * renderer performance samples used by the "Generate diagnostics report" command.
+   * Local-only — nothing ever leaves the machine. Turning it off disables the
+   * sampler and stops counter bumps. Desktop-only; a no-op on mobile.
+   */
+  telemetryEnabled: boolean;
   /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
   hasSeenWelcome: boolean;
   /**
@@ -706,6 +713,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   statusLineIntervalMs: 30_000,
   debugLogging: false,
+  telemetryEnabled: true,
   hasSeenWelcome: false,
   imageExternalizationComplete: false,
   autoArchiveIdleDays: 14,

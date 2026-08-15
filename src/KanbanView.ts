@@ -10,7 +10,8 @@ import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { appendOrchestratorBadge } from './orchestrator-badge';
-import { partitionThreads } from './threadRowState';
+import { partitionThreads, classifyThreadRow, type ThreadRowState } from './threadRowState';
+import { telemetry } from './telemetry';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -33,6 +34,37 @@ const UNASSIGNED_GROUP = 'Unassigned';
  */
 const QUIET_COLUMN_LABELS = new Set(['New', 'Done', 'Ready', 'Reviewed']);
 
+/**
+ * Maps a thread's {@link ThreadRowState} to the column label + card RowState it
+ * lands in under the status board / folder swimlanes (both use `bucketize()`).
+ * Kept in exact lock-step with `bucketize()` so `computeCardPlacement()` can
+ * reproduce a card's column key without re-running the full render.
+ */
+const STATUS_COLUMN_MAP: Record<ThreadRowState, { label: string; state: RowState }> = {
+  running:         { label: 'Working', state: 'running' },
+  awaiting:        { label: 'Awaiting', state: 'running' },
+  waiting:         { label: 'Waiting', state: 'waiting' },
+  'idle-new':      { label: 'New', state: 'idle' },
+  'idle-reviewed': { label: 'Done', state: 'idle' },
+  error:           { label: 'Failed', state: 'error' },
+  empty:           { label: 'Ready', state: 'empty' },
+};
+
+/**
+ * Maps a thread's {@link ThreadRowState} to the section label + card RowState it
+ * lands in under the project-columns board (`sectionsForColumn()`), which folds
+ * 'awaiting' into 'Working' and labels reviewed-idle as 'Reviewed' (vs 'Done').
+ */
+const PROJECT_SECTION_MAP: Record<ThreadRowState, { label: string; state: RowState }> = {
+  running:         { label: 'Working', state: 'running' },
+  awaiting:        { label: 'Working', state: 'running' },
+  waiting:         { label: 'Waiting', state: 'waiting' },
+  'idle-new':      { label: 'New', state: 'idle' },
+  'idle-reviewed': { label: 'Reviewed', state: 'idle' },
+  error:           { label: 'Failed', state: 'error' },
+  empty:           { label: 'Ready', state: 'empty' },
+};
+
 export class KanbanView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
@@ -52,10 +84,21 @@ export class KanbanView extends ItemView {
   private timeEls: Map<string, HTMLElement> = new Map();
   private rowEls: Map<string, HTMLElement> = new Map();
   private taskEls: Map<string, HTMLElement> = new Map();
+  private summaryEls: Map<string, HTMLElement> = new Map();
   private activeThreadId: string | null = null;
 
+  /**
+   * Records each rendered card's column placement (combined bucket + group key)
+   * and RowState so `handleEvent` can decide, on a state-change event, whether
+   * the card merely needs an in-place patch (placement unchanged) or a full
+   * board rebuild (the card moved columns / was created / deleted). Rebuilt
+   * every render alongside the element maps.
+   */
+  private cardPlacements: Map<string, { bucketKey: string; state: RowState }> = new Map();
+
   private renderPending = false;
-  private activityTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Per-thread debounce timers for `scheduleActivityRefresh` (one 800ms window each). */
+  private activityTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private timeInterval: ReturnType<typeof setInterval> | null = null;
   private dispatchInput!: DispatchInput;
 
@@ -94,7 +137,8 @@ export class KanbanView extends ItemView {
 
   async onClose(): Promise<void> {
     this.unsubscribe?.();
-    if (this.activityTimer) clearTimeout(this.activityTimer);
+    for (const timer of this.activityTimers.values()) clearTimeout(timer);
+    this.activityTimers.clear();
     if (this.timeInterval) clearInterval(this.timeInterval);
     this.dispatchInput?.destroy();
     this._restorePanels();
@@ -328,6 +372,10 @@ export class KanbanView extends ItemView {
   }
 
   render(): void {
+    // Telemetry: a full board rebuild. Paired with rendersScheduled, this
+    // quantifies how effectively scheduleRender() coalesces event bursts (and
+    // guards against a regression of the v0.25.7 incremental-render fix).
+    telemetry.recordKanbanFullRebuild();
     const scrollState = this.captureScrollState();
 
     this.boardEl.empty();
@@ -335,6 +383,8 @@ export class KanbanView extends ItemView {
     this.timeEls.clear();
     this.rowEls.clear();
     this.taskEls.clear();
+    this.summaryEls.clear();
+    this.cardPlacements.clear();
 
     const q = this.searchQuery;
     const allThreads = this.manager.getThreads();
@@ -670,7 +720,7 @@ export class KanbanView extends ItemView {
     const stackingEnabled = QUIET_COLUMN_LABELS.has(label) && (this.plugin.settings.stackScheduledThreads ?? true);
     if (!stackingEnabled) {
       for (const thread of threads) {
-        this.renderCard(thread, state, body);
+        this.renderCard(thread, state, body, scopeKey);
       }
       return;
     }
@@ -689,7 +739,7 @@ export class KanbanView extends ItemView {
     items.sort((a, b) => b.ts - a.ts);
 
     for (const item of items) {
-      if (item.kind === 'card') this.renderCard(item.thread, state, body);
+      if (item.kind === 'card') this.renderCard(item.thread, state, body, scopeKey);
       else this.renderStackCard(item.stack, state, body, scopeKey);
     }
   }
@@ -730,12 +780,12 @@ export class KanbanView extends ItemView {
     if (expanded) {
       const stackBody = card.createDiv('ct-kanban-stack-body');
       for (const thread of stack.threads) {
-        this.renderCard(thread, state, stackBody);
+        this.renderCard(thread, state, stackBody, scopeKey);
       }
     }
   }
 
-  private renderCard(thread: Thread, state: RowState, parent: HTMLElement): void {
+  private renderCard(thread: Thread, state: RowState, parent: HTMLElement, placementKey: string): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
     const hasPending = state === 'running' && (this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id));
@@ -750,6 +800,9 @@ export class KanbanView extends ItemView {
       ].filter(Boolean).join(' '),
     });
     this.rowEls.set(thread.id, card);
+    // Record where this card lives so handleEvent can patch-vs-rebuild. The key
+    // is the same combined bucket+group scopeKey the column was rendered under.
+    this.cardPlacements.set(thread.id, { bucketKey: placementKey, state });
 
     // Header: icon + title
     const cardHeader = card.createDiv('ct-kanban-card-header');
@@ -763,10 +816,13 @@ export class KanbanView extends ItemView {
     const cardTitleEl = cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
     appendOrchestratorBadge(cardTitleEl, thread.id, this.plugin.settings.orchestratorThreadId);
 
-    // Summary (idle threads only)
-    const summary = thread.summary || thread.recap;
-    if (summary && state === 'idle') {
-      card.createDiv({ cls: 'ct-kanban-card-summary', text: summary });
+    // Summary (idle threads only). Always created for idle cards — kept hidden
+    // (display:none via ct-hidden) when empty — so a later `summary_updated`
+    // patch can populate it in place without a full board rebuild.
+    if (state === 'idle') {
+      const summaryEl = card.createDiv({ cls: 'ct-kanban-card-summary' });
+      this.summaryEls.set(thread.id, summaryEl);
+      this.applySummary(summaryEl, thread);
     }
 
     // Task list (compact checklist from Claude Code's TodoWrite/TaskCreate).
@@ -843,6 +899,23 @@ export class KanbanView extends ItemView {
 
     // Footer chips
     const footer = card.createDiv('ct-kanban-card-footer');
+    this.buildFooter(footer, thread);
+
+    card.addEventListener('click', () => {
+      if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
+      this.plugin.openThreadInChatView(thread.id);
+    });
+  }
+
+  /**
+   * (Re)builds a card's footer chip row from scratch: time, edited-files, PR,
+   * cwd, and message-count chips. Shared by initial render and `patchCard` so a
+   * chip that appears/disappears (e.g. a PR chip once a PR URL lands) is handled
+   * identically without rebuilding the whole card. Never touches the status
+   * icon, so it can't restart the running-icon spin animation.
+   */
+  private buildFooter(footer: HTMLElement, thread: Thread): void {
+    footer.empty();
 
     const timeEl = footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-time', text: relativeTime(thread.updatedAt) });
     this.timeEls.set(thread.id, timeEl);
@@ -874,11 +947,73 @@ export class KanbanView extends ItemView {
       setIcon(iconSpan, 'message-circle');
       msgChip.createSpan({ text: String(thread.messages.length) });
     }
+  }
 
-    card.addEventListener('click', () => {
-      if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
-      this.plugin.openThreadInChatView(thread.id);
+  /** Populate (or hide, when empty) an idle card's summary line in place. */
+  private applySummary(el: HTMLElement, thread: Thread): void {
+    const summary = thread.summary || thread.recap;
+    if (summary) {
+      el.setText(summary);
+      el.removeClass('ct-hidden');
+    } else {
+      el.setText('');
+      el.addClass('ct-hidden');
+    }
+  }
+
+  /**
+   * Computes the column placement a thread WOULD render into right now — the
+   * same combined bucket+group `scopeKey` and RowState used at render time — so
+   * `handleEvent` can compare against the recorded placement and decide between
+   * an in-place `patchCard` (placement unchanged) and a full rebuild (it moved).
+   * Mirrors `bucketize()` / `sectionsForColumn()` via the shared column maps.
+   */
+  private computeCardPlacement(thread: Thread): { bucketKey: string; state: RowState } {
+    const rowState = classifyThreadRow({
+      isRunning: this.manager.isRunning(thread.id),
+      hasPendingPermission: this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(thread.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(thread.id),
+      lastError: thread.lastError,
+      messageCount: thread.messages.length,
+      reviewed: thread.reviewed,
     });
+
+    const mode = this.groupBy;
+    if (mode === 'project') {
+      const { label, state } = PROJECT_SECTION_MAP[rowState];
+      return { bucketKey: `${this.groupLabel(thread)}::${label}`, state };
+    }
+    const { label, state } = STATUS_COLUMN_MAP[rowState];
+    if (mode === 'folder') {
+      return { bucketKey: `${this.groupLabel(thread)}::${label}`, state };
+    }
+    return { bucketKey: label, state };
+  }
+
+  /**
+   * Updates only the mutable, in-column parts of an already-rendered card: the
+   * activity line, the idle summary line, and the footer chips (time / files /
+   * PR / msgs). Deliberately leaves the status-icon node untouched so the
+   * running-icon CSS spin animation isn't restarted and no layout is forced.
+   * Only ever called when the card's column placement is unchanged.
+   */
+  private patchCard(threadId: string): void {
+    const card = this.rowEls.get(threadId);
+    const thread = this.manager.getThread(threadId);
+    if (!card || !thread) return;
+    const state = this.cardPlacements.get(threadId)?.state ?? 'idle';
+
+    const activityEl = this.activityEls.get(threadId);
+    if (activityEl) activityEl.setText(this.getActivityText(thread, state));
+
+    if (state === 'idle') {
+      const summaryEl = this.summaryEls.get(threadId);
+      if (summaryEl) this.applySummary(summaryEl, thread);
+    }
+
+    const footer = card.querySelector<HTMLElement>('.ct-kanban-card-footer');
+    if (footer) this.buildFooter(footer, thread);
   }
 
   /**
@@ -1039,6 +1174,19 @@ export class KanbanView extends ItemView {
       event.type === 'wakeup_changed' ||
       event.type === 'run_state_settled';
     if (isStateChange) {
+      // Patch the card in place when its column membership is unchanged; only
+      // fall back to a full rebuild when it actually moved columns, or is a
+      // create/delete (which have no matching recorded placement / rendered
+      // card, so they naturally take the scheduleRender path below).
+      const recorded = this.cardPlacements.get(threadId);
+      const thread = this.manager.getThread(threadId);
+      if (thread && recorded && this.rowEls.has(threadId)) {
+        const next = this.computeCardPlacement(thread);
+        if (next.bucketKey === recorded.bucketKey && next.state === recorded.state) {
+          this.patchCard(threadId);
+          return;
+        }
+      }
       this.scheduleRender();
       return;
     }
@@ -1071,6 +1219,9 @@ export class KanbanView extends ItemView {
   }
 
   private scheduleRender(): void {
+    // Telemetry: count every render request (pre-coalescing), even ones the
+    // debounce below folds into an existing pending render.
+    telemetry.recordRenderScheduled();
     if (this.renderPending) return;
     this.renderPending = true;
     // 120ms coalesces bursts of events that span multiple macrotasks (a plain
@@ -1083,9 +1234,12 @@ export class KanbanView extends ItemView {
   }
 
   private scheduleActivityRefresh(threadId: string): void {
-    if (this.activityTimer) return;
-    this.activityTimer = setTimeout(() => {
-      this.activityTimer = null;
+    // Per-thread debounce: one in-flight 800ms window PER thread, so a second
+    // running thread's activity isn't starved by the first thread holding a
+    // single shared timer.
+    if (this.activityTimers.has(threadId)) return;
+    const timer = setTimeout(() => {
+      this.activityTimers.delete(threadId);
       const el = this.activityEls.get(threadId);
       // Keep the activity line updating from subagent/workflow progress even
       // after the outer turn's own isRunning() has gone false — onTaskProgress
@@ -1095,5 +1249,6 @@ export class KanbanView extends ItemView {
         if (thread) el.setText(this.getActivityText(thread, 'running'));
       }
     }, 800);
+    this.activityTimers.set(threadId, timer);
   }
 }
