@@ -74,6 +74,21 @@ export type ThreadEvent =
   | { type: 'elicitation_request'; request: import('@anthropic-ai/claude-agent-sdk').ElicitationRequest; signal: AbortSignal; respond: (result: import('@anthropic-ai/claude-agent-sdk').ElicitationResult) => void };
 
 /**
+ * Structural equality for the small, plain-data poll payloads (StatusTag[] /
+ * GitDiffInfo) that the status-line and git-diff poll services re-apply on
+ * every pass. These are tiny arrays/objects of primitives, so a JSON.stringify
+ * compare is both correct and cheap; it lets applyStatusTags/applyGitDiff skip
+ * a redundant emit (and the Kanban rebuild it triggers) on a no-op re-apply.
+ * `undefined` (no prior value) and any concrete payload compare as unequal, so
+ * the first real apply always emits.
+ */
+function payloadsEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
  * Parse an agent definition markdown file (frontmatter + body).
  * Frontmatter fields: name, description (plain or YAML >- block scalar).
  * Body (after the closing ---) becomes the system prompt.
@@ -845,6 +860,10 @@ export class ThreadManager {
   applyStatusTags(threadId: string, tags: StatusTag[]): boolean {
     const thread = this.threads.get(threadId);
     if (!thread) return false;
+    // Poll services re-apply tags on every pass; most passes yield identical
+    // tags. Detect a genuine change BEFORE overwriting so we can skip the emit
+    // (and the full Kanban rebuild it triggers) when nothing actually changed.
+    const tagsChanged = !payloadsEqual(thread.statusTags, tags);
     thread.statusTags = tags;
     const pr = derivePrUrl(tags);
     let prChanged = false;
@@ -852,7 +871,11 @@ export class ThreadManager {
       thread.prUrl = pr;
       prChanged = true;
     }
-    this.emit(threadId, { type: 'status_tags' });
+    // Emit when the tags changed OR a new PR url appeared (so the PR chip can
+    // render) — but stay silent on a no-op re-apply.
+    if (tagsChanged || prChanged) {
+      this.emit(threadId, { type: 'status_tags' });
+    }
     return prChanged;
   }
 
@@ -865,8 +888,13 @@ export class ThreadManager {
   applyGitDiff(threadId: string, info: GitDiffInfo): void {
     const thread = this.threads.get(threadId);
     if (!thread) return;
+    // Same dedupe rationale as applyStatusTags: GitDiffService re-derives this
+    // on every poll and it's usually identical — skip the emit when unchanged.
+    const changed = !payloadsEqual(thread.gitDiff, info);
     thread.gitDiff = info;
-    this.emit(threadId, { type: 'git_diff' });
+    if (changed) {
+      this.emit(threadId, { type: 'git_diff' });
+    }
   }
 
   // ── Background task tracking ─────────────────────────────────────────────────
