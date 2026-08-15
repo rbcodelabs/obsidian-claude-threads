@@ -509,6 +509,7 @@ export class RelayClient {
         case 'task_notification':
         case 'notification':
         case 'api_retry':
+        case 'permission_denied':
         case 'rate_limit':
         case 'interrupted':
           break;

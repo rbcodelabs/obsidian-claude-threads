@@ -3648,6 +3648,23 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'permission_denied': {
+        // A tool call was auto-denied without an interactive prompt (auto/dontAsk
+        // mode, a deny rule, or a headless auto-deny). Render a distinct annotation
+        // so the denial is visible instead of only surfacing as an is_error result.
+        if (this.streamingEl) {
+          const denyEl = this.streamingEl.createDiv('ct-permission-denied-annotation');
+          const iconEl = denyEl.createSpan({ cls: 'ct-permission-denied-icon' });
+          setIcon(iconEl, 'shield-off');
+          const reason = event.decisionReasonType ? ` · ${event.decisionReasonType}` : '';
+          denyEl.createSpan({
+            cls: 'ct-permission-denied-text',
+            text: `Auto-denied ${formatToolName(event.toolName)}${reason}`,
+          });
+        }
+        break;
+      }
+
       case 'rate_limit': {
         if (event.limitStatus === 'rejected') {
           const resetMsg = event.resetsAt

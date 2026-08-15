@@ -129,6 +129,17 @@ export class RawLogWriter {
     return { path: abs, total: filtered.length, returned: entries.length, entries };
   }
 
+  /**
+   * Resolve once every append queued so far (across all threads) has been
+   * flushed to disk. Useful on plugin unload so a final event isn't lost to a
+   * still-pending write, and as a deterministic barrier in tests — awaiting the
+   * real write chain instead of guessing at a fixed sleep. Awaits the tails
+   * that exist at call time; appends enqueued after this call are not covered.
+   */
+  async flushAll(): Promise<void> {
+    await Promise.all([...this.writeTails.values()]);
+  }
+
   private enqueue(abs: string, line: string): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');

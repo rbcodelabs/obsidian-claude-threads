@@ -19,10 +19,15 @@ afterEach(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
-/** Wait for the writer's async append chain for a thread to settle. */
-async function settle(): Promise<void> {
-  // Two macrotask hops are enough for the mkdir + appendFile promise chain.
-  await new Promise((r) => setTimeout(r, 20));
+/**
+ * Deterministically wait for the writer's async append chain to finish, by
+ * awaiting the real per-file write tails instead of a fixed sleep. A blind
+ * `setTimeout` here was flaky: on a busy machine the mkdir + appendFile chain
+ * sometimes hadn't flushed within the timeout, so the read-back saw an empty
+ * or missing file.
+ */
+async function settle(w: RawLogWriter): Promise<void> {
+  await w.flushAll();
 }
 
 function makeWriter(folder = 'Claude') {
@@ -70,7 +75,7 @@ describe('RawLogWriter.append', () => {
   it('writes one wrapped JSONL line per event with ts/threadId/type/event', async () => {
     const w = makeWriter();
     w.append('t1', 'sess-9', 'assistant', { type: 'assistant', message: { text: 'hi' } });
-    await settle();
+    await settle(w);
 
     const lines = logLines('t1');
     expect(lines).toHaveLength(1);
@@ -87,7 +92,7 @@ describe('RawLogWriter.append', () => {
     w.append('t2', undefined, 'session_start', { type: 'session_start' });
     w.append('t2', undefined, 'assistant', { type: 'assistant', n: 1 });
     w.append('t2', undefined, 'result', { type: 'result', cost: 0.02 });
-    await settle();
+    await settle(w);
 
     const types = logLines('t2').map((l) => l.type);
     expect(types).toEqual(['session_start', 'assistant', 'result']);
@@ -97,7 +102,7 @@ describe('RawLogWriter.append', () => {
     const w = makeWriter();
     w.append('a', undefined, 'assistant', { type: 'assistant' });
     w.append('b', undefined, 'assistant', { type: 'assistant' });
-    await settle();
+    await settle(w);
 
     expect(logLines('a')).toHaveLength(1);
     expect(logLines('b')).toHaveLength(1);
@@ -106,7 +111,7 @@ describe('RawLogWriter.append', () => {
   it('does nothing when the vault root is unknown', async () => {
     const w = new RawLogWriter(() => '', () => 'Claude');
     w.append('t3', undefined, 'assistant', { type: 'assistant' });
-    await settle();
+    await settle(w);
     // No file should have been created anywhere under tmpRoot.
     expect(fs.existsSync(path.join(tmpRoot, 'Claude'))).toBe(false);
   });
@@ -116,7 +121,7 @@ describe('RawLogWriter.append', () => {
     const circular: Record<string, unknown> = { type: 'assistant' };
     circular.self = circular;
     w.append('t4', undefined, 'assistant', circular);
-    await settle();
+    await settle(w);
 
     const lines = logLines('t4');
     expect(lines).toHaveLength(1);
@@ -140,7 +145,7 @@ describe('RawLogWriter.read', () => {
     const w = makeWriter();
     w.append('r1', 's', 'session_start', { type: 'session_start' });
     w.append('r1', 's', 'assistant', { type: 'assistant', n: 1 });
-    await settle();
+    await settle(w);
 
     const res = await w.read('r1');
     expect(res).not.toBeNull();
@@ -153,7 +158,7 @@ describe('RawLogWriter.read', () => {
   it('tails to the most recent `limit` entries', async () => {
     const w = makeWriter();
     for (let i = 0; i < 5; i++) w.append('r2', undefined, 'assistant', { type: 'assistant', n: i });
-    await settle();
+    await settle(w);
 
     const res = await w.read('r2', { limit: 2 });
     expect(res!.total).toBe(5);
@@ -167,7 +172,7 @@ describe('RawLogWriter.read', () => {
     w.append('r3', undefined, 'assistant', { type: 'assistant', n: 0 });
     w.append('r3', undefined, 'result', { type: 'result' });
     w.append('r3', undefined, 'assistant', { type: 'assistant', n: 1 });
-    await settle();
+    await settle(w);
 
     const res = await w.read('r3', { type: 'assistant', limit: 0 });
     expect(res!.total).toBe(2);
@@ -178,7 +183,7 @@ describe('RawLogWriter.read', () => {
   it('skips malformed lines rather than throwing', async () => {
     const w = makeWriter();
     w.append('r4', undefined, 'assistant', { type: 'assistant' });
-    await settle();
+    await settle(w);
     // Corrupt the file by appending a junk line.
     const file = path.join(tmpRoot, 'Claude', 'logs', 'r4.jsonl');
     fs.appendFileSync(file, 'not json\n', 'utf8');

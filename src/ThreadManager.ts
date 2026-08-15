@@ -38,6 +38,7 @@ export type ThreadEvent =
   | { type: 'background_tasks_pending'; tasks: PendingBackgroundTask[] }
   | { type: 'notification'; text: string; priority: 'low' | 'medium' | 'high' | 'immediate' }
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
+  | { type: 'permission_denied'; toolName: string; toolUseId: string; message: string; agentId?: string; decisionReasonType?: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
   | { type: 'interrupted' }
   | { type: 'cwd_changed'; cwd: string }
@@ -1620,6 +1621,7 @@ export class ThreadManager {
       },
       onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
       onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
+      onPermissionDenied: (toolName, toolUseId, message, agentId, decisionReasonType) => this.emit(threadId, { type: 'permission_denied', toolName, toolUseId, message, agentId, decisionReasonType }),
       onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
       onModelFallback: (trigger, fromModel, toModel) => this.emit(threadId, { type: 'model_fallback', trigger, fromModel, toModel }),
       onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),

@@ -1,10 +1,11 @@
 /**
  * Tests for the new message handler callbacks added in the SDK alignment gap pass:
- *   - model_fallback   → onModelFallback
- *   - task_updated     → onTaskUpdated (patch applied to thread via ThreadManager)
- *   - tool_progress    → onToolProgress
- *   - memory_recall    → onMemoryRecall
- *   - commands_changed → onCommandsChanged
+ *   - model_fallback    → onModelFallback
+ *   - task_updated      → onTaskUpdated (patch applied to thread via ThreadManager)
+ *   - tool_progress     → onToolProgress
+ *   - memory_recall     → onMemoryRecall
+ *   - commands_changed  → onCommandsChanged
+ *   - permission_denied → onPermissionDenied
  *
  * Pattern: mock ThreadSession (ADR-0002 Stage 2 — replaces the old per-turn
  * ClaudeSession) so test code drives individual callbacks directly through
@@ -310,5 +311,58 @@ describe('commands_changed → onCommandsChanged', () => {
       Extract<ThreadEvent, { type: 'commands_changed' }> | undefined;
     expect(evt).toBeDefined();
     expect(evt!.commands).toEqual([]);
+  });
+});
+
+// ─── permission_denied ────────────────────────────────────────────────────────
+
+describe('permission_denied → onPermissionDenied', () => {
+  it('emits permission_denied event with tool name, use id, message, and reason', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    await manager.sendMessage(thread.id, 'hi');
+    mock.callbacks!.onPermissionDenied!('Bash', 'tool-use-9', 'Denied by rule', 'agent-2', 'rule');
+    driveResponse();
+
+    const evt = events.find(e => e.type === 'permission_denied') as
+      Extract<ThreadEvent, { type: 'permission_denied' }> | undefined;
+    expect(evt).toBeDefined();
+    expect(evt!.toolName).toBe('Bash');
+    expect(evt!.toolUseId).toBe('tool-use-9');
+    expect(evt!.message).toBe('Denied by rule');
+    expect(evt!.agentId).toBe('agent-2');
+    expect(evt!.decisionReasonType).toBe('rule');
+  });
+
+  it('emits permission_denied with optional fields undefined when omitted', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, e) => events.push(e));
+
+    await manager.sendMessage(thread.id, 'hi');
+    mock.callbacks!.onPermissionDenied!('Write', 'tool-use-1', 'Auto-denied');
+    driveResponse();
+
+    const evt = events.find(e => e.type === 'permission_denied') as
+      Extract<ThreadEvent, { type: 'permission_denied' }> | undefined;
+    expect(evt).toBeDefined();
+    expect(evt!.toolName).toBe('Write');
+    expect(evt!.agentId).toBeUndefined();
+    expect(evt!.decisionReasonType).toBeUndefined();
+  });
+
+  it('does not throw when onPermissionDenied is called without a subscriber', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T');
+
+    await manager.sendMessage(thread.id, 'hi');
+    expect(() =>
+      mock.callbacks!.onPermissionDenied!('Bash', 'tid', 'nope'),
+    ).not.toThrow();
+    driveResponse();
   });
 });
