@@ -518,6 +518,21 @@ Once a PR exists for the thread (tracked via the same sticky `prUrl` used by the
 
 Use **Claude Threads: Reload plugin (safe)** from the command palette instead of Obsidian's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
 
+### Diagnostics report
+
+When Obsidian feels slow — the renderer pinning a core, typing lag, or a machine where an EDR/antivirus agent taxes every subprocess — Claude Threads keeps a small, **always-on, local-only** diagnostics layer running so you can capture what's actually happening. Nothing ever leaves your machine: there are no network calls and no remote reporting.
+
+In the background it tracks a few cheap signals: how often the Kanban board rebuilds vs. how often a render was merely requested (measuring the incremental-render coalescing), how many `git`/status-line subprocesses were spawned, how many settings saves coalesced into actual disk writes, plus a ring of renderer CPU/memory samples (taken only while a plugin view is open) and a summary of any long main-thread tasks. It works identically in real Obsidian and in the Geode desktop app, and is a complete no-op on mobile.
+
+Run **Claude Threads: Generate diagnostics report** from the command palette (or click **Copy diagnostics** in Settings → General → Diagnostics). It:
+
+- copies a **redacted** Markdown report to your clipboard, ready to paste into a GitHub issue, and
+- saves that Markdown plus a raw `.json` bundle into a `claude-threads-diagnostics/` folder in your vault root, then shows a Notice with the path.
+
+The report is redacted by construction: it never includes message or file contents, absolute paths are collapsed to `~` or reduced to a basename (so no username or private directory layout leaks), and obvious `SECRET=value` strings are stripped. On mobile the command shows a "desktop only" Notice and does nothing.
+
+You can turn the whole layer off with the **Diagnostics** toggle in Settings → General (it's on by default, which is safe because everything stays local); turning it off stops the sampler and freezes the counters.
+
 ## Agent tools reference
 
 Every thread runs with built-in tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. Claude receives them through its built-in MCP server; Codex receives the same canonical definitions through its dynamic-tool protocol. No configuration is required.
@@ -669,6 +684,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
 | Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agent Dashboard's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agent dashboard](#agent-dashboard). |
+| Diagnostics | Enable the always-on, local-only telemetry layer (counters + renderer CPU/memory samples) that powers the [Diagnostics report](#diagnostics-report). Nothing leaves your machine; on by default. Desktop only. |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |
 | Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
 | Show pairing QR | Display a QR code for one-time mobile pairing (expires in 5 minutes) |

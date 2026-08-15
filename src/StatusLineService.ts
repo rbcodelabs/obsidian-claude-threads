@@ -11,6 +11,7 @@
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import { parseStatusLine } from './statusLine';
 import { execEnv } from './dashboardUtils';
+import { telemetry } from './telemetry';
 
 /** Minimal child_process.exec signature (callback form) the service depends on. */
 export type StatusLineExec = (
@@ -219,6 +220,8 @@ export class StatusLineService {
       let settled = false;
       const done = (v: string | null) => { if (!settled) { settled = true; resolve(v); } };
       try {
+        // Telemetry: each exec is a child-process spawn (EDR-sensitive).
+        telemetry.recordSpawn('statusline');
         const child = this.deps.exec(
           expanded,
           { timeout: EXEC_TIMEOUT_MS, env: execEnv() },

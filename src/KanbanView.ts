@@ -11,6 +11,7 @@ import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirec
 import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUtils';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads, classifyThreadRow, type ThreadRowState } from './threadRowState';
+import { telemetry } from './telemetry';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -371,6 +372,10 @@ export class KanbanView extends ItemView {
   }
 
   render(): void {
+    // Telemetry: a full board rebuild. Paired with rendersScheduled, this
+    // quantifies how effectively scheduleRender() coalesces event bursts (and
+    // guards against a regression of the v0.25.7 incremental-render fix).
+    telemetry.recordKanbanFullRebuild();
     const scrollState = this.captureScrollState();
 
     this.boardEl.empty();
@@ -1214,6 +1219,9 @@ export class KanbanView extends ItemView {
   }
 
   private scheduleRender(): void {
+    // Telemetry: count every render request (pre-coalescing), even ones the
+    // debounce below folds into an existing pending render.
+    telemetry.recordRenderScheduled();
     if (this.renderPending) return;
     this.renderPending = true;
     // 120ms coalesces bursts of events that span multiple macrotasks (a plain
