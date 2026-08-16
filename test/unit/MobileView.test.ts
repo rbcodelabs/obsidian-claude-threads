@@ -325,6 +325,26 @@ describe('MobileView — back button', () => {
 });
 
 describe('MobileView — send message', () => {
+  it('labels the composer for the active thread harness', async () => {
+    const { view, store } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [
+        makeThread({ id: 'claude-thread', agentHarness: 'claude' }),
+        makeThread({ id: 'codex-thread', agentHarness: 'codex' }),
+      ],
+      activeThreadId: 'codex-thread',
+    });
+
+    const inputEl = (view as never)['inputEl'] as HTMLTextAreaElement;
+    expect(inputEl.placeholder).toBe('Message Codex');
+
+    store.setActiveThreadId('claude-thread');
+    expect(inputEl.placeholder).toBe('Message Claude');
+
+    await view.onClose();
+  });
+
   it('send button dispatches send_message command with correct threadId', async () => {
     const { view, store, relay } = await buildView();
     store.applyFrame({

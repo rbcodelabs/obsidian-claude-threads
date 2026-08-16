@@ -63,6 +63,7 @@ function serializeThread(thread: Thread): SerializedThread {
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     sessionId: thread.sessionId,
+    agentHarness: thread.agentHarness,
     recap: thread.recap,
     summary: thread.summary,
     lastError: thread.lastError,
@@ -144,6 +145,16 @@ describe('serializeThread — message completeness', () => {
     expect(parsed.messages).toHaveLength(50);
     expect(parsed.messages[49].id).toBe('msg-49');
     expect(parsed.messages[49].content).toContain('Message content 49');
+  });
+
+  it('preserves a Codex thread harness through JSON round-trip', () => {
+    const manager = new ThreadManager({ ...DEFAULT_SETTINGS, agentHarness: 'codex' });
+    const thread = manager.createThread('Codex thread', '/home/user');
+
+    const parsed = JSON.parse(JSON.stringify(serializeThread(thread))) as SerializedThread;
+
+    expect(thread.agentHarness).toBe('codex');
+    expect(parsed.agentHarness).toBe('codex');
   });
 });
 

@@ -50,4 +50,19 @@ test.describe('ThreadsView — initial thread selection', () => {
     const titleEl = page.locator('.ct-title-text');
     await expect(titleEl).toContainText('HipTrip feature');
   });
+
+  test('composer placeholder follows the active thread harness', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+
+    await page.evaluate(() => {
+      (window as any).__manager.getThread('thread-fix-auth').agentHarness = 'codex';
+      (window as any).__manager.getThread('thread-brainstorm').agentHarness = 'claude';
+      return (window as any).__view.focusThread('thread-fix-auth');
+    });
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Codex');
+
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Claude');
+  });
 });

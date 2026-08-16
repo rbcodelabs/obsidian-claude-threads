@@ -209,3 +209,18 @@ describe('DispatchInput — interactive wait controls', () => {
     expect(root.querySelector('.ct-stop-btn')?.classList.contains('ct-hidden')).toBe(false);
   });
 });
+
+describe('DispatchInput — placeholder', () => {
+  it('updates the mounted textarea placeholder', () => {
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend: vi.fn(),
+      placeholder: 'Message Claude',
+    });
+    const root = di.mount(makeContainer());
+
+    di.setPlaceholder('Message Codex');
+
+    expect(root.querySelector('textarea')?.placeholder).toBe('Message Codex');
+  });
+});

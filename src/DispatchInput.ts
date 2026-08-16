@@ -336,6 +336,11 @@ export class DispatchInput {
     this.maybeConvertCommandPill();
   }
 
+  setPlaceholder(placeholder: string): void {
+    if (!this.inputEl) return;
+    this.inputEl.placeholder = placeholder;
+  }
+
   setStreaming(v: boolean, allowSend = false): void {
     if (!this.options.showStopBtn) return;
     if (v) {
