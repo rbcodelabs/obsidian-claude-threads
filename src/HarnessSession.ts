@@ -17,6 +17,7 @@ export interface HarnessSession {
   setModel(model: string | undefined): Promise<void>;
   setPermissionMode(mode: string): Promise<void>;
   getContextUsage(): Promise<import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse | null>;
+  getUsageSnapshot(includeAccountUsage?: boolean): Promise<import('./Usage').UsageSnapshot | null>;
 }
 
 /** Options every harness needs to execute a thread consistently. */

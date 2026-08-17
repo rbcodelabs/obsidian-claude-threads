@@ -243,6 +243,61 @@ describe('CodexSession protocol notifications', () => {
     expect(onRateLimit).toHaveBeenCalledWith('allowed_warning', 2_000_000);
   });
 
+  it('keeps multiple quota buckets alongside thread tokens', async () => {
+    const onUsage = vi.fn();
+    const session = new CodexSession('codex');
+    (session as any).options = { callbacks: { onUsage } };
+    (session as any).handle({ method: 'thread/tokenUsage/updated', params: { tokenUsage: {
+      total: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 100, outputTokens: 100, reasoningOutputTokens: 20 },
+      last: { totalTokens: 50, inputTokens: 40, cachedInputTokens: 10, outputTokens: 10, reasoningOutputTokens: 2 },
+      modelContextWindow: 1000,
+    } } });
+    (session as any).handle({ method: 'account/rateLimits/updated', params: { rateLimits: {
+      primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 2000 },
+      secondary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: 3000 },
+    } } });
+
+    await expect(session.getUsageSnapshot()).resolves.toMatchObject({
+      tokens: { total: 500 }, lastTurnTokens: { total: 50 },
+      quotaWindows: [{ usedPercent: 20 }, { usedPercent: 60 }],
+    });
+    expect(onUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads initial rate limits and account activity on demand', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.options = { callbacks: { onUsage: vi.fn() } };
+    const request = vi.spyOn(internal, 'request')
+      .mockResolvedValueOnce({
+        rateLimits: { primary: { usedPercent: 10, resetsAt: 2000 } },
+        rateLimitsByLimitId: { codex: { primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 2000 }, secondary: { usedPercent: 50, windowDurationMins: 10080, resetsAt: 3000 } } },
+        rateLimitResetCredits: { balance: 2 },
+      })
+      .mockResolvedValueOnce({ summary: { lifetimeTokens: 123, peakDailyTokens: 50, currentStreakDays: 2 }, dailyUsageBuckets: [{ startDate: '2026-08-17', tokens: 123 }] });
+
+    await internal.loadInitialRateLimits();
+    const usage = await session.getUsageSnapshot(true);
+
+    expect(request).toHaveBeenNthCalledWith(1, 'account/rateLimits/read', {});
+    expect(request).toHaveBeenNthCalledWith(2, 'account/usage/read', {});
+    expect(usage).toMatchObject({
+      quotaWindows: [{ label: 'Codex · 5 hours' }, { label: 'Codex · 7 days' }],
+      resetCredits: { balance: 2 }, accountUsage: { lifetimeTokens: 123, daily: [{ tokens: 123 }] },
+    });
+  });
+
+  it('returns quota data with an explicit account-usage error when unauthenticated', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.latestUsage = { provider: 'codex', updatedAt: 1, quotaWindows: [{ label: 'Primary', usedPercent: 10 }] };
+    vi.spyOn(internal, 'request').mockRejectedValue(new Error('not authenticated'));
+
+    await expect(session.getUsageSnapshot(true)).resolves.toMatchObject({
+      quotaWindows: [{ usedPercent: 10 }], accountUsageUnavailable: 'not authenticated',
+    });
+  });
+
   it('discovers enabled Codex skills as shared slash commands', async () => {
     const onCommandsChanged = vi.fn();
     const session = new CodexSession('codex');

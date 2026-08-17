@@ -3,6 +3,7 @@ import type { ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
 import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
+import { mergeUsageSnapshot, normalizeCodexAccountUsage, normalizeCodexRateLimitResponse, normalizeCodexTokenUsage, type UsageSnapshot } from './Usage';
 
 type CodexTokenUsageBreakdown = {
   totalTokens: number;
@@ -102,6 +103,7 @@ export class CodexSession {
   /** App-server has one active turn per thread; retain follow-ups locally. */
   private queuedTurns: Array<{ text: string; images?: ImageAttachment[] }> = [];
   private latestContextUsage: ContextUsage | null = null;
+  private latestUsage: UsageSnapshot | null = null;
   private activeModel = '';
   private pendingPlanText: string | null = null;
   private announcedSubagents = new Set<string>();
@@ -118,6 +120,7 @@ export class CodexSession {
     this.options = options;
     this.activeModel = options.model ?? '';
     this.latestContextUsage = null;
+    this.latestUsage = null;
     this.announcedSubagents.clear();
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
@@ -142,6 +145,8 @@ export class CodexSession {
     // The app-server follows the LSP-style two-phase handshake: it does not
     // accept thread requests until the client confirms initialization.
     this.notify('initialized');
+
+    await this.loadInitialRateLimits();
 
     await this.registerSkillRoots();
 
@@ -264,6 +269,42 @@ export class CodexSession {
   }
 
   async getContextUsage(): Promise<ContextUsage | null> { return this.latestContextUsage; }
+
+  async getUsageSnapshot(includeAccountUsage = false): Promise<UsageSnapshot | null> {
+    if (!includeAccountUsage) return this.latestUsage;
+    try {
+      const accountUsage = normalizeCodexAccountUsage(await this.request('account/usage/read', {}));
+      const update: UsageSnapshot = {
+        provider: 'codex', updatedAt: Date.now(), quotaWindows: [], accountUsage, accountUsageUnavailable: undefined,
+      };
+      this.latestUsage = mergeUsageSnapshot(this.latestUsage, update);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.latestUsage = mergeUsageSnapshot(this.latestUsage, {
+        provider: 'codex', updatedAt: Date.now(), quotaWindows: [],
+        accountUsage: undefined, accountUsageUnavailable: message,
+      });
+    }
+    return this.latestUsage;
+  }
+
+  private async loadInitialRateLimits(): Promise<void> {
+    try {
+      const result = await this.request('account/rateLimits/read', {});
+      this.applyRateLimits(result);
+    } catch (error) {
+      console.warn('[ClaudeThreads] Could not read Codex rate limits:', error);
+    }
+  }
+
+  private applyUsage(update: UsageSnapshot): void {
+    this.latestUsage = mergeUsageSnapshot(this.latestUsage, update);
+    this.options?.callbacks.onUsage?.(this.latestUsage);
+  }
+
+  private applyRateLimits(rateLimits: Record<string, unknown>): void {
+    this.applyUsage(normalizeCodexRateLimitResponse(rateLimits));
+  }
 
   private discoverModels(): void {
     this.request('model/list', { limit: 100 })
@@ -402,6 +443,7 @@ export class CodexSession {
       }
       case 'thread/tokenUsage/updated':
         this.latestContextUsage = codexContextUsage(params.tokenUsage as CodexThreadTokenUsage, this.activeModel);
+        this.applyUsage(normalizeCodexTokenUsage(params.tokenUsage));
         break;
       case 'model/rerouted':
         this.activeModel = String(params.toModel ?? this.activeModel);
@@ -414,6 +456,7 @@ export class CodexSession {
         callbacks.onNotification?.(String(params.message ?? params.warning ?? 'Codex warning'), 'medium');
         break;
       case 'account/rateLimits/updated': {
+        this.applyRateLimits(params);
         const window = params.rateLimits?.primary ?? params.rateLimits?.secondary;
         const used = Number(window?.usedPercent ?? 0);
         const status = used >= 100 || params.rateLimits?.rateLimitReachedType ? 'rejected'

@@ -1170,4 +1170,47 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('context-usage-panel.png', { fullPage: true });
   });
 
+  for (const usageViewport of [
+    { name: 'desktop', width: 1280, height: 800, golden: 'usage-panel-desktop.png' },
+    { name: 'mobile', width: 390, height: 844, golden: 'usage-panel-mobile.png' },
+    { name: 'mobile SE', width: 375, height: 667, golden: 'usage-panel-mobile-se.png' },
+  ]) {
+    test(`usage panel — ${usageViewport.name}`, async ({ page }) => {
+      await page.setViewportSize({ width: usageViewport.width, height: usageViewport.height });
+      await page.goto(harnessUrl);
+      await page.waitForSelector('.ct-messages');
+      await page.evaluate(() => {
+        const view = (window as any).__view;
+        view['renderUsageCard']({
+          provider: 'codex', updatedAt: new Date('2026-08-17T14:00:00-04:00').getTime(),
+          tokens: { total: 42000, input: 35000, cachedInput: 12000, output: 7000, reasoning: 2000 },
+          lastTurnTokens: { total: 2400 },
+          quotaWindows: [
+            { label: '5 hours', usedPercent: 84, resetsAt: new Date('2026-08-17T15:00:00-04:00').getTime() },
+            { label: '7 days', usedPercent: 100, resetsAt: new Date('2026-08-24T14:00:00-04:00').getTime() },
+          ],
+          accountUsage: {
+            lifetimeTokens: 125000, peakDailyTokens: 18000, longestRunningTurnSeconds: 95,
+            currentStreakDays: 4, longestStreakDays: 11,
+            daily: [{ date: '2026-08-17', tokens: 4200 }, { date: '2026-08-16', tokens: 3800 }],
+          },
+        });
+      });
+
+      const card = page.locator('.ct-usage-card');
+      await expect(card).toBeVisible();
+      await expect(card).toContainText('42,000 thread/session tokens');
+      await expect(card.locator('.ct-usage-quota')).toHaveCount(2);
+      await expect(card.locator('.ct-usage-bar-warning')).toHaveCount(1);
+      await expect(card.locator('.ct-usage-bar-exhausted')).toHaveCount(1);
+      await expect(card).toContainText('125,000 lifetime tokens');
+      await expect(card).toContainText('4 day current streak');
+      await expect(card).toContainText('Aug 17, 2026');
+      await expect(card.locator('.ct-usage-account')).toHaveCount(0);
+      expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await expect(page).toHaveScreenshot(usageViewport.golden, { fullPage: true });
+    });
+  }
+
 });

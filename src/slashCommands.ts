@@ -21,6 +21,7 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'loop', description: 'Re-run a prompt on an interval: /loop 5m <prompt> · /loop stop' },
   { name: 'ephemeral', description: 'Mark this thread as ephemeral: sessions will not be persisted to disk' },
   { name: 'context', description: 'Show current context window usage breakdown' },
+  { name: 'usage', description: 'Show token usage, quota windows, and account activity' },
   { name: 'create-pr', description: 'Create a pull request for this branch (add --draft for a draft PR)' },
 ];
 

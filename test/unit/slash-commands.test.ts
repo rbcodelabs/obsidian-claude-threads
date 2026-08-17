@@ -33,6 +33,14 @@ describe('DISPATCH_BUILTIN_COMMANDS', () => {
   });
 });
 
+describe('THREAD_BUILTIN_COMMANDS', () => {
+  it('advertises /usage while preserving the existing /cost command', () => {
+    const names = THREAD_BUILTIN_COMMANDS.map((c) => c.name);
+    expect(names).toContain('usage');
+    expect(names).toContain('cost');
+  });
+});
+
 describe('escalationCommand', () => {
   const base = { escalationEnabled: true, escalationKeyword: '/escalate', escalationModel: 'opus' };
 

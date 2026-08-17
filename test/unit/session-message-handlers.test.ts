@@ -79,6 +79,7 @@ vi.mock('../../src/ThreadSession', () => ({
     async restart(): Promise<void> {}
     close(): void {}
     async getContextUsage(): Promise<null> { return null; }
+    async getUsageSnapshot(): Promise<import('../../src/Usage').UsageSnapshot | null> { return null; }
   },
 }));
 
@@ -100,6 +101,25 @@ beforeEach(() => {
   mock.lastKnownSessionId = undefined;
   mock.startCallCount = 0;
   mock.sendCallCount = 0;
+});
+
+describe('usage snapshot propagation', () => {
+  it('stores the latest provider snapshot and emits a usage event', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, event) => events.push(event));
+    await manager.sendMessage(thread.id, 'hi');
+
+    mock.callbacks!.onUsage!({
+      provider: 'claude', updatedAt: 123, estimatedCostUsd: 0.1,
+      quotaWindows: [{ label: 'Five hour', usedPercent: 80 }],
+    });
+
+    expect(manager.getThread(thread.id)?.usageSnapshot).toMatchObject({ provider: 'claude', estimatedCostUsd: 0.1 });
+    expect(events).toContainEqual(expect.objectContaining({ type: 'usage' }));
+    driveResponse();
+  });
 });
 
 // ─── model_fallback ───────────────────────────────────────────────────────────
