@@ -310,7 +310,7 @@ export class ClaudeSession {
       }));
       debugLog('[ClaudeThreads] MCP servers attached to session:', JSON.stringify(mcpDebug));
     } else {
-      console.warn('[ClaudeThreads] No MCP servers for this session — Obsidian tools will be unavailable');
+      console.warn('[ClaudeThreads] No MCP servers for this session — built-in tools will be unavailable');
     }
     if (disallowedTools?.length) options.disallowedTools = disallowedTools;
     if (sessionOptions?.thinking) options.thinking = sessionOptions.thinking;
@@ -329,8 +329,8 @@ export class ClaudeSession {
     // MCP versions, which read effectiveCwd (updated by set_working_directory)
     // rather than the frozen OS-level subprocess cwd.
     options.toolAliases = {
-      EnterWorktree: 'mcp__obsidian__enter_worktree',
-      ExitWorktree: 'mcp__obsidian__exit_worktree',
+      EnterWorktree: 'mcp__claude_threads__enter_worktree',
+      ExitWorktree: 'mcp__claude_threads__exit_worktree',
     };
 
     debugLog('[ClaudeThreads] launching query', { claudePath: this.claudePath, cwd, permissionMode, resume: resumeSessionId, model: model ?? 'default' });

@@ -9,6 +9,7 @@ import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
 import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
+import { selectCanonicalHarnessTools } from './mcpServerMerge';
 import type { App } from 'obsidian';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -195,6 +196,8 @@ export class ThreadManager {
    * (e.g. onSetCwd) into the server without shared mutable state across concurrent threads.
    */
   mcpServerFactory: ((threadId: string, initialCwd: string) => Record<string, McpServerConfig>) | undefined = undefined;
+  /** Human-readable plugin host injected into new session context. */
+  hostName: 'Geode' | 'Obsidian' = 'Obsidian';
   /**
    * When set, called before each session run to resolve secret env var values from
    * the OS keychain. Returns a plain key-value map that is merged into the session
@@ -1208,6 +1211,7 @@ export class ThreadManager {
       thread.cwd,
       this.settings.vaultFolder,
       this.settings.saveThreadsToVault,
+      this.hostName,
     );
     const projectDesc = project?.description?.trim();
     const goalContext = thread.goal
@@ -1226,12 +1230,12 @@ export class ThreadManager {
       .filter(Boolean)
       .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, thread.cwd) : this.mcpServers;
-    // The Obsidian MCP server exposes the same canonical tool definitions to
+    // The Claude Threads MCP server exposes the same canonical tool definitions to
     // Codex through its app-server dynamic-tool adapter. Serializable external
     // stdio/HTTP/SSE servers are mirrored into Codex's per-thread config.
-    const codexDynamicTools = (sessionMcpServers?.obsidian as unknown as { harnessTools?: import('./HarnessSession').HarnessDynamicTool[] } | undefined)?.harnessTools;
+    const codexDynamicTools = selectCanonicalHarnessTools<import('./HarnessSession').HarnessDynamicTool>(sessionMcpServers);
     const codexMcpServers = Object.fromEntries(
-      Object.entries(sessionMcpServers ?? {}).filter(([name, server]) => name !== 'obsidian' && (server as { type?: string }).type !== 'sdk'),
+      Object.entries(sessionMcpServers ?? {}).filter(([, server]) => (server as { type?: string }).type !== 'sdk'),
     );
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
 
@@ -2034,27 +2038,28 @@ function buildHistoryPreamble(priorMessages: ChatMessage[], newCwd: string): str
  * Tells the agent where it is running, path semantics for Obsidian vs
  * filesystem tools, and key behavioral notes about session-affecting tools.
  */
-function buildEnvironmentSystemPrompt(
+export function buildEnvironmentSystemPrompt(
   vaultRoot: string,
   cwd: string,
   vaultFolder: string,
   saveThreadsToVault: boolean,
+  hostName: 'Geode' | 'Obsidian' = 'Obsidian',
 ): string {
   const lines = [
-    'You are running inside the Obsidian Claude Threads plugin.',
+    `You are running inside the ${hostName} Claude Threads plugin.`,
     '',
     `Vault root (filesystem path): ${vaultRoot}`,
     `Working directory: ${cwd}`,
     '',
     'Path semantics:',
-    '- obsidian_* tools use vault-relative paths (e.g. "Daily/2026-05-18.md")',
+    '- vault_* tools use vault-relative paths (e.g. "Daily/2026-05-18.md")',
     '- Filesystem tools (Read, Write, Bash) use absolute paths',
   ];
 
   if (saveThreadsToVault) {
     lines.push(
       '',
-      `Conversation history: completed threads are auto-saved as Markdown notes to "${vaultFolder}/YYYY-MM-DD-<title-slug>.md" in the vault. Use obsidian_search_vault or Read to look up prior conversations.`,
+      `Conversation history: completed threads are auto-saved as Markdown notes to "${vaultFolder}/YYYY-MM-DD-<title-slug>.md" in the vault. Use vault_search or Read to look up prior conversations.`,
     );
   }
 
@@ -2064,9 +2069,9 @@ function buildEnvironmentSystemPrompt(
     '- set_working_directory takes effect on the next turn and resets session continuity. Set it before starting a task, not mid-conversation.',
     '- EnterWorktree / ExitWorktree are automatically routed to the plugin\'s MCP versions (enter_worktree / exit_worktree), which read the effective cwd set by set_working_directory.',
     '- ScheduleWakeup injects the given prompt as a new message into this thread after the delay.',
-    '- obsidian_list_commands returns all registered Obsidian commands (id + name); pass a query to filter. Call this before obsidian_execute_command to look up the correct command ID.',
-    '- obsidian_execute_command triggers any Obsidian command by ID — useful for vault-bridge sync, git push, toggling editor modes, etc.',
-    '- obsidian_open_url opens a URL directly in the Obsidian Web Viewer panel (reuses an existing tab by default). Use this to open local dev servers, HTML files, or any web page without the user having to type the URL.',
+    '- host_list_commands returns all registered host commands (id + name); pass a query to filter. Call this before host_execute_command to look up the correct command ID.',
+    '- host_execute_command triggers any host command by ID — useful for vault-bridge sync, git push, toggling editor modes, etc.',
+    '- host_open_url opens a URL directly in the host Web Viewer panel (reuses an existing tab by default). Use this to open local dev servers, HTML files, or any web page without the user having to type the URL.',
   );
 
   return lines.join('\n');

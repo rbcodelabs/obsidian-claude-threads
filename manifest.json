@@ -3,7 +3,7 @@
   "name": "Claude Threads",
   "version": "0.25.9",
   "minAppVersion": "1.0.0",
-  "description": "Multi-threaded Claude Code sessions in Obsidian.",
+  "description": "Multi-threaded Claude Code sessions in Obsidian and Geode.",
   "author": "Rick Bowman",
   "authorUrl": "https://github.com/richardbowman",
   "isDesktopOnly": false

@@ -57,7 +57,7 @@ const executeCommandSchema = {
   commandId: z
     .string()
     .describe(
-      'The command ID to execute (e.g. "editor:toggle-bold", "obsidian-git:push"). Use obsidian_list_commands to discover available IDs.',
+      'The command ID to execute (e.g. "editor:toggle-bold", "obsidian-git:push"). Use host_list_commands to discover available IDs.',
     ),
 };
 
@@ -180,7 +180,7 @@ const addVaultBridgeSchema = {
   autoSync: z
     .boolean()
     .optional()
-    .describe('Pull this bridge when Obsidian opens. Defaults to true.'),
+    .describe('Pull this bridge when the host app opens. Defaults to true.'),
   syncNow: z
     .boolean()
     .optional()
@@ -310,14 +310,16 @@ export interface CronCreateParams {
 export type CronUpdatePatch = SchedulerItemPatch;
 
 /**
- * Creates an MCP server config with Obsidian-specific tools bound to the given App instance.
- * Pass the result as `{ obsidian: createObsidianMcpServer(this.app) }` in the `mcpServers` option.
+ * Creates MCP tool surfaces bound to the host's Obsidian-compatible App API.
  */
 export type ObsidianMcpServerWithHarnessTools = McpSdkServerConfigWithInstance & {
   harnessTools?: HarnessDynamicTool[];
 };
 
-export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): ObsidianMcpServerWithHarnessTools {
+function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {}): {
+  claude_threads: ObsidianMcpServerWithHarnessTools;
+  obsidian: ObsidianMcpServerWithHarnessTools;
+} {
   // ── In-session cwd tracking ────────────────────────────────────────────────
   // Unlike cwdAtStart in ThreadManager (which is frozen in the subprocess),
   // effectiveCwd is updated immediately by set_working_directory so worktree
@@ -927,7 +929,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListCommands = tool(
     'obsidian_list_commands',
-    'Returns all registered Obsidian commands with their ID and name, sorted alphabetically by ID. Optionally filter by a query string. Use this to discover command IDs before calling obsidian_execute_command.',
+    'Returns all registered host commands with their ID and name, sorted alphabetically by ID. Optionally filter by a query string. Use this to discover command IDs before calling host_execute_command.',
     listCommandsSchema,
     async (args, _extra) => {
       try {
@@ -954,7 +956,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundExecuteCommand = tool(
     'obsidian_execute_command',
-    'Executes an Obsidian command by its ID (e.g. "obsidian-git:push", "editor:toggle-bold"). Use obsidian_list_commands to discover available command IDs. Returns success or failure.',
+    'Executes a host command by its ID (e.g. "obsidian-git:push", "editor:toggle-bold"). Use host_list_commands to discover available command IDs. Returns success or failure.',
     executeCommandSchema,
     async (args, _extra) => {
       try {
@@ -965,7 +967,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
               type: 'text' as const,
               text: JSON.stringify({
                 success: false,
-                error: `Unknown command: "${args.commandId}". Use obsidian_list_commands to see available commands.`,
+                error: `Unknown command: "${args.commandId}". Use host_list_commands to see available commands.`,
               }, null, 2),
             }],
             isError: true,
@@ -1078,7 +1080,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
             text: JSON.stringify({
               success: true,
               threadTitle,
-              message: `Fork created: "${threadTitle}". The user can switch to it from the notification that appeared in Obsidian.`,
+              message: `Fork created: "${threadTitle}". The user can switch to it from the notification that appeared in the host app.`,
             }, null, 2),
           }],
         };
@@ -1096,7 +1098,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with obsidian_get_thread_log).',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with threads_get_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1120,7 +1122,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with obsidian_get_thread_log).',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1158,7 +1160,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundCreateProject = tool(
     'obsidian_create_project',
-    'Creates a new project with the given name and vault folder. Returns the created project snapshot including its id. Capture the returned id — it is the projectId used by CronCreate, obsidian_set_thread_project, and other project-aware APIs.',
+    'Creates a new project with the given name and vault folder. Returns the created project snapshot including its id. Capture the returned id — it is the projectId used by CronCreate, threads_set_project, and other project-aware APIs.',
     {
       name: z.string().describe('Human-readable project name (e.g. "Golden Wealth", "HipTrip", "Personal")'),
       vaultFolder: z
@@ -1191,7 +1193,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundSetThreadProject = tool(
     'obsidian_set_thread_project',
-    'Assigns a thread to a project or clears its project assignment. Call obsidian_list_projects first to get a valid projectId. Pass projectId as null to detach the thread from any project.',
+    'Assigns a thread to a project or clears its project assignment. Call threads_list_projects first to get a valid projectId. Pass projectId as null to detach the thread from any project.',
     {
       threadId: z.string().describe('ID of the thread to update'),
       projectId: z
@@ -1249,7 +1251,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundGetThreadLog = tool(
     'obsidian_get_thread_log',
-    'Returns parsed entries from a thread\'s raw JSONL conversation log — the verbatim SDK event stream captured per turn: tool calls with full inputs, tool results/outputs, assistant messages, result events (cost/usage/turns), system events, and a synthetic session_start marker (prompt, cwd, model, resume target) at the head of each turn. Each entry is an envelope { ts, threadId, sessionId, type, event } where event is the raw SDK payload, untouched. Use this to audit exactly what another thread (or a sub-agent) did and with what arguments — far more detail than obsidian_get_thread_messages, which only returns rendered message text. Logs can be large, so results are filtered by type (if given) and then tailed to the most recent N entries (default 100). The returned `path` is the absolute log file path — Read it directly for the complete, unfiltered stream. Defaults to the current thread when threadId is omitted. Note: per-token streaming deltas are intentionally not logged (they are reconstructed in the final assistant message).',
+    'Returns parsed entries from a thread\'s raw JSONL conversation log — the verbatim SDK event stream captured per turn: tool calls with full inputs, tool results/outputs, assistant messages, result events (cost/usage/turns), system events, and a synthetic session_start marker (prompt, cwd, model, resume target) at the head of each turn. Each entry is an envelope { ts, threadId, sessionId, type, event } where event is the raw SDK payload, untouched. Use this to audit exactly what another thread (or a sub-agent) did and with what arguments — far more detail than threads_get_messages, which only returns rendered message text. Logs can be large, so results are filtered by type (if given) and then tailed to the most recent N entries (default 100). The returned `path` is the absolute log file path — Read it directly for the complete, unfiltered stream. Defaults to the current thread when threadId is omitted. Note: per-token streaming deltas are intentionally not logged (they are reconstructed in the final assistant message).',
     {
       threadId: z.string().optional().describe('ID of the thread whose log to read. Defaults to the current thread.'),
       limit: z.number().int().nonnegative().optional().describe('Return only the most recent N entries (default 100). Pass 0 for all entries. Type filtering is applied before tailing.'),
@@ -1278,7 +1280,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundWaitForThread = tool(
     'obsidian_wait_for_thread',
-    'Blocks until the specified thread finishes processing its current request (isRunning becomes false), then returns. Returns immediately if the thread is already idle. Use after obsidian_send_message_to_thread to wait for a response before reading results.',
+    'Blocks until the specified thread finishes processing its current request (isRunning becomes false), then returns. Returns immediately if the thread is already idle. Use after threads_send_message to wait for a response before reading results.',
     {
       threadId: z.string().describe('ID of the thread to wait for'),
       timeoutSeconds: z.number().optional().describe('Maximum seconds to wait before giving up (default 120)'),
@@ -1315,7 +1317,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   const boundSendMessageToThread = tool(
     'obsidian_send_message_to_thread',
-    'Sends a user message to another thread, triggering Claude to process it. The call returns as soon as the message is queued — use obsidian_wait_for_thread to block until the response is ready. Cannot send to the current thread.',
+    'Sends a user message to another thread, triggering Claude to process it. The call returns as soon as the message is queued — use threads_wait to block until the response is ready. Cannot send to the current thread.',
     {
       threadId: z.string().describe('ID of the thread to send the message to'),
       message: z.string().describe('The message text to send'),
@@ -1524,7 +1526,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     'obsidian_get_file_history',
     [
       'Returns the Obsidian Sync version history for a file.',
-      'Each entry includes a uid (version ID for use with obsidian_restore_file_version), ISO timestamp, file size in bytes, and the device that saved it.',
+      'Each entry includes a uid (version ID for use with vault_restore_file_version), ISO timestamp, file size in bytes, and the device that saved it.',
       'Requires Obsidian Sync to be active and the file to be synced.',
     ].join(' '),
     { path: z.string().describe('Vault-relative path of the file') },
@@ -1576,13 +1578,13 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     'obsidian_restore_file_version',
     [
       'Restores a specific version of a file from Obsidian Sync history, overwriting the current content.',
-      'Use obsidian_get_file_history first to find the uid of the version to restore.',
+      'Use vault_get_file_history first to find the uid of the version to restore.',
       'The current file content is preserved in sync history before the restore.',
       'Requires Obsidian Sync to be active.',
     ].join(' '),
     {
       path: z.string().describe('Vault-relative path of the file to restore'),
-      uid: z.number().int().describe('Version UID from obsidian_get_file_history to restore'),
+      uid: z.number().int().describe('Version UID from vault_get_file_history to restore'),
     },
     async (args, _extra) => {
       try {
@@ -1617,7 +1619,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
         const version = history.find((v) => v.uid === args.uid);
         if (!version) {
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Version uid ${args.uid} not found in history for ${args.path}. Use obsidian_get_file_history to list available versions.` }) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: `Version uid ${args.uid} not found in history for ${args.path}. Use vault_get_file_history to list available versions.` }) }],
             isError: true,
           };
         }
@@ -1720,7 +1722,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
 
   // ── Vault Bridges tools ───────────────────────────────────────────────────
   // These reach into the vault-bridges plugin API (if installed) so agents can
-  // inspect and configure bridges without editing data.json or restarting Obsidian.
+  // inspect and configure bridges without editing data.json or restarting the host.
 
   type VaultBridgesPlugin = {
     api: {
@@ -1788,7 +1790,7 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
     [
       'Adds a new Vault Bridge (a live link between a local git repo and a vault folder).',
       'If a bridge with the same repoPath + vaultPath already exists, the existing bridge is returned without creating a duplicate.',
-      'Call obsidian_list_vault_bridges first to check what is already configured.',
+      'Call vault_list_bridges first to check what is already configured.',
       'Requires the vault-bridges plugin to be installed and enabled.',
     ].join(' '),
     addVaultBridgeSchema,
@@ -2363,20 +2365,107 @@ export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOpti
       boundSkillsUninstall,
       boundSkillsUpdate,
     ];
-  const server = createSdkMcpServer({
+  const legacyTools = tools.map(toDeprecatedLegacyToolDefinition);
+  const legacyServer = createSdkMcpServer({
     name: 'obsidian',
-    tools,
+    tools: legacyTools,
     alwaysLoad: true,
   });
-  return Object.assign(server, { harnessTools: toHarnessDynamicTools(tools) });
+  const canonicalTools = tools.map(toCanonicalToolDefinition);
+  const canonicalServer = createSdkMcpServer({
+    name: 'claude_threads',
+    tools: canonicalTools,
+    alwaysLoad: true,
+  });
+  return {
+    claude_threads: Object.assign(canonicalServer, { harnessTools: toHarnessDynamicTools(canonicalTools) }),
+    obsidian: Object.assign(legacyServer, { harnessTools: toHarnessDynamicTools(legacyTools) }),
+  };
 }
 
-/** Adapts the canonical Obsidian MCP definitions to host-native tool calls. */
+/** Canonical and compatibility MCP surfaces, backed by identical handlers and schemas. */
+export function createClaudeThreadsMcpServers(
+  app: App,
+  options: ObsidianMcpServerOptions = {},
+): { claude_threads: ObsidianMcpServerWithHarnessTools; obsidian: ObsidianMcpServerWithHarnessTools } {
+  return createMcpToolSurfaces(app, options);
+}
+
+/** @deprecated Use createClaudeThreadsMcpServers().obsidian only for compatibility tests/callers. */
+export function createObsidianMcpServer(app: App, options: ObsidianMcpServerOptions = {}): ObsidianMcpServerWithHarnessTools {
+  return createMcpToolSurfaces(app, options).obsidian;
+}
+
+export const LEGACY_TO_CANONICAL_TOOL_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  obsidian_search_vault: 'vault_search',
+  obsidian_get_note_metadata: 'vault_get_note_metadata',
+  obsidian_get_backlinks: 'vault_get_backlinks',
+  obsidian_get_outgoing_links: 'vault_get_outgoing_links',
+  obsidian_get_file_history: 'vault_get_file_history',
+  obsidian_restore_file_version: 'vault_restore_file_version',
+  obsidian_list_vault_bridges: 'vault_list_bridges',
+  obsidian_add_vault_bridge: 'vault_add_bridge',
+  obsidian_get_active_file: 'workspace_get_active_file',
+  obsidian_get_open_tabs: 'workspace_get_open_tabs',
+  obsidian_navigate_to_file: 'workspace_navigate_to_file',
+  obsidian_insert_at_cursor: 'workspace_insert_at_cursor',
+  obsidian_list_commands: 'host_list_commands',
+  obsidian_execute_command: 'host_execute_command',
+  obsidian_open_url: 'host_open_url',
+  obsidian_get_current_thread: 'threads_get_current',
+  obsidian_list_threads: 'threads_list',
+  obsidian_list_projects: 'threads_list_projects',
+  obsidian_create_project: 'threads_create_project',
+  obsidian_set_thread_project: 'threads_set_project',
+  obsidian_get_thread_messages: 'threads_get_messages',
+  obsidian_get_thread_log: 'threads_get_log',
+  obsidian_wait_for_thread: 'threads_wait',
+  obsidian_send_message_to_thread: 'threads_send_message',
+  obsidian_archive_thread: 'threads_archive',
+  obsidian_set_thread_notes: 'threads_set_notes',
+  obsidian_set_thread_proposed_reply: 'threads_set_proposed_reply',
+  obsidian_clear_thread_proposed_reply: 'threads_clear_proposed_reply',
+});
+
+const CANONICAL_DESCRIPTION_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({
+  workspace_get_open_tabs: 'Returns all open tabs in the host workspace with their path, title, type, and active state.',
+  workspace_get_active_file: 'Returns metadata for the currently active file in the host workspace, or null if nothing is open.',
+  workspace_navigate_to_file: 'Opens a vault file in the host workspace, optionally in a new tab.',
+  workspace_insert_at_cursor: 'Inserts text at the cursor in the active editor, replacing the current selection.',
+  host_list_commands: 'Returns registered host commands with their ID and name, sorted by ID. Optionally filters by query. Use this before host_execute_command.',
+  host_execute_command: 'Executes a host command by ID. Use host_list_commands to discover available IDs. Third-party command IDs remain unchanged.',
+  host_open_url: 'Opens a URL in the host Web Viewer, reusing an existing tab by default and falling back to the system browser when unavailable.',
+});
+
+function toCanonicalToolDefinition(definition: SdkMcpToolDefinition<any>): SdkMcpToolDefinition<any> {
+  const name = LEGACY_TO_CANONICAL_TOOL_NAMES[definition.name] ?? definition.name;
+  if (name === definition.name) return definition;
+  const description = CANONICAL_DESCRIPTION_OVERRIDES[name] ?? definition.description
+    .replace(/\bObsidian workspace\b/g, 'host workspace')
+    .replace(/\bObsidian commands\b/g, 'host commands')
+    .replace(/\bObsidian command\b/g, 'host command')
+    .replace(/obsidian_([a-z_]+)/g, (legacy) => LEGACY_TO_CANONICAL_TOOL_NAMES[legacy] ?? legacy);
+  return tool(name, description, definition.inputSchema, definition.handler, { alwaysLoad: true });
+}
+
+function toDeprecatedLegacyToolDefinition(definition: SdkMcpToolDefinition<any>): SdkMcpToolDefinition<any> {
+  if (!LEGACY_TO_CANONICAL_TOOL_NAMES[definition.name]) return definition;
+  const canonicalName = LEGACY_TO_CANONICAL_TOOL_NAMES[definition.name];
+  return tool(
+    definition.name,
+    `Deprecated compatibility alias; use ${canonicalName} on the claude_threads server. ${definition.description}`,
+    definition.inputSchema,
+    definition.handler,
+    { alwaysLoad: true },
+  );
+}
+
+/** Adapts built-in MCP definitions to host-native tool calls. */
 function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynamicTool[] {
   // Reuse the canonical MCP definitions for every harness. The conservative
   // read-only set bypasses prompts; every other operation is presented through
   // the same SessionCallbacks.onPermissionRequest UI Claude already uses.
-  const readOnlyToolNames = new Set([
+  const legacyReadOnlyToolNames = [
     'obsidian_get_open_tabs', 'obsidian_get_active_file', 'obsidian_search_vault',
     'obsidian_get_backlinks', 'obsidian_get_outgoing_links', 'obsidian_get_note_metadata',
     'obsidian_list_commands', 'obsidian_get_current_thread', 'obsidian_list_threads',
@@ -2384,6 +2473,10 @@ function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynam
     'obsidian_list_vault_bridges', 'obsidian_get_file_history', 'CronList',
     'skills_list_installed', 'skills_search', 'skills_get', 'skills_list_sources',
     'skills_check_updates',
+  ];
+  const readOnlyToolNames = new Set([
+    ...legacyReadOnlyToolNames,
+    ...legacyReadOnlyToolNames.map(name => LEGACY_TO_CANONICAL_TOOL_NAMES[name] ?? name),
   ]);
   return tools.map((toolDefinition) => ({
     name: toolDefinition.name,

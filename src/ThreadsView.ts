@@ -12,6 +12,7 @@ import os from 'os';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
+import { isTrustedBuiltInTool } from './toolNameUtils';
 import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVITY_LABELS, smoothToolGroups, pickCurrentTool, shouldWrapOuter, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
@@ -308,8 +309,9 @@ export class ThreadsView extends ItemView {
     this.buildUI();
 
     this.manager.permissionHandler = (threadId, toolName, detail) => {
-      // First-party Obsidian MCP tools are always trusted — no prompt needed.
-      if (toolName.startsWith('obsidian_')) return Promise.resolve(true);
+      // First-party host tools are always trusted; classification is an explicit
+      // capability allowlist, not a forgeable naming-prefix convention.
+      if (isTrustedBuiltInTool(toolName)) return Promise.resolve(true);
       if (this.plugin.settings.alwaysAllowedTools.includes(toolName)) return Promise.resolve(true);
 
       return new Promise((resolve) => {

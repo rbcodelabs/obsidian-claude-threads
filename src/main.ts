@@ -10,7 +10,9 @@ import type { ThreadManager } from './ThreadManager';
 import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
 import type { WakeLockService } from './WakeLockService';
-import type { createObsidianMcpServer } from './ObsidianTools';
+import type { createClaudeThreadsMcpServers } from './ObsidianTools';
+import { detectHostName } from './hostEnvironment';
+import { mergeMcpServers } from './mcpServerMerge';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 // Shared / mobile-safe modules (no Node.js built-in calls at module level)
@@ -227,7 +229,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Scheduler, computeNextRun } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createObsidianMcpServer, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
+    const { createClaudeThreadsMcpServers, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -244,11 +246,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.migrateGithubSourcesIntoVault();
 
     this.manager = new ThreadManager(this.settings);
+    this.manager.hostName = detectHostName(window as unknown as { geode?: unknown });
     // Use a per-thread factory so the set_working_directory tool can close over the
     // correct threadId without shared mutable state across concurrent sessions.
     this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
       try {
-        const mcpServer = createObsidianMcpServer(this.app, {
+        const mcpServers = createClaudeThreadsMcpServers(this.app, {
           enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
           initialCwd,
           onSetCwd: (newCwd: string, originRepoPath?: string | null) => {
@@ -479,12 +482,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
             });
           },
         });
-        const mcpDebug = {
-          type: (mcpServer as unknown as Record<string, unknown>).type,
-          name: (mcpServer as unknown as Record<string, unknown>).name,
-          hasInstance: 'instance' in mcpServer,
-        };
-        debugLog(`[ClaudeThreads] Obsidian MCP server created for thread ${threadId}:`, mcpDebug);
+        const mcpDebug = Object.fromEntries(Object.entries(mcpServers).map(([key, server]) => [key, {
+          type: (server as unknown as Record<string, unknown>).type,
+          name: (server as unknown as Record<string, unknown>).name,
+          hasInstance: 'instance' in server,
+        }]));
+        debugLog(`[ClaudeThreads] Built-in MCP servers created for thread ${threadId}:`, mcpDebug);
 
         // Merge external MCP servers from ~/.claude/settings.json so that
         // scheduled/looped sessions have the same tools as a normal CLI session.
@@ -497,9 +500,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
           debugLog(`[ClaudeThreads] Merging ${externalCount} external MCP server(s) from ~/.claude/settings.json:`, Object.keys(externalMcps));
         }
 
-        return { obsidian: mcpServer, ...externalMcps };
+        return mergeMcpServers(mcpServers, externalMcps);
       } catch (err) {
-        console.error('[ClaudeThreads] Failed to create Obsidian MCP server:', err);
+        console.error('[ClaudeThreads] Failed to create built-in MCP servers:', err);
         return {} as Record<string, McpServerConfig>;
       }
     };
@@ -1887,8 +1890,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       const running = this.manager ? this.manager.getRunningThreads().length : 0;
 
       // Host detection: Geode exposes window.geode; otherwise assume Obsidian.
-      const w = window as unknown as { geode?: unknown };
-      const hostApp = w.geode ? 'geode' : 'obsidian';
+      const hostApp = detectHostName(window as unknown as { geode?: unknown }).toLowerCase();
       const hostVersion =
         (this.app as unknown as { appVersion?: string }).appVersion ??
         (globalThis as unknown as { apiVersion?: string }).apiVersion ??

@@ -298,7 +298,7 @@ export class ThreadSession {
       }));
       debugLog('[ClaudeThreads] MCP servers attached to thread session:', JSON.stringify(mcpDebug));
     } else {
-      console.warn('[ClaudeThreads] No MCP servers for this thread session — Obsidian tools will be unavailable');
+      console.warn('[ClaudeThreads] No MCP servers for this thread session — built-in tools will be unavailable');
     }
     if (claude?.disallowedTools?.length) sdkOptions.disallowedTools = claude.disallowedTools;
     if (claude?.sessionOptions?.thinking) sdkOptions.thinking = claude.sessionOptions.thinking;
@@ -314,8 +314,8 @@ export class ThreadSession {
       sdkOptions.onElicitation = (request, opts) => callbacks.onElicitation!(request, opts.signal);
     }
     sdkOptions.toolAliases = {
-      EnterWorktree: 'mcp__obsidian__enter_worktree',
-      ExitWorktree: 'mcp__obsidian__exit_worktree',
+      EnterWorktree: 'mcp__claude_threads__enter_worktree',
+      ExitWorktree: 'mcp__claude_threads__exit_worktree',
     };
 
     debugLog('[ClaudeThreads] opening thread session', {
