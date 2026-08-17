@@ -3177,6 +3177,141 @@
   opacity: 0.9;
 }
 
+/* -- Inline MCP elicitation card ----------------------------------- */
+.ct-streaming .ct-elicitation-card {
+  margin-top: 8px;
+}
+
+.ct-elicitation-card {
+  background: color-mix(in srgb, var(--color-blue, #4a90d9) 8%, var(--background-primary));
+  border: 1px solid color-mix(in srgb, var(--color-blue, #4a90d9) 28%, transparent);
+  border-left: 3px solid var(--color-blue, #4a90d9);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: ct-fade-in 0.15s ease;
+}
+
+.ct-elicitation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-blue, #4a90d9);
+}
+
+.ct-elicitation-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-elicitation-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-elicitation-label {
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-elicitation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ct-elicitation-message,
+.ct-elicitation-desc,
+.ct-elicitation-waiting {
+  margin: 0;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.45;
+}
+
+.ct-elicitation-message {
+  color: var(--text-normal);
+}
+
+.ct-elicitation-desc,
+.ct-elicitation-waiting,
+.ct-elicitation-field-desc {
+  color: var(--text-muted);
+}
+
+.ct-elicitation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ct-elicitation-field-label {
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ct-elicitation-field-input {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font: inherit;
+}
+
+.ct-elicitation-field-input:focus {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 20%, transparent);
+  outline: none;
+}
+
+.ct-elicitation-field-desc {
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-elicitation-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ct-elicitation-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: var(--font-ui-smaller);
+  font-weight: 500;
+}
+
+.ct-elicitation-cancel {
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.ct-elicitation-cancel:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ct-elicitation-submit,
+.ct-elicitation-open {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ct-elicitation-submit:hover,
+.ct-elicitation-open:hover {
+  opacity: 0.9;
+}
+
 /* -- Inline plan card ----------------------------------------------- */
 .ct-streaming .ct-plan-card {
   margin-top: 8px;
