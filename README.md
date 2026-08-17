@@ -1,6 +1,6 @@
-# Claude Threads for Obsidian
+# Claude Threads
 
-A native Obsidian sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
+A native Obsidian and Geode sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
 ![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.25.8-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
@@ -22,19 +22,19 @@ A native Obsidian sidebar plugin for running multiple Claude Code sessions in pa
 
 ## What it does
 
-Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
+Claude Threads embeds Claude Code directly in your host sidebar. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
 
 **Key features:**
 
 - **Multi-tab sessions** — open as many Claude threads as you need, switch between them instantly
 - **Streaming responses** — tokens stream in with live markdown rendering (code blocks, tables, lists, etc.)
-- **Persistent conversations** — sessions resume where you left off after restarting Obsidian
+- **Persistent conversations** — sessions resume where you left off after restarting the host app
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
 - **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done), or regroup the board into **folder swimlanes** or **project columns** — one lane/column per app/project — to see every conversation for a codebase together; the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click closes all other tabs and opens only the files Claude touched in this thread, snapping your workspace to the work
-- **Workspace tab syncing** — the Obsidian workspace tab title automatically reflects the active thread so you always know which session is which
+- **Workspace tab syncing** — the host workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
 - **Claude or Bedrock** — authenticate with your Claude account or route every session through Amazon Bedrock (one dropdown in settings)
@@ -52,7 +52,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 - **Plan Mode** — set permission mode to `plan` and Claude will propose a written plan before touching any files. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before Claude proceeds
 - **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
 - **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
-- **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Obsidian
+- **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Claude Threads
 - **Tool call visibility** — see exactly which files Claude is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files Claude edited that you subsequently modified show a "Modified by user" badge; a tool call that's auto-denied without a prompt (in `auto` or `dontAsk` mode, or by a deny rule) shows a distinct "Auto-denied" annotation so the denial is visible instead of silently swallowed
 - **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills, live as the turn runs (not just after it settles) — so a long agentic run never grows an unbounded wall of pills while Claude is still working; the in-progress group shows a "still running" pulse, the group you expand mid-turn stays expanded as more calls arrive, and a group containing a failed call auto-expands and stays flagged so errors are never hidden. Short off-kind interruptions (e.g. a single `TaskUpdate` between two runs of file reads) are folded back into their surrounding group instead of breaking it into extra short entries, and if the list is still long after that smoothing, it collapses one level further into a second "N tool calls, M steps" wrapper — which itself shows a live-updating "currently running" tool name and icon while the turn is in progress, and auto-expands through both levels if a call anywhere inside it fails. Works on both desktop and mobile (mobile gets the smoothing pass only — the second collapsible tier and live header are desktop-only).
 - **Cancel and restore** — press Escape (or click Stop) while Claude is running to cancel; the sent message pops back into the input box ready to edit and re-send
@@ -60,7 +60,7 @@ Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is
 
 ## Prerequisites
 
-- [Obsidian](https://obsidian.md) v1.0.0 or later (desktop only)
+- Obsidian v1.0.0+ or a compatible Geode desktop host
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
   - The plugin auto-detects `claude` at `/opt/homebrew/bin/claude`, `/usr/local/bin/claude`, or `~/.local/bin/claude`
   - AWS Bedrock / SSO users: set `AWS_PROFILE` and `AWS_REGION` in the plugin's Extra Environment Variables setting
@@ -98,7 +98,7 @@ New threads use the harness selected in **Settings → Agent → Agent harness**
 |---|---:|---:|
 | Persistent sessions, streaming, tools, images, interruption | ✓ | ✓ |
 | Models, permission modes, approvals, and plan review | ✓ | ✓ |
-| Obsidian tools and external stdio/HTTP/SSE MCP servers | ✓ | ✓ |
+| Built-in vault/workspace tools and external stdio/HTTP/SSE MCP servers | ✓ | ✓ |
 | MCP form/URL elicitation | ✓ | ✓ |
 | Context usage, compaction, and raw event logs | ✓ | ✓ |
 | Skills and sub-agent/task activity | ✓ Claude-native | ✓ Codex-native |
@@ -192,7 +192,7 @@ Type `@` anywhere in the input box to search vault files by name. A dropdown app
 
 Selecting a file inserts `@[[filename]]` into your message. When you send the message, the plugin resolves each mention and appends the file's full content as context for Claude — useful for asking Claude to work with a specific note, doc, or config file without copying and pasting.
 
-Type `@this` (no search needed) to instantly reference the currently active file in Obsidian. It resolves to the same `@[[filename]]` injection at send time.
+Type `@this` (no search needed) to instantly reference the currently active file in the host workspace. It resolves to the same `@[[filename]]` injection at send time.
 
 ### Model switching
 
@@ -206,7 +206,7 @@ Type `@this` (no search needed) to instantly reference the currently active file
 /model default  → resets to the plugin's Default model setting (or the CLI default)
 ```
 
-A **Default model** dropdown in settings picks the model for threads that have no `/model` override. Family aliases (Fable / Opus / Sonnet / Haiku "latest") are always listed first; pinned model IDs are sourced from the SDK's `capabilities_discovered` event, which fires the first time a thread starts in the current Obsidian session. Before any thread has run, the dropdown falls back to a hardcoded list of current models — start a thread and reopen Settings to see the full CLI-sourced list, so no plugin update is needed when Anthropic adds a new model. The Escalation model dropdown is populated the same way.
+A **Default model** dropdown in settings picks the model for threads that have no `/model` override. Family aliases (Fable / Opus / Sonnet / Haiku "latest") are always listed first; pinned model IDs are sourced from the SDK's `capabilities_discovered` event, which fires the first time a thread starts in the current host session. Before any thread has run, the dropdown falls back to a hardcoded list of current models — start a thread and reopen Settings to see the full CLI-sourced list, so no plugin update is needed when Anthropic adds a new model. The Escalation model dropdown is populated the same way.
 
 You can also switch models without typing: a **model switcher button** (CPU icon) sits in the conversation footer, left of the menu button. Hover it to see the active model; click it to pick Default / Opus / Sonnet / Haiku / Fable from a dropdown. The icon turns accent-colored whenever a per-thread override is active, and it stays in sync with the `/model` command.
 
@@ -232,7 +232,7 @@ The active model is shown as a badge in the thread info bar. You can also use `/
 
 Like `/goal`, starting a loop sends the prompt immediately — you don't wait for the
 first interval to elapse. Intervals below 30 seconds are clamped to 30s. Loops run on
-the plugin's built-in scheduler, so they **persist across plugin reloads and Obsidian
+the plugin's built-in scheduler, so they **persist across plugin reloads and host app
 restarts**. If a loop tick arrives before the thread's previous turn has finished, it's
 retried shortly after rather than piling up as a queued duplicate. A thread can only
 have one active loop at a time — starting a new `/loop` replaces whichever loop was
@@ -299,7 +299,7 @@ Toggle the **Kanban** button in the dashboard toolbar to switch from the default
   <img src="docs/screenshot-kanban-status.png" width="800" alt="Kanban board grouped by status — Working, Awaiting, Waiting, New, Done, Failed, and Ready columns, each holding thread cards" />
 </p>
 
-**Auto-collapse side panels.** Set **Settings → Features → Kanban board → Auto-collapse side panel** to `Left sidebar`, `Right sidebar`, or `Both sidebars` to automatically collapse Obsidian's sidebar panel(s) when the Kanban tab opens, giving the board more horizontal room. Only the panel(s) the Kanban view collapsed are restored when you close the tab, so it won't fight a panel you collapsed or expanded manually. Defaults to `None` (opt-in).
+**Auto-collapse side panels.** Set **Settings → Features → Kanban board → Auto-collapse side panel** to `Left sidebar`, `Right sidebar`, or `Both sidebars` to automatically collapse the host's sidebar panel(s) when the Kanban tab opens, giving the board more horizontal room. Only the panel(s) the Kanban view collapsed are restored when you close the tab, so it won't fight a panel you collapsed or expanded manually. Defaults to `None` (opt-in).
 
 **Group by folder or project.** The group-by toggle in the board header (the icon next to search) cycles through three layouts: **status columns** (the default), **folder swimlanes**, and **project columns**. Each click advances to the next; the choice persists across reloads.
 
@@ -329,7 +329,7 @@ When Claude needs to write a file or run a command, a permission card appears in
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
-> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets. Such threads also carry the originating scheduled item's id and name (`scheduledItemId`/`scheduledItemName`), captured once at creation time and surfaced as a "Scheduled: `<name>`" footer pill and in the `obsidian_get_current_thread`/`obsidian_list_threads` tool output.
+> **Note for scheduled sessions:** threads created by the built-in scheduler automatically use `dontAsk` so cron jobs never stall waiting for a permission dialog that nobody is watching. They also inherit any external MCP servers defined in `~/.claude/settings.json` (Compass, Helio, or any other user-configured HTTP/SSE/stdio server) alongside the plugin's built-in tools, so scheduled agents have the same tool surface as an interactive CLI session — `${VAR_NAME}` placeholders in that config are resolved from environment variables and keychain-stored secrets. Such threads also carry the originating scheduled item's id and name (`scheduledItemId`/`scheduledItemName`), captured once at creation time and surfaced as a "Scheduled: `<name>`" footer pill and in the `threads_get_current`/`threads_list` tool output.
 
 > **Active-hours windows:** a scheduled item can be scoped to a local time-of-day window so it only fires during, say, business hours. Pass `activeHoursStart`/`activeHoursEnd` (24h `HH:MM`) to `CronCreate`, or set/clear them later with `CronUpdate` (`activeHoursStart`/`activeHoursEnd`/`clearActiveHours`). When a cycle comes due outside the window it's skipped **without opening a thread at all** — the scheduler just jumps to the next window-open time — so an every-6h job scoped to `07:00`–`22:00` never wastes an overnight run. Overnight windows (start after end, e.g. `22:00`–`06:00`) wrap past midnight. **Settings → Scheduled tasks** shows the window inline, e.g. *"Every 6 hour(s) (07:00-22:00 only)"*. This replaces baking a `date`-based business-hours check into the prompt itself, which used to burn a whole thread each time it fired just to check the clock and bail.
 
@@ -355,10 +355,10 @@ Plan Mode is useful for risky or large-scale tasks where you want to review the 
 
 Some MCP servers need a credential or a form filled before they can proceed — for example, an OAuth flow or a confirmation dialog. When this happens, Claude Threads renders an elicitation card inline in the conversation rather than silently failing.
 
-- **URL auth card** — displays a clickable link for the OAuth URL. Click it to open the auth page in Obsidian's Web Viewer (or your system browser), complete the flow, then return to the thread. Claude resumes automatically once the server receives the credential.
+- **URL auth card** — displays a clickable link for the OAuth URL. Click it to open the auth page in the host's Web Viewer (or your system browser), complete the flow, then return to the thread. Claude resumes automatically once the server receives the credential.
 - **Form card** — renders input fields derived from the server's JSON schema (text fields, selects, checkboxes). Fill in the form and submit; the response is forwarded to the MCP server and the session continues.
 
-Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Obsidian.
+Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Claude Threads.
 
 ### Managing MCP servers
 
@@ -368,7 +368,7 @@ Settings → **MCP** lists, adds, edits, and removes the external MCP servers re
   <img src="docs/screenshot-mcp-servers.png" width="800" alt="Settings MCP tab: a list of configured MCP servers, each with a type badge (stdio, http, sdk), a one-line summary, and Edit/Remove buttons, plus an Add MCP server button" />
 </p>
 
-**This tab edits your GLOBAL `~/.claude/settings.json`** (or the per-machine file it symlinks to), not a per-vault or per-plugin config. That file is shared by every Obsidian vault running Claude Threads on this machine *and* by the `claude` CLI itself, so a server you add here shows up everywhere, and a server someone else added via the CLI shows up here too. Changes take effect for new threads only — sessions already running keep whatever MCP servers they started with.
+**This tab edits your GLOBAL `~/.claude/settings.json`** (or the per-machine file it symlinks to), not a per-vault or per-plugin config. That file is shared by every vault running Claude Threads on this machine *and* by the `claude` CLI itself, so a server you add here shows up everywhere, and a server someone else added via the CLI shows up here too. Changes take effect for new threads only — sessions already running keep whatever MCP servers they started with.
 
 For each server you can see its name, a type badge (`stdio`, `http`, `sse`, or `sdk`), and a one-line summary (the command for `stdio`, the URL for `http`/`sse`). Adding or editing a server opens a form for the command/args/env (stdio) or URL/transport/headers (http/sse) — env values and header values support `${VAR_NAME}` placeholders, resolved the same way as everywhere else in the plugin (environment variables merged with keychain-stored secrets).
 
@@ -496,7 +496,7 @@ A row of pills below the input area shows live context for each thread — git b
 
 **PR detection** is fully script-driven: a `kind:"pr"` tag with a `url` (e.g. from `gh pr view`) populates the thread's `prUrl`, which is **sticky** — it survives after the PR merges so release tooling can still match the thread.
 
-**Opening links:** clicking a pill with a `url` opens it in Obsidian's in-app **Web Viewer** when that core plugin is enabled (reusing an existing tab); otherwise it opens in your system browser. **Cmd-click** (Ctrl-click on Windows/Linux) always opens in the system browser, even when the Web Viewer is enabled.
+**Opening links:** clicking a pill with a `url` opens it in the host's in-app **Web Viewer** when available (reusing an existing tab); otherwise it opens in your system browser. **Cmd-click** (Ctrl-click on Windows/Linux) always opens in the system browser, even when the Web Viewer is enabled.
 
 A ready-to-use reference script (branch · PR · dev URL · Bedrock-gated AWS) ships at [`docs/statusline-command.example.sh`](docs/statusline-command.example.sh).
 
@@ -516,11 +516,11 @@ Once a PR exists for the thread (tracked via the same sticky `prUrl` used by the
 
 ### Safe plugin reload
 
-Use **Claude Threads: Reload plugin (safe)** from the command palette instead of Obsidian's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
+Use **Claude Threads: Reload plugin (safe)** from the command palette instead of the host's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
 
 ### Diagnostics report
 
-When Obsidian feels slow — the renderer pinning a core, typing lag, or a machine where an EDR/antivirus agent taxes every subprocess — Claude Threads keeps a small, **always-on, local-only** diagnostics layer running so you can capture what's actually happening. Nothing ever leaves your machine: there are no network calls and no remote reporting.
+When the host app feels slow — the renderer pinning a core, typing lag, or a machine where an EDR/antivirus agent taxes every subprocess — Claude Threads keeps a small, **always-on, local-only** diagnostics layer running so you can capture what's actually happening. Nothing ever leaves your machine: there are no network calls and no remote reporting.
 
 In the background it tracks a few cheap signals: how often the Kanban board rebuilds vs. how often a render was merely requested (measuring the incremental-render coalescing), how many `git`/status-line subprocesses were spawned, how many settings saves coalesced into actual disk writes, plus a ring of renderer CPU/memory samples (taken only while a plugin view is open) and a summary of any long main-thread tasks. It works identically in real Obsidian and in the Geode desktop app, and is a complete no-op on mobile.
 
@@ -535,31 +535,32 @@ You can turn the whole layer off with the **Diagnostics** toggle in Settings →
 
 ## Agent tools reference
 
-Every thread runs with built-in tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. Claude receives them through its built-in MCP server; Codex receives the same canonical definitions through its dynamic-tool protocol. No configuration is required.
+Every thread runs with built-in tools for vault access, session control, and — for multi-agent workflows — live coordination with other threads. Claude receives them through the host-neutral `claude_threads` MCP server; Codex receives the same canonical definitions through its dynamic-tool protocol. No configuration is required. The former `obsidian` server and `obsidian_*` names remain callable as deprecated compatibility aliases until the next major release, but new prompts and automation should use the canonical names below.
 
 ### Vault tools
 
-Read and search your Obsidian vault from within any thread.
+Read and search your vault from within any thread.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_search_vault` | `query`, `limit?` | Full-text search across all Markdown files. Tokenizes multi-word queries so each term is matched independently. Returns results ranked by relevance (filename hits weighted 10×) with a ~300-char excerpt from the densest matching region. Default limit: 20. |
-| `obsidian_get_note_metadata` | `path` | Returns the full metadata cache entry for a note: frontmatter, tags, wikilinks, and headings. |
-| `obsidian_get_backlinks` | `path` | Returns all notes that link to the specified file, with source path and original link text. |
-| `obsidian_get_outgoing_links` | `path` | Returns all wikilinks and Markdown links a note makes to other files, with display text and resolved vault paths. |
+| `vault_search` | `query`, `limit?` | Full-text search across all Markdown files. Tokenizes multi-word queries so each term is matched independently. Returns results ranked by relevance (filename hits weighted 10×) with a ~300-char excerpt from the densest matching region. Default limit: 20. |
+| `vault_get_note_metadata` | `path` | Returns the full metadata cache entry for a note: frontmatter, tags, wikilinks, and headings. |
+| `vault_get_backlinks` | `path` | Returns all notes that link to the specified file, with source path and original link text. |
+| `vault_get_outgoing_links` | `path` | Returns all wikilinks and Markdown links a note makes to other files, with display text and resolved vault paths. |
 
-### UI tools
+### Workspace and host tools
 
-Interact with the active Obsidian workspace.
+Interact with the active Obsidian or Geode workspace.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_get_active_file` | — | Returns metadata (path, basename, extension, size, mtime, ctime) for the file currently open in the editor, or `null` if nothing is open. |
-| `obsidian_get_open_tabs` | — | Returns all open tabs with path, title, view type, and which one is active. |
-| `obsidian_navigate_to_file` | `path`, `newLeaf?` | Opens a vault file in the editor. Pass `newLeaf: true` to open in a new tab. |
-| `obsidian_insert_at_cursor` | `text` | Inserts text at the cursor in the active editor, replacing any current selection. |
-| `obsidian_list_commands` | `query?` | Returns all registered Obsidian commands (id + name), sorted alphabetically. Pass a `query` string to filter. Use this to discover command IDs before calling `obsidian_execute_command`. |
-| `obsidian_execute_command` | `commandId` | Runs any Obsidian command by its ID (e.g. `obsidian-git:push`, `editor:toggle-bold`). Returns success or failure. |
+| `workspace_get_active_file` | — | Returns metadata (path, basename, extension, size, mtime, ctime) for the file currently open in the editor, or `null` if nothing is open. |
+| `workspace_get_open_tabs` | — | Returns all open tabs with path, title, view type, and which one is active. |
+| `workspace_navigate_to_file` | `path`, `newLeaf?` | Opens a vault file in the editor. Pass `newLeaf: true` to open in a new tab. |
+| `workspace_insert_at_cursor` | `text` | Inserts text at the cursor in the active editor, replacing any current selection. |
+| `host_list_commands` | `query?` | Returns all registered host commands (id + name), sorted alphabetically. Pass a `query` string to filter. Use this to discover command IDs before calling `host_execute_command`. |
+| `host_execute_command` | `commandId` | Runs any host command by its ID (e.g. `obsidian-git:push`, `editor:toggle-bold`). Third-party command IDs are unchanged. |
+| `host_open_url` | `url`, `newTab?` | Opens a URL in the host Web Viewer panel. Reuses an existing tab by default; set `newTab: true` to force a fresh tab. |
 
 ### Session tools
 
@@ -580,19 +581,19 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_get_current_thread` | — | Returns this thread's own metadata: `id`, `title`, `status`, `uiStatus`, `isRunning`, `projectId`, `cwd`, `prUrl`, `scheduledItemId`, `scheduledItemName`, `rawLogPath`, `updatedAt`, `messageCount`. Useful for knowing your own context before coordinating with peers. `uiStatus` matches the Agent Dashboard UI labels (`working` \| `new` \| `reviewed` \| `failed` \| `ready`). `prUrl` is the URL of the most recent GitHub PR opened in this thread, if any. `scheduledItemId`/`scheduledItemName` identify the cron item that created this thread, if it was created by one. |
-| `obsidian_list_threads` | — | Returns all threads with the same metadata fields as `obsidian_get_current_thread`, including a live `isRunning` flag — useful for matching threads to PRs or scheduled items without reading message history. |
-| `obsidian_list_projects` | — | Returns all configured projects: `id`, `name`, `description`, `vaultFolder`. Useful for deciding which project context a new thread should use. |
-| `obsidian_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates a new project and persists it. Returns the created project snapshot including its `id` — capture this for use with `CronCreate`, `obsidian_set_thread_project`, and other project-aware APIs. |
-| `obsidian_set_thread_project` | `threadId`, `projectId` | Assigns a thread to a project. Pass `projectId: null` to detach the thread from its current project. Call `obsidian_list_projects` first to get a valid `projectId`. |
-| `obsidian_get_thread_messages` | `threadId`, `limit?` | Returns the live message history for any thread. Messages are filtered to `user` and `assistant` roles (internal compaction markers are excluded). Default: last 20 messages. |
-| `obsidian_wait_for_thread` | `threadId`, `timeoutSeconds?` | Blocks until the target thread finishes its current request (`isRunning` → `false`). Polls every second. Returns `{ done: true, elapsedSeconds }` on success, or `{ timedOut: true }` if the timeout is reached (default 120s, max 600s). Returns immediately if the thread is already idle. |
-| `obsidian_send_message_to_thread` | `threadId`, `message` | Queues a user message on another thread and triggers Claude to process it. Returns immediately once the message is enqueued — use `obsidian_wait_for_thread` to block until the response is ready. Cannot send to the current thread. |
-| `obsidian_archive_thread` | `threadId` | Saves the thread as a vault note (if vault save is enabled) then removes it from the active thread list. Use at the end of a release or multi-step session to close out completed threads automatically. A thread cannot archive itself. |
-| `obsidian_open_url` | `url`, `newTab?` | Opens a URL in the Obsidian Web Viewer panel. Reuses an existing Web Viewer tab by default; set `newTab: true` to force a fresh tab. Useful for opening local dev servers (`http://localhost:…`), HTML prototypes, or any web page directly from an agent without manual URL entry. |
-| `obsidian_set_thread_notes` | `threadId`, `notes` | Sets (overwrites) a thread's orchestrator tracking notes — free-form text for an inferred goal, status, and a last-reviewed cursor. Shown in a collapsible "Manager Notes" panel in ThreadsView, but never injected into any session's context. Pass an empty string to clear. |
-| `obsidian_set_thread_proposed_reply` | `threadId`, `text` | Sets an AI-proposed next message for a thread, awaiting human approval. Rendered as a banner above the compose box with **Approve & Send** / **Edit** / **Discard** actions — nothing is ever sent automatically. Distinct from the thread's own unsent compose-box draft. Cannot target the current thread. |
-| `obsidian_clear_thread_proposed_reply` | `threadId` | Clears a thread's pending proposed reply, if any, without sending it. Use when a prior proposal is stale or no longer relevant. |
+| `threads_get_current` | — | Returns this thread's metadata, live status, project, cwd, PR, schedule origin, raw-log path, and message count. |
+| `threads_list` | — | Returns the same metadata for every thread, including live `isRunning` state. |
+| `threads_list_projects` | — | Returns configured projects and their vault folders. |
+| `threads_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates and persists a project. |
+| `threads_set_project` | `threadId`, `projectId` | Assigns a thread to a project, or detaches it with `null`. |
+| `threads_get_messages` | `threadId`, `limit?` | Returns recent user and assistant messages. |
+| `threads_get_log` | `threadId?`, `limit?`, `type?` | Returns parsed raw JSONL event-log entries. |
+| `threads_wait` | `threadId`, `timeoutSeconds?` | Waits until a target thread becomes idle. |
+| `threads_send_message` | `threadId`, `message` | Queues a message on another thread and triggers it. |
+| `threads_archive` | `threadId` | Saves and removes a completed thread. A thread cannot archive itself. |
+| `threads_set_notes` | `threadId`, `notes` | Sets orchestrator tracking notes. |
+| `threads_set_proposed_reply` | `threadId`, `text` | Stages a proposed reply for human approval. |
+| `threads_clear_proposed_reply` | `threadId` | Clears a stale proposed reply. |
 
 These three tools back the bundled **thread-orchestrator** skill (`resources/skills/thread-orchestrator`), which lets one thread supervise several peers: it tracks per-thread notes across polling passes and proposes replies for a human to review rather than sending on a peer's behalf.
 
@@ -602,20 +603,20 @@ These three tools back the bundled **thread-orchestrator** skill (`resources/ski
 
 A typical delegation loop:
 
-1. Call `obsidian_list_threads` to find a peer, or `fork_conversation` to create a dedicated one
-2. Call `obsidian_send_message_to_thread` to assign a task
-3. Call `obsidian_wait_for_thread` to block until the peer finishes
-4. Call `obsidian_get_thread_messages` to read the result
+1. Call `threads_list` to find a peer, or `fork_conversation` to create a dedicated one
+2. Call `threads_send_message` to assign a task
+3. Call `threads_wait` to block until the peer finishes
+4. Call `threads_get_messages` to read the result
 
 ```
 Thread A                              Thread B
   │                                      │
-  ├─ obsidian_list_threads               │
-  ├─ obsidian_send_message_to_thread ───►│ (Claude receives message)
-  ├─ obsidian_wait_for_thread            │
+  ├─ threads_list                         │
+  ├─ threads_send_message ───────────────►│ (Claude receives message)
+  ├─ threads_wait                         │
   │   (polls isRunning every 1s)         ├─ ... processes task ...
   │◄────────────────────────────────────┤ (isRunning → false)
-  └─ obsidian_get_thread_messages        │
+  └─ threads_get_messages                 │
        (reads the result)
 ```
 
@@ -623,12 +624,12 @@ This pattern works across any combination of threads — you can fan out to mult
 
 ### Vault Bridges integration
 
-If you have the [Vault Bridges](https://github.com/rbcodelabs/obsidian-vault-bridges) plugin installed, Claude agents can inspect and configure bridges directly via MCP — no config-file editing or Obsidian restarts required.
+If you have the [Vault Bridges](https://github.com/rbcodelabs/obsidian-vault-bridges) plugin installed, Claude agents can inspect and configure bridges directly via MCP — no config-file editing or host restart required.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `obsidian_list_vault_bridges` | — | Returns all currently configured bridges. Agents should call this first to check what already exists before adding a new one. |
-| `obsidian_add_vault_bridge` | `name`, `repoPath`, `vaultPath`, `sourcePath?`, `branch?`, `autoSync?`, `syncNow?` | Adds a new bridge live via the Vault Bridges API. The bridge is registered immediately — the status bar updates, per-bridge push/pull commands are wired up, and settings are saved. If a bridge with the same `repoPath` + `vaultPath` already exists, the existing record is returned without creating a duplicate. |
+| `vault_list_bridges` | — | Returns all currently configured bridges. Agents should call this first to check what already exists before adding a new one. |
+| `vault_add_bridge` | `name`, `repoPath`, `vaultPath`, `sourcePath?`, `branch?`, `autoSync?`, `syncNow?` | Adds a new bridge live via the Vault Bridges API. The bridge is registered immediately and duplicate repo/vault pairs return the existing bridge. |
 
 Both tools return a clear error if the vault-bridges plugin is not installed or not enabled.
 
@@ -637,7 +638,7 @@ Both tools return a clear error if the vault-bridges plugin is not installed or 
 When an agent edits files inside a bridged repo (rather than the synced vault copy), Claude Threads detects it automatically at the end of the turn:
 
 - **Auto-pull** — each affected bridge is synced once per turn, so the vault copies update immediately (a notice confirms success or failure).
-- **Vault-relative links** — edited-file chips, the focus button, and absolute repo paths in Claude's messages all resolve to the synced vault note: chips show the vault path and open the note in Obsidian, and message paths become clickable internal links (only when the vault copy exists).
+- **Vault-relative links** — edited-file chips, the focus button, and absolute repo paths in Claude's messages all resolve to the synced vault note: chips show the vault path and open the note in the host workspace, and message paths become clickable internal links (only when the vault copy exists).
 
 Edits made directly to vault files are unaffected — they don't match any bridge root and behave as before. Note that edits made inside a temporary coding-task worktree only reach the vault after merge plus a normal bridge pull.
 

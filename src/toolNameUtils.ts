@@ -19,14 +19,14 @@
  */
 export function formatToolName(raw: string): string {
   // Strip mcp__<server>__ prefix
-  const mcpMatch = raw.match(/^mcp__[^_]+__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[1] : raw;
+  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
+  const bare = mcpMatch ? mcpMatch[2] : raw;
   // If bare still starts with a repeated server name segment, drop it.
   // e.g. obsidian_search_vault → strip leading "obsidian_"
   const deduplicated = bare.replace(/^([a-z]+)_\1_/, '$1_').replace(/^[a-z]+_([a-z].+)$/, (_, rest) => {
     // Only strip if the prefix is the server name from the original mcp call
     if (mcpMatch) {
-      const server = raw.match(/^mcp__([^_]+)__/)![1];
+      const server = mcpMatch[1];
       const serverSnake = server + '_';
       if (bare.startsWith(serverSnake)) return bare.slice(serverSnake.length);
     }
@@ -39,9 +39,9 @@ export function formatToolName(raw: string): string {
 /** Return a Lucide icon name for a tool. Falls back to 'wrench'. */
 export function getToolIcon(raw: string): string {
   // Normalize first so we can match on bare names
-  const mcpMatch = raw.match(/^mcp__[^_]+__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[1] : raw;
-  const server = mcpMatch ? raw.match(/^mcp__([^_]+)__/)![1] : null;
+  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
+  const bare = mcpMatch ? mcpMatch[2] : raw;
+  const server = mcpMatch ? mcpMatch[1] : null;
 
   // Strip leading server prefix for MCP tools
   const key = (server && bare.startsWith(server + '_'))
@@ -81,8 +81,9 @@ export function getToolIcon(raw: string): string {
     case 'TaskOutput':     return 'scroll-text';
     case 'Monitor':        return 'activity';
     case 'RemoteTrigger':  return 'radio-tower';
-    // Obsidian MCP
-    case 'search_vault':         return 'vault';
+    // Built-in vault/workspace tools
+    case 'search_vault':
+    case 'vault_search':         return 'vault';
     case 'navigate_to_file':     return 'navigation';
     case 'get_active_file':      return 'file-search';
     case 'insert_at_cursor':     return 'text-cursor-input';
@@ -96,6 +97,40 @@ export function getToolIcon(raw: string): string {
     case 'ScheduleWakeup':       return 'alarm-clock';
     default:               return 'wrench';
   }
+}
+
+const LEGACY_BUILT_IN_TOOLS = new Set([
+  'obsidian_search_vault', 'obsidian_get_note_metadata', 'obsidian_get_backlinks',
+  'obsidian_get_outgoing_links', 'obsidian_get_file_history', 'obsidian_restore_file_version',
+  'obsidian_list_vault_bridges', 'obsidian_add_vault_bridge', 'obsidian_get_active_file',
+  'obsidian_get_open_tabs', 'obsidian_navigate_to_file', 'obsidian_insert_at_cursor',
+  'obsidian_list_commands', 'obsidian_execute_command', 'obsidian_open_url',
+  'obsidian_get_current_thread', 'obsidian_list_threads', 'obsidian_list_projects',
+  'obsidian_create_project', 'obsidian_set_thread_project', 'obsidian_get_thread_messages',
+  'obsidian_get_thread_log', 'obsidian_wait_for_thread', 'obsidian_send_message_to_thread',
+  'obsidian_archive_thread', 'obsidian_set_thread_notes', 'obsidian_set_thread_proposed_reply',
+  'obsidian_clear_thread_proposed_reply',
+]);
+const CANONICAL_BUILT_IN_TOOLS = new Set([
+  'vault_search', 'vault_get_note_metadata', 'vault_get_backlinks', 'vault_get_outgoing_links',
+  'vault_get_file_history', 'vault_restore_file_version', 'vault_list_bridges', 'vault_add_bridge',
+  'workspace_get_active_file', 'workspace_get_open_tabs', 'workspace_navigate_to_file',
+  'workspace_insert_at_cursor', 'host_list_commands', 'host_execute_command', 'host_open_url',
+  'threads_get_current', 'threads_list', 'threads_list_projects', 'threads_create_project',
+  'threads_set_project', 'threads_get_messages', 'threads_get_log', 'threads_wait',
+  'threads_send_message', 'threads_archive', 'threads_set_notes', 'threads_set_proposed_reply',
+  'threads_clear_proposed_reply',
+]);
+
+/** True only for a known first-party tool on the canonical or compatibility server. */
+export function isTrustedBuiltInTool(raw: string): boolean {
+  const match = raw.match(/^mcp__(.+?)__(.+)$/);
+  if (match) {
+    if (match[1] === 'claude_threads') return CANONICAL_BUILT_IN_TOOLS.has(match[2]);
+    if (match[1] === 'obsidian') return LEGACY_BUILT_IN_TOOLS.has(match[2]);
+    return false;
+  }
+  return CANONICAL_BUILT_IN_TOOLS.has(raw) || LEGACY_BUILT_IN_TOOLS.has(raw);
 }
 
 /**
@@ -119,9 +154,9 @@ export const ACTIVITY_LABELS: Record<ActivityKind, string> = {
 export function getActivityKind(raw: string): ActivityKind {
   // Normalize the same way getToolIcon does so MCP-prefixed tool names
   // (e.g. mcp__obsidian__Bash) classify identically to bare names.
-  const mcpMatch = raw.match(/^mcp__[^_]+__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[1] : raw;
-  const server = mcpMatch ? raw.match(/^mcp__([^_]+)__/)![1] : null;
+  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
+  const bare = mcpMatch ? mcpMatch[2] : raw;
+  const server = mcpMatch ? mcpMatch[1] : null;
   const key = (server && bare.startsWith(server + '_'))
     ? bare.slice(server.length + 1)
     : bare;

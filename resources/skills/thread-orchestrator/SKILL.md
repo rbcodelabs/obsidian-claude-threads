@@ -14,7 +14,7 @@ You are woken in one of three ways:
 1. **Event ping** — another thread just finished a turn (done or error). The
    wake-up message names each thread that finished, with its id, title, and
    done/error status — you can jump straight to those threads with
-   `obsidian_get_thread_messages(threadId)` instead of diffing the full list.
+   `threads_get_messages(threadId)` instead of diffing the full list.
    Still run the full discovery pass below too, since it's also how you catch
    any activity a missed or coalesced ping didn't mention.
 2. **Heartbeat** — an hourly `CronCreate` fallback in case an event was missed.
@@ -25,14 +25,14 @@ In every case, the procedure is the same:
 
 ## 1. Discover every thread
 
-Call `obsidian_list_threads()` to get every thread, any status. Also call
-`obsidian_get_current_thread()` once so you know your own thread id — never
+Call `threads_list()` to get every thread, any status. Also call
+`threads_get_current()` once so you know your own thread id — never
 target yourself with any tool in this skill.
 
 ## 2. Skip threads with no new activity
 
 Each thread you have previously reviewed carries a structured block you wrote
-into its `managerNotes` field (returned by `obsidian_list_threads`), in this
+into its `managerNotes` field (returned by `threads_list`), in this
 exact format:
 
 ```
@@ -54,38 +54,38 @@ For each thread with new activity, **except** threads that are currently
 `working` or `isRunning` (still mid-turn — reviewing it now would race the
 live session):
 
-1. Call `obsidian_get_thread_messages(threadId)` to read recent messages
+1. Call `threads_get_messages(threadId)` to read recent messages
    (default last 20 is usually enough; pass a larger `limit` for threads with
    a lot of back-and-forth since your last review).
 2. Update your read on the thread's goal and status based on what happened.
 3. Write the updated tracking block back with
-   `obsidian_set_thread_notes(threadId, notes)`, using the exact
+   `threads_set_notes(threadId, notes)`, using the exact
    `Orchestrator-tracked goal / Last reviewed / Status` format above so your
    next pass can parse it. Always set `Last reviewed` to the current time.
 4. If the thread is waiting on a next step Rick would plausibly want to send
    (a natural continuation, a clarifying question answered, a task that
    finished and needs a follow-up), draft one and call
-   `obsidian_set_thread_proposed_reply(threadId, text)`. If the thread
+   `threads_set_proposed_reply(threadId, text)`. If the thread
    genuinely has nothing useful to propose right now (e.g. it's just idle
    between unrelated tasks, or already has a fresh unactioned proposal you
    have no new information to improve), don't overwrite an existing proposal
    with a weaker one — leave it as is.
 5. If a previously proposed reply is now stale or no longer makes sense given
    what happened since (e.g. Rick already answered the thread himself, or the
-   thread moved on), call `obsidian_clear_thread_proposed_reply(threadId)`
+   thread moved on), call `threads_clear_proposed_reply(threadId)`
    rather than leaving a misleading suggestion behind.
 
 ## 4. Never send anything, never target yourself
 
 - **No tool in this skill can send a message on Rick's behalf.** Proposing a
-  reply via `obsidian_set_thread_proposed_reply` only stages it — sending
+  reply via `threads_set_proposed_reply` only stages it — sending
   requires Rick clicking **Approve & Send** in the ThreadsView banner. Do not
-  look for a workaround (e.g. `obsidian_send_message_to_thread`) to send a
+  look for a workaround (e.g. `threads_send_message`) to send a
   proposed reply yourself; that tool is for direct thread-to-thread
   coordination, not for approving your own proposals.
 - Every tool call in this skill that takes a `threadId` must never target your
-  own thread id (from `obsidian_get_current_thread()`). The
-  `obsidian_set_thread_proposed_reply` tool enforces this with a hard error as
+  own thread id (from `threads_get_current()`). The
+  `threads_set_proposed_reply` tool enforces this with a hard error as
   a safety net, but don't rely on that — just skip yourself when iterating.
 
 ## 5. Keep it quiet

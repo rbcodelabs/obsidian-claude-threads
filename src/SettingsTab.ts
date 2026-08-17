@@ -1461,7 +1461,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         .setName('Web Viewer tool')
         .setDesc(
           wvAvailable
-            ? 'Let Claude open URLs directly in the Obsidian Web Viewer panel (obsidian_open_url).'
+            ? 'Let Claude open URLs directly in the host Web Viewer panel (host_open_url).'
             : 'Requires the Web Viewer core plugin — enable it under Settings → Core plugins, then reopen this tab.',
         )
         .addToggle((toggle) => {
@@ -1522,7 +1522,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setName('Add always-allowed tool')
       .setDesc('Granted automatically without prompting. Tools land here when you choose "Always allow" in a permission prompt; you can also add one by name.')
       .addText((text) => {
-        text.setPlaceholder('e.g. Bash, Read, mcp__obsidian__…');
+        text.setPlaceholder('e.g. Bash, Read, mcp__claude_threads__…');
         newToolInput = text.inputEl;
       })
       .addButton((btn) =>
@@ -1546,7 +1546,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
   private renderVaultTab(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Save threads to vault')
-      .setDesc('Auto-save conversations as Obsidian notes after each response.')
+      .setDesc('Auto-save conversations as Markdown notes in the vault after each response.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.saveThreadsToVault).onChange(async (value) => {
           this.plugin.settings.saveThreadsToVault = value;
