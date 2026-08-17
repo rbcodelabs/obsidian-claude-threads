@@ -434,6 +434,22 @@ export class CodexSession {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
     if (message.method === 'mcpServer/elicitation/request') {
+      const requestedSchema = (params.requestedSchema ?? {}) as Record<string, unknown>;
+      const properties = requestedSchema.properties;
+      const isEmptyForm = params.mode !== 'url'
+        && (!properties || (typeof properties === 'object' && Object.keys(properties).length === 0));
+      if (isEmptyForm && callbacks?.onPermissionRequest) {
+        const serverName = String(params.serverName ?? 'server');
+        const detail = String(params.message ?? `${serverName} requests permission to continue`);
+        callbacks.onPermissionRequest(`MCP: ${serverName}`, detail)
+          .then((allow) => this.respond(message.id, {
+            action: allow ? 'accept' : 'decline',
+            content: allow ? {} : null,
+            _meta: null,
+          }))
+          .catch(() => this.respond(message.id, { action: 'decline', content: null, _meta: null }));
+        return;
+      }
       if (!callbacks?.onElicitation) {
         this.respond(message.id, { action: 'cancel', content: null, _meta: null });
         return;
@@ -450,7 +466,7 @@ export class CodexSession {
             serverName: String(params.serverName ?? ''),
             message: String(params.message ?? ''),
             mode: 'form' as const,
-            requestedSchema: (params.requestedSchema ?? {}) as Record<string, unknown>,
+            requestedSchema,
           };
       callbacks.onElicitation(request, new AbortController().signal)
         .then((result) => this.respond(message.id, {

@@ -345,6 +345,28 @@ describe('model escalation', () => {
 });
 
 describe('permission handler', () => {
+  it('stays pending for Kanban classification until the user responds', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    let respond!: (allow: boolean) => void;
+    manager.permissionHandler = () => new Promise<boolean>((resolve) => { respond = resolve; });
+
+    await manager.sendMessage(thread.id, 'Hi');
+    const resultPromise = mock.callbacks!.onPermissionRequest('MCP: github', 'Allow search_repositories?');
+    await Promise.resolve();
+
+    expect(manager.hasPendingPermission(thread.id)).toBe(true);
+    expect(manager.getPendingPermission(thread.id)).toEqual({
+      toolName: 'MCP: github',
+      detail: 'Allow search_repositories?',
+    });
+
+    respond(true);
+    await expect(resultPromise).resolves.toBe(true);
+    expect(manager.hasPendingPermission(thread.id)).toBe(false);
+    driveResponse('Done');
+  });
+
   it('calls permissionHandler and allows when it resolves true', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());

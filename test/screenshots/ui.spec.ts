@@ -85,6 +85,56 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('permission-card.png', { fullPage: true });
   });
 
+  test('permission card reappears after switching away and back', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => {
+      (window as any).__view.manager.permissionHandler(
+        'thread-fix-auth',
+        'MCP: github',
+        'Allow search_repositories?',
+      );
+    });
+    await page.waitForSelector('.ct-permission-card');
+
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await expect(page.locator('.ct-permission-card')).toHaveCount(0);
+
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await expect(page.locator('.ct-permission-card')).toBeVisible();
+    await expect(page.locator('.ct-permission-card')).toContainText('Allow search_repositories?');
+  });
+
+  test('MCP elicitation form card', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    await page.evaluate(() => {
+      (window as any).__view.renderElicitationFormCard(
+        {
+          mode: 'form',
+          serverName: 'linear',
+          message: 'Choose where this issue should be created.',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              project: { type: 'string', title: 'Project', description: 'The Linear project for this issue.' },
+              priority: { type: 'string', title: 'Priority', enum: ['Low', 'Medium', 'High'] },
+            },
+          },
+        },
+        new AbortController().signal,
+        () => {},
+      );
+    });
+    await page.waitForSelector('.ct-elicitation-card');
+    await expect(page).toHaveScreenshot('mcp-elicitation-form-card.png', { fullPage: true });
+  });
+
   test('scheduled wake-up banner', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

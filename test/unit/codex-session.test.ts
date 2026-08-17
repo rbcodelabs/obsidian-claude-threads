@@ -163,6 +163,37 @@ describe('CodexSession protocol notifications', () => {
     });
   });
 
+  it('routes empty-schema MCP elicitations through the shared permission callback', async () => {
+    const onPermissionRequest = vi.fn().mockResolvedValue(true);
+    const onElicitation = vi.fn();
+    const session = new CodexSession('codex');
+    const respond = vi.spyOn(session as any, 'respond');
+    (session as any).options = { callbacks: { onPermissionRequest, onElicitation } };
+
+    (session as any).handle({
+      id: 'elicit-permission-1',
+      method: 'mcpServer/elicitation/request',
+      params: {
+        mode: 'form',
+        serverName: 'github',
+        message: 'Allow the GitHub MCP server to run search_repositories?',
+        requestedSchema: { type: 'object', properties: {} },
+      },
+    });
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    expect(onPermissionRequest).toHaveBeenCalledWith(
+      'MCP: github',
+      'Allow the GitHub MCP server to run search_repositories?',
+    );
+    expect(onElicitation).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith('elicit-permission-1', {
+      action: 'accept',
+      content: {},
+      _meta: null,
+    });
+  });
+
   it('surfaces a completed Codex plan and starts implementation after approval', async () => {
     const onDone = vi.fn();
     const onPlanReady = vi.fn();
