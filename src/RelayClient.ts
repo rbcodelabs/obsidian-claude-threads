@@ -41,6 +41,7 @@ function serializeThread(thread: Thread): SerializedThread {
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     sessionId: thread.sessionId,
+    agentHarness: thread.agentHarness,
     recap: thread.recap,
     summary: thread.summary,
     lastError: thread.lastError,

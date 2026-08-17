@@ -39,6 +39,7 @@ export interface SerializedThread {
   createdAt: number;
   updatedAt: number;
   sessionId?: string;
+  agentHarness?: 'claude' | 'codex';
   recap?: string;
   summary?: string;
   lastError?: string;

@@ -257,6 +257,7 @@ export class MobileView extends ItemView {
     this.updateQueueBanner(activeId);
 
     const thread = activeId ? this.store.getThread(activeId) : null;
+    this.inputEl.placeholder = thread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude';
     const msgCount = thread?.messages.length ?? 0;
     const permCount = activeId ? (this.store.getPendingPermissionsForThread(activeId)?.length ?? 0) : 0;
     const questionCount = activeId ? (this.store.getPendingQuestionsForThread(activeId)?.length ?? 0) : 0;

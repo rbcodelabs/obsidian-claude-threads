@@ -599,7 +599,7 @@ export class ThreadsView extends ItemView {
 
     this.dispatchInput = new DispatchInput({
       app: this.app,
-      placeholder: 'Message Claude',
+      placeholder: this.plugin.settings.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude',
       inputCls: 'ct-input',
       sendBtnText: '↵',
       sendBtnTitle: 'Send message',
@@ -814,6 +814,8 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
+    const activeThread = this.manager.getThread(id);
+    this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
     this.syncEditedFiles();
