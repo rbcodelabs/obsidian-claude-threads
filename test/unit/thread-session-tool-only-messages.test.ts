@@ -147,6 +147,32 @@ interface CapturedMessage {
 }
 
 describe('ThreadSession — tool-only assistant messages must be persisted', () => {
+  it('captures complete Claude result and rate-limit usage snapshots', async () => {
+    const output = makeChannel();
+    sdk.nextIterable = output;
+    const onUsage = vi.fn();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({ onUsage })));
+
+    output.push({ type: 'rate_limit_event', rate_limit_info: {
+      status: 'allowed_warning', utilization: 0.9, rateLimitType: 'five_hour', resetsAt: 2000,
+    } });
+    output.push({
+      type: 'result', subtype: 'success', session_id: 's', total_cost_usd: 0.25, num_turns: 2,
+      usage: { input_tokens: 100, output_tokens: 20 },
+      modelUsage: { sonnet: { inputTokens: 100, outputTokens: 20, costUSD: 0.25 } },
+    });
+    await flush();
+
+    await expect(session.getUsageSnapshot()).resolves.toMatchObject({
+      estimatedCostUsd: 0.25, turns: 2, tokens: { input: 100, output: 20 },
+      quotaWindows: [{ usedPercent: 90, resetsAt: 2_000_000 }],
+    });
+    expect(onUsage).toHaveBeenCalledTimes(2);
+    session.close();
+    output.close();
+  });
+
   it('persists a single tool-only message (no text) via onMessage, not just onToolUse', async () => {
     sdk.generations = [];
     const out = makeChannel();

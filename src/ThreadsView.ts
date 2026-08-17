@@ -3114,6 +3114,96 @@ export class ThreadsView extends ItemView {
     this.scrollToBottom();
   }
 
+  /** Renders provider-neutral token, quota, and account usage without implying parity. */
+  private renderUsageCard(usage: import('./Usage').UsageSnapshot): void {
+    const container = this.cardContainer();
+    const card = container.createDiv('ct-usage-card');
+    const header = card.createDiv('ct-usage-header');
+    const iconEl = header.createSpan('ct-usage-icon');
+    setIcon(iconEl, 'gauge');
+    header.createSpan({ cls: 'ct-usage-title', text: 'Usage' });
+    header.createSpan({ cls: 'ct-usage-provider', text: usage.provider === 'claude' ? 'Claude' : 'Codex' });
+
+    const tokenSection = card.createDiv('ct-usage-section');
+    tokenSection.createEl('h4', { text: 'Tokens' });
+    const tokens = usage.tokens;
+    if (tokens && Object.values(tokens).some(value => value !== undefined)) {
+      const total = tokens.total ?? (tokens.input ?? 0) + (tokens.output ?? 0);
+      tokenSection.createDiv({ cls: 'ct-usage-primary', text: `${total.toLocaleString()} thread/session tokens` });
+      const details = [
+        tokens.input !== undefined ? `${tokens.input.toLocaleString()} input` : '',
+        tokens.output !== undefined ? `${tokens.output.toLocaleString()} output` : '',
+        tokens.cachedInput !== undefined ? `${tokens.cachedInput.toLocaleString()} cached` : '',
+        tokens.reasoning !== undefined ? `${tokens.reasoning.toLocaleString()} reasoning` : '',
+      ].filter(Boolean);
+      if (details.length) tokenSection.createDiv({ cls: 'ct-usage-muted', text: details.join(' · ') });
+      if (usage.lastTurnTokens?.total !== undefined) {
+        tokenSection.createDiv({ cls: 'ct-usage-muted', text: `Last turn: ${usage.lastTurnTokens.total.toLocaleString()} tokens` });
+      }
+    } else {
+      tokenSection.createDiv({ cls: 'ct-usage-muted', text: 'Token totals are not available yet.' });
+    }
+    if (usage.estimatedCostUsd !== undefined) {
+      tokenSection.createDiv({ cls: 'ct-usage-muted', text: `Estimated cost: $${usage.estimatedCostUsd.toFixed(4)}` });
+    }
+
+    const quotaSection = card.createDiv('ct-usage-section');
+    quotaSection.createEl('h4', { text: 'Quota windows' });
+    if (usage.quotaWindows.length === 0) {
+      quotaSection.createDiv({ cls: 'ct-usage-muted', text: usage.provider === 'claude'
+        ? 'No quota event has been received in this session yet.'
+        : 'Quota information is unavailable.' });
+    }
+    for (const window of usage.quotaWindows) {
+      const row = quotaSection.createDiv('ct-usage-quota');
+      const top = row.createDiv('ct-usage-quota-top');
+      top.createSpan({ text: window.label });
+      top.createSpan({ text: window.usedPercent === undefined ? '—' : `${window.usedPercent.toFixed(0)}% used` });
+      if (window.usedPercent !== undefined) {
+        const bar = row.createDiv('ct-usage-bar');
+        const fill = bar.createDiv('ct-usage-bar-fill');
+        fill.style.width = `${Math.max(0, Math.min(100, window.usedPercent))}%`;
+        if (window.usedPercent >= 100) fill.addClass('ct-usage-bar-exhausted');
+        else if (window.usedPercent >= 80) fill.addClass('ct-usage-bar-warning');
+      }
+      if (window.resetsAt) row.createDiv({ cls: 'ct-usage-muted', text: `Resets ${new Date(window.resetsAt).toLocaleString()}` });
+    }
+
+    const account = card.createDiv('ct-usage-section');
+    account.createEl('h4', { text: 'Account activity' });
+    if (usage.provider === 'claude') {
+      account.createDiv({ cls: 'ct-usage-muted', text: 'Account activity is not exposed by the Claude SDK.' });
+    } else if (usage.accountUsageUnavailable) {
+      account.createDiv({ cls: 'ct-usage-muted', text: `Unavailable: ${usage.accountUsageUnavailable}` });
+    } else if (usage.accountUsage != null) {
+      const activity = usage.accountUsage;
+      const metrics = account.createDiv('ct-usage-account-metrics');
+      const addMetric = (value: number | undefined, label: string) => {
+        if (value !== undefined) metrics.createDiv({ cls: 'ct-usage-account-metric', text: `${value.toLocaleString()} ${label}` });
+      };
+      addMetric(activity.lifetimeTokens, 'lifetime tokens');
+      addMetric(activity.peakDailyTokens, 'peak daily tokens');
+      addMetric(activity.currentStreakDays, 'day current streak');
+      addMetric(activity.longestStreakDays, 'day longest streak');
+      if (activity.longestRunningTurnSeconds !== undefined) {
+        metrics.createDiv({ cls: 'ct-usage-account-metric', text: `${activity.longestRunningTurnSeconds.toLocaleString()}s longest turn` });
+      }
+      if (activity.daily.length > 0) {
+        const daily = account.createDiv('ct-usage-daily');
+        for (const bucket of activity.daily.slice(-7).reverse()) {
+          const row = daily.createDiv('ct-usage-daily-row');
+          const parsed = new Date(`${bucket.date}T00:00:00`);
+          row.createSpan({ text: Number.isNaN(parsed.getTime()) ? bucket.date : parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) });
+          row.createSpan({ text: `${bucket.tokens.toLocaleString()} tokens` });
+        }
+      }
+    } else {
+      account.createDiv({ cls: 'ct-usage-muted', text: 'No account activity was returned.' });
+    }
+    card.createDiv({ cls: 'ct-usage-freshness', text: `Updated ${new Date(usage.updatedAt).toLocaleTimeString()}` });
+    this.scrollToBottom();
+  }
+
   private clearStreamingState(): void {
     if (this.streamingRenderTimer !== null) {
       clearTimeout(this.streamingRenderTimer);
@@ -4421,6 +4511,15 @@ export class ThreadsView extends ItemView {
       } else {
         this.renderContextUsageCard(usage);
       }
+      return;
+    }
+
+    // /usage — cross-provider token totals, quota windows, and account activity.
+    // /cost remains untouched as the harness-native command for compatibility.
+    if (/^\/usage$/i.test(typed.trim())) {
+      const usage = await this.manager.getUsageSnapshot(this.activeThreadId);
+      if (!usage) this.showCommandDivider('Usage is unavailable — start a conversation first.');
+      else this.renderUsageCard(usage);
       return;
     }
 

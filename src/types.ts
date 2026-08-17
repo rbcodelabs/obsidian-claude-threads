@@ -195,6 +195,8 @@ export interface Thread {
   /** Harness that owns this thread's persisted session ID. Kept per-thread so
    * switching the default never attempts to resume a Claude session in Codex. */
   agentHarness?: 'claude' | 'codex';
+  /** Latest provider usage/quota snapshot; replaces older samples rather than building history. */
+  usageSnapshot?: import('./Usage').UsageSnapshot;
   title: string;
   cwd: string;
   /**

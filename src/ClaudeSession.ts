@@ -2,6 +2,7 @@ import { query, type Options, type Query, type CanUseTool, type SDKUserMessage, 
 import type { ToolCallRecord, AskQuestion, ImageAttachment, TaskItemStatus } from './types';
 import { parseExtraEnv } from './types';
 import { debugLog } from './logger';
+import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, timestampMs, type UsageSnapshot } from './Usage';
 // Import from the mobile-safe utility module, then re-export so that desktop
 // callers that already import formatToolName/getToolIcon from ClaudeSession
 // continue to work without changes.
@@ -73,6 +74,8 @@ export interface SessionCallbacks {
    */
   onPermissionDenied?: (toolName: string, toolUseId: string, message: string, agentId?: string, decisionReasonType?: string) => void;
   onRateLimit?: (status: 'allowed' | 'allowed_warning' | 'rejected', resetsAt?: number) => void;
+  /** Fired whenever provider token, cost, quota, or account-usage data changes. */
+  onUsage?: (usage: import('./Usage').UsageSnapshot) => void;
   /** Fired when a tool result contains inline images (e.g. the Read tool reading a PNG). */
   onToolResultImages?: (images: Array<{ mediaType: string; data: string }>) => void;
   /** Fired when the agent's task list changes (TodoWrite / TaskCreate / TaskUpdate). */
@@ -146,6 +149,8 @@ export interface SessionCallbacks {
 
 export class ClaudeSession {
   private activeQuery: Query | null = null;
+  private latestUsage: UsageSnapshot | null = null;
+  private usageCallback: SessionCallbacks['onUsage'] = undefined;
   private recapEmitted = false;
   private interrupted = false;
   private resumeSessionId: string | undefined = undefined;
@@ -153,6 +158,11 @@ export class ClaudeSession {
   private inputOpen = false;
 
   constructor(private claudePath: string) {}
+
+  private applyUsage(update: UsageSnapshot): void {
+    this.latestUsage = mergeUsageSnapshot(this.latestUsage, update);
+    this.usageCallback?.(this.latestUsage);
+  }
 
   /** Idempotent: resolves the held-open input generator's release promise, if any. */
   private releaseInput(): void {
@@ -198,6 +208,7 @@ export class ClaudeSession {
   ): Promise<void> {
     this.interrupted = false;
     this.resumeSessionId = resumeSessionId;
+    this.usageCallback = callbacks.onUsage;
 
     const inputReleased = new Promise<void>((resolve) => {
       this.releaseInputResolve = resolve;
@@ -550,6 +561,7 @@ export class ClaudeSession {
           }
 
           case 'result': {
+            this.applyUsage(normalizeClaudeResult(msg as unknown as Record<string, any>));
             if (msg.subtype === 'success') {
               // Fallback recap from tool calls if no tool_use_summary was emitted
               if (allToolCalls.length > 0 && !this.recapEmitted) {
@@ -708,8 +720,9 @@ export class ClaudeSession {
             const info = rle.rate_limit_info as Record<string, unknown>;
             callbacks.onRateLimit?.(
               info.status as 'allowed' | 'allowed_warning' | 'rejected',
-              info.resetsAt as number | undefined,
+              timestampMs(info.resetsAt),
             );
+            this.applyUsage(normalizeClaudeRateLimit(info));
             break;
           }
 
@@ -900,6 +913,8 @@ export class ClaudeSession {
       return null;
     }
   }
+
+  async getUsageSnapshot(): Promise<UsageSnapshot | null> { return this.latestUsage; }
 }
 
 

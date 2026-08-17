@@ -30,6 +30,7 @@ import {
   rateLimitBackoffMs,
   MAX_RATE_LIMIT_AUTO_RETRIES,
 } from './rateLimitRecovery';
+import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, timestampMs, type UsageSnapshot } from './Usage';
 
 /**
  * Everything needed to open a thread's long-lived `Query`, once, for the
@@ -81,6 +82,7 @@ export class ThreadSession {
   private recapEmitted = false;
   /** Resolves the plugin-initiated /compact maintenance turn, if one is active. */
   private internalCompactionResolve: ((completed: boolean) => void) | null = null;
+  private latestUsage: UsageSnapshot | null = null;
 
   // --- state surface for a reaper / UI, per ADR-0002 §3 ---
   private _turnInFlight = false;
@@ -486,6 +488,13 @@ export class ThreadSession {
     }
   }
 
+  async getUsageSnapshot(): Promise<UsageSnapshot | null> { return this.latestUsage; }
+
+  private applyUsage(update: UsageSnapshot): void {
+    this.latestUsage = mergeUsageSnapshot(this.latestUsage, update);
+    this.currentOptions?.callbacks.onUsage?.(this.latestUsage);
+  }
+
   /**
    * `close()` then `start()` again, resuming from the last known SDK session
    * id (except for `'cwd-change'`, where resuming is unsafe by construction —
@@ -628,6 +637,7 @@ export class ThreadSession {
           }
 
           case 'result': {
+            this.applyUsage(normalizeClaudeResult(msg as unknown as Record<string, any>));
             this._lastActivityAt = Date.now();
             if (msg.subtype === 'success') {
               this.lastKnownSessionId = msg.session_id;
@@ -783,8 +793,9 @@ export class ThreadSession {
             const info = rle.rate_limit_info as Record<string, unknown>;
             callbacks.onRateLimit?.(
               info.status as 'allowed' | 'allowed_warning' | 'rejected',
-              info.resetsAt as number | undefined,
+              timestampMs(info.resetsAt),
             );
+            this.applyUsage(normalizeClaudeRateLimit(info));
             break;
           }
 

@@ -42,6 +42,7 @@ export type ThreadEvent =
   | { type: 'api_retry'; attempt: number; maxRetries: number; error: string }
   | { type: 'permission_denied'; toolName: string; toolUseId: string; message: string; agentId?: string; decisionReasonType?: string }
   | { type: 'rate_limit'; limitStatus: 'allowed' | 'allowed_warning' | 'rejected'; resetsAt?: number }
+  | { type: 'usage'; usage: import('./Usage').UsageSnapshot }
   | { type: 'interrupted' }
   | { type: 'cwd_changed'; cwd: string }
   | { type: 'thread_deleted' }
@@ -1668,6 +1669,11 @@ export class ThreadManager {
       onApiRetry: (attempt, maxRetries, error) => this.emit(threadId, { type: 'api_retry', attempt, maxRetries, error }),
       onPermissionDenied: (toolName, toolUseId, message, agentId, decisionReasonType) => this.emit(threadId, { type: 'permission_denied', toolName, toolUseId, message, agentId, decisionReasonType }),
       onRateLimit: (limitStatus, resetsAt) => this.emit(threadId, { type: 'rate_limit', limitStatus, resetsAt }),
+      onUsage: (usage) => {
+        thread.usageSnapshot = usage;
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'usage', usage });
+      },
       onModelFallback: (trigger, fromModel, toModel) => this.emit(threadId, { type: 'model_fallback', trigger, fromModel, toModel }),
       onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),
       onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
@@ -1920,6 +1926,17 @@ export class ThreadManager {
     const session = this.sessions.get(threadId);
     if (!session) return null;
     return session.getContextUsage();
+  }
+
+  /** Returns the latest cross-provider usage/quota snapshot, refreshing account activity on demand. */
+  async getUsageSnapshot(threadId: string): Promise<import('./Usage').UsageSnapshot | null> {
+    const thread = this.threads.get(threadId);
+    if (!thread) return null;
+    const session = this.sessions.get(threadId);
+    if (!session) return thread.usageSnapshot ?? null;
+    const usage = await session.getUsageSnapshot(true);
+    if (usage) thread.usageSnapshot = usage;
+    return usage ?? thread.usageSnapshot ?? null;
   }
 
   async interrupt(threadId: string): Promise<void> {

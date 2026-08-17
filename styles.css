@@ -7222,6 +7222,36 @@ body.ct-skills-resizing {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Cross-provider /usage card. */
+.ct-usage-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+.ct-usage-header, .ct-usage-quota-top { display: flex; align-items: center; gap: 7px; }
+.ct-usage-title { font-weight: 650; }
+.ct-usage-provider { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+.ct-usage-icon { display: inline-flex; }
+.ct-usage-icon svg { width: 16px; height: 16px; }
+.ct-usage-section { margin-top: 12px; }
+.ct-usage-section h4 { margin: 0 0 5px; font-size: 12px; color: var(--text-muted); text-transform: uppercase; }
+.ct-usage-primary { font-weight: 600; }
+.ct-usage-muted, .ct-usage-freshness { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.ct-usage-quota { margin: 8px 0; }
+.ct-usage-quota-top { justify-content: space-between; font-size: 13px; }
+.ct-usage-bar { height: 6px; margin: 5px 0; border-radius: 999px; overflow: hidden; background: var(--background-modifier-border); }
+.ct-usage-bar-fill { height: 100%; background: var(--interactive-accent); }
+.ct-usage-bar-warning { background: var(--color-yellow); }
+.ct-usage-bar-exhausted { background: var(--color-red); }
+.ct-usage-account-metrics { display: flex; flex-wrap: wrap; gap: 5px; }
+.ct-usage-account-metric { padding: 3px 6px; border-radius: 5px; background: var(--background-primary); font-size: 12px; }
+.ct-usage-daily { margin-top: 7px; }
+.ct-usage-daily-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 12px; color: var(--text-muted); }
+.ct-usage-freshness { margin-top: 12px; text-align: right; }
+
 .ct-agent-team { margin: 8px 12px 0; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-secondary); overflow: hidden; }
 .ct-agent-team-header { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--background-modifier-border); }
 .ct-agent-team-count, .ct-agent-state, .ct-agent-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
