@@ -59,7 +59,7 @@ export interface SessionCallbacks {
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
   onStatus?: (status: 'compacting' | 'requesting' | null) => void;
   onCompact?: (trigger: 'auto' | 'manual', preTokens: number) => void;
-  onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean, taskType?: string, workflowName?: string, subagentType?: string) => void;
+  onTaskStarted?: (taskId: string, description: string, skipTranscript: boolean, taskType?: string, workflowName?: string, subagentType?: string, parentNativeAgentId?: string, model?: string) => void;
   onTaskUpdated?: (taskId: string, patch: { status?: string; description?: string; error?: string }) => void;
   onTaskProgress?: (taskId: string, description: string, lastToolName?: string) => void;
   onTaskNotification?: (taskId: string, status: 'completed' | 'failed' | 'stopped', summary: string) => void;
@@ -624,6 +624,8 @@ export class ClaudeSession {
                   sys.task_type as string | undefined,
                   sys.workflow_name as string | undefined,
                   sys.subagent_type as string | undefined,
+                  sys.parent_task_id as string | undefined,
+                  sys.model as string | undefined,
                 );
                 break;
               case 'task_updated': {

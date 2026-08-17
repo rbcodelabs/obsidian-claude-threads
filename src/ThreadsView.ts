@@ -24,6 +24,7 @@ import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
 import { partitionThreads } from './threadRowState';
+import { renderAgentTeam } from './agentRuns/renderAgentTeam';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -65,6 +66,7 @@ export class ThreadsView extends ItemView {
   private titleTextEl!: HTMLSpanElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
+  private agentTeamEl!: HTMLElement;
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
@@ -559,6 +561,7 @@ export class ThreadsView extends ItemView {
     });
 
     this.mainEl = root.createDiv('ct-main');
+    this.agentTeamEl = this.mainEl.createDiv('ct-agent-team ct-hidden');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
     const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
@@ -2023,6 +2026,7 @@ export class ThreadsView extends ItemView {
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
+    this.renderAgentTeam();
 
     if (thread.messages.length === 0) {
       const empty = this.messagesEl.createDiv('ct-empty');
@@ -2119,6 +2123,16 @@ export class ThreadsView extends ItemView {
 
     this.scrollToBottom();
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
+  }
+
+  private renderAgentTeam(): void {
+    if (!this.activeThreadId || !this.agentTeamEl) return;
+    renderAgentTeam(
+      this.agentTeamEl,
+      this.manager.getAgentRuns(this.activeThreadId),
+      id => { this.manager.selectAgentRun(this.activeThreadId!, id); this.renderAgentTeam(); },
+      this.manager.getSelectedAgentRun(this.activeThreadId),
+    );
   }
 
   private async appendMessage(msg: ChatMessage): Promise<HTMLElement | null> {
@@ -3421,6 +3435,11 @@ export class ThreadsView extends ItemView {
 
       case 'recap': {
         this.renderThreadInfo();
+        break;
+      }
+
+      case 'agent_runs_changed': {
+        this.renderAgentTeam();
         break;
       }
 

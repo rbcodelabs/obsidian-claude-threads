@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import ClaudeThreadsPlugin from '../../src/main';
+import ClaudeThreadsPlugin, { subscribeAgentRunPersistence } from '../../src/main';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
@@ -70,6 +70,22 @@ function queueWrite(saveData: ReturnType<typeof vi.fn>, disk: { state: SavedSett
 }
 
 describe('ClaudeThreadsPlugin.saveSettings() — serialized write queue', () => {
+  it('requests an immediate settings save whenever durable agent-run state changes', () => {
+    const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+    const saveSettings = vi.fn();
+    const unsubscribe = subscribeAgentRunPersistence(manager, saveSettings);
+    const thread = manager.createThread('agent persistence', '/tmp');
+    const callbacks = (manager as any).buildSessionCallbacks(thread.id, thread);
+
+    callbacks.onTaskStarted('agent-1', 'Review persistence', false, 'subagent');
+
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+    expect(thread.agentRuns).toEqual([
+      expect.objectContaining({ nativeAgentId: 'agent-1', status: 'working' }),
+    ]);
+    unsubscribe();
+  });
+
   it('a slow overlapping write does not clobber a later write with stale thread state (regression: archive resurrection)', async () => {
     const { plugin, saveData, disk } = makePlugin();
     const thread = plugin.manager.createThread('to be archived', '/tmp');
