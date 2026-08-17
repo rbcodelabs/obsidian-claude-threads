@@ -13,6 +13,9 @@ export interface HarnessSession {
   prepareForSend?(text: string, images?: ImageAttachment[]): Promise<void>;
   send(text: string, images?: ImageAttachment[]): void;
   interrupt(): Promise<void>;
+  /** Native child-agent controls. Absent unless a harness exposes a directly verified route. */
+  sendAgentMessage?(nativeAgentId: string, text: string): Promise<void>;
+  interruptAgent?(nativeAgentId: string): Promise<void>;
   close(): void;
   setModel(model: string | undefined): Promise<void>;
   setPermissionMode(mode: string): Promise<void>;

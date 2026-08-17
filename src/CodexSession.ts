@@ -538,7 +538,7 @@ export class CodexSession {
         for (const id of ids) {
           if (!this.announcedSubagents.has(id)) {
             this.announcedSubagents.add(id);
-            callbacks.onTaskStarted?.(id, String(item.prompt ?? 'Codex sub-agent'), false, 'subagent', undefined, item.model ?? undefined);
+            callbacks.onTaskStarted?.(id, String(item.prompt ?? 'Codex sub-agent'), false, 'subagent', undefined, undefined, item.senderThreadId ? String(item.senderThreadId) : undefined, item.model ?? undefined);
           }
           if (completed) {
             const state = item.agentsStates?.[id];
@@ -558,7 +558,7 @@ export class CodexSession {
       const id = String(item.agentThreadId ?? item.id);
       if (!this.announcedSubagents.has(id)) {
         this.announcedSubagents.add(id);
-        callbacks.onTaskStarted?.(id, `Codex sub-agent ${id}`, false, 'subagent');
+        callbacks.onTaskStarted?.(id, `Codex sub-agent ${id}`, false, 'subagent', undefined, undefined, item.parentThreadId ? String(item.parentThreadId) : undefined, item.model ? String(item.model) : undefined);
       }
       if (item.kind === 'interrupted') callbacks.onTaskUpdated?.(id, { status: 'killed' });
       else callbacks.onTaskProgress?.(id, `Sub-agent ${item.kind}`, item.kind);

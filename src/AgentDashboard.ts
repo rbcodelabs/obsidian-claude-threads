@@ -264,6 +264,7 @@ export class AgentDashboard extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
+      event.type === 'agent_runs_changed' ||
       event.type === 'status_tags';
     if (isStateChange) {
       this.scheduleRender();
@@ -334,7 +335,10 @@ export class AgentDashboard extends ItemView {
       ? allThreads.filter(t =>
           t.title.toLowerCase().includes(q) ||
           (t.summary ?? '').toLowerCase().includes(q) ||
-          (t.recap ?? '').toLowerCase().includes(q)
+          (t.recap ?? '').toLowerCase().includes(q) ||
+          this.manager.getAgentRuns(t.id).some(agent =>
+            `${agent.role ?? ''} ${agent.description} ${agent.currentActivity ?? ''}`.toLowerCase().includes(q)
+          )
         )
       : allThreads;
     const buckets = partitionThreads(threads, (t) => ({
@@ -569,6 +573,28 @@ export class AgentDashboard extends ItemView {
       body.createDiv({ cls: 'ct-agents-row-cwd', text: buildCwdLabel(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
+    const agentRuns = this.manager.getAgentRuns(thread.id);
+    if (agentRuns.length) {
+      const tree = body.createDiv({ cls: 'ct-dashboard-agent-tree', attr: { role: 'tree', 'aria-label': `Agents in ${thread.title}` } });
+      const byParent = new Map<string | undefined, typeof agentRuns>();
+      for (const agent of agentRuns) {
+        const key = agent.parentAgentRunId;
+        const bucket = byParent.get(key) ?? []; bucket.push(agent); byParent.set(key, bucket);
+      }
+      const appendAgents = (host: HTMLElement, parentId?: string, level = 1) => {
+        for (const agent of byParent.get(parentId) ?? []) {
+          const button = host.createEl('button', { cls: `ct-dashboard-agent ct-agent-${agent.status}`, attr: { role: 'treeitem', 'aria-level': String(level), title: `Open ${agent.description}` } });
+          button.createSpan({ cls: 'ct-agent-status-dot' });
+          button.createSpan({ text: agent.role ?? agent.description });
+          button.addEventListener('click', e => {
+            e.stopPropagation(); this.manager.selectAgentRun(thread.id, agent.id); this.plugin.openThreadInChatView(thread.id);
+          });
+          appendAgents(host, agent.id, level + 1);
+        }
+      };
+      appendAgents(tree);
+    }
+
     const meta = row.createDiv('ct-agents-row-meta');
     const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });
     this.timeEls.set(thread.id, timeEl);
@@ -687,4 +713,3 @@ export class AgentDashboard extends ItemView {
   }
 
 }
-

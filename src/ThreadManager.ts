@@ -10,8 +10,9 @@ import { resolveGitProjectName } from './pathUtils';
 import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
+import { AgentRunStore } from './agentRuns/AgentRunStore';
 import type { App } from 'obsidian';
-import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo } from './types';
+import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo, AgentRun } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
@@ -64,6 +65,7 @@ export type ThreadEvent =
   | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
   | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
   | { type: 'task_progress_summary'; taskId: string; summary: string }
+  | { type: 'agent_runs_changed'; agentRuns: AgentRun[] }
   | { type: 'git_operation'; summary: string }
   | { type: 'file_user_modified'; filePath: string }
   | { type: 'tool_result_status'; toolUseId: string; status: 'success' | 'error'; durationMs?: number }
@@ -123,6 +125,8 @@ function parseAgentMarkdown(content: string): { name?: string; description?: str
 
 export class ThreadManager {
   private threads: Map<string, Thread> = new Map();
+  private agentRuns = new AgentRunStore();
+  private selectedAgentRuns = new Map<string, string>();
   private projects: Map<string, Project> = new Map();
   /**
    * One long-lived `ThreadSession` per thread (ADR-0002 §2), lazily created
@@ -381,6 +385,7 @@ export class ThreadManager {
       // Migrate threads persisted before updatedAt was introduced so that the
       // Kanban byRecency sort never sees undefined (NaN comparisons break sort).
       if (!t.updatedAt) t.updatedAt = t.createdAt;
+      if (t.agentRuns?.length) this.agentRuns.restore(t.id, t.agentRuns);
       this.threads.set(t.id, t);
     }
   }
@@ -397,6 +402,17 @@ export class ThreadManager {
 
   getThread(id: string): Thread | undefined {
     return this.threads.get(id);
+  }
+
+  getAgentRuns(threadId: string): AgentRun[] { return this.agentRuns.getByThread(threadId); }
+  getAgentRun(agentRunId: string): AgentRun | undefined { return this.agentRuns.getById(agentRunId); }
+  getSelectedAgentRun(threadId: string): string | undefined { return this.selectedAgentRuns.get(threadId); }
+  selectAgentRun(threadId: string, agentRunId: string): void { this.selectedAgentRuns.set(threadId, agentRunId); this.emit(threadId, { type: 'agent_runs_changed', agentRuns: this.getAgentRuns(threadId) }); }
+
+  private persistAgentRuns(thread: Thread): void {
+    thread.agentRuns = this.agentRuns.snapshot(thread.id);
+    thread.updatedAt = Date.now();
+    this.emit(thread.id, { type: 'agent_runs_changed', agentRuns: thread.agentRuns });
   }
 
   createThread(title: string, cwd?: string, projectId?: string): Thread {
@@ -745,6 +761,7 @@ export class ThreadManager {
    * a spawned subagent or workflow finishes server-side.
    */
   hasActiveBackgroundTasks(threadId: string): boolean {
+    if (this.agentRuns.getByThread(threadId).some(run => run.status === 'starting' || run.status === 'working' || run.status === 'waiting')) return true;
     const live = this.activeBgTasks.get(threadId);
     if (live && live.size > 0) return true;
     return (this.threads.get(threadId)?.pendingBackgroundTasks?.length ?? 0) > 0;
@@ -1596,7 +1613,7 @@ export class ThreadManager {
         thread.updatedAt = Date.now();
         this.emit(threadId, { type: 'compact', message: compactMsg });
       },
-      onTaskStarted: (taskId, description, skipTranscript, taskType, workflowName, subagentType) => {
+      onTaskStarted: (taskId, description, skipTranscript, taskType, workflowName, subagentType, parentNativeAgentId, model) => {
         this.threadActivity.set(threadId, description);
         // Background tasks use skipTranscript=true. Track them so we can detect
         // if they're still running when the session ends.
@@ -1605,14 +1622,33 @@ export class ThreadManager {
           active.set(taskId, { description, startedAt: Date.now() });
           this.activeBgTasks.set(threadId, active);
         }
+        if (AgentRunStore.isAgentTask({ skipTranscript, taskType, subagentType })) {
+          this.agentRuns.observeStart({
+            threadId, harness: thread.agentHarness ?? 'claude', nativeAgentId: taskId,
+            taskId, description, role: subagentType, parentNativeAgentId, model,
+          });
+          this.persistAgentRuns(thread);
+        }
         this.emit(threadId, { type: 'task_started', taskId, description, skipTranscript, taskType, workflowName, subagentType });
       },
       onTaskUpdated: (taskId, patch) => {
+        const run = this.agentRuns.getByNativeId(threadId, thread.agentHarness ?? 'claude', taskId);
+        if (run) {
+          if (patch.description) run.description = patch.description;
+          const status = patch.status === 'completed' ? 'completed' : patch.status === 'failed' ? 'failed' : patch.status === 'killed' ? 'interrupted' : patch.status === 'pending' ? 'waiting' : 'working';
+          this.agentRuns.observeStatus(threadId, run.harness, taskId, status, undefined, patch.error);
+          this.persistAgentRuns(thread);
+        }
         this.emit(threadId, { type: 'task_updated', taskId, ...patch });
       },
       onTaskProgress: (taskId, description, lastToolName) => {
         const suffix = lastToolName ? ` · ${lastToolName}` : '';
         this.threadActivity.set(threadId, description + suffix);
+        const run = this.agentRuns.getByNativeId(threadId, thread.agentHarness ?? 'claude', taskId);
+        if (run) {
+          this.agentRuns.observeActivity(threadId, run.harness, taskId, { kind: lastToolName ? 'tool' : 'activity', text: description, toolName: lastToolName, timestamp: Date.now() });
+          this.persistAgentRuns(thread);
+        }
         this.emit(threadId, { type: 'task_progress', taskId, description, lastToolName });
       },
       onTaskNotification: (taskId, status, summary) => {
@@ -1621,6 +1657,11 @@ export class ThreadManager {
         // Also clear from persisted state (handles notifications that arrive
         // on a poll-resume after a previous session missed them).
         this.clearPendingBackgroundTask(threadId, taskId);
+        const run = this.agentRuns.getByNativeId(threadId, thread.agentHarness ?? 'claude', taskId);
+        if (run) {
+          this.agentRuns.observeStatus(threadId, run.harness, taskId, status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'interrupted', summary);
+          this.persistAgentRuns(thread);
+        }
         this.emit(threadId, { type: 'task_notification', taskId, status, summary });
       },
       onNotification: (text, priority) => this.emit(threadId, { type: 'notification', text, priority }),
@@ -1631,7 +1672,14 @@ export class ThreadManager {
       onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),
       onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
       onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),
-      onTaskProgressSummary: (taskId, summary) => this.emit(threadId, { type: 'task_progress_summary', taskId, summary }),
+      onTaskProgressSummary: (taskId, summary) => {
+        const run = this.agentRuns.getByNativeId(threadId, thread.agentHarness ?? 'claude', taskId);
+        if (run) {
+          this.agentRuns.observeActivity(threadId, run.harness, taskId, { kind: 'activity', text: summary, timestamp: Date.now() });
+          this.persistAgentRuns(thread);
+        }
+        this.emit(threadId, { type: 'task_progress_summary', taskId, summary });
+      },
       onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
       onToolResult: (toolUseId, status, durationMs) => this.emit(threadId, { type: 'tool_result_status', toolUseId, status, durationMs }),
       onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),

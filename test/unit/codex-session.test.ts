@@ -214,7 +214,7 @@ describe('CodexSession protocol notifications', () => {
     });
 
     expect(onToolUse).toHaveBeenCalledWith(expect.objectContaining({ name: 'Agent', summary: 'Audit event coverage' }));
-    expect(onTaskStarted).toHaveBeenCalledWith('agent-1', 'Audit event coverage', false, 'subagent', undefined, 'gpt-5.6-codex');
+    expect(onTaskStarted).toHaveBeenCalledWith('agent-1', 'Audit event coverage', false, 'subagent', undefined, undefined, undefined, 'gpt-5.6-codex');
     expect(onTaskUpdated).toHaveBeenCalledWith('agent-1', { status: 'completed', error: undefined });
     expect(onToolResult).toHaveBeenCalledWith('call-1', 'success', undefined);
   });
