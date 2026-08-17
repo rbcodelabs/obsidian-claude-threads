@@ -93,6 +93,47 @@ export interface PendingBackgroundTask {
   pollCount: number;
 }
 
+export type AgentRunStatus = 'starting' | 'working' | 'waiting' | 'completed' | 'failed' | 'interrupted' | 'unavailable';
+
+export interface AgentCapabilities {
+  viewTranscript: boolean;
+  sendMessage: boolean;
+  interrupt: boolean;
+}
+
+export interface AgentRunEvent {
+  kind: 'lifecycle' | 'activity' | 'tool' | 'result' | 'error' | 'control';
+  text: string;
+  timestamp: number;
+  nativeEventId?: string;
+  toolName?: string;
+}
+
+/** Durable projection of a harness-native child agent. It is not a Thread. */
+export interface AgentRun {
+  id: string;
+  threadId: string;
+  nativeAgentId: string;
+  parentAgentRunId?: string;
+  /** Retained until a late parent-start event resolves parentAgentRunId. */
+  parentNativeAgentId?: string;
+  taskId?: string;
+  harness: 'claude' | 'codex';
+  role?: string;
+  description: string;
+  model?: string;
+  status: AgentRunStatus;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  currentActivity?: string;
+  usage?: { inputTokens?: number; outputTokens?: number };
+  capabilities: AgentCapabilities;
+  events: AgentRunEvent[];
+  resultSummary?: string;
+  error?: string;
+}
+
 export type TaskItemStatus = 'pending' | 'in_progress' | 'completed';
 
 /**
@@ -286,6 +327,8 @@ export interface Thread {
    * these automatically and clears them when completions arrive.
    */
   pendingBackgroundTasks?: PendingBackgroundTask[];
+  /** Persisted native-agent workspace projection. */
+  agentRuns?: AgentRun[];
   /**
    * Persistent goal set via the /goal command. Injected into the session's
    * appended system prompt on every turn until cleared with /goal clear.

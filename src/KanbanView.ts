@@ -815,6 +815,8 @@ export class KanbanView extends ItemView {
     }
     const cardTitleEl = cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
     appendOrchestratorBadge(cardTitleEl, thread.id, this.plugin.settings.orchestratorThreadId);
+    const agentCount = this.manager.getAgentRuns?.(thread.id).length ?? 0;
+    if (agentCount) cardHeader.createDiv({ cls: 'ct-kanban-agent-count', text: `◉ ${agentCount}`, attr: { title: `${agentCount} native agent${agentCount === 1 ? '' : 's'}` } });
 
     // Summary (idle threads only). Always created for idle cards — kept hidden
     // (display:none via ct-hidden) when empty — so a later `summary_updated`
@@ -1170,6 +1172,7 @@ export class KanbanView extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
+      event.type === 'agent_runs_changed' ||
       event.type === 'status_tags' ||
       event.type === 'wakeup_changed' ||
       event.type === 'run_state_settled';

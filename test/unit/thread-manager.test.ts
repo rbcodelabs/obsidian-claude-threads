@@ -21,6 +21,20 @@ describe('ThreadManager — thread lifecycle', () => {
     expect(manager.getThread(t.id)).toBe(t);
   });
 
+  it('normalizes native sub-agent callbacks into persisted AgentRuns', () => {
+    const t = manager.createThread('Agents');
+    t.agentHarness = 'codex';
+    const callbacks = (manager as any).buildSessionCallbacks(t.id, t);
+    callbacks.onTaskStarted('agent-1', 'Audit fixtures', false, 'subagent');
+    callbacks.onTaskProgress('agent-1', 'Reading tests', 'Read');
+    callbacks.onTaskUpdated('agent-1', { status: 'completed' });
+
+    expect(manager.getAgentRuns(t.id)).toEqual([
+      expect.objectContaining({ nativeAgentId: 'agent-1', description: 'Audit fixtures', currentActivity: 'Reading tests', status: 'completed' }),
+    ]);
+    expect(t.agentRuns).toHaveLength(1);
+  });
+
   it('createThread falls back to defaultCwd from settings', () => {
     const m = makeManager({ defaultCwd: '/default' });
     const t = m.createThread('T');

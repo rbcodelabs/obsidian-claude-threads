@@ -683,6 +683,8 @@ export class ThreadSession {
                   sys.task_type as string | undefined,
                   sys.workflow_name as string | undefined,
                   sys.subagent_type as string | undefined,
+                  sys.parent_task_id as string | undefined,
+                  sys.model as string | undefined,
                 );
                 break;
               case 'task_updated': {

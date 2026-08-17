@@ -7222,3 +7222,29 @@ body.ct-skills-resizing {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ct-agent-team { margin: 8px 12px 0; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-secondary); overflow: hidden; }
+.ct-agent-team-header { display: flex; justify-content: space-between; padding: 8px 10px; border-bottom: 1px solid var(--background-modifier-border); }
+.ct-agent-team-count, .ct-agent-state, .ct-agent-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ct-agent-tree { padding: 4px 6px; }
+.ct-agent-row { margin-left: 0; }
+.ct-agent-row .ct-agent-row { margin-left: 16px; }
+.ct-agent-row-button { width: 100%; min-height: 36px; display: grid; grid-template-columns: 8px auto 1fr auto; align-items: center; gap: 7px; padding: 4px 6px; border: 0; background: transparent; color: var(--text-normal); text-align: left; }
+.ct-agent-row-button:hover, .ct-agent-row-button:focus-visible { background: var(--background-modifier-hover); }
+.ct-agent-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); display: inline-block; }
+.ct-agent-working > .ct-agent-row-button .ct-agent-status-dot, .ct-agent-working .ct-agent-status-dot { background: var(--interactive-accent); }
+.ct-agent-completed > .ct-agent-row-button .ct-agent-status-dot, .ct-agent-completed .ct-agent-status-dot { background: var(--color-green); }
+.ct-agent-failed > .ct-agent-row-button .ct-agent-status-dot, .ct-agent-failed .ct-agent-status-dot { background: var(--color-red); }
+.ct-agent-role { font-weight: 600; }
+.ct-agent-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ct-agent-detail { border-top: 1px solid var(--background-modifier-border); padding: 10px; max-height: 280px; overflow: auto; }
+.ct-agent-breadcrumbs { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ct-agent-detail h3 { margin: 6px 0 2px; font-size: var(--font-ui-medium); }
+.ct-agent-timeline { margin: 8px 0; padding-left: 22px; }
+.ct-agent-event { margin: 5px 0; }
+.ct-agent-event time { color: var(--text-faint); margin-right: 8px; font-size: var(--font-ui-smaller); }
+.ct-agent-capability-note { color: var(--text-muted); font-size: var(--font-ui-smaller); margin: 8px 0 0; }
+.ct-dashboard-agent-tree { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.ct-dashboard-agent { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; font-size: var(--font-ui-smaller); }
+.ct-dashboard-agent[aria-level="2"] { margin-left: 12px; }
+.ct-kanban-agent-count { color: var(--text-muted); font-size: var(--font-ui-smaller); white-space: nowrap; }
+@media (max-width: 600px) { .ct-agent-team { margin-inline: 6px; } .ct-agent-row-button, .ct-dashboard-agent { min-height: 44px; } .ct-agent-row-button { grid-template-columns: 8px auto 1fr; } .ct-agent-state { grid-column: 3; } }

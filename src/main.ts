@@ -115,6 +115,20 @@ export interface PendingWakeup {
   reason: string;
 }
 
+/**
+ * Persist AgentRun snapshots as they change, rather than waiting for the
+ * owning turn to settle. This is deliberately a small exported seam so the
+ * crash-recovery contract can be covered without constructing an Obsidian App.
+ */
+export function subscribeAgentRunPersistence(
+  manager: Pick<ThreadManager, 'subscribe'>,
+  persist: () => void,
+): () => void {
+  return manager.subscribe((_threadId, event) => {
+    if (event.type === 'agent_runs_changed') persist();
+  });
+}
+
 export default class ClaudeThreadsPlugin extends Plugin {
   settings!: PluginSettings;
   manager!: ThreadManager;
@@ -559,6 +573,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
       }
     });
     this.register(unsubStatus);
+
+    // AgentRun state is a crash-recovery record, so persist every lifecycle
+    // projection while the parent turn is still active. Waiting for done/error
+    // would lose in-flight agents if Obsidian or the host process exits.
+    const unsubAgentRuns = subscribeAgentRunPersistence(this.manager, () => {
+      this.saveSettings().catch(console.error);
+    });
+    this.register(unsubAgentRuns);
 
     // Persist cwd repairs to data.json. repairStaleCwds() (called below at load
     // time) already calls saveSettings() directly, but the session-start safety-net

@@ -25,6 +25,68 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });
 
+  test('native agent workspace', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = view.manager;
+      const threadId = 'thread-fix-auth';
+      const store = manager.agentRuns;
+      const parent = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-review', description: 'Review authentication flow', role: 'reviewer', model: 'claude-sonnet-4-5' }, Date.now() - 65000);
+      const child = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-tests', parentNativeAgentId: 'agent-review', description: 'Inspect regression tests', role: 'test engineer' }, Date.now() - 35000);
+      store.observeActivity(threadId, 'claude', 'agent-review', { kind: 'tool', text: 'Reading auth middleware', toolName: 'Read', timestamp: Date.now() - 4000 });
+      store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
+      manager.selectAgentRun(threadId, child.id);
+      view.focusThread(threadId);
+      view.renderAgentTeam();
+    });
+    await page.waitForSelector('.ct-agent-detail');
+    await expect(page.locator('.ct-agent-tree [role="treeitem"]')).toHaveCount(2);
+    await expect(page.locator('.ct-agent-team')).toHaveScreenshot('native-agent-workspace.png');
+  });
+
+  for (const viewport of [
+    { name: 'iphone-14', width: 390, height: 844 },
+    { name: 'iphone-se', width: 375, height: 667 },
+  ]) {
+    test(`native agent workspace mobile layout (${viewport.width}x${viewport.height})`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(harnessUrl);
+      await page.waitForSelector('.ct-title-row');
+      await page.evaluate(() => {
+        const view = (window as any).__view;
+        const manager = view.manager;
+        const threadId = 'thread-fix-auth';
+        const store = manager.agentRuns;
+        store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-review', description: 'Review authentication flow', role: 'reviewer', model: 'claude-sonnet-4-5' }, Date.now() - 65000);
+        const child = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-tests', parentNativeAgentId: 'agent-review', description: 'Inspect regression tests', role: 'test engineer' }, Date.now() - 35000);
+        store.observeActivity(threadId, 'claude', 'agent-review', { kind: 'tool', text: 'Reading auth middleware', toolName: 'Read', timestamp: Date.now() - 4000 });
+        store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
+        manager.selectAgentRun(threadId, child.id);
+        view.focusThread(threadId);
+        view.renderAgentTeam();
+
+        // AgentDashboard is not mounted by this harness, so render its real
+        // interactive class to verify the shared mobile tap-target contract.
+        const dashboardButton = document.createElement('button');
+        dashboardButton.className = 'ct-dashboard-agent';
+        dashboardButton.textContent = 'Test engineer';
+        document.body.appendChild(dashboardButton);
+      });
+
+      await page.waitForSelector('.ct-agent-detail');
+      await expect(page.locator('.ct-agent-row-button').first()).toHaveCSS('min-height', '44px');
+      await expect(page.locator('.ct-dashboard-agent')).toHaveCSS('min-height', '44px');
+      const hasHorizontalOverflow = await page.locator('.ct-agent-team').evaluate(
+        (element) => element.scrollWidth > element.clientWidth,
+      );
+      expect(hasHorizontalOverflow).toBe(false);
+      await expect(page.locator('.ct-agent-team')).toHaveScreenshot(`native-agent-workspace-${viewport.name}.png`);
+    });
+  }
+
   test('wikilink rendering in assistant message', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
