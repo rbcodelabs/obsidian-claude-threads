@@ -29,6 +29,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { TFile } from 'obsidian';
 import { VaultPersistence } from '../../src/VaultPersistence';
 import type { Thread } from '../../src/types';
+import { decodeThreadRecoverySnapshot, recoverySnapshotPath } from '../../src/threadRecoverySnapshot';
 
 /** A deferred promise whose resolution the test controls explicitly. */
 function deferred<T = void>() {
@@ -75,6 +76,22 @@ function baseThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe('VaultPersistence.saveThread() — per-thread write serialization', () => {
+  it('renames the recovery sidecar with its presentation note after a later title change', async () => {
+    const app = makeApp();
+    const vp = new VaultPersistence(app as any, 'Claude');
+    const thread = baseThread();
+    const original = await vp.saveThread(thread);
+    const originalSidecar = recoverySnapshotPath(original);
+
+    thread.title = 'Later Title';
+    const renamed = await vp.saveThread(thread);
+
+    expect(renamed).not.toBe(original);
+    expect(app.contents[original]).toBeUndefined();
+    expect(app.contents[originalSidecar]).toBeUndefined();
+    expect(app.contents[recoverySnapshotPath(renamed)]).toBeDefined();
+  });
+
   it('concurrent saves on the same thread with a title change mid-flight do not throw and converge on exactly one file matching the final title', async () => {
     const app = makeApp();
     const vp = new VaultPersistence(app as any, 'Claude');
@@ -101,9 +118,11 @@ describe('VaultPersistence.saveThread() — per-thread write serialization', () 
 
     expect(r1).toBe(r2);
     expect(r1).toContain('renamed-title');
-    // Exactly one file exists — no stale "Original Title" orphan left behind.
-    expect(Object.keys(app.contents)).toEqual([r1]);
+    // Exactly one presentation note and its canonical recovery sidecar exist —
+    // no stale "Original Title" artifacts are left behind.
+    expect(Object.keys(app.contents).sort()).toEqual([r1, recoverySnapshotPath(r1)].sort());
     expect(app.contents[r1]).toContain('# Renamed Title');
+    expect(decodeThreadRecoverySnapshot(app.contents[recoverySnapshotPath(r1)])?.title).toBe('Renamed Title');
     expect(thread.noteFile).toBe(r1);
   });
 
@@ -129,9 +148,10 @@ describe('VaultPersistence.saveThread() — per-thread write serialization', () 
     gate.resolve();
     await Promise.all([p1, p2, p3]);
 
-    // Three saveThread() calls should not produce three underlying writes.
+    // Each save pass writes two artifacts (presentation + recovery). Three
+    // requests coalesce into at most two passes rather than six writes.
     const totalWriteOps = createSpy.mock.calls.length + modifySpy.mock.calls.length;
-    expect(totalWriteOps).toBeLessThan(3);
+    expect(totalWriteOps).toBeLessThanOrEqual(4);
     expect(thread.noteFile).toBeDefined();
     expect(app.contents[thread.noteFile!]).toBeDefined();
   });
@@ -173,7 +193,8 @@ describe('VaultPersistence.saveThread() — per-thread write serialization', () 
     });
 
     await expect(vp.saveThread(thread)).resolves.toBe(fileName);
-    expect(modifySpy).toHaveBeenCalledTimes(1);
+    // One failed presentation modify plus one successful sidecar modify.
+    expect(modifySpy).toHaveBeenCalledTimes(2);
     expect(app.contents[fileName]).toBeDefined();
     expect(thread.noteFile).toBe(fileName);
   });

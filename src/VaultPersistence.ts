@@ -1,6 +1,11 @@
 import { App, TFile, normalizePath } from 'obsidian';
-import type { Thread, ChatMessage, ThreadStatus } from './types';
+import type { Thread, ChatMessage } from './types';
 import { imageEmbedMarkdown } from './imageExternalization';
+import {
+  decodeThreadRecoverySnapshot,
+  encodeThreadRecoverySnapshot,
+  recoverySnapshotPath,
+} from './threadRecoverySnapshot';
 
 export class VaultPersistence {
   private folder: string;
@@ -96,7 +101,12 @@ export class VaultPersistence {
             if (renamed instanceof TFile) {
               await this.app.vault.modify(renamed, content);
             }
+            const staleSidecar = this.app.vault.getAbstractFileByPath(recoverySnapshotPath(thread.noteFile));
+            if (staleSidecar instanceof TFile) {
+              await this.app.vault.rename(staleSidecar, recoverySnapshotPath(fileName));
+            }
             thread.noteFile = fileName;
+            await this.writeRecoverySnapshot(fileName, thread);
             return fileName;
           } catch {
             // The stale file vanished/moved out from under us between the
@@ -112,7 +122,16 @@ export class VaultPersistence {
     // Keep noteFile in sync so callers can reference the vault path.
     // Only reached after a call above that actually succeeded.
     thread.noteFile = fileName;
+    await this.writeRecoverySnapshot(fileName, thread);
     return fileName;
+  }
+
+  private async writeRecoverySnapshot(markdownPath: string, thread: Thread): Promise<void> {
+    const path = recoverySnapshotPath(markdownPath);
+    const content = encodeThreadRecoverySnapshot({ ...thread, noteFile: markdownPath });
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) await this.app.vault.modify(existing, content);
+    else await this.app.vault.create(path, content);
   }
 
   /**
@@ -144,6 +163,14 @@ export class VaultPersistence {
         const content = await this.app.vault.read(file);
         const updated = content.replace(/^(status:\s*)waiting$/m, '$1archived');
         await this.app.vault.modify(file, updated);
+        const sidecar = this.app.vault.getAbstractFileByPath(recoverySnapshotPath(file.path));
+        if (sidecar instanceof TFile) {
+          const snapshot = decodeThreadRecoverySnapshot(await this.app.vault.read(sidecar));
+          if (snapshot) {
+            snapshot.status = 'archived';
+            await this.app.vault.modify(sidecar, encodeThreadRecoverySnapshot(snapshot));
+          }
+        }
         count++;
       } catch {
         // skip unreadable files
@@ -153,11 +180,8 @@ export class VaultPersistence {
   }
 
   async loadAllThreads(): Promise<Thread[]> {
-    // A thread's title can change over its lifetime, and older plugin versions
-    // could leave the pre-rename note behind. Treat those files as snapshots of
-    // one thread, not as independent threads. In particular, an old `waiting`
-    // snapshot must never override a newer `archived` snapshot and resurrect a
-    // thread during startup recovery.
+    // Markdown bodies are presentation-only. Recovery reads the versioned JSON
+    // sidecar and never attempts to reconstruct canonical state from prose.
     const threadsById = new Map<string, Thread>();
     const files = this.app.vault.getMarkdownFiles().filter(
       (f) => f.path.startsWith(this.folder + '/'),
@@ -170,8 +194,11 @@ export class VaultPersistence {
       if (!cached?.frontmatter?.['thread_id']) continue;
 
       try {
-        const content = await this.app.vault.read(file);
-        const thread = this.markdownToThread(content, file.path);
+        const sidecar = this.app.vault.getAbstractFileByPath(recoverySnapshotPath(file.path));
+        if (!(sidecar instanceof TFile)) continue;
+        const content = await this.app.vault.read(sidecar);
+        const decoded = decodeThreadRecoverySnapshot(content);
+        const thread = decoded ? { ...decoded, noteFile: file.path } : null;
         if (thread) {
           const current = threadsById.get(thread.id);
           if (
@@ -245,82 +272,4 @@ export class VaultPersistence {
     return body;
   }
 
-  private markdownToThread(content: string, filePath: string): Thread | null {
-    try {
-      const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-      if (!frontmatterMatch) return null;
-
-      const fm = frontmatterMatch[1];
-      const get = (key: string) => {
-        const m = fm.match(new RegExp(`^${key}:\\s*(.*)$`, 'm'));
-        return m ? m[1].trim() : undefined;
-      };
-
-      const id = get('thread_id');
-      if (!id) return null;
-      const cwd = get('cwd') ?? '';
-
-      const titleMatch = content.match(/^# (.+)$/m);
-      const title = titleMatch ? titleMatch[1] : (get('title')?.replace(/^"|"$/g, '') ?? 'Untitled');
-      const sessionId = get('claude_session_id');
-      const createdAt = get('created') ? new Date(get('created')!).getTime() : Date.now();
-      const updatedAt = get('updated') ? new Date(get('updated')!).getTime() : createdAt;
-      const rawStatus = get('status');
-      const status = (rawStatus === 'waiting' || rawStatus === 'active' || rawStatus === 'error' || rawStatus === 'archived')
-        ? rawStatus as ThreadStatus
-        : 'waiting';
-      const model = get('model');
-      const rawLogPath = get('raw_log');
-      const summaryRaw = get('summary');
-      const summary = summaryRaw ? summaryRaw.replace(/^"|"$/g, '') : undefined;
-
-      const messages = this.parseMessages(content.replace(/^---[\s\S]*?---\n/, ''));
-
-      return {
-        id,
-        sessionId,
-        title,
-        cwd,
-        messages,
-        createdAt,
-        updatedAt,
-        noteFile: filePath,
-        rawLogPath,
-        status,
-        model,
-        summary,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private parseMessages(body: string): ChatMessage[] {
-    const messages: ChatMessage[] = [];
-    const parts = body.split(/\n\n(?=\*\*(?:You|Claude):\*\*)/);
-    let timestamp = Date.now();
-
-    for (const part of parts) {
-      const userMatch = part.match(/^\*\*You:\*\*\n\n([\s\S]*?)$/);
-      const claudeMatch = part.match(/^\*\*Claude:\*\*\n\n([\s\S]*?)$/);
-
-      if (userMatch) {
-        messages.push({
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: userMatch[1].trim(),
-          timestamp: timestamp++,
-        });
-      } else if (claudeMatch) {
-        messages.push({
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: claudeMatch[1].trim(),
-          timestamp: timestamp++,
-        });
-      }
-    }
-
-    return messages;
-  }
 }

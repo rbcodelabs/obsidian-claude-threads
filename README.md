@@ -670,7 +670,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 |---|---|
 | Claude binary path | Path to the `claude` executable (auto-detected) |
 | Default working directory | `cwd` for new threads; defaults to vault root |
-| Save threads to vault | Auto-save conversations as Markdown notes |
+| Save threads to vault | Auto-save readable Markdown notes plus versioned machine recovery snapshots |
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Secret environment variables | Keychain-backed env vars (values stored in the OS keychain, never in `data.json`) — for API keys and tokens |
@@ -696,6 +696,8 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Remote access | Enable/disable mobile remote access via WebSocket relay |
 | Room ID | Shared secret used to pair mobile (rotate to revoke all access) |
 | Show pairing QR | Display a QR code for one-time mobile pairing (expires in 5 minutes) |
+
+Thread state in the plugin's `data.json` is canonical during normal startup. When vault saving is enabled, each readable `.md` conversation is accompanied by a versioned `.recovery.json` snapshot containing the canonical thread/session metadata and message history. The Markdown body is presentation-only: it is never parsed back into a live conversation, so callouts, embeds, or manual note edits cannot corrupt a restarted thread. Legacy Markdown archives without a supported snapshot remain readable archives but are not guessed back into live state.
 
 ## Building from source
 
