@@ -54,7 +54,7 @@ Claude Threads embeds Claude Code directly in your host sidebar. Each tab is an 
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
 - **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
-- **Keep computer awake** — prevents the Mac from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses `caffeinate -i` on macOS, Web Lock API as fallback)
+- **Keep computer awake** — prevents the computer from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses Geode's native Electron power-save blocker when available, with `caffeinate -i` for Obsidian on macOS and the Web Wake Lock API as fallback)
 - **Plan Mode** — set permission mode to `plan` and Claude will propose a written plan before touching any files. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before Claude proceeds
 - **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
 - **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
@@ -687,7 +687,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
 | Escalation keyword | Keyword that routes a single turn to the escalation model (default: `/escalate`) |
 | Escalation model | Model the escalation keyword targets (default: Opus) |
-| Keep computer awake | Prevent the Mac from sleeping while Claude is processing; shows ☕ in the status bar |
+| Keep computer awake | Prevent the computer from sleeping while Claude is processing; shows ☕ in the status bar |
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
 | Projects | Group threads by vault sub-folder with a shared context prompt |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
