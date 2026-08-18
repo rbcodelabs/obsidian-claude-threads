@@ -109,6 +109,13 @@ export interface AgentRunEvent {
   toolName?: string;
 }
 
+export interface AgentTranscriptMessage {
+  role: 'user' | 'assistant' | 'tool';
+  text: string;
+  timestamp: number;
+  toolName?: string;
+}
+
 /** Durable projection of a harness-native child agent. It is not a Thread. */
 export interface AgentRun {
   id: string;
@@ -130,6 +137,8 @@ export interface AgentRun {
   usage?: { inputTokens?: number; outputTokens?: number };
   capabilities: AgentCapabilities;
   events: AgentRunEvent[];
+  /** Native child transcript messages, only when a harness actually exposes them. */
+  transcript?: AgentTranscriptMessage[];
   resultSummary?: string;
   error?: string;
 }

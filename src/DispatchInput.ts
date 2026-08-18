@@ -50,6 +50,8 @@ export interface DispatchInputOptions {
   onChipChange?: () => void;
   /** Slot for the caller to inject extra buttons into the footer actions area */
   appendFooterActions?: (container: HTMLElement) => void;
+  /** Slot beside the CWD chip for compact contextual metadata. */
+  appendFooterMetadata?: (container: HTMLElement) => void;
   /**
    * When true, renders a compact single-row layout suitable for wider panels:
    *   [attach · mic]  [textarea (auto-grow)]  [send/stop]
@@ -227,6 +229,8 @@ export class DispatchInput {
           this.cwdChipEl = null;
         }
 
+        this.options.appendFooterMetadata?.(inputFooter);
+
         const footerActionsEl = inputFooter.createDiv('ct-input-footer-actions');
         this.options.appendFooterActions?.(footerActionsEl);
         // Attach + mic live in the footer bottom row (keeps input area compact)
@@ -339,6 +343,13 @@ export class DispatchInput {
   setPlaceholder(placeholder: string): void {
     if (!this.inputEl) return;
     this.inputEl.placeholder = placeholder;
+  }
+
+  setDisabled(disabled: boolean): void {
+    if (!this.inputEl) return;
+    this.inputEl.disabled = disabled;
+    this.sendBtn.disabled = disabled;
+    this.rootEl?.toggleClass('ct-dispatch-disabled', disabled);
   }
 
   setStreaming(v: boolean, allowSend = false): void {

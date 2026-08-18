@@ -40,11 +40,12 @@ test.describe('Claude Threads UI', () => {
       store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
       manager.selectAgentRun(threadId, child.id);
       view.focusThread(threadId);
-      view.renderAgentTeam();
+      view.renderMessages();
     });
-    await page.waitForSelector('.ct-agent-detail');
-    await expect(page.locator('.ct-agent-tree [role="treeitem"]')).toHaveCount(2);
-    await expect(page.locator('.ct-agent-team')).toHaveScreenshot('native-agent-workspace.png');
+    await page.waitForSelector('.ct-agent-conversation-header');
+    await expect(page.locator('.ct-agent-status-pill')).toHaveAttribute('aria-label', /2 active/);
+    await expect(page.locator('.ct-agent-status-pill')).toHaveScreenshot('native-agent-status-pill.png');
+    await expect(page.locator('.ct-main')).toHaveScreenshot('native-agent-workspace.png');
   });
 
   for (const viewport of [
@@ -66,7 +67,7 @@ test.describe('Claude Threads UI', () => {
         store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
         manager.selectAgentRun(threadId, child.id);
         view.focusThread(threadId);
-        view.renderAgentTeam();
+        view.renderMessages();
 
         // AgentDashboard is not mounted by this harness, so render its real
         // interactive class to verify the shared mobile tap-target contract.
@@ -76,14 +77,14 @@ test.describe('Claude Threads UI', () => {
         document.body.appendChild(dashboardButton);
       });
 
-      await page.waitForSelector('.ct-agent-detail');
-      await expect(page.locator('.ct-agent-row-button').first()).toHaveCSS('min-height', '44px');
+      await page.waitForSelector('.ct-agent-conversation-header');
+      await expect(page.locator('.ct-agent-status-pill')).toBeVisible();
       await expect(page.locator('.ct-dashboard-agent')).toHaveCSS('min-height', '44px');
-      const hasHorizontalOverflow = await page.locator('.ct-agent-team').evaluate(
+      const hasHorizontalOverflow = await page.locator('.ct-main').evaluate(
         (element) => element.scrollWidth > element.clientWidth,
       );
       expect(hasHorizontalOverflow).toBe(false);
-      await expect(page.locator('.ct-agent-team')).toHaveScreenshot(`native-agent-workspace-${viewport.name}.png`);
+      await expect(page.locator('.ct-main')).toHaveScreenshot(`native-agent-workspace-${viewport.name}.png`);
     });
   }
 

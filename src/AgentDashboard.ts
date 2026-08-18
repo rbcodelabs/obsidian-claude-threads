@@ -299,6 +299,14 @@ export class AgentDashboard extends ItemView {
     this.rowEls.get(threadId)?.addClass('ct-agents-row-active');
   }
 
+  public focusThread(threadId: string): void {
+    this.setActiveRow(threadId);
+    const row = this.rowEls.get(threadId);
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row?.addClass('ct-agents-row-focused');
+    if (row) setTimeout(() => row.removeClass('ct-agents-row-focused'), 1400);
+  }
+
   private scheduleRender(): void {
     if (this.renderPending) return;
     this.renderPending = true;
