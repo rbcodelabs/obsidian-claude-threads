@@ -30,10 +30,43 @@ describe('host-neutral MCP catalogs', () => {
     expect(canonical.tools.map(t => t.name)).toContain('workspace_get_active_file');
     expect(canonical.tools.map(t => t.name)).toContain('host_list_commands');
     expect(canonical.tools.map(t => t.name)).toContain('threads_list');
+    expect(canonical.tools.map(t => t.name)).toContain('threads_create');
+    expect(canonical.tools.map(t => t.name)).not.toContain('fork_conversation');
     expect(legacy.tools.map(t => t.name)).toContain('obsidian_search_vault');
     expect((legacy.tools as Array<{ name: string; description?: string }>).find(t => t.name === 'obsidian_search_vault')?.description)
       .toMatch(/deprecated/i);
     expect(new Set(canonical.tools.map(t => t.name)).size).toBe(canonical.tools.length);
+  });
+
+  it('creates a thread and queues its required initial prompt through the host callback', async () => {
+    const createThread = vi.fn().mockResolvedValue({ threadId: 'thread-123', title: 'Investigate auth' });
+    const server = createClaudeThreadsMcpServers(app, { createThread }).claude_threads as unknown as {
+      tools: Array<{
+        name: string;
+        inputSchema: Record<string, z.ZodTypeAny>;
+        handler: (args: unknown, context: unknown) => Promise<{ content: Array<{ text: string }> }>;
+      }>;
+    };
+    const definition = server.tools.find(tool => tool.name === 'threads_create')!;
+
+    expect(z.object(definition.inputSchema).safeParse({}).success).toBe(false);
+    expect(z.object(definition.inputSchema).safeParse({ prompt: '   \n\t' }).success).toBe(false);
+    expect(z.object(definition.inputSchema).safeParse({ prompt: 'Investigate auth' }).success).toBe(true);
+
+    const result = await definition.handler({
+      prompt: 'Investigate auth',
+      title: 'Investigate auth',
+      cwd: '/repo/worktree',
+      projectId: null,
+    }, {});
+
+    expect(createThread).toHaveBeenCalledWith({
+      prompt: 'Investigate auth',
+      title: 'Investigate auth',
+      cwd: '/repo/worktree',
+      projectId: null,
+    });
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ threadId: 'thread-123', title: 'Investigate auth' });
   });
 
   it('canonical and legacy aliases share schemas and handlers', () => {

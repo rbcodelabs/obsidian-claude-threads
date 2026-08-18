@@ -6,6 +6,8 @@ describe('built-in tool permission classification', () => {
     expect(isTrustedBuiltInTool('mcp__claude_threads__vault_search')).toBe(true);
     expect(isTrustedBuiltInTool('mcp__obsidian__obsidian_search_vault')).toBe(true);
     expect(isTrustedBuiltInTool('threads_send_message')).toBe(true);
+    expect(isTrustedBuiltInTool('threads_create')).toBe(true);
+    expect(isTrustedBuiltInTool('fork_conversation')).toBe(false);
   });
 
   it('does not trust arbitrary names based on an obsidian prefix', () => {

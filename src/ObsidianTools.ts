@@ -212,12 +212,13 @@ export interface ObsidianMcpServerOptions {
    * the wake-up is actually persisted to disk.
    */
   onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => Promise<void>;
-  /**
-   * Called when the agent requests a fork of the current conversation.
-   * focusArea is an optional description of what the new thread should focus on.
-   * Resolves with the new thread title on success, or throws on failure.
-   */
-  onForkRequested?: (focusArea: string) => Promise<{ threadTitle: string }>;
+  /** Creates a persistent thread and queues its initial prompt. */
+  createThread?: (params: {
+    prompt: string;
+    title?: string;
+    cwd?: string;
+    projectId?: string | null;
+  }) => Promise<{ threadId: string; title: string }>;
   /**
    * Initial effective cwd for this session. Pre-seeds the in-session cwd tracker so
    * enter_worktree knows which repo to operate on from the first turn.
@@ -1047,41 +1048,39 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     },
   );
 
-  const boundForkConversation = tool(
-    'fork_conversation',
+  const boundCreateThread = tool(
+    'threads_create',
     [
-      'Forks the current conversation into a new, self-contained thread.',
-      'A separate Claude call distills the conversation history into a focused starting prompt for the new thread.',
-      'The new thread inherits the same working directory and project as the current one.',
-      'Use this when the conversation has grown long, when you want to explore a different angle without losing the current thread,',
-      'or when the user asks to start fresh with focused context.',
-      'The current thread continues unaffected — the fork is a new independent thread.',
+      'Creates a new persistent thread and immediately queues its initial prompt.',
+      'The new thread inherits the current thread\'s working directory and project when those fields are omitted.',
+      'Pass projectId: null to create the thread without a project.',
+      'Returns as soon as the prompt is queued; use threads_wait to wait for its response.',
     ].join(' '),
     {
-      focus_area: z
+      prompt: z.string().trim().min(1).describe('The initial prompt to queue in the new thread'),
+      title: z.string().min(1).optional().describe('Optional title for the new thread'),
+      cwd: z.string().min(1).optional().describe('Optional working directory override'),
+      projectId: z
         .string()
+        .nullable()
         .optional()
         .describe(
-          'What the new thread should focus on. Examples: "the auth bug", "refactoring the API layer", "next deployment steps". Leave empty to continue and extend the current work.',
+          'Optional project ID override. Omit to inherit the current project; pass null to create without a project.',
         ),
     },
     async (args, _extra) => {
-      if (!options.onForkRequested) {
+      if (!options.createThread) {
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'fork_conversation is not available in this context.' }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'createThread is not available in this context.' }) }],
           isError: true,
         };
       }
       try {
-        const { threadTitle } = await options.onForkRequested(args.focus_area ?? '');
+        const result = await options.createThread(args);
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify({
-              success: true,
-              threadTitle,
-              message: `Fork created: "${threadTitle}". The user can switch to it from the notification that appeared in the host app.`,
-            }, null, 2),
+            text: JSON.stringify(result, null, 2),
           }],
         };
       } catch (err: unknown) {
@@ -2333,7 +2332,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundListCommands,
       boundExecuteCommand,
       ...(options.enableOpenUrl !== false ? [boundOpenUrl] : []),
-      boundForkConversation,
+      boundCreateThread,
       boundGetCurrentThread,
       boundListThreads,
       boundListProjects,
