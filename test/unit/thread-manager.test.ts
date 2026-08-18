@@ -35,6 +35,18 @@ describe('ThreadManager — thread lifecycle', () => {
     expect(t.agentRuns).toHaveLength(1);
   });
 
+  it('persists unique paths reported through the provider-neutral edited-files callback', () => {
+    const t = manager.createThread('Codex files');
+    const events: string[] = [];
+    manager.subscribe((_threadId, event) => events.push(event.type));
+    const callbacks = (manager as any).buildSessionCallbacks(t.id, t);
+
+    callbacks.onFilesEdited(['/project/src/a.ts', '/project/src/b.ts', '/project/src/a.ts', '']);
+
+    expect(t.editedFiles).toEqual(['/project/src/a.ts', '/project/src/b.ts']);
+    expect(events).toContain('files_edited');
+  });
+
   it('createThread falls back to defaultCwd from settings', () => {
     const m = makeManager({ defaultCwd: '/default' });
     const t = m.createThread('T');
