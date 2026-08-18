@@ -1282,6 +1282,9 @@ export class ThreadManager {
       // keyword to apply.
       model: modelOverride ?? thread.model ?? (this.settings.defaultModel || undefined),
       appendSystemPrompt,
+      resumeFallbackHistory: thread.agentHarness === 'codex' && thread.sessionId
+        ? buildHistoryPreamble(thread.messages.slice(0, -1), thread.cwd)
+        : undefined,
       secretEnv: resolvedSecretEnv,
       claude: {
         mcpServers: sessionMcpServers,

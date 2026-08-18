@@ -22,6 +22,10 @@ type CodexThreadTokenUsage = {
 
 type ContextUsage = import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse;
 
+export function applyCodexResumeFallback(text: string, history: string | undefined, resumeFailed: boolean): string {
+  return resumeFailed && history ? history + text : text;
+}
+
 /** Convert Claude's process-transport MCP shapes to Codex config.toml keys. */
 export function codexMcpServers(servers: NonNullable<HarnessSessionOptions['codex']>['mcpServers']): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -109,6 +113,7 @@ export class CodexSession {
   private activeModel = '';
   private pendingPlanText: string | null = null;
   private announcedSubagents = new Set<string>();
+  private resumeFallbackPending = false;
 
   constructor(private codexPath: string) {}
 
@@ -124,6 +129,7 @@ export class CodexSession {
     this.latestContextUsage = null;
     this.latestUsage = null;
     this.announcedSubagents.clear();
+    this.resumeFallbackPending = false;
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
@@ -168,6 +174,7 @@ export class CodexSession {
           config: threadConfig,
         });
       } catch (error) {
+        this.resumeFallbackPending = true;
         console.warn('[ClaudeThreads] Could not resume Codex thread; starting a new one:', error);
       }
     }
@@ -229,7 +236,9 @@ export class CodexSession {
       this.queuedTurns.push({ text, images });
       return;
     }
-    this.startTurn(text, images);
+    const effectiveText = applyCodexResumeFallback(text, this.options?.resumeFallbackHistory, this.resumeFallbackPending);
+    this.resumeFallbackPending = false;
+    this.startTurn(effectiveText, images);
   }
 
   private startTurn(text: string, images?: ImageAttachment[]): void {

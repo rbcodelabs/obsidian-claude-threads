@@ -35,6 +35,10 @@ import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
 import { setDebugLogging, debugLog, getLogRing } from './logger';
 import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './telemetry';
 import { secretStorageKey } from './secretUtils';
+import {
+  sharedPersistenceWriterFence,
+  type PersistenceWriterToken,
+} from './PersistenceWriterFence';
 
 // View-type string constants. Must match the values exported by each view module.
 // Defined here as literals so both desktop and mobile code can reference them without
@@ -188,6 +192,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).
   private pendingBgTaskTimers = new Map<string, number>();
+  private persistenceWriterToken?: PersistenceWriterToken;
 
   /** Maximum number of poll attempts per thread before giving up on background task monitoring. */
   private static readonly BG_TASK_MAX_POLLS = 10;
@@ -195,6 +200,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
   private static readonly BG_TASK_POLL_INTERVAL_MS = 30_000;
 
   async onload(): Promise<void> {
+    // Claim persistence before any awaited startup work. Obsidian may construct
+    // this generation before the prior instance's async onunload has finished.
+    const fence = sharedPersistenceWriterFence();
+    this.persistenceWriterToken = fence.claim();
+    await fence.drain();
     // Register icons that may not be in Obsidian's internal Lucide subset
     addIcon('send', '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>');
     addIcon('square', '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/>');
@@ -959,9 +969,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
       await this.saveSettings();
     }
 
-    // Crash recovery: if data.json was cleared (e.g. after a plugin update or crash),
-    // threads may be missing from memory even though their vault notes still exist.
-    // Scan the vault folder and reload any threads not already in memory.
+    // Crash recovery: data.json is canonical during normal startup. If it was
+    // cleared, recover missing threads only from versioned JSON sidecars stored
+    // beside vault notes. The Markdown body is presentation-only and is never
+    // parsed back into live thread state.
     //
     // Important guards:
     //   - Skip threads whose vault note is already marked `archived` — those were
@@ -971,9 +982,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
     //   - Reset `active` status to `waiting` — the SDK session is gone after any
     //     reload so there's nothing to resume; showing them as running would be wrong.
     //
-    // Performance: use the metadata cache (already built by Obsidian during vault
-    // init, zero disk reads) to check whether any vault thread notes are missing
-    // from data.json before doing the expensive full file-read scan.
+    // Legacy notes without a supported sidecar remain readable archives but are
+    // not guessed back into live state; canonical data.json remains available
+    // when present, and raw JSONL remains an audit log rather than a prose parser.
     if (this.settings.saveThreadsToVault) {
       const knownIds = new Set(this.manager.getThreads().map((t) => t.id));
       const vaultFolder = this.settings.vaultFolder;
@@ -2039,6 +2050,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
       return;
     }
     const id = this.manifest.id;
+    // The host does not await onunload(). Flush while this generation still
+    // owns the writer lease, then hand control to disable/enable.
+    await this.saveSettings();
     await plugins.disablePlugin(id);
     await plugins.enablePlugin(id);
   }
@@ -2109,6 +2123,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
    * savePromise coalescing guarantees only one writer runs at a time.
    */
   private async saveDataAtomic(): Promise<void> {
+    const fence = sharedPersistenceWriterFence();
+    const token = this.persistenceWriterToken ??= fence.claim();
+    await fence.write(token, () => this.writeDataAtomicUnfenced());
+  }
+
+  private async writeDataAtomicUnfenced(): Promise<void> {
     // Only the desktop FileSystemAdapter can do a temp-file + rename. Anything
     // else (mobile, or an instance not fully wired to an App) falls back to
     // Obsidian's own saveData (same write path as before this change).

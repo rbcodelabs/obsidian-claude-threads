@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { VaultPersistence } from '../../src/VaultPersistence';
+import { decodeThreadRecoverySnapshot, encodeThreadRecoverySnapshot, recoverySnapshotPath } from '../../src/threadRecoverySnapshot';
+import type { Thread } from '../../src/types';
+import { TFile } from 'obsidian';
 
 // ---------------------------------------------------------------------------
 // Minimal vault mock
@@ -35,6 +38,11 @@ function makeApp(files: Record<string, string>) {
       modify: async (file: { path: string }, content: string) => {
         fileContents[file.path] = content;
       },
+      create: async (path: string, content: string) => {
+        fileContents[path] = content;
+        return { path };
+      },
+      getAbstractFileByPath: (path: string) => fileContents[path] === undefined ? null : new TFile(path),
       // Return the live fileContents so tests can inspect it after the call
       _contents: fileContents,
     },
@@ -98,6 +106,24 @@ describe('VaultPersistence.archiveOrphanedNotes', () => {
     expect(count).toBe(1);
     expect(contents[path]).toContain('status: archived');
     expect(contents[path]).not.toContain('status: waiting');
+  });
+
+  it('archives the canonical recovery snapshot with the orphaned presentation note', async () => {
+    const path = `${FOLDER}/orphan.md`;
+    const thread: Thread = {
+      id: 'orphan', title: 'Orphan', cwd: '/cwd', messages: [],
+      createdAt: 1, updatedAt: 2, status: 'waiting', agentHarness: 'codex', sessionId: 'native-id',
+    };
+    const { vp, contents } = makeVP({
+      [path]: threadNote('orphan', 'waiting'),
+      [recoverySnapshotPath(path)]: encodeThreadRecoverySnapshot(thread),
+    });
+
+    await vp.archiveOrphanedNotes(new Set());
+
+    expect(decodeThreadRecoverySnapshot(contents[recoverySnapshotPath(path)])).toMatchObject({
+      id: 'orphan', status: 'archived', agentHarness: 'codex', sessionId: 'native-id',
+    });
   });
 
   it('leaves an active thread note unchanged and returns count 0', async () => {
@@ -219,20 +245,51 @@ describe('VaultPersistence.archiveOrphanedNotes', () => {
 describe('VaultPersistence.loadAllThreads', () => {
   const FOLDER = 'Claude';
 
+  function recoveryFiles(path: string, thread: Thread, renderedBody: string): Record<string, string> {
+    return { [path]: [
+      '---',
+      `thread_id: ${thread.id}`,
+      `status: ${thread.status ?? 'waiting'}`,
+      `updated: ${new Date(thread.updatedAt).toISOString()}`,
+      '---',
+      renderedBody,
+    ].join('\n'), [recoverySnapshotPath(path)]: encodeThreadRecoverySnapshot(thread) };
+  }
+
+  it('restores only the canonical snapshot and never parses stale Tools used presentation text', async () => {
+    const canonical: Thread = {
+      id: 'codex-thread', sessionId: 'codex-native-id', agentHarness: 'codex',
+      title: 'Snapshot title', cwd: '/repo', status: 'waiting', createdAt: 1, updatedAt: 2,
+      messages: [{ id: 'm1', role: 'assistant', content: 'Canonical response', timestamp: 3,
+        toolCalls: [{ name: 'Read', summary: 'Read: source.ts', status: 'success' }] }],
+    };
+    const prose = '# Stale title\n\n> [!info] Tools used\n  - `Corrupt leaked tool`\n\n**Claude:**\n\nStale rendered response';
+    const path = `${FOLDER}/thread.md`;
+    const app = makeApp(recoveryFiles(path, canonical, prose));
+
+    const loaded = await new VaultPersistence(app as any, FOLDER).loadAllThreads();
+
+    expect(loaded).toEqual([{ ...canonical, noteFile: `${FOLDER}/thread.md` }]);
+    expect(loaded[0].messages[0].content).not.toContain('Tools used');
+    expect(loaded[0].agentHarness).toBe('codex');
+    expect(loaded[0].sessionId).toBe('codex-native-id');
+  });
+
+  it('does not recover a legacy prose-only archive without a snapshot', async () => {
+    const app = makeApp({ [`${FOLDER}/legacy.md`]: threadNote('legacy', 'waiting') });
+
+    const loaded = await new VaultPersistence(app as any, FOLDER).loadAllThreads();
+
+    expect(loaded).toEqual([]);
+  });
+
   it('uses only the newest note when stale title snapshots share a thread_id', async () => {
-    const olderWaiting = threadNote(
-      'same-thread',
-      'waiting',
-      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z',
-    );
-    const newerArchived = threadNote(
-      'same-thread',
-      'archived',
-      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-03T00:00:00.000Z',
-    );
+    const base = { id: 'same-thread', title: 'Test', cwd: '/cwd', messages: [], createdAt: Date.parse('2026-01-01') } as Thread;
+    const olderWaiting = { ...base, status: 'waiting' as const, updatedAt: Date.parse('2026-01-02') };
+    const newerArchived = { ...base, status: 'archived' as const, updatedAt: Date.parse('2026-01-03') };
     const app = makeApp({
-      [`${FOLDER}/2026-01-01-old-title.md`]: olderWaiting,
-      [`${FOLDER}/2026-01-01-new-title.md`]: newerArchived,
+      ...recoveryFiles(`${FOLDER}/2026-01-01-old-title.md`, olderWaiting, '# Old'),
+      ...recoveryFiles(`${FOLDER}/2026-01-01-new-title.md`, newerArchived, '# New'),
     });
     const vp = new VaultPersistence(app as any, FOLDER);
 
@@ -245,10 +302,10 @@ describe('VaultPersistence.loadAllThreads', () => {
   });
 
   it('prefers archived when duplicate snapshots have the same updated time', async () => {
-    const timestamp = 'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z';
+    const base = { id: 'same-thread', title: 'Test', cwd: '/cwd', messages: [], createdAt: 1, updatedAt: 2 } as Thread;
     const app = makeApp({
-      [`${FOLDER}/waiting.md`]: threadNote('same-thread', 'waiting', timestamp),
-      [`${FOLDER}/archived.md`]: threadNote('same-thread', 'archived', timestamp),
+      ...recoveryFiles(`${FOLDER}/waiting.md`, { ...base, status: 'waiting' }, '# Waiting'),
+      ...recoveryFiles(`${FOLDER}/archived.md`, { ...base, status: 'archived' }, '# Archived'),
     });
     const vp = new VaultPersistence(app as any, FOLDER);
 
@@ -259,19 +316,12 @@ describe('VaultPersistence.loadAllThreads', () => {
   });
 
   it('prefers a newer waiting snapshot over an older archived snapshot', async () => {
-    const olderArchived = threadNote(
-      'same-thread',
-      'archived',
-      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-02T00:00:00.000Z',
-    );
-    const newerWaiting = threadNote(
-      'same-thread',
-      'waiting',
-      'created: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-03T00:00:00.000Z',
-    );
+    const base = { id: 'same-thread', title: 'Test', cwd: '/cwd', messages: [], createdAt: Date.parse('2026-01-01') } as Thread;
+    const olderArchived = { ...base, status: 'archived' as const, updatedAt: Date.parse('2026-01-02') };
+    const newerWaiting = { ...base, status: 'waiting' as const, updatedAt: Date.parse('2026-01-03') };
     const app = makeApp({
-      [`${FOLDER}/archived.md`]: olderArchived,
-      [`${FOLDER}/waiting.md`]: newerWaiting,
+      ...recoveryFiles(`${FOLDER}/archived.md`, olderArchived, '# Archived'),
+      ...recoveryFiles(`${FOLDER}/waiting.md`, newerWaiting, '# Waiting'),
     });
     const vp = new VaultPersistence(app as any, FOLDER);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CodexSession, codexContextUsage, codexMcpServers } from '../../src/CodexSession';
+import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexMcpServers } from '../../src/CodexSession';
 
 describe('codexMcpServers', () => {
   it('translates stdio and remote MCP transports to Codex config keys', () => {
@@ -61,6 +61,31 @@ describe('codexContextUsage', () => {
       last: { totalTokens: 1, inputTokens: 1, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
       modelContextWindow: null,
     }, '')).toBeNull();
+  });
+});
+
+describe('Codex resume fallback', () => {
+  it('replays canonical history exactly once when thread/resume is replaced by thread/start', () => {
+    const fallback = '[canonical prior history]\n\n';
+
+    expect(applyCodexResumeFallback('Continue', fallback, true)).toBe(`${fallback}Continue`);
+    expect(applyCodexResumeFallback('Continue', fallback, false)).toBe('Continue');
+  });
+
+  it('consumes fallback history on the replacement session first turn only', () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'replacement-thread';
+    internal.options = { resumeFallbackHistory: '[canonical prior history]\n\n', callbacks: {} };
+    internal.resumeFallbackPending = true;
+    const startTurn = vi.spyOn(internal, 'startTurn').mockImplementation(() => undefined);
+
+    session.send('First continuation');
+    session.send('Second continuation');
+
+    expect(startTurn).toHaveBeenNthCalledWith(1, '[canonical prior history]\n\nFirst continuation', undefined);
+    expect(startTurn).toHaveBeenNthCalledWith(2, 'Second continuation', undefined);
   });
 });
 

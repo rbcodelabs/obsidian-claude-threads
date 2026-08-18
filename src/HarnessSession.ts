@@ -33,6 +33,8 @@ export interface HarnessSessionOptions {
   additionalDirectories?: string[];
   model?: string;
   appendSystemPrompt?: string;
+  /** Canonical transcript replayed on the first turn only if native resume fails. */
+  resumeFallbackHistory?: string;
   secretEnv?: Record<string, string>;
   claude?: ClaudeHarnessOptions;
   codex?: CodexHarnessOptions;
