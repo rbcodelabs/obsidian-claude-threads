@@ -44,6 +44,35 @@ const AGENT_VIEW_TYPE = 'claude-threads:agents';
 const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 const SKILLS_VIEW_TYPE = 'claude-threads:skills';
 
+interface AgentThreadCreateParams {
+  prompt: string;
+  title?: string;
+  cwd?: string;
+  projectId?: string | null;
+}
+
+/** Builds the host callback behind the agent-facing threads_create tool. */
+export function createAgentThreadCallback(deps: {
+  sourceThreadId: string;
+  getThread: (id: string) => { cwd?: string; projectId?: string } | undefined;
+  createThread: (title: string, cwd?: string, projectId?: string) => { id: string; title: string };
+  saveSettings: () => Promise<void>;
+  sendMessage: (id: string, prompt: string) => Promise<void>;
+}): (params: AgentThreadCreateParams) => Promise<{ threadId: string; title: string }> {
+  return async ({ prompt, title, cwd, projectId }) => {
+    const sourceThread = deps.getThread(deps.sourceThreadId);
+    const resolvedTitle = title ?? prompt.trim().split('\n')[0]!.slice(0, 80);
+    const createdThread = deps.createThread(
+      resolvedTitle,
+      cwd ?? sourceThread?.cwd,
+      projectId === undefined ? sourceThread?.projectId : projectId ?? undefined,
+    );
+    await deps.saveSettings();
+    void deps.sendMessage(createdThread.id, prompt);
+    return { threadId: createdThread.id, title: createdThread.title };
+  };
+}
+
 // Welcome guide content — written to vault on first install
 const WELCOME_GUIDE = `# Getting Started with Claude Threads
 
@@ -299,30 +328,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.manager.notifyWakeupChanged(threadId);
             debugLog(`[ClaudeThreads] ScheduleWakeup registered for thread ${threadId} in ${delayMs}ms — ${reason}`);
           },
-          onForkRequested: async (focusArea: string) => {
-            const sourceThread = this.manager.getThread(threadId);
-            if (!sourceThread || sourceThread.messages.filter(m => m.role !== 'compact').length === 0) {
-              throw new Error('Thread has no messages to fork from.');
-            }
-            const forkPrompt = await this.inProcessSummarizer.generateForkPrompt(
-              sourceThread.messages,
-              focusArea,
-              this.settings.claudeBinaryPath,
-              this.settings.inprocessModel,
-              effectiveExtraEnv(this.settings),
-            );
-            const forkedThread = this.manager.createThread(
-              `Fork: ${sourceThread.title.slice(0, 40)}`,
-              sourceThread.cwd,
-              sourceThread.projectId,
-            );
-            await this.saveSettings();
-            // Fire-and-forget: the tool returns as soon as the thread is created and
-            // the first message is queued — no need to wait for Claude's response.
-            void this.manager.sendMessage(forkedThread.id, forkPrompt);
-            new Notice(`Fork created: "${forkedThread.title}"`);
-            return { threadTitle: forkedThread.title };
-          },
+          createThread: createAgentThreadCallback({
+            sourceThreadId: threadId,
+            getThread: id => this.manager.getThread(id),
+            createThread: (title, cwd, projectId) => this.manager.createThread(title, cwd, projectId),
+            saveSettings: () => this.saveSettings(),
+            sendMessage: (id, prompt) => this.manager.sendMessage(id, prompt),
+          }),
           threadId,
           getOrchestratorThreadId: () => this.settings.orchestratorThreadId,
           getThreadDetail: (id: string) => {
