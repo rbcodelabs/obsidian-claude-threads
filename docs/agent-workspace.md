@@ -1,6 +1,6 @@
 # Native agent workspace
 
-Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows an **Agent Team** tree. Select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy without creating a separate thread.
+Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows a compact aggregate status pill beside the working folder. Open the Agent Dashboard and select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy in the central pane without creating a separate thread.
 
 The Agent Dashboard also shows compact child-agent entries. Agent role, task, and current activity are included in dashboard search.
 
@@ -18,3 +18,16 @@ The Claude SDK defines model-invoked `SendMessage` and `TaskStop` tool inputs, b
 Agent runs are persisted with their owning thread in plugin data. Terminal history survives reload. A run that was active when Obsidian closed is restored as **unavailable** until its harness reports live activity again. Duplicate native events are replay-safe, and a child whose parent arrives later is reattached automatically.
 
 Background shell jobs and local workflow phases remain ordinary tasks; they are not promoted to conversational agents.
+# Compact status and child-agent navigation
+
+The conversation footer shows aggregate native-agent status beside the working
+folder. Activating it opens and focuses the current thread in the Agent
+Dashboard without filtering away other threads. Selecting a child agent opens
+its scoped central-pane view; breadcrumbs return to its parent or the main
+conversation. The composer is disabled because current Claude and Codex host
+protocols do not expose direct child messaging.
+
+Current host event coverage is documented in
+[`agent-transcript-data-spike.md`](agent-transcript-data-spike.md). Both harnesses
+currently provide lifecycle/activity summaries but not full child transcripts,
+so these views are labeled **Agent activity**.

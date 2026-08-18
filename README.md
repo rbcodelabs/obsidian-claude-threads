@@ -2,7 +2,7 @@
 
 ## Native agent workspace
 
-Background Claude and Codex agents are first-class, durable participants. The conversation shows a nested **Agent Team** tree, and the Agent Dashboard exposes the same agents for navigation and search. Selecting one opens the exact activity and lifecycle information exposed by its native harness. Active runs that cannot be reconnected after reload are labeled unavailable rather than incorrectly shown as completed.
+Background Claude and Codex agents are first-class, durable participants. A compact status pill beside the conversation's working-folder chip shows active, completed, and failed agent counts without displacing the transcript. Select the pill to focus the current thread in the Agent Dashboard; selecting an agent there opens its transcript-scoped view in the central pane with breadcrumbs back to its parents and the main conversation. When a harness exposes only lifecycle and progress summaries, the view is explicitly labeled **Agent activity** rather than presented as a full transcript. Active runs that cannot be reconnected after reload are labeled unavailable rather than incorrectly shown as completed.
 
 Direct child-agent messaging and single-agent interruption are capability-gated. They remain unavailable when the harness has no verified host-side control path; Claude Threads never silently routes those actions to the parent. See [the capability matrix and recovery behavior](docs/agent-workspace.md).
 

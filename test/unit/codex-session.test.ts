@@ -311,6 +311,78 @@ describe('CodexSession protocol notifications', () => {
     expect(onToolResult).toHaveBeenCalledWith('call-1', 'success', undefined);
   });
 
+  it('marks a Codex sub-agent completed from its child-scoped turn completion', () => {
+    const onTaskStarted = vi.fn();
+    const onTaskUpdated = vi.fn();
+    const onDone = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'parent-thread';
+    internal._turnInFlight = true;
+    internal.options = { callbacks: { onTaskStarted, onTaskUpdated, onDone, onTaskProgress: vi.fn() } };
+    const started = {
+      type: 'subAgentActivity', id: 'activity-1', kind: 'started',
+      agentThreadId: 'agent-1', agentPath: '/root/engineer',
+    };
+
+    internal.handle({ method: 'item/completed', params: { item: started } });
+    internal.handle({
+      method: 'turn/completed',
+      params: { threadId: 'agent-1', turn: { id: 'child-turn', status: 'completed', error: null } },
+    });
+
+    expect(onTaskStarted).toHaveBeenCalledTimes(1);
+    expect(onTaskUpdated).toHaveBeenCalledWith('agent-1', { status: 'completed' });
+    expect(onDone).not.toHaveBeenCalled();
+    expect(internal._turnInFlight).toBe(true);
+  });
+
+  it('tracks child follow-up turns without accepting a late terminal event', () => {
+    const onTaskStarted = vi.fn();
+    const onTaskUpdated = vi.fn();
+    const onDone = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'parent-thread';
+    internal.options = { callbacks: { onTaskStarted, onTaskUpdated, onDone, onTaskProgress: vi.fn() } };
+    internal.handle({ method: 'item/completed', params: { item: {
+      type: 'subAgentActivity', id: 'activity-1', kind: 'started',
+      agentThreadId: 'nested-agent', agentPath: '/root/engineer/reviewer',
+    } } });
+    internal.handle({ method: 'turn/started', params: {
+      threadId: 'nested-agent', turn: { id: 'child-turn-2', status: 'inProgress' },
+    } });
+    expect(onTaskUpdated).toHaveBeenLastCalledWith('nested-agent', { status: 'in_progress' });
+    onTaskUpdated.mockClear();
+
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'nested-agent', turn: { id: 'child-turn-1', status: 'completed', error: null },
+    } });
+    expect(onTaskUpdated).not.toHaveBeenCalled();
+
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'nested-agent', turn: { id: 'child-turn-2', status: 'failed', error: { message: 'Review failed' } },
+    } });
+    expect(onTaskUpdated).toHaveBeenCalledWith('nested-agent', { status: 'failed', error: 'Review failed' });
+    expect(onDone).not.toHaveBeenCalled();
+
+    onTaskUpdated.mockClear();
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'unannounced-agent', turn: { id: 'unknown-turn', status: 'interrupted', error: null },
+    } });
+    expect(onTaskUpdated).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+
+    internal.handle({ method: 'item/completed', params: { item: {
+      type: 'subAgentActivity', id: 'activity-2', kind: 'started',
+      agentThreadId: 'stopped-agent', agentPath: '/root/stopped',
+    } } });
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'stopped-agent', turn: { id: 'stopped-turn', status: 'interrupted', error: null },
+    } });
+    expect(onTaskUpdated).toHaveBeenCalledWith('stopped-agent', { status: 'killed', error: undefined });
+  });
+
   it('does not emit phantom tool results for reasoning items', () => {
     const onToolResult = vi.fn();
     const session = new CodexSession('codex');

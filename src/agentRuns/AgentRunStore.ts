@@ -42,7 +42,7 @@ export class AgentRunStore {
       parentNativeAgentId: input.parentNativeAgentId, taskId: input.taskId,
       description: input.description, role: input.role, model: input.model,
       status: 'working', startedAt: now, updatedAt: now,
-      capabilities: { viewTranscript: true, sendMessage: false, interrupt: false },
+      capabilities: { viewTranscript: false, sendMessage: false, interrupt: false },
       events: [{ kind: 'lifecycle', text: 'Agent started', timestamp: now, nativeEventId: `start:${input.nativeAgentId}` }],
     };
     this.runs.set(run.id, run);
@@ -73,7 +73,7 @@ export class AgentRunStore {
 
   restore(threadId: string, snapshot: AgentRun[]): void {
     for (const source of snapshot) {
-      const run = { ...source, events: [...source.events], capabilities: { ...source.capabilities } };
+      const run = { ...source, events: [...source.events], capabilities: { ...source.capabilities, viewTranscript: !!source.transcript?.length } };
       if (!terminal.has(run.status)) run.status = 'unavailable';
       this.runs.set(run.id, run);
       this.nativeIndex.set(this.nativeKey(threadId, run.harness, run.nativeAgentId), run.id);
@@ -81,7 +81,7 @@ export class AgentRunStore {
     this.resolveParents(threadId);
   }
 
-  snapshot(threadId: string): AgentRun[] { return this.getByThread(threadId).map(r => ({ ...r, capabilities: { ...r.capabilities }, events: r.events.map(e => ({ ...e })) })); }
+  snapshot(threadId: string): AgentRun[] { return this.getByThread(threadId).map(r => ({ ...r, capabilities: { ...r.capabilities }, events: r.events.map(e => ({ ...e })), transcript: r.transcript?.map(m => ({ ...m })) })); }
   getById(id: string): AgentRun | undefined { return this.runs.get(id); }
   getByNativeId(threadId: string, harness: 'claude' | 'codex', nativeId: string): AgentRun | undefined { const id = this.nativeIndex.get(this.nativeKey(threadId, harness, nativeId)); return id ? this.runs.get(id) : undefined; }
   getByThread(threadId: string): AgentRun[] { return [...this.runs.values()].filter(r => r.threadId === threadId).sort((a, b) => a.startedAt - b.startedAt); }

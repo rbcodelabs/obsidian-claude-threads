@@ -410,6 +410,7 @@ export class ThreadManager {
   getAgentRun(agentRunId: string): AgentRun | undefined { return this.agentRuns.getById(agentRunId); }
   getSelectedAgentRun(threadId: string): string | undefined { return this.selectedAgentRuns.get(threadId); }
   selectAgentRun(threadId: string, agentRunId: string): void { this.selectedAgentRuns.set(threadId, agentRunId); this.emit(threadId, { type: 'agent_runs_changed', agentRuns: this.getAgentRuns(threadId) }); }
+  clearSelectedAgentRun(threadId: string): void { this.selectedAgentRuns.delete(threadId); this.emit(threadId, { type: 'agent_runs_changed', agentRuns: this.getAgentRuns(threadId) }); }
 
   private persistAgentRuns(thread: Thread): void {
     thread.agentRuns = this.agentRuns.snapshot(thread.id);

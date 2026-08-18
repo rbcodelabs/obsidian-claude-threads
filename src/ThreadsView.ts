@@ -24,7 +24,7 @@ import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
 import { partitionThreads } from './threadRowState';
-import { renderAgentTeam } from './agentRuns/renderAgentTeam';
+import { buildAgentConversation, renderAgentStatusPill } from './agentRuns/agentConversation';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -66,7 +66,6 @@ export class ThreadsView extends ItemView {
   private titleTextEl!: HTMLSpanElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
-  private agentTeamEl!: HTMLElement;
   private inputRowEl!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
@@ -85,6 +84,9 @@ export class ThreadsView extends ItemView {
 
   // Shared dispatch input component
   private dispatchInput!: DispatchInput;
+  private agentStatusBtn!: HTMLButtonElement;
+  private conversationScrollPositions = new Map<string, number>();
+  private renderedAgentRunId: string | null = null;
 
   // Files edited in the active thread (rebuilt on thread switch, updated live)
   private editedFilesSet: Set<string> = new Set();
@@ -561,7 +563,6 @@ export class ThreadsView extends ItemView {
     });
 
     this.mainEl = root.createDiv('ct-main');
-    this.agentTeamEl = this.mainEl.createDiv('ct-agent-team ct-hidden');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
     const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
@@ -621,6 +622,21 @@ export class ThreadsView extends ItemView {
       extraSkillDirs: githubSkillDirs,
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
+      appendFooterMetadata: (container) => {
+        this.agentStatusBtn = container.createEl('button', { cls: 'ct-agent-status-pill' });
+        this.agentStatusBtn.hidden = true;
+        this.agentStatusBtn.addEventListener('click', () => {
+          const threadId = this.activeThreadId;
+          if (!threadId) return;
+          const draft = this.dispatchInput.getValue();
+          const scrollTop = this.messagesEl.scrollTop;
+          void this.plugin.activateAgentView().then(() => {
+            this.plugin.getAgentDashboard()?.focusThread(threadId);
+            this.dispatchInput.setValue(draft);
+            this.messagesEl.scrollTop = scrollTop;
+          });
+        });
+      },
       appendFooterActions: (container) => {
         this.permissionModeBtn = container.createEl('button', {
           cls: 'ct-more-btn ct-permission-mode-btn',
@@ -820,7 +836,9 @@ export class ThreadsView extends ItemView {
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
     const activeThread = this.manager.getThread(id);
-    this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    if (!this.manager.getSelectedAgentRun(id)) {
+      this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    }
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
     this.syncEditedFiles();
@@ -2026,7 +2044,12 @@ export class ThreadsView extends ItemView {
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
-    this.renderAgentTeam();
+    this.renderAgentStatus();
+    this.dispatchInput.setDisabled(false);
+    this.dispatchInput.setPlaceholder(thread.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    const selectedAgentId = this.manager.getSelectedAgentRun(this.activeThreadId);
+    if (selectedAgentId && this.renderAgentConversation(selectedAgentId)) return;
+    this.renderedAgentRunId = null;
 
     if (thread.messages.length === 0) {
       const empty = this.messagesEl.createDiv('ct-empty');
@@ -2122,17 +2145,58 @@ export class ThreadsView extends ItemView {
     }
 
     this.scrollToBottom();
+    const mainScroll = this.conversationScrollPositions.get(`${this.activeThreadId}:main`);
+    if (mainScroll !== undefined) this.messagesEl.scrollTop = mainScroll;
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
 
-  private renderAgentTeam(): void {
-    if (!this.activeThreadId || !this.agentTeamEl) return;
-    renderAgentTeam(
-      this.agentTeamEl,
-      this.manager.getAgentRuns(this.activeThreadId),
-      id => { this.manager.selectAgentRun(this.activeThreadId!, id); this.renderAgentTeam(); },
-      this.manager.getSelectedAgentRun(this.activeThreadId),
-    );
+  private renderAgentStatus(): void {
+    if (!this.activeThreadId || !this.agentStatusBtn) return;
+    renderAgentStatusPill(this.agentStatusBtn, this.manager.getAgentRuns(this.activeThreadId));
+    const icon = this.agentStatusBtn.querySelector<HTMLElement>('.ct-agent-status-icon');
+    if (icon) setIcon(icon, 'bot');
+  }
+
+  private renderAgentConversation(selectedId: string): boolean {
+    if (!this.activeThreadId) return false;
+    const runs = this.manager.getAgentRuns(this.activeThreadId);
+    const view = buildAgentConversation(runs, selectedId);
+    if (!view) return false;
+    const selectedKey = `${this.activeThreadId}:${selectedId}`;
+    this.messagesEl.empty();
+    const header = this.messagesEl.createDiv('ct-agent-conversation-header');
+    header.createDiv({ cls: 'ct-agent-conversation-label', text: view.title });
+    const crumbs = header.createDiv({ cls: 'ct-agent-conversation-breadcrumbs', attr: { 'aria-label': 'Agent conversation breadcrumb' } });
+    for (const [index, crumb] of view.breadcrumbs.entries()) {
+      if (index) crumbs.createSpan({ cls: 'ct-agent-breadcrumb-separator', text: '›' });
+      const button = crumbs.createEl('button', { text: crumb.label });
+      button.disabled = crumb.agentRunId === selectedId;
+      button.addEventListener('click', () => {
+        this.conversationScrollPositions.set(selectedKey, this.messagesEl.scrollTop);
+        if (crumb.agentRunId) this.manager.selectAgentRun(this.activeThreadId!, crumb.agentRunId);
+        else this.manager.clearSelectedAgentRun(this.activeThreadId!);
+        void this.renderMessages();
+      });
+    }
+    const meta = this.messagesEl.createDiv({ cls: 'ct-agent-conversation-meta', text: `${view.run.harness} · ${view.run.status}${view.run.model ? ` · ${view.run.model}` : ''}` });
+    if (view.kind === 'activity') {
+      this.messagesEl.createEl('p', { cls: 'ct-agent-activity-disclosure', text: 'This harness exposes activity summaries, not a full child-agent transcript.' });
+      const timeline = this.messagesEl.createEl('ol', { cls: 'ct-agent-conversation-timeline' });
+      for (const event of [...view.run.events].sort((a, b) => a.timestamp - b.timestamp)) {
+        const item = timeline.createEl('li', { cls: `ct-agent-event ct-agent-event-${event.kind}` });
+        item.createEl('time', { text: new Date(event.timestamp).toLocaleTimeString() });
+        item.createSpan({ text: `${event.toolName ? `${event.toolName}: ` : ''}${event.text}` });
+      }
+    } else {
+      for (const message of view.run.transcript ?? []) {
+        this.messagesEl.createDiv({ cls: `ct-message ct-message-${message.role}`, text: message.text });
+      }
+    }
+    this.dispatchInput.setDisabled(true);
+    this.dispatchInput.setPlaceholder('Return to the main conversation to send a message');
+    this.renderedAgentRunId = selectedId;
+    this.messagesEl.scrollTop = this.conversationScrollPositions.get(selectedKey) ?? 0;
+    return true;
   }
 
   private async appendMessage(msg: ChatMessage): Promise<HTMLElement | null> {
@@ -3439,7 +3503,16 @@ export class ThreadsView extends ItemView {
       }
 
       case 'agent_runs_changed': {
-        this.renderAgentTeam();
+        this.renderAgentStatus();
+        if (this.activeThreadId) {
+          const selected = this.manager.getSelectedAgentRun(this.activeThreadId);
+          if (selected && !this.renderedAgentRunId) {
+            this.conversationScrollPositions.set(`${this.activeThreadId}:main`, this.messagesEl.scrollTop);
+          } else if (this.renderedAgentRunId) {
+            this.conversationScrollPositions.set(`${this.activeThreadId}:${this.renderedAgentRunId}`, this.messagesEl.scrollTop);
+          }
+          if (selected || this.renderedAgentRunId) void this.renderMessages();
+        }
         break;
       }
 

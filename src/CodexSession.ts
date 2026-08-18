@@ -109,6 +109,7 @@ export class CodexSession {
   private activeModel = '';
   private pendingPlanText: string | null = null;
   private announcedSubagents = new Set<string>();
+  private activeSubagentTurns = new Map<string, string>();
 
   constructor(private codexPath: string) {}
 
@@ -124,6 +125,7 @@ export class CodexSession {
     this.latestContextUsage = null;
     this.latestUsage = null;
     this.announcedSubagents.clear();
+    this.activeSubagentTurns.clear();
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
@@ -274,6 +276,7 @@ export class CodexSession {
     this.activeTurnId = undefined;
     this.turnStartPromise = null;
     this.queuedTurns = [];
+    this.activeSubagentTurns.clear();
     this.process?.kill();
     this.process = null;
     this.failAll(new Error('Codex session closed'));
@@ -423,7 +426,32 @@ export class CodexSession {
         }
         break;
       }
+      case 'turn/started': {
+        const eventThreadId = params.threadId ? String(params.threadId) : undefined;
+        if (eventThreadId && eventThreadId !== this.codexThreadId && this.announcedSubagents.has(eventThreadId)) {
+          if (params.turn?.id) this.activeSubagentTurns.set(eventThreadId, String(params.turn.id));
+          callbacks.onTaskUpdated?.(eventThreadId, { status: 'in_progress' });
+        }
+        break;
+      }
       case 'turn/completed': {
+        const eventThreadId = params.threadId ? String(params.threadId) : undefined;
+        if (eventThreadId && eventThreadId !== this.codexThreadId) {
+          if (this.announcedSubagents.has(eventThreadId)) {
+            const childTurn = params.turn ?? {};
+            const activeChildTurnId = this.activeSubagentTurns.get(eventThreadId);
+            if (activeChildTurnId && childTurn.id && String(childTurn.id) !== activeChildTurnId) break;
+            this.activeSubagentTurns.delete(eventThreadId);
+            const status = childTurn.status === 'failed' ? 'failed'
+              : childTurn.status === 'interrupted' ? 'killed'
+              : 'completed';
+            callbacks.onTaskUpdated?.(eventThreadId, {
+              status,
+              error: childTurn.status === 'failed' ? childTurn.error?.message ?? undefined : undefined,
+            });
+          }
+          break;
+        }
         this._turnInFlight = false;
         this.activeTurnId = undefined;
         this.turnStartPromise = null;

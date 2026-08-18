@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { AgentRunStore } from '../../src/agentRuns/AgentRunStore';
 
 describe('AgentRunStore', () => {
+  it('does not claim transcript support when restoring legacy activity-only runs', () => {
+    const store = new AgentRunStore();
+    const legacy = { id: 'legacy', threadId: 'thread-1', nativeAgentId: 'a', harness: 'claude' as const, description: 'Legacy', status: 'completed' as const, startedAt: 1, updatedAt: 2, capabilities: { viewTranscript: true, sendMessage: false, interrupt: false }, events: [] };
+    store.restore('thread-1', [legacy]);
+    expect(store.getById(legacy.id)?.capabilities.viewTranscript).toBe(false);
+  });
   it('builds nested agent trees and replays duplicate events idempotently', () => {
     const store = new AgentRunStore();
     const child = store.observeStart({ threadId: 'thread-1', harness: 'codex', nativeAgentId: 'child', description: 'Audit' }, 100);

@@ -7278,3 +7278,49 @@ body.ct-skills-resizing {
 .ct-dashboard-agent[aria-level="2"] { margin-left: 12px; }
 .ct-kanban-agent-count { color: var(--text-muted); font-size: var(--font-ui-smaller); white-space: nowrap; }
 @media (max-width: 600px) { .ct-agent-team { margin-inline: 6px; } .ct-agent-row-button, .ct-dashboard-agent { min-height: 44px; } .ct-agent-row-button { grid-template-columns: 8px auto 1fr; } .ct-agent-state { grid-column: 3; } }
+.ct-agent-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+}
+.ct-agent-status-pill[hidden] { display: none; }
+/* Agent status is ambient information, so keep the existing footer row visible
+   while it has runs instead of requiring hover/focus to discover it. */
+.ct-panel-collapsible:has(.ct-agent-status-pill:not([hidden])) .ct-input-footer {
+  max-height: 50px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.ct-agent-status-item { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.ct-agent-status-active .ct-agent-status-mark { animation: ct-agent-status-spin 1s linear infinite; }
+.ct-agent-status-completed { color: var(--text-success); }
+.ct-agent-status-failed { color: var(--text-error); }
+@keyframes ct-agent-status-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ct-agent-status-active .ct-agent-status-mark { animation: none; } }
+
+.ct-agent-conversation-header { position: sticky; top: 0; z-index: 2; padding: 10px 14px; background: var(--background-primary); border-bottom: 1px solid var(--background-modifier-border); }
+.ct-agent-conversation-label { color: var(--text-muted); font-size: var(--font-ui-smaller); text-transform: uppercase; letter-spacing: .04em; }
+.ct-agent-conversation-breadcrumbs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; }
+.ct-agent-conversation-breadcrumbs button { padding: 2px 4px; white-space: nowrap; border: 0; box-shadow: none; background: transparent; color: var(--text-accent); }
+.ct-agent-conversation-breadcrumbs button:disabled { color: var(--text-normal); opacity: 1; }
+.ct-agent-conversation-meta, .ct-agent-activity-disclosure { margin: 12px 16px; color: var(--text-muted); }
+.ct-agent-conversation-timeline { margin: 0 16px 24px 36px; }
+.ct-agent-conversation-timeline li { padding: 5px 0; }
+.ct-agent-conversation-timeline time { margin-right: 8px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.ct-agents-row-focused { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.ct-dispatch-disabled textarea { opacity: .55; }
+
+@media (max-width: 480px) {
+  .ct-agent-status-pill { gap: 3px; padding: 0 5px; }
+  .ct-agent-status-icon { display: none; }
+  .ct-footer-cwd { max-width: 42%; }
+}
