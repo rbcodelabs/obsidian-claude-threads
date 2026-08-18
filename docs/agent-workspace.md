@@ -1,6 +1,6 @@
 # Native agent workspace
 
-Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows an **Agent Team** tree. Select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy without creating a separate thread.
+Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows a compact aggregate status pill beside the working folder. Open the Agent Dashboard and select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy in the central pane without creating a separate thread.
 
 The Agent Dashboard also shows compact child-agent entries. Agent role, task, and current activity are included in dashboard search.
 

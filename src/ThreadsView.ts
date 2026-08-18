@@ -836,7 +836,9 @@ export class ThreadsView extends ItemView {
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
     const activeThread = this.manager.getThread(id);
-    this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    if (!this.manager.getSelectedAgentRun(id)) {
+      this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    }
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
     this.syncEditedFiles();
@@ -2044,6 +2046,7 @@ export class ThreadsView extends ItemView {
     if (!thread) return;
     this.renderAgentStatus();
     this.dispatchInput.setDisabled(false);
+    this.dispatchInput.setPlaceholder(thread.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
     const selectedAgentId = this.manager.getSelectedAgentRun(this.activeThreadId);
     if (selectedAgentId && this.renderAgentConversation(selectedAgentId)) return;
     this.renderedAgentRunId = null;
@@ -2190,6 +2193,7 @@ export class ThreadsView extends ItemView {
       }
     }
     this.dispatchInput.setDisabled(true);
+    this.dispatchInput.setPlaceholder('Return to the main conversation to send a message');
     this.renderedAgentRunId = selectedId;
     this.messagesEl.scrollTop = this.conversationScrollPositions.get(selectedKey) ?? 0;
     return true;
@@ -3504,6 +3508,8 @@ export class ThreadsView extends ItemView {
           const selected = this.manager.getSelectedAgentRun(this.activeThreadId);
           if (selected && !this.renderedAgentRunId) {
             this.conversationScrollPositions.set(`${this.activeThreadId}:main`, this.messagesEl.scrollTop);
+          } else if (this.renderedAgentRunId) {
+            this.conversationScrollPositions.set(`${this.activeThreadId}:${this.renderedAgentRunId}`, this.messagesEl.scrollTop);
           }
           if (selected || this.renderedAgentRunId) void this.renderMessages();
         }

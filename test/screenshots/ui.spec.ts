@@ -48,6 +48,39 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-main')).toHaveScreenshot('native-agent-workspace.png');
   });
 
+  test('child activity live refresh preserves scroll and read-only composer guidance', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = view.manager;
+      const threadId = 'thread-fix-auth';
+      const store = manager.agentRuns;
+      const child = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-scroll', description: 'Inspect a long activity stream', role: 'researcher' }, Date.now() - 65000);
+      for (let i = 0; i < 40; i++) store.observeActivity(threadId, 'claude', 'agent-scroll', { kind: 'activity', text: `Activity ${i}`, timestamp: Date.now() - 60000 + i, nativeEventId: `activity-${i}` });
+      manager.selectAgentRun(threadId, child.id);
+      view.focusThread(threadId);
+    });
+    await page.waitForSelector('.ct-agent-conversation-header');
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Return to the main conversation to send a message');
+    const before = await page.locator('.ct-messages').evaluate(el => { el.scrollTop = 240; return el.scrollTop; });
+    expect(before).toBeGreaterThan(0);
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = view.manager;
+      const threadId = 'thread-fix-auth';
+      const run = manager.getAgentRuns(threadId)[0];
+      manager.agentRuns.observeActivity(threadId, 'claude', run.nativeAgentId, { kind: 'activity', text: 'Live update', timestamp: Date.now(), nativeEventId: 'live-update' });
+      manager.emit(threadId, { type: 'agent_runs_changed', agentRuns: manager.getAgentRuns(threadId) });
+    });
+    await page.waitForTimeout(50);
+    expect(await page.locator('.ct-messages').evaluate(el => el.scrollTop)).toBe(before);
+    await page.getByRole('button', { name: 'Main conversation' }).click();
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Claude');
+    await expect(page.locator('.ct-input')).toBeEnabled();
+  });
+
   for (const viewport of [
     { name: 'iphone-14', width: 390, height: 844 },
     { name: 'iphone-se', width: 375, height: 667 },
