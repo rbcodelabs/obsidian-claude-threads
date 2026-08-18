@@ -33,6 +33,16 @@ function makeSpawnFn(proc: ReturnType<typeof makeFakeProcess>) {
   return vi.fn().mockReturnValue(proc) as unknown as typeof import('child_process').spawn;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('WakeLockService — lifecycle (macOS path)', () => {
@@ -100,6 +110,87 @@ describe('WakeLockService — lifecycle (macOS path)', () => {
     svc.release(); // extra — should not throw or go negative
     expect(svc.sessionCount).toBe(0);
     expect(proc.kill).toHaveBeenCalledOnce(); // still only killed once
+  });
+});
+
+describe('WakeLockService — Geode native bridge', () => {
+  it('prefers the native blocker and releases its token after the last session', async () => {
+    const proc = makeFakeProcess();
+    const spawnFn = makeSpawnFn(proc);
+    const nativeBridge = {
+      acquirePowerSaveBlocker: vi.fn().mockResolvedValue('blocker-1'),
+      releasePowerSaveBlocker: vi.fn().mockResolvedValue(true),
+    };
+    const svc = new WakeLockService({ platform: 'darwin', spawnFn, nativeBridge });
+
+    svc.acquire();
+    await vi.waitFor(() => expect(nativeBridge.acquirePowerSaveBlocker).toHaveBeenCalledOnce());
+    expect(spawnFn).not.toHaveBeenCalled();
+
+    svc.release();
+    await vi.waitFor(() => expect(nativeBridge.releasePowerSaveBlocker).toHaveBeenCalledWith('blocker-1'));
+  });
+
+  it('falls back to caffeinate when native acquisition rejects', async () => {
+    const proc = makeFakeProcess();
+    const spawnFn = makeSpawnFn(proc);
+    const nativeBridge = {
+      acquirePowerSaveBlocker: vi.fn().mockRejectedValue(new Error('IPC unavailable')),
+      releasePowerSaveBlocker: vi.fn(),
+    };
+    const svc = new WakeLockService({ platform: 'darwin', spawnFn, nativeBridge });
+
+    svc.acquire();
+    await vi.waitFor(() => expect(nativeBridge.acquirePowerSaveBlocker).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledWith('caffeinate', ['-i'], expect.anything()));
+    svc.destroy();
+  });
+
+  it('falls back safely when native acquisition returns an invalid token', async () => {
+    const proc = makeFakeProcess();
+    const spawnFn = makeSpawnFn(proc);
+    const nativeBridge = {
+      acquirePowerSaveBlocker: vi.fn().mockResolvedValue(''),
+      releasePowerSaveBlocker: vi.fn(),
+    };
+    const svc = new WakeLockService({ platform: 'darwin', spawnFn, nativeBridge });
+
+    svc.acquire();
+    await vi.waitFor(() => expect(nativeBridge.acquirePowerSaveBlocker).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(spawnFn).toHaveBeenCalledOnce());
+    svc.destroy();
+  });
+
+  it('releases a late native token when the session ends before acquisition resolves', async () => {
+    const pending = deferred<string>();
+    const nativeBridge = {
+      acquirePowerSaveBlocker: vi.fn().mockReturnValue(pending.promise),
+      releasePowerSaveBlocker: vi.fn().mockResolvedValue(true),
+    };
+    const svc = new WakeLockService({ platform: 'darwin', nativeBridge });
+
+    svc.acquire();
+    svc.release();
+    pending.resolve('late-token');
+
+    await vi.waitFor(() => expect(nativeBridge.releasePowerSaveBlocker).toHaveBeenCalledWith('late-token'));
+    expect(svc.isActive()).toBe(false);
+  });
+
+  it('releases a late native token when disabled or destroyed before acquisition resolves', async () => {
+    for (const stop of ['disable', 'destroy'] as const) {
+      const pending = deferred<string>();
+      const nativeBridge = {
+        acquirePowerSaveBlocker: vi.fn().mockReturnValue(pending.promise),
+        releasePowerSaveBlocker: vi.fn().mockResolvedValue(true),
+      };
+      const svc = new WakeLockService({ platform: 'darwin', nativeBridge });
+      svc.acquire();
+      if (stop === 'disable') svc.setEnabled(false);
+      else svc.destroy();
+      pending.resolve(`${stop}-token`);
+      await vi.waitFor(() => expect(nativeBridge.releasePowerSaveBlocker).toHaveBeenCalledWith(`${stop}-token`));
+    }
   });
 });
 
