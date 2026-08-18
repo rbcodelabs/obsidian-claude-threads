@@ -3874,6 +3874,15 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'files_edited': {
+        for (const filePath of event.paths) {
+          this.editedFilesSet.delete(filePath);
+          this.editedFilesSet.add(filePath);
+        }
+        this.renderEditedFilesCard();
+        break;
+      }
+
       case 'tool_result_status': {
         // ClaudeSession mutates the SAME ToolCallRecord object in place
         // (record.status = status — see the 'user'/tool_result handling in

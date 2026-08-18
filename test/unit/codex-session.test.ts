@@ -65,6 +65,67 @@ describe('codexContextUsage', () => {
 });
 
 describe('CodexSession protocol notifications', () => {
+  it('reports every path from a multi-file fileChange through the shared edited-files callback', () => {
+    const managerEditedFiles: string[] = [];
+    const onFilesEdited = (paths: string[]) => {
+      for (const filePath of paths) {
+        if (!managerEditedFiles.includes(filePath)) managerEditedFiles.push(filePath);
+      }
+    };
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.options = {
+      callbacks: {
+        onRawEvent: vi.fn(),
+        onToolUse: vi.fn(),
+        onFilesEdited,
+      },
+    };
+
+    internal.handle({
+      method: 'item/started',
+      params: {
+        item: {
+          type: 'fileChange',
+          id: 'change-1',
+          status: 'inProgress',
+          changes: [
+            { path: '/project/src/a.ts', kind: 'update', diff: '@@' },
+            { path: '/project/src/b.ts', kind: 'create', diff: '@@' },
+            { path: '', kind: 'update', diff: '@@' },
+          ],
+        },
+      },
+    });
+
+    expect(managerEditedFiles).toEqual(['/project/src/a.ts', '/project/src/b.ts']);
+  });
+
+  it('waits for the active turn id before sending Stop to Codex', async () => {
+    let acceptTurn!: (result: { turn: { id: string } }) => void;
+    const turnAccepted = new Promise<{ turn: { id: string } }>((resolve) => { acceptTurn = resolve; });
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { callbacks: { onError: vi.fn() } };
+    const request = vi.spyOn(internal, 'request').mockImplementation((method: string) => (
+      method === 'turn/start' ? turnAccepted : Promise.resolve({})
+    ));
+
+    session.send('Keep working');
+    const stopped = session.interrupt();
+
+    expect(request).toHaveBeenCalledOnce();
+    acceptTurn({ turn: { id: 'turn-1' } });
+    await stopped;
+
+    expect(request).toHaveBeenLastCalledWith('turn/interrupt', {
+      threadId: 'codex-thread',
+      turnId: 'turn-1',
+    });
+  });
+
   it('caches usage, raw-logs the notification, and reports a completed turn', async () => {
     const onDone = vi.fn();
     const onRawEvent = vi.fn();

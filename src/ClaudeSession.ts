@@ -108,6 +108,8 @@ export interface SessionCallbacks {
    * proposed content in the permission dialog before accepting.
    */
   onFileUserModified?: (filePath: string) => void;
+  /** Fired when the harness reports one or more files changed during a turn. */
+  onFilesEdited?: (paths: string[]) => void;
   /**
    * Fired when a tool_result arrives for a previously-seen tool_use, carrying
    * its final success/error status and elapsed duration. Mirrors the

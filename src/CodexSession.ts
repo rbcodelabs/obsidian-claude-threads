@@ -99,6 +99,8 @@ export class CodexSession {
   private options: HarnessSessionOptions | null = null;
   private codexThreadId: string | undefined;
   private _turnInFlight = false;
+  private activeTurnId: string | undefined;
+  private turnStartPromise: Promise<string | undefined> | null = null;
   private closed = true;
   /** App-server has one active turn per thread; retain follow-ups locally. */
   private queuedTurns: Array<{ text: string; images?: ImageAttachment[] }> = [];
@@ -232,12 +234,13 @@ export class CodexSession {
 
   private startTurn(text: string, images?: ImageAttachment[]): void {
     this._turnInFlight = true;
+    this.activeTurnId = undefined;
     this.pendingPlanText = null;
     const isPlanMode = this.options?.permissionMode === 'plan';
     if (isPlanMode) this.options?.callbacks.onEnterPlanMode?.();
     const input: any[] = [{ type: 'text', text, text_elements: [] }];
     for (const image of images ?? []) input.push({ type: 'image', url: `data:${image.mediaType};base64,${image.base64}` });
-    this.request('turn/start', {
+    this.turnStartPromise = this.request('turn/start', {
       threadId: this.codexThreadId,
       input,
       ...(isPlanMode ? {
@@ -246,22 +249,30 @@ export class CodexSession {
           settings: { model: this.activeModel, reasoning_effort: null, developer_instructions: null },
         },
       } : {}),
+    }).then((result) => {
+      this.activeTurnId = result.turn?.id;
+      return this.activeTurnId;
     })
       .catch((error) => {
         this._turnInFlight = false;
         this.options?.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+        return undefined;
       });
   }
 
   async interrupt(): Promise<void> {
     if (!this.codexThreadId || !this._turnInFlight) return;
     this.queuedTurns = [];
-    await this.request('turn/interrupt', { threadId: this.codexThreadId });
+    const turnId = this.activeTurnId ?? await this.turnStartPromise;
+    if (!turnId || !this._turnInFlight) return;
+    await this.request('turn/interrupt', { threadId: this.codexThreadId, turnId });
   }
 
   close(): void {
     this.closed = true;
     this._turnInFlight = false;
+    this.activeTurnId = undefined;
+    this.turnStartPromise = null;
     this.queuedTurns = [];
     this.process?.kill();
     this.process = null;
@@ -393,6 +404,7 @@ export class CodexSession {
       case 'item/agentMessage/delta': callbacks.onToken(String(params.delta ?? '')); break;
       case 'item/started': {
         const item = params.item;
+        this.reportEditedFiles(item, callbacks);
         if (this.isToolItem(item)) {
           callbacks.onToolUse({ toolUseId: item.id, name: this.toolName(item), summary: this.toolSummary(item), status: 'pending' });
         }
@@ -401,6 +413,7 @@ export class CodexSession {
       }
       case 'item/completed': {
         const item = params.item;
+        this.reportEditedFiles(item, callbacks);
         if (item?.type === 'agentMessage' && item.text) callbacks.onMessage(item.text, []);
         if (item?.type === 'plan' && item.text) this.pendingPlanText = String(item.text);
         if (item?.type === 'contextCompaction') callbacks.onCompact?.('auto', this.latestContextUsage?.totalTokens ?? 0);
@@ -412,6 +425,8 @@ export class CodexSession {
       }
       case 'turn/completed': {
         this._turnInFlight = false;
+        this.activeTurnId = undefined;
+        this.turnStartPromise = null;
         const turn = params.turn ?? {};
         if (turn.status === 'interrupted') callbacks.onInterrupted(this.codexThreadId ?? '');
         else if (turn.status === 'failed') callbacks.onError(new Error(turn.error?.message ?? 'Codex turn failed'));
@@ -579,6 +594,14 @@ export class CodexSession {
     if (item.type === 'dynamicToolCall') return String(item.tool ?? 'dynamicToolCall');
     if (item.type === 'mcpToolCall') return `${item.server ?? 'mcp'}:${item.tool ?? 'tool'}`;
     return String(item.type);
+  }
+
+  private reportEditedFiles(item: any, callbacks: SessionCallbacks): void {
+    if (item?.type !== 'fileChange' || !Array.isArray(item.changes)) return;
+    const paths = item.changes
+      .map((change: any) => change?.path)
+      .filter((filePath: unknown): filePath is string => typeof filePath === 'string' && filePath.length > 0);
+    if (paths.length > 0) callbacks.onFilesEdited?.(paths);
   }
 
   private isToolItem(item: any): boolean {

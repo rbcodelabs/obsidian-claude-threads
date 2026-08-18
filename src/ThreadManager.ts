@@ -69,6 +69,7 @@ export type ThreadEvent =
   | { type: 'agent_runs_changed'; agentRuns: AgentRun[] }
   | { type: 'git_operation'; summary: string }
   | { type: 'file_user_modified'; filePath: string }
+  | { type: 'files_edited'; paths: string[] }
   | { type: 'tool_result_status'; toolUseId: string; status: 'success' | 'error'; durationMs?: number }
   | { type: 'enter_plan_mode' }
   | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
@@ -1388,6 +1389,16 @@ export class ThreadManager {
           }
         }
         this.emit(threadId, { type: 'tool_use', record });
+      },
+      onFilesEdited: (paths) => {
+        const added: string[] = [];
+        if (!thread.editedFiles) thread.editedFiles = [];
+        for (const filePath of paths) {
+          if (!filePath || thread.editedFiles.includes(filePath)) continue;
+          thread.editedFiles.push(filePath);
+          added.push(filePath);
+        }
+        if (added.length > 0) this.emit(threadId, { type: 'files_edited', paths: added });
       },
       onRecap: (summary) => {
         thread.recap = summary;
