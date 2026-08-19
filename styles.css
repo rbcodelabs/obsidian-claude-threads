@@ -2223,6 +2223,69 @@
   background: var(--interactive-accent-hover);
 }
 
+.ct-harness-picker-root {
+  position: relative;
+}
+
+.ct-harness-send-btn {
+  position: relative;
+}
+
+.ct-harness-send-btn::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 0;
+  height: 0;
+  border-left: 2.5px solid transparent;
+  border-right: 2.5px solid transparent;
+  border-top: 3px solid currentColor;
+  opacity: 0.65;
+}
+
+.ct-harness-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ct-harness-menu {
+  position: absolute;
+  z-index: var(--layer-popover, 1000);
+  right: 8px;
+  bottom: 46px;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+
+.ct-harness-menu-item {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  color: var(--text-normal);
+  background: transparent;
+}
+
+.ct-harness-menu-item:hover,
+.ct-harness-menu-item:focus,
+.ct-harness-menu-item[aria-checked='true'] {
+  background: var(--background-modifier-hover);
+}
+
 .ct-stop-btn {
   background: var(--color-red);
   color: white;

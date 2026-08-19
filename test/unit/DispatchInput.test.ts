@@ -224,3 +224,89 @@ describe('DispatchInput — placeholder', () => {
     expect(root.querySelector('textarea')?.placeholder).toBe('Message Codex');
   });
 });
+
+describe('DispatchInput — harness picker', () => {
+  function mountPicker(onSend = vi.fn()) {
+    const di = new DispatchInput({
+      app: makeApp(),
+      onSend,
+      harnessPicker: { initialHarness: 'claude' },
+    });
+    const container = makeContainer();
+    document.body.appendChild(container);
+    const root = di.mount(container);
+    const textarea = root.querySelector('textarea')!;
+    const sendButton = root.querySelector<HTMLButtonElement>('.ct-send-btn')!;
+    return { di, root, textarea, sendButton, onSend };
+  }
+
+  it('scopes the picker positioning class away from ordinary dispatch inputs', () => {
+    const ordinary = new DispatchInput({ app: makeApp(), onSend: vi.fn() });
+    const ordinaryRoot = ordinary.mount(makeContainer());
+    const { root: pickerRoot } = mountPicker();
+
+    expect(ordinaryRoot.classList.contains('ct-harness-picker-root')).toBe(false);
+    expect(pickerRoot.classList.contains('ct-harness-picker-root')).toBe(true);
+  });
+
+  it('shows the initial harness and submits it with the payload', async () => {
+    const { textarea, sendButton, onSend } = mountPicker();
+
+    expect(sendButton.getAttribute('aria-label')).toContain('Claude');
+    textarea.value = 'Do the task';
+    sendButton.click();
+    await Promise.resolve();
+
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'Do the task',
+      agentHarness: 'claude',
+    }));
+  });
+
+  it('right-click opens a selector; choosing Codex changes selection without dispatching', async () => {
+    const { root, textarea, sendButton, onSend } = mountPicker();
+
+    const contextMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    sendButton.dispatchEvent(contextMenu);
+    expect(contextMenu.defaultPrevented).toBe(true);
+
+    const codexOption = root.querySelector<HTMLButtonElement>('[role="menuitemradio"][data-harness="codex"]')!;
+    expect(codexOption).toBeTruthy();
+    codexOption.click();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(sendButton.getAttribute('aria-label')).toContain('Codex');
+
+    textarea.value = 'Use Codex';
+    sendButton.click();
+    await Promise.resolve();
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ agentHarness: 'codex' }));
+  });
+
+  it('opens from the keyboard and closes on Escape', () => {
+    const { root, sendButton } = mountPicker();
+
+    sendButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }));
+    expect(root.querySelector('[role="menu"]')).toBeTruthy();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(root.querySelector('[role="menu"]')).toBeFalsy();
+    expect(document.activeElement).toBe(sendButton);
+  });
+
+  it('long-press opens the selector and suppresses the resulting send click', () => {
+    vi.useFakeTimers();
+    try {
+      const { root, sendButton, onSend } = mountPicker();
+
+      sendButton.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+      vi.advanceTimersByTime(500);
+      sendButton.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, button: 0 }));
+      sendButton.click();
+
+      expect(root.querySelector('[role="menu"]')).toBeTruthy();
+      expect(onSend).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -1852,13 +1852,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
        * loop re-sends `text` every intervalSeconds; the first iteration is
        * the dispatch itself. */
       loop?: { intervalSeconds: number };
+      /** Harness override selected at kickoff; does not change Settings. */
+      agentHarness?: 'claude' | 'codex';
     },
   ): Promise<string> {
     const rawTitle = titleHint ?? text;
     const title = rawTitle.trim()
       ? rawTitle.slice(0, 50).split('\n')[0].trim()
       : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
-    const thread = this.manager.createThread(title, this.getEffectiveCwd());
+    const thread = this.manager.createThread(title, this.getEffectiveCwd(), undefined, opts?.agentHarness);
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
     if (opts?.loop) {

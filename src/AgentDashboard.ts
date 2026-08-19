@@ -144,10 +144,11 @@ export class AgentDashboard extends ItemView {
         return esc ? [...DISPATCH_BUILTIN_COMMANDS, esc] : DISPATCH_BUILTIN_COMMANDS;
       },
       argCompletions: DISPATCH_ARG_COMPLETIONS,
-      onSend: async ({ text, images, attachment }) => {
+      harnessPicker: { initialHarness: this.plugin.settings.agentHarness ?? 'claude' },
+      onSend: async ({ text, images, attachment, agentHarness }) => {
         // Intercept leading built-in commands (/model, /goal, /loop) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
-        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number } } | undefined;
+        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
         let titleText = text;
         const directive = parseDispatchDirective(
           text,
@@ -165,14 +166,14 @@ export class AgentDashboard extends ItemView {
               this.dispatchComponent.setValue(text);
               return;
             }
-            dispatchOpts = { model: directive.model };
+            dispatchOpts = { ...dispatchOpts, model: directive.model };
             text = titleText = directive.rest;
           } else if (directive.kind === 'goal') {
-            dispatchOpts = { goal: directive.goal };
+            dispatchOpts = { ...dispatchOpts, goal: directive.goal };
             text = goalKickoffMessage(directive.goal);
             titleText = directive.goal;
           } else if (directive.kind === 'loop') {
-            dispatchOpts = { loop: { intervalSeconds: directive.intervalSeconds } };
+            dispatchOpts = { ...dispatchOpts, loop: { intervalSeconds: directive.intervalSeconds } };
             text = titleText = directive.prompt;
           }
           // 'escalate' directives always carry `error` (handled above) — no

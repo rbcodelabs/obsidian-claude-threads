@@ -268,6 +268,8 @@ When the context window fills up, Claude compacts the conversation automatically
 
 Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance. Each thread appears as a row showing its name, working directory, current model, and status.
 
+The dispatch button shows the harness that will run the new thread: **Claude** or **Codex**. Click normally to start with the shown harness. Right-click, press and hold, or use `Shift+F10` while the button is focused to open the harness menu; choosing an option changes the button without dispatching. That choice stays with the mounted dashboard while you launch more threads. **Settings → Agent harness** supplies the initial default only—the dashboard choice does not change the global setting, and existing threads remain on their original harness.
+
 **Live activity (running threads):** While a thread is actively processing, the dashboard shows a live one-line summary of the current tool call or step — so you can see "Reading src/components/Header.tsx" or "Running npm test" without switching to that tab.
 
 **Auto-generated summaries (idle threads):** After each completed response, the summarizer runs in a lightweight background process (a separate Claude Code instance using a small model) and writes a multi-sentence recap of what that thread worked on. This summary is shown in the dashboard row so you can re-orient yourself to any thread at a glance — what it accomplished, what files it touched, what's left to do.
@@ -299,6 +301,8 @@ The block is rendered entirely from the SDK event stream (no extra API calls), s
 ### Kanban board
 
 Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working** (also covers a thread whose own turn has ended but a background subagent or `Workflow` task it spawned hasn't reported back yet — see [Agent dashboard](#agent-dashboard)), **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
+
+The Kanban dispatch button uses the same [Claude/Codex kickoff selector](#agent-dashboard): its icon identifies the harness, while right-click, press-and-hold, or `Shift+F10` opens the menu without taking up another permanent control.
 
 **Task list on cards.** When a thread has an active `TodoWrite` / `TaskCreate` checklist, its kanban card shows a compact task list: up to 5 items with status icons (✔ completed, ■ in-progress, ○ pending), a "X / Y done" progress line, and "+N more" when there are additional tasks. The list updates live as the agent ticks items off.
 
@@ -669,6 +673,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Setting | Description |
 |---|---|
 | Claude binary path | Path to the `claude` executable (auto-detected) |
+| Agent harness | Initial Claude or Codex default for new kickoff selectors. A selection made in the Agent Dashboard or Kanban view is local to that mounted view and does not rewrite this setting. |
 | Default working directory | `cwd` for new threads; defaults to vault root |
 | Save threads to vault | Auto-save readable Markdown notes plus versioned machine recovery snapshots |
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |

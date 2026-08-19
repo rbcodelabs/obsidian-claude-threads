@@ -21,6 +21,16 @@ describe('ThreadManager — thread lifecycle', () => {
     expect(manager.getThread(t.id)).toBe(t);
   });
 
+  it('createThread uses an explicit harness override without changing the default', () => {
+    const m = makeManager({ agentHarness: 'claude' });
+
+    const codexThread = m.createThread('Codex task', '/some/cwd', undefined, 'codex');
+    const defaultThread = m.createThread('Default task');
+
+    expect(codexThread.agentHarness).toBe('codex');
+    expect(defaultThread.agentHarness).toBe('claude');
+  });
+
   it('normalizes native sub-agent callbacks into persisted AgentRuns', () => {
     const t = manager.createThread('Agents');
     t.agentHarness = 'codex';
