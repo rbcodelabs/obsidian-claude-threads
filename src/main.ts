@@ -26,6 +26,7 @@ import {
 } from './types';
 import { serializeThreadForSave } from './imageExternalization';
 import { selectIdleThreadsForArchive } from './autoArchive';
+import { createDeferredThreadArchiver } from './deferredThreadArchive';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { execEnv } from './dashboardUtils';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
@@ -299,6 +300,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.migrateGithubSourcesIntoVault();
 
     this.manager = new ThreadManager(this.settings);
+    const deferredThreadArchiver = createDeferredThreadArchiver(
+      this.manager,
+      async (id) => {
+        await this.archiveThreadById(id);
+        await this.saveSettings();
+      },
+    );
+    this.register(() => deferredThreadArchiver.dispose());
     this.manager.hostName = detectHostName(window as unknown as { geode?: unknown });
     // Use a per-thread factory so the set_working_directory tool can close over the
     // correct threadId without shared mutable state across concurrent sessions.
@@ -441,6 +450,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             await this.archiveThreadById(id);
             await this.saveSettings();
           },
+          requestDeferredArchive: (id: string) => deferredThreadArchiver.request(id),
           setThreadNotes: (id: string, notes: string) => {
             const thread = this.manager.getThread(id);
             if (!thread) throw new Error(`Thread not found: ${id}`);
