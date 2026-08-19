@@ -336,6 +336,71 @@ describe('CodexSession protocol notifications', () => {
     expect(onToolResult).toHaveBeenCalledWith('call-1', 'success', undefined);
   });
 
+  it.each([
+    ['completed', undefined, { status: 'completed' }],
+    ['failed', { message: 'Child failed' }, { status: 'failed', error: 'Child failed' }],
+    ['interrupted', undefined, { status: 'killed', error: undefined }],
+  ])('settles a Codex sub-agent when its child-scoped turn is %s', (status, error, expectedUpdate) => {
+    const onTaskUpdated = vi.fn();
+    const onDone = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'parent-thread';
+    internal._turnInFlight = true;
+    internal.options = { callbacks: { onTaskStarted: vi.fn(), onTaskUpdated, onDone, onTaskProgress: vi.fn() } };
+    internal.handle({ method: 'item/completed', params: { item: {
+      type: 'subAgentActivity', id: 'activity-1', kind: 'started', agentThreadId: 'agent-1',
+    } } });
+
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'agent-1', turn: { id: 'child-turn', status, error },
+    } });
+
+    expect(onTaskUpdated).toHaveBeenCalledWith('agent-1', expectedUpdate);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(internal._turnInFlight).toBe(true);
+  });
+
+  it('ignores a stale child-turn completion after a newer follow-up starts', () => {
+    const onTaskUpdated = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'parent-thread';
+    internal.options = { callbacks: { onTaskStarted: vi.fn(), onTaskUpdated, onTaskProgress: vi.fn() } };
+    internal.handle({ method: 'item/completed', params: { item: {
+      type: 'subAgentActivity', id: 'activity-1', kind: 'started', agentThreadId: 'agent-1',
+    } } });
+    internal.handle({ method: 'turn/started', params: {
+      threadId: 'agent-1', turn: { id: 'child-turn-2', status: 'inProgress' },
+    } });
+    expect(onTaskUpdated).toHaveBeenLastCalledWith('agent-1', { status: 'in_progress' });
+    onTaskUpdated.mockClear();
+
+    internal.handle({ method: 'turn/completed', params: {
+      threadId: 'agent-1', turn: { id: 'child-turn-1', status: 'completed' },
+    } });
+
+    expect(onTaskUpdated).not.toHaveBeenCalled();
+  });
+
+  it('clears child-turn tracking when the session closes', () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'parent-thread';
+    internal.options = { callbacks: { onTaskStarted: vi.fn(), onTaskUpdated: vi.fn(), onTaskProgress: vi.fn() } };
+    internal.handle({ method: 'item/completed', params: { item: {
+      type: 'subAgentActivity', id: 'activity-1', kind: 'started', agentThreadId: 'agent-1',
+    } } });
+    internal.handle({ method: 'turn/started', params: {
+      threadId: 'agent-1', turn: { id: 'child-turn', status: 'inProgress' },
+    } });
+    expect(internal.activeSubagentTurns.size).toBe(1);
+
+    session.close();
+
+    expect(internal.activeSubagentTurns.size).toBe(0);
+  });
+
   it('does not emit phantom tool results for reasoning items', () => {
     const onToolResult = vi.fn();
     const session = new CodexSession('codex');
