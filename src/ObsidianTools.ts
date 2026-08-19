@@ -253,9 +253,12 @@ export interface ObsidianMcpServerOptions {
   sendMessageToThread?: (id: string, message: string) => Promise<void>;
   /**
    * Archives a thread: saves it to the vault (if vault persistence is enabled)
-   * then removes it from memory. Cannot be called on the current thread.
+   * then removes it from memory. Scheduled current-thread requests are deferred
+   * through requestDeferredArchive; other current threads are rejected.
    */
   archiveThread?: (id: string) => Promise<void>;
+  /** Requests that the current scheduled thread be archived after its run settles. */
+  requestDeferredArchive?: (id: string) => void;
   /** Sets (or clears, with an empty string) a thread's orchestrator tracking notes. */
   setThreadNotes?: (threadId: string, notes: string) => void;
   /** Sets an AI-proposed reply awaiting human approval on a thread. */
@@ -1343,7 +1346,8 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     [
       'Archives a thread by ID — saves it to the vault (if vault persistence is enabled) then removes it from memory.',
       'Use this to close out completed threads, e.g. after merging PRs or finishing release management.',
-      'Cannot archive the current thread.',
+      'A scheduled thread may archive itself; that archive is deferred until its current run settles.',
+      'Other current threads cannot archive themselves.',
       'Archiving the Thread Orchestrator (the thread tracked in settings.orchestratorThreadId) requires confirm: true.',
     ].join(' '),
     {
@@ -1356,6 +1360,14 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread archiving not available in this context.' }) }], isError: true };
         }
         if (args.threadId === options.threadId) {
+          if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is the Thread Orchestrator. Pass confirm: true to archive it anyway — doing so stops automatic thread review until "Open Thread Orchestrator" is run again.' }) }], isError: true };
+          }
+          const currentThread = options.getThreadDetail?.(args.threadId);
+          if (currentThread?.scheduledItemId && options.requestDeferredArchive) {
+            options.requestDeferredArchive(args.threadId);
+            return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, archivedThreadId: args.threadId, deferred: true }) }] };
+          }
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot archive the current thread.' }) }], isError: true };
         }
         if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {

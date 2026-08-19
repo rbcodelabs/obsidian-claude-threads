@@ -97,6 +97,29 @@ describe('obsidian_archive_thread', () => {
     expect(archiveThread).not.toHaveBeenCalled();
   });
 
+  it('defers archiving when the current thread has a scheduled origin', async () => {
+    const archiveThread = vi.fn();
+    const requestDeferredArchive = vi.fn();
+    const server = createObsidianMcpServer(makeApp(), {
+      threadId: 'current-thread',
+      archiveThread,
+      requestDeferredArchive,
+      getThreadDetail: () => ({ scheduledItemId: 'scheduled-item' } as never),
+    }) as unknown as CapturedServer;
+    const tool = getTool(server, 'obsidian_archive_thread');
+
+    const result = await tool._handler({ threadId: 'current-thread' });
+
+    expect(result.isError).toBeUndefined();
+    expect(requestDeferredArchive).toHaveBeenCalledWith('current-thread');
+    expect(archiveThread).not.toHaveBeenCalled();
+    expect(parseResult(result)).toEqual({
+      success: true,
+      archivedThreadId: 'current-thread',
+      deferred: true,
+    });
+  });
+
   it('calls archiveThread and returns success for a different thread', async () => {
     const archiveThread = vi.fn().mockResolvedValue(undefined);
     const server = createObsidianMcpServer(makeApp(), {
@@ -141,6 +164,25 @@ describe('obsidian_archive_thread', () => {
   });
 
   describe('orchestrator thread confirm guard', () => {
+    it('still requires confirmation when a scheduled current thread is the orchestrator', async () => {
+      const archiveThread = vi.fn();
+      const requestDeferredArchive = vi.fn();
+      const server = createObsidianMcpServer(makeApp(), {
+        threadId: 'orchestrator-thread',
+        archiveThread,
+        requestDeferredArchive,
+        getThreadDetail: () => ({ scheduledItemId: 'scheduled-item' } as never),
+        getOrchestratorThreadId: () => 'orchestrator-thread',
+      }) as unknown as CapturedServer;
+      const tool = getTool(server, 'obsidian_archive_thread');
+
+      const result = await tool._handler({ threadId: 'orchestrator-thread' });
+
+      expect(result.isError).toBe(true);
+      expect((parseResult(result) as { error: string }).error).toMatch(/Thread Orchestrator/);
+      expect(requestDeferredArchive).not.toHaveBeenCalled();
+    });
+
     it('returns an error and does not archive the orchestrator thread when confirm is omitted', async () => {
       const archiveThread = vi.fn().mockResolvedValue(undefined);
       const server = createObsidianMcpServer(makeApp(), {
