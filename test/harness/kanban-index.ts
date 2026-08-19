@@ -43,6 +43,7 @@ m.threadActivity.set(kanbanRunningThreadId, kanbanRunningActivity);
 // the pendingWakeups map in test/harness/index.ts.
 const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();
 pendingWakeups.set(kanbanWaitingThreadId, [{ timerId: 0, fireAt: kanbanWaitingFireAt, reason: kanbanWaitingReason }]);
+const dispatchCalls: unknown[][] = [];
 
 const mockPlugin = {
   app: (mockLeaf as any).app,
@@ -52,7 +53,10 @@ const mockPlugin = {
   saveSettings: async () => {},
   getActiveThreadId: () => null,
   openThreadInChatView: async () => {},
-  dispatchNewThread: async () => 'new-thread',
+  dispatchNewThread: async (...args: unknown[]) => {
+    dispatchCalls.push(args);
+    return 'new-thread';
+  },
   getPendingWakeups: (threadId: string) =>
     [...(pendingWakeups.get(threadId) ?? [])].sort((a, b) => a.fireAt - b.fireAt),
   hasPendingWakeup: (threadId: string) => (pendingWakeups.get(threadId)?.length ?? 0) > 0,
@@ -66,6 +70,7 @@ view.onOpen();
 // Expose for Playwright
 (window as any).__kanban = view;
 (window as any).__manager = manager;
+(window as any).__dispatchCalls = dispatchCalls;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   settings.kanbanGroupBy = mode;
   view.render();

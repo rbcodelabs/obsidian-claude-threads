@@ -10,6 +10,8 @@ export interface DispatchPayload {
   text: string;
   images: ImageAttachment[];
   attachment: string | null;
+  /** Harness selected by a kickoff picker, when that picker is enabled. */
+  agentHarness?: 'claude' | 'codex';
 }
 
 export interface DispatchInputOptions {
@@ -64,6 +66,8 @@ export interface DispatchInputOptions {
   sendBtnText?: string;
   /** Title tooltip for the send button (default: 'Start task') */
   sendBtnTitle?: string;
+  /** Turn the send button into a locally sticky kickoff harness picker. */
+  harnessPicker?: { initialHarness: 'claude' | 'codex' };
   /**
    * Called on every keydown/keyup to retrieve the current push-to-talk hotkey
    * string (e.g. "Alt+Space"). When provided, hold-to-record PTT is enabled.
@@ -117,6 +121,21 @@ export class DispatchInput {
 
   private sttController: SttController | null = null;
   private dispatching = false;
+  private selectedHarness: 'claude' | 'codex' | null = null;
+  private harnessMenu: HTMLElement | null = null;
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private suppressNextSendClick = false;
+  private readonly closeHarnessMenuOnPointerDown = (event: PointerEvent): void => {
+    if (this.harnessMenu && !this.harnessMenu.contains(event.target as Node) && event.target !== this.sendBtn) {
+      this.closeHarnessMenu();
+    }
+  };
+  private readonly closeHarnessMenuOnEscape = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.harnessMenu) {
+      event.preventDefault();
+      this.closeHarnessMenu(true);
+    }
+  };
 
   constructor(options: DispatchInputOptions) {
     this.app = options.app;
@@ -156,8 +175,16 @@ export class DispatchInput {
       text: this.options.sendBtnText ?? '▶',
       attr: { title: this.options.sendBtnTitle ?? 'Start task' },
     });
-    sendBtn.addEventListener('click', () => this.send());
     this.sendBtn = sendBtn;
+    this.selectedHarness = this.options.harnessPicker?.initialHarness ?? null;
+    if (this.selectedHarness) this.configureHarnessPicker();
+    sendBtn.addEventListener('click', () => {
+      if (this.suppressNextSendClick) {
+        this.suppressNextSendClick = false;
+        return;
+      }
+      this.send();
+    });
 
     // Optional stop button (shown/hidden via setStreaming())
     if (this.options.showStopBtn) {
@@ -315,6 +342,8 @@ export class DispatchInput {
   }
 
   destroy(): void {
+    this.clearLongPressTimer();
+    this.closeHarnessMenu();
     this.sttController?.destroy();
     this.hideFileDropdown();
     this.hideSkillDropdown();
@@ -400,10 +429,120 @@ export class DispatchInput {
     this.renderChips();
 
     try {
-      await this.options.onSend({ text, images, attachment });
+      await this.options.onSend({
+        text,
+        images,
+        attachment,
+        ...(this.selectedHarness ? { agentHarness: this.selectedHarness } : {}),
+      });
     } finally {
       this.dispatching = false;
     }
+  }
+
+  // ── Kickoff harness picker ───────────────────────────────────────────────
+
+  private configureHarnessPicker(): void {
+    this.rootEl.addClass('ct-harness-picker-root');
+    this.sendBtn.addClass('ct-harness-send-btn');
+    this.renderHarnessIdentity();
+    this.sendBtn.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.openHarnessMenu();
+    });
+    this.sendBtn.addEventListener('keydown', (event) => {
+      if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu' || (event.altKey && event.key === 'ArrowDown')) {
+        event.preventDefault();
+        this.openHarnessMenu();
+      }
+    });
+    this.sendBtn.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      this.clearLongPressTimer();
+      this.longPressTimer = setTimeout(() => {
+        this.longPressTimer = null;
+        this.suppressNextSendClick = true;
+        this.openHarnessMenu();
+      }, 500);
+    });
+    this.sendBtn.addEventListener('pointerup', () => {
+      this.clearLongPressTimer();
+      // A synthesized click follows pointerup synchronously. If the platform
+      // omits that click, avoid suppressing the user's next intentional send.
+      if (this.suppressNextSendClick) setTimeout(() => { this.suppressNextSendClick = false; }, 0);
+    });
+    this.sendBtn.addEventListener('pointercancel', () => {
+      this.clearLongPressTimer();
+      this.suppressNextSendClick = false;
+    });
+    this.sendBtn.addEventListener('pointerleave', () => this.clearLongPressTimer());
+  }
+
+  private renderHarnessIdentity(): void {
+    if (!this.selectedHarness) return;
+    const name = this.selectedHarness === 'claude' ? 'Claude' : 'Codex';
+    this.sendBtn.empty();
+    this.sendBtn.createSpan({
+      cls: `ct-harness-mark ct-harness-mark-${this.selectedHarness}`,
+      text: this.selectedHarness === 'claude' ? 'A' : '◎',
+    });
+    const label = `Start task with ${name}; right-click or hold to change agent`;
+    this.sendBtn.setAttribute('aria-label', label);
+    this.sendBtn.setAttribute('aria-haspopup', 'menu');
+    this.sendBtn.setAttribute('aria-expanded', this.harnessMenu ? 'true' : 'false');
+    this.sendBtn.title = label;
+  }
+
+  private openHarnessMenu(): void {
+    if (this.harnessMenu) return;
+    const menu = this.rootEl.createDiv({ cls: 'ct-harness-menu', attr: { role: 'menu', 'aria-label': 'Choose agent harness' } });
+    this.harnessMenu = menu;
+    for (const harness of ['claude', 'codex'] as const) {
+      const name = harness === 'claude' ? 'Claude' : 'Codex';
+      const item = menu.createEl('button', {
+        cls: 'ct-harness-menu-item',
+        attr: {
+          role: 'menuitemradio',
+          'aria-checked': String(this.selectedHarness === harness),
+          'data-harness': harness,
+        },
+      });
+      item.createSpan({ cls: `ct-harness-mark ct-harness-mark-${harness}`, text: harness === 'claude' ? 'A' : '◎' });
+      item.createSpan({ text: name });
+      item.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.selectedHarness = harness;
+        this.closeHarnessMenu(true);
+        this.renderHarnessIdentity();
+      });
+      item.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+        const offset = event.key === 'ArrowDown' ? 1 : -1;
+        items[(items.indexOf(item) + offset + items.length) % items.length]?.focus();
+      });
+    }
+    this.sendBtn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', this.closeHarnessMenuOnPointerDown);
+    document.addEventListener('keydown', this.closeHarnessMenuOnEscape);
+    menu.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+  }
+
+  private closeHarnessMenu(restoreFocus = false): void {
+    if (!this.harnessMenu) return;
+    this.harnessMenu.remove();
+    this.harnessMenu = null;
+    this.sendBtn?.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', this.closeHarnessMenuOnPointerDown);
+    document.removeEventListener('keydown', this.closeHarnessMenuOnEscape);
+    if (restoreFocus) this.sendBtn?.focus();
+  }
+
+  private clearLongPressTimer(): void {
+    if (this.longPressTimer) clearTimeout(this.longPressTimer);
+    this.longPressTimer = null;
   }
 
   // ── Attachment handling ───────────────────────────────────────────────────

@@ -961,6 +961,31 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('kanban-status.png', { fullPage: true });
   });
 
+  test('kanban kickoff harness picker selects without dispatching', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    await page.waitForSelector('.ct-kanban-board');
+
+    const harnessButton = page.locator('.ct-kanban-dispatch .ct-harness-send-btn');
+    await expect(harnessButton).toHaveAttribute('aria-label', /Claude/);
+    await harnessButton.click({ button: 'right' });
+
+    const menu = page.locator('.ct-harness-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitemradio', { name: 'Claude' })).toHaveAttribute('aria-checked', 'true');
+    await expect(menu.getByRole('menuitemradio', { name: 'Codex' })).toHaveCSS('min-height', '44px');
+
+    await menu.getByRole('menuitemradio', { name: 'Codex' }).click();
+    await expect(menu).toHaveCount(0);
+    await expect(harnessButton).toHaveAttribute('aria-label', /Codex/);
+    expect(await page.evaluate(() => (window as any).__dispatchCalls.length)).toBe(0);
+
+    await harnessButton.click({ button: 'right' });
+    const reopenedMenu = page.locator('.ct-harness-menu');
+    await expect(reopenedMenu).toBeVisible();
+    await expect(reopenedMenu).toHaveScreenshot('kanban-harness-picker.png');
+  });
+
   test('kanban board — group by folder swimlanes', async ({ page }) => {
     await page.setViewportSize({ width: 1240, height: 820 });
     await page.goto(kanbanUrl);

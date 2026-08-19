@@ -2,6 +2,10 @@
 
 Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows an **Agent Team** tree. Select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy without creating a separate thread.
 
+## Choosing the harness at kickoff
+
+The Agent Dashboard and Kanban dispatch controls show the harness that will own the new thread. A normal click dispatches with the shown Claude or Codex harness. Right-click, press and hold, or focus the button and press `Shift+F10` to choose the other harness without sending. The selection remains local to that mounted view; the Agent harness setting is only its initial default, and changing the kickoff selection never switches an existing thread.
+
 The Agent Dashboard also shows compact child-agent entries. Agent role, task, and current activity are included in dashboard search.
 
 ## Current capability matrix
