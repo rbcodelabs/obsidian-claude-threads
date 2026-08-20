@@ -47,6 +47,7 @@ export type ThreadEvent =
   | { type: 'cwd_changed'; cwd: string }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
+  | { type: 'threads_loaded'; threadIds: string[] }
   | { type: 'thread_renamed'; threadId: string; title: string }
   | { type: 'permission_request'; toolName: string; detail: string }
   | { type: 'permission_resolved' }
@@ -378,7 +379,7 @@ export class ThreadManager {
 
   // ── Threads ──────────────────────────────────────────────────────────────────
 
-  loadThreads(threads: Thread[]): void {
+  loadThreads(threads: Thread[], notify = false): void {
     for (const t of threads) {
       // Threads saved before multi-harness support are Claude sessions.
       if (!t.agentHarness) t.agentHarness = 'claude';
@@ -389,6 +390,9 @@ export class ThreadManager {
       if (!t.updatedAt) t.updatedAt = t.createdAt;
       if (t.agentRuns?.length) this.agentRuns.restore(t.id, t.agentRuns);
       this.threads.set(t.id, t);
+    }
+    if (notify && threads.length > 0) {
+      this.emit('', { type: 'threads_loaded', threadIds: threads.map((thread) => thread.id) });
     }
   }
 
