@@ -1125,6 +1125,10 @@ export class KanbanView extends ItemView {
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
+    if (event.type === 'threads_loaded') {
+      this.scheduleRender();
+      return;
+    }
     if (event.type === 'active_thread_changed') {
       this.setActiveCard(threadId);
       return;

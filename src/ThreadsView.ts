@@ -391,6 +391,7 @@ export class ThreadsView extends ItemView {
     };
 
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
+      this.handleThreadListEvent(event);
       // Save whenever any thread's persistent state changes, not just the active one.
       // Without this, messages on background threads are never written to disk and
       // are lost on reload.
@@ -511,6 +512,11 @@ export class ThreadsView extends ItemView {
     // Render the status footer from the active thread's current tags. The
     // StatusLineService (owned by main.ts) keeps statusTags fresh in the background.
     this.renderStatusFooter();
+  }
+
+  /** Refresh list-derived chrome after a batch of threads enters memory. */
+  private handleThreadListEvent(event: ThreadEvent): void {
+    if (event.type === 'threads_loaded') this.renderProjectBar();
   }
 
   async onClose(): Promise<void> {

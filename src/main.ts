@@ -36,6 +36,7 @@ import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
 import { setDebugLogging, debugLog, getLogRing } from './logger';
 import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './telemetry';
 import { secretStorageKey } from './secretUtils';
+import { scheduleVaultThreadRecovery } from './vaultThreadRecovery';
 import {
   sharedPersistenceWriterFence,
   type PersistenceWriterToken,
@@ -1006,27 +1007,20 @@ export default class ClaudeThreadsPlugin extends Plugin {
         });
 
       if (hasUnknownThreads) {
-        try {
-          const vaultThreads = await this.persistence.loadAllThreads();
-          const recovered = vaultThreads.filter(
-            (t) => !knownIds.has(t.id) && t.status !== 'archived',
-          );
-          for (const t of recovered) {
-            if (t.status === 'active') t.status = 'waiting';
-          }
-          if (recovered.length > 0) {
-            this.manager.loadThreads(recovered);
-            console.log(`[ClaudeThreads] Recovered ${recovered.length} thread(s) from vault notes`);
-            // Write recovered threads back into data.json immediately so they survive
-            // the next restart even if saveSettings() on unload is skipped.
-            // Reset the orphan-archive flag so the next startup re-scans for any
-            // notes that may have been left in waiting state during the crash.
+        scheduleVaultThreadRecovery({
+          knownIds,
+          loadAllThreads: () => this.persistence.loadAllThreads(),
+          // Emit one batch event after every recovered thread is in memory so
+          // already-open views refresh once, rather than once per thread.
+          loadRecoveredThreads: (threads) => this.manager.loadThreads(threads, true),
+          markOrphanArchiveScanIncomplete: () => {
             this.settings.orphanArchiveScanComplete = false;
-            await this.saveSettings();
-          }
-        } catch (err) {
-          console.error('[ClaudeThreads] Failed to recover threads from vault:', err);
-        }
+          },
+          // Persist recovered state durably, but never hold up plugin startup.
+          saveSettings: () => this.saveSettings(),
+          logRecovered: (count) => console.log(`[ClaudeThreads] Recovered ${count} thread(s) from vault notes`),
+          logError: (err) => console.error('[ClaudeThreads] Failed to recover threads from vault:', err),
+        });
       }
     }
 
