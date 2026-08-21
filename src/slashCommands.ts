@@ -23,6 +23,7 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'context', description: 'Show current context window usage breakdown' },
   { name: 'usage', description: 'Show token usage, quota windows, and account activity' },
   { name: 'create-pr', description: 'Create a pull request for this branch (add --draft for a draft PR)' },
+  { name: 'design', description: 'Create or revise a live static UI artifact: /design <brief>' },
 ];
 
 /**
