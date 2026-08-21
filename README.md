@@ -171,7 +171,14 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/context` | Show a per-category token usage breakdown for the active session (tools, system prompt, skills, MCP tools, conversation, etc.) |
 | `/create-pr` | Ask Claude to push the branch and open a PR (`gh pr create`) — same action as the [git diff bar](#git-diff-bar-create-pr)'s Create PR button |
 | `/create-pr --draft` | Same, but opens a draft PR — same as the git diff bar's Create draft PR button |
+| `/design <brief>` | Create or revise a secure, responsive static UI artifact for this thread and open it in Geode's ArtifactView |
 | `/escalate <prompt>` | Route just this turn to the [escalation model](#model-switching) (default `/escalate`, keyword and target model configurable in Settings; only shown when escalation is enabled) |
+
+### Design artifacts in Geode
+
+Use `/design <brief>` in an existing thread to create a zero-install static UI artifact under `.geode/artifacts/` in your vault. Claude edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files; the artifact card then keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief to reopen the existing preview, or include a new brief to revise it in the same thread.
+
+Geode's ArtifactView previews the result with live reload, desktop/tablet/mobile viewport controls, runtime diagnostics, and PNG capture. Artifacts run in an isolated, ephemeral, Node-less guest with network, clipboard, downloads, popups, and external navigation denied. Outside Geode, Threads reveals the source instead of launching the artifact without that sandbox.
 
 **Command pills** — when you complete a built-in command (type `/goal ` or pick one from the dropdown), it turns into a pill chip at the left of the input box. Type the arguments after it; a single Backspace at the start of the input (or clicking the pill's ×) deletes the whole command. After a command, argument autocomplete kicks in — `/model ` offers `fable|opus|sonnet|haiku|default`.
 

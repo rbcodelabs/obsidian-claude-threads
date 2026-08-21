@@ -1857,6 +1857,52 @@
   color: var(--color-red);
 }
 
+/* Design artifact card */
+.ct-artifact-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-secondary));
+}
+
+.ct-artifact-card-icon {
+  display: inline-flex;
+  color: var(--text-accent);
+}
+
+.ct-artifact-card-copy { min-width: 0; }
+.ct-artifact-card-title {
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-artifact-card-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.ct-artifact-card-actions { display: flex; gap: 4px; }
+.ct-artifact-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.ct-artifact-action:hover { border-color: var(--interactive-accent); color: var(--text-accent); }
+.ct-artifact-action-icon { display: inline-flex; }
+.ct-artifact-action-icon svg { width: 14px; height: 14px; }
+
 /* Edited-files card */
 .ct-edited-files {
   padding: 4px 8px;
@@ -6900,6 +6946,37 @@ body.ct-skills-resizing {
   opacity: 1;
   pointer-events: auto;
   transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+.ct-floating-panel.ct-panel-collapsible .ct-artifact-card:not(.ct-hidden) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height 0.2s ease, padding 0.2s ease, margin 0.2s ease, opacity 0.16s ease;
+}
+
+.ct-floating-panel.ct-panel-collapsible:hover .ct-artifact-card:not(.ct-hidden),
+.ct-floating-panel.ct-panel-collapsible:focus-within .ct-artifact-card:not(.ct-hidden) {
+  max-height: 90px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  border-width: 1px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 520px) {
+  .ct-artifact-card { grid-template-columns: auto minmax(0, 1fr); }
+  .ct-artifact-card-actions { grid-column: 1 / -1; }
+  .ct-artifact-action { flex: 1; justify-content: center; min-height: 36px; }
 }
 
 /* — Task list card (ThreadsView: TodoWrite / TaskCreate checklist) ──────────── */

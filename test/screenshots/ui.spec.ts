@@ -129,6 +129,27 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('slash-commands.png', { fullPage: true });
   });
 
+  test('design artifact card actions', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const thread = view.manager.getThread('thread-fix-auth');
+      thread.artifacts = [{
+        id: 'design-thread-fix-auth', kind: 'design-static', title: 'Responsive checkout concept',
+        root: '/vault/.geode/artifacts/design-thread-fix-auth',
+        manifestPath: '/vault/.geode/artifacts/design-thread-fix-auth/artifact.json',
+        entryPath: '/vault/.geode/artifacts/design-thread-fix-auth/index.html',
+        createdAt: 1, updatedAt: 1,
+      }];
+      view.syncEditedFiles();
+    });
+    await page.hover('.ct-floating-panel');
+    await page.waitForSelector('.ct-artifact-card:not(.ct-hidden)');
+    await expect(page).toHaveScreenshot('design-artifact-card.png', { fullPage: true });
+  });
+
   test('permission card', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

@@ -25,6 +25,8 @@ import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
 import { partitionThreads } from './threadRowState';
 import { renderAgentTeam } from './agentRuns/renderAgentTeam';
+import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
+import type { DesignArtifact } from './types';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -76,6 +78,7 @@ export class ThreadsView extends ItemView {
   private activeWorkCardEl: HTMLElement | null = null;
   private rateLimitCardEl: HTMLElement | null = null;
   private editedFilesEl!: HTMLElement;
+  private artifactCardEl!: HTMLElement;
   /** Small badge shown in the title bar when the active thread is ephemeral. */
   private ephemeralBadgeEl!: HTMLSpanElement;
   /** Models discovered from the active session via supportedModels(). */
@@ -582,6 +585,7 @@ export class ThreadsView extends ItemView {
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
     this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
+    this.artifactCardEl = panelContext.createDiv('ct-artifact-card ct-hidden');
     this.editedFilesEl = panelContext.createDiv('ct-edited-files ct-hidden');
 
     this.gitDiffBarEl = floatingPanel.createDiv('ct-git-diff-bar ct-hidden');
@@ -1179,6 +1183,82 @@ export class ThreadsView extends ItemView {
       }
     }
     this.renderEditedFilesCard();
+    this.renderArtifactCard();
+  }
+
+  private activeArtifact(): DesignArtifact | null {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    return thread?.artifacts?.find((artifact) => artifact.kind === 'design-static') ?? null;
+  }
+
+  /** Persisted artifact actions stay visible independently of edited-file history. */
+  private renderArtifactCard(): void {
+    this.artifactCardEl.empty();
+    const artifact = this.activeArtifact();
+    if (!artifact) {
+      this.artifactCardEl.addClass('ct-hidden');
+      return;
+    }
+    this.artifactCardEl.removeClass('ct-hidden');
+
+    const icon = this.artifactCardEl.createSpan('ct-artifact-card-icon');
+    setIcon(icon, 'panels-top-left');
+    const copy = this.artifactCardEl.createDiv('ct-artifact-card-copy');
+    copy.createDiv({ cls: 'ct-artifact-card-title', text: artifact.title });
+    copy.createDiv({ cls: 'ct-artifact-card-meta', text: 'Static design artifact' });
+
+    const actions = this.artifactCardEl.createDiv('ct-artifact-card-actions');
+    const action = (label: string, iconName: string, handler: () => void | Promise<void>) => {
+      const button = actions.createEl('button', { cls: 'ct-artifact-action', text: label });
+      const iconEl = button.createSpan('ct-artifact-action-icon');
+      setIcon(iconEl, iconName);
+      button.prepend(iconEl);
+      button.addEventListener('click', () => { void handler(); });
+      return button;
+    };
+    action('Open preview', 'play', () => this.openArtifactPreview(artifact));
+    action('Capture', 'camera', () => this.captureArtifact(artifact));
+    action('Reveal source', 'folder-open', () => this.revealArtifactSource(artifact));
+  }
+
+  private async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
+    try {
+      const existing = this.app.workspace.getLeavesOfType('geode-artifact');
+      const leaf = existing.find((candidate) =>
+        (candidate.getViewState().state as { root?: string } | undefined)?.root === artifact.root,
+      ) ?? existing[0] ?? this.app.workspace.getLeaf('tab');
+      await leaf.setViewState({ type: 'geode-artifact', active: true, state: { root: artifact.root } });
+      this.app.workspace.revealLeaf(leaf);
+    } catch {
+      const { shell } = require('electron') as { shell: { showItemInFolder: (target: string) => void } };
+      shell.showItemInFolder(artifact.manifestPath);
+      new Notice('Secure artifact preview requires Geode; revealed the source instead.');
+    }
+  }
+
+  private async captureArtifact(artifact: DesignArtifact): Promise<void> {
+    const host = (window as unknown as {
+      geode?: { captureArtifact?: (root: string) => Promise<{ path: string; width: number; height: number }> };
+    }).geode;
+    if (!host?.captureArtifact) {
+      new Notice('Artifact capture requires Geode with ArtifactView support.');
+      return;
+    }
+    try {
+      const captured = await host.captureArtifact(artifact.root);
+      artifact.lastCapturePath = captured.path;
+      artifact.updatedAt = Date.now();
+      await this.plugin.saveSettings();
+      this.renderArtifactCard();
+      new Notice(`Captured ${captured.width}×${captured.height} artifact screenshot.`);
+    } catch (error) {
+      new Notice(`Artifact capture failed: ${(error as Error).message}`);
+    }
+  }
+
+  private async revealArtifactSource(artifact: DesignArtifact): Promise<void> {
+    const { shell } = require('electron') as { shell: { showItemInFolder: (target: string) => void } };
+    shell.showItemInFolder(artifact.manifestPath);
   }
 
   // Switch to icon-only chips above this file count to keep the row compact
@@ -4419,6 +4499,48 @@ export class ThreadsView extends ItemView {
       });
   }
 
+  private async handleDesignCommand(brief: string): Promise<void> {
+    if (!this.activeThreadId) return;
+    const thread = this.manager.getThread(this.activeThreadId);
+    if (!thread) return;
+    if (!brief && !thread.artifacts?.length) {
+      this.showCommandDivider('Include a brief — e.g. /design a responsive pricing page for a developer tool', true);
+      return;
+    }
+
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      this.showCommandDivider('Design artifacts require a desktop vault with local filesystem access.', true);
+      return;
+    }
+    const existing = thread.artifacts?.find((artifact) => artifact.kind === 'design-static');
+    let artifact: DesignArtifact;
+    try {
+      artifact = await ensureDesignArtifact(
+        thread,
+        adapter.getBasePath(),
+        brief || existing?.title || 'Design artifact',
+      );
+      await this.plugin.saveSettings();
+      this.renderArtifactCard();
+      await this.openArtifactPreview(artifact);
+    } catch (error) {
+      this.showCommandDivider(`Could not prepare the design artifact: ${(error as Error).message}`, true);
+      return;
+    }
+
+    if (!brief) {
+      this.showCommandDivider(`Opened design artifact: ${artifact.title}`);
+      return;
+    }
+    this.showCommandDivider(existing ? 'Revising design artifact…' : 'Design artifact created. Starting design turn…');
+    const sendThreadId = this.activeThreadId;
+    this.manager.sendMessage(sendThreadId, designKickoffMessage(artifact, brief)).catch((error) => {
+      this.showCommandDivider(`Failed to start design turn: ${(error as Error).message}`, true);
+      if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+    });
+  }
+
   private async handleLoopCommand(arg: string): Promise<void> {
     if (!this.activeThreadId) return;
     const threadId = this.activeThreadId;
@@ -4566,6 +4688,13 @@ export class ThreadsView extends ItemView {
           return;
         }
       }
+    }
+
+    // /design [brief] — create/revise, or reopen the thread's static artifact.
+    const designMatch = typed.match(/^\/design(?:\s+([\s\S]+))?$/i);
+    if (designMatch) {
+      await this.handleDesignCommand((designMatch[1] ?? '').trim());
+      return;
     }
 
     // /goal [text | clear] — set/show/clear the persistent goal for this thread.

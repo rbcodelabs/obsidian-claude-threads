@@ -261,6 +261,8 @@ export interface Thread {
   reviewed?: boolean;
   /** Paths of files written or edited during this thread's lifetime. */
   editedFiles?: string[];
+  /** Durable local design artifacts created from this thread. Source files remain canonical. */
+  artifacts?: DesignArtifact[];
   /** Subset of editedFiles where the user modified the proposed content in the permission dialog. */
   userModifiedFiles?: string[];
   /** Unsent draft message and attachments for this thread. */
@@ -360,6 +362,19 @@ export interface Thread {
    * crash that killed the session mid-turn, exactly like `pendingPlan`.
    */
   pendingQuestions?: AskQuestion[];
+}
+
+export interface DesignArtifact {
+  id: string;
+  kind: 'design-static';
+  title: string;
+  /** Absolute local artifact directory containing artifact.json. */
+  root: string;
+  manifestPath: string;
+  entryPath: string;
+  createdAt: number;
+  updatedAt: number;
+  lastCapturePath?: string;
 }
 
 /**
