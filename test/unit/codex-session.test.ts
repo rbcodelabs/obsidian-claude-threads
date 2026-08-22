@@ -401,6 +401,30 @@ describe('CodexSession protocol notifications', () => {
     expect(internal.activeSubagentTurns.size).toBe(0);
   });
 
+  it('does not announce the root coordinator as a sub-agent (agentPath /root)', () => {
+    const onTaskStarted = vi.fn();
+    const onTaskProgress = vi.fn();
+    const onTaskUpdated = vi.fn();
+    const session = new CodexSession('codex');
+    (session as any).options = { callbacks: { onTaskStarted, onTaskProgress, onTaskUpdated } };
+
+    // The prior session's root thread reappearing on resume: must be ignored so
+    // it doesn't create a never-settling 'working' run that wedges the thread.
+    (session as any).handle({
+      method: 'item/started',
+      params: { item: { type: 'subAgentActivity', agentThreadId: 'root-thread', agentPath: '/root', kind: 'interacted' } },
+    });
+    expect(onTaskStarted).not.toHaveBeenCalled();
+    expect(onTaskProgress).not.toHaveBeenCalled();
+
+    // A genuine child (nested path) must still be announced.
+    (session as any).handle({
+      method: 'item/started',
+      params: { item: { type: 'subAgentActivity', agentThreadId: 'child-thread', agentPath: '/root/engineer', kind: 'started' } },
+    });
+    expect(onTaskStarted).toHaveBeenCalledWith('child-thread', 'Codex sub-agent child-thread', false, 'subagent', undefined, undefined, undefined, undefined);
+  });
+
   it('does not emit phantom tool results for reasoning items', () => {
     const onToolResult = vi.fn();
     const session = new CodexSession('codex');
