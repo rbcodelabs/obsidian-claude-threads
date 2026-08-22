@@ -674,6 +674,16 @@ export class CodexSession {
       return;
     }
     if (item.type === 'subAgentActivity') {
+      // The root/coordinator agent (agentPath '/root') is the main session
+      // thread itself, not a spawned child. When a Codex thread is resumed, the
+      // prior session's root reappears in the new session's stream as a
+      // subAgentActivity item; announcing it as a sub-agent creates an AgentRun
+      // that never settles — it only ever emits kind 'interacted' (never
+      // 'interrupted'), and being a root it never receives a child-scoped
+      // turn/completed under the announcedSubagents guard — so the thread stays
+      // wedged on "Working" forever. Skip the root; genuine children have nested
+      // paths ('/root/<name>'). A missing agentPath falls through unchanged.
+      if (item.agentPath === '/root') return;
       const id = String(item.agentThreadId ?? item.id);
       if (!this.announcedSubagents.has(id)) {
         this.announcedSubagents.add(id);
