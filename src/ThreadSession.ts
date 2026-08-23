@@ -30,7 +30,7 @@ import {
   rateLimitBackoffMs,
   MAX_RATE_LIMIT_AUTO_RETRIES,
 } from './rateLimitRecovery';
-import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, timestampMs, type UsageSnapshot } from './Usage';
+import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, normalizeClaudeUsageResponse, timestampMs, type UsageSnapshot } from './Usage';
 
 /**
  * Everything needed to open a thread's long-lived `Query`, once, for the
@@ -488,7 +488,19 @@ export class ThreadSession {
     }
   }
 
-  async getUsageSnapshot(): Promise<UsageSnapshot | null> { return this.latestUsage; }
+  async getUsageSnapshot(includeAccountUsage = false): Promise<UsageSnapshot | null> {
+    if (!includeAccountUsage || !this.query) return this.latestUsage;
+    try {
+      const q = this.query as any;
+      if (typeof q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET === 'function') {
+        const resp = await q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+        this.latestUsage = mergeUsageSnapshot(this.latestUsage, normalizeClaudeUsageResponse(resp));
+      }
+    } catch {
+      // Never let /usage error: fall through to the last known snapshot.
+    }
+    return this.latestUsage;
+  }
 
   private applyUsage(update: UsageSnapshot): void {
     this.latestUsage = mergeUsageSnapshot(this.latestUsage, update);
