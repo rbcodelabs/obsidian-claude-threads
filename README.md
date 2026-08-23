@@ -112,6 +112,8 @@ New threads use the harness selected in **Settings → Agent → Agent harness**
 
 Harness-native skills and sub-agents use their respective CLI's definitions and event protocol; they are presented through the same slash-command and task UI where the protocols expose equivalent data.
 
+Agent profiles supplied by installed GitHub plugin sources remain native agent definitions in Claude and are available to Codex as role instructions for delegation.
+
 ### Tabs
 
 | Action | How |

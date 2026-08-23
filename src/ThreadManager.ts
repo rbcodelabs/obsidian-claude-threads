@@ -11,6 +11,7 @@ import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
 import { AgentRunStore } from './agentRuns/AgentRunStore';
+import { loadAgentProfiles, type AgentProfileMap } from './AgentProfiles';
 import type { App } from 'obsidian';
 import type { Thread, ChatMessage, PluginSettings, ToolCallRecord, AskQuestion, ImageAttachment, Project, PendingBackgroundTask, TaskItem, TaskItemStatus, StatusTag, GitDiffInfo, AgentRun } from './types';
 import type { McpServerConfig, SdkBeta, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
@@ -93,37 +94,6 @@ function payloadsEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
   return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/**
- * Parse an agent definition markdown file (frontmatter + body).
- * Frontmatter fields: name, description (plain or YAML >- block scalar).
- * Body (after the closing ---) becomes the system prompt.
- */
-function parseAgentMarkdown(content: string): { name?: string; description?: string; prompt?: string } {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-  if (!match) return {};
-  const fm = match[1];
-  const prompt = match[2].trim();
-
-  const nameMatch = fm.match(/^name:\s*(.+)$/m);
-  const name = nameMatch?.[1]?.trim();
-
-  // Handle both inline (description: text) and block scalar (description: >-\n  line...)
-  let description: string | undefined;
-  const blockMatch = fm.match(/^description:\s*>[-]?\r?\n((?:[ \t]+[^\r\n]*\r?\n?)+)/m);
-  if (blockMatch) {
-    description = blockMatch[1]
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean)
-      .join(' ');
-  } else {
-    const inlineMatch = fm.match(/^description:\s*(.+)$/m);
-    description = inlineMatch?.[1]?.trim();
-  }
-
-  return { name, description, prompt: prompt || undefined };
 }
 
 export class ThreadManager {
@@ -1261,6 +1231,7 @@ export class ThreadManager {
       Object.entries(sessionMcpServers ?? {}).filter(([, server]) => (server as { type?: string }).type !== 'sdk'),
     );
     const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
+    const agentProfiles = loadAgentProfiles(this.settings.skillSources ?? []);
 
     return {
       cwd: thread.cwd,
@@ -1293,7 +1264,7 @@ export class ThreadManager {
       claude: {
         mcpServers: sessionMcpServers,
         disallowedTools: this.settings.disallowedTools,
-        sessionOptions: this.buildSessionOptions(thread),
+        sessionOptions: this.buildSessionOptions(thread, agentProfiles),
       },
       codex: {
         ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
@@ -1305,6 +1276,7 @@ export class ThreadManager {
         ),
         dynamicTools: codexDynamicTools,
         mcpServers: codexMcpServers,
+        agentProfiles,
       },
     };
   }
@@ -1814,7 +1786,10 @@ export class ThreadManager {
   }
 
   /** Build the sessionOptions object from plugin settings (and thread-level overrides). */
-  private buildSessionOptions(thread: Thread): NonNullable<HarnessSessionOptions['claude']>['sessionOptions'] {
+  private buildSessionOptions(
+    thread: Thread,
+    agentProfiles: AgentProfileMap,
+  ): NonNullable<HarnessSessionOptions['claude']>['sessionOptions'] {
     const s = this.settings;
     const opts: {
       thinking?: Options['thinking'];
@@ -1904,34 +1879,9 @@ export class ThreadManager {
       if (plugins.length > 0) opts.plugins = plugins;
     }
 
-    // GitHub agent definitions — read agent .md files listed in plugin.json and
-    // pass them via options.agents so Claude Code can spawn them as subagents.
-    {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('fs') as typeof import('fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const path = require('path') as typeof import('path');
-      const agents: Record<string, import('@anthropic-ai/claude-agent-sdk').AgentDefinition> = {};
-      for (const src of (s.skillSources ?? [])) {
-        if (src.type !== 'github' || !src.clonePath) continue;
-        try {
-          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
-          const agentPaths = Array.isArray(manifest.agents) ? manifest.agents as string[] : [];
-          for (const relPath of agentPaths) {
-            try {
-              const absPath = path.join(src.clonePath, relPath);
-              const content = fs.readFileSync(absPath, 'utf-8');
-              const parsed = parseAgentMarkdown(content);
-              if (parsed.name && parsed.description && parsed.prompt) {
-                agents[parsed.name] = { description: parsed.description, prompt: parsed.prompt };
-              }
-            } catch { continue; }
-          }
-        } catch { /* no manifest or no agents list */ }
-      }
-      if (Object.keys(agents).length > 0) opts.agents = agents;
-    }
+    // Claude retains its native agent profile support. The same already-loaded
+    // map is rendered into Codex instructions by its harness adapter.
+    if (Object.keys(agentProfiles).length > 0) opts.agents = agentProfiles;
 
     return opts;
   }

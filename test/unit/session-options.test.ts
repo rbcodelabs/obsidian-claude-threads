@@ -189,6 +189,17 @@ describe('agentProgressSummaries → claude.sessionOptions', () => {
   });
 });
 
+describe('Claude native agent profiles', () => {
+  it('continues passing the shared profiles through options.agents unchanged', () => {
+    const manager = makeManager() as any;
+    const profiles = {
+      qa: { description: 'Adversarial verification.', prompt: 'Find edge cases.' },
+    };
+
+    expect(manager.buildSessionOptions({} as Thread, profiles).agents).toBe(profiles);
+  });
+});
+
 // ─── enable1MContext ──────────────────────────────────────────────────────────
 
 describe('enable1MContext → claude.sessionOptions.betas', () => {

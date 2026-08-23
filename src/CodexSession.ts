@@ -4,6 +4,7 @@ import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
 import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
 import { mergeUsageSnapshot, normalizeCodexAccountUsage, normalizeCodexRateLimitResponse, normalizeCodexTokenUsage, type UsageSnapshot } from './Usage';
+import { renderCodexAgentProfiles } from './AgentProfiles';
 
 type CodexTokenUsageBreakdown = {
   totalTokens: number;
@@ -24,6 +25,17 @@ type ContextUsage = import('@anthropic-ai/claude-agent-sdk').SDKControlGetContex
 
 export function applyCodexResumeFallback(text: string, history: string | undefined, resumeFailed: boolean): string {
   return resumeFailed && history ? history + text : text;
+}
+
+export function codexDeveloperInstructions(options: HarnessSessionOptions): string | null {
+  const profileInstructions = renderCodexAgentProfiles(options.codex?.agentProfiles ?? {});
+  const parts = [options.appendSystemPrompt, profileInstructions].filter(Boolean);
+  return parts.length > 0 ? parts.join('\n\n') : null;
+}
+
+/** ThreadResumeParams supports overriding developer instructions on resume. */
+export function codexResumeInstructions(options: HarnessSessionOptions): { developerInstructions: string | null } {
+  return { developerInstructions: codexDeveloperInstructions(options) };
 }
 
 /** Convert Claude's process-transport MCP shapes to Codex config.toml keys. */
@@ -174,6 +186,7 @@ export class CodexSession {
           approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
           sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
           config: threadConfig,
+          ...codexResumeInstructions(options),
         });
       } catch (error) {
         this.resumeFallbackPending = true;
@@ -187,7 +200,7 @@ export class CodexSession {
         model: options.model ?? null,
         approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
         sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
-        developerInstructions: options.appendSystemPrompt || null,
+        developerInstructions: codexDeveloperInstructions(options),
         config: threadConfig,
         dynamicTools: options.codex?.dynamicTools?.map((tool) => ({
           type: 'function',

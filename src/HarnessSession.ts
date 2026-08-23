@@ -1,6 +1,7 @@
 import type { McpServerConfig, Options, SdkBeta } from '@anthropic-ai/claude-agent-sdk';
 import type { ImageAttachment } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
+import type { AgentProfileMap } from './AgentProfiles';
 
 /** The stable, harness-neutral contract used by ThreadManager. */
 export interface HarnessSession {
@@ -64,6 +65,8 @@ export interface CodexHarnessOptions {
   dynamicTools?: HarnessDynamicTool[];
   /** Serializable external MCP servers to mirror into Codex's thread config. */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Harness-neutral profiles rendered into Codex delegation instructions. */
+  agentProfiles?: AgentProfileMap;
 }
 
 /** A host-owned capability exposed through a harness's native tool protocol. */
