@@ -145,6 +145,8 @@ Tabs are renamed automatically after the first exchange using the thread summari
 - **Rate limit** — if the API returns a rate limit response, a card shows in warning or error style depending on whether the request was allowed to proceed or rejected outright.
 - **Model escalation tip** — when a turn is routed to the escalation model (e.g. Fable 5 when you send `/escalate`), a brief tooltip pops up from the model button rather than reshuffling the layout. It fades in, holds for a moment, then fades out automatically — no interaction needed and zero layout shift. For the rest of the escalated turn, the model button itself stays highlighted with an accent glow, and its tooltip reads "escalated to \<model\> for this turn", so you can confirm the escalation at any point until the turn completes.
 
+**Idle spinners pause automatically.** A thread parked at an unanswered plan/permission prompt (or otherwise wedged) stays "running" until you answer it, but its infinite spinner animations freeze after ~45s of no progress instead of compositing forever — this keeps a stuck thread from pinning the renderer's CPU. Answering the prompt resumes progress and the spinner un-freezes. A thread waiting on an ExitPlanMode plan approval also shows the calmer **Awaiting** indicator rather than the aggressive running spinner.
+
 <p align="center">
   <img src="docs/screenshot-status-rail.png" width="800" alt="Status rail — active-work card with spinner above the composer" />
 </p>

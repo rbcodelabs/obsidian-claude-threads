@@ -12,6 +12,14 @@ import type { ToolCallRecord } from './types';
 
 type StoreListener = () => void;
 
+/**
+ * Mirror of `ThreadManager.STALE_MS`. Duplicated deliberately so the mobile
+ * store stays free of any `ThreadManager` import (see file header — mobile has
+ * no knowledge of desktop session state). A thread streaming this long with no
+ * new token/tool/message is treated as wedged and its spinner is paused.
+ */
+const STALE_MS = 45_000;
+
 export class MobileThreadStore {
   private threads: Map<string, SerializedThread> = new Map();
   private activeThreadId: string | null = null;
@@ -24,6 +32,12 @@ export class MobileThreadStore {
   private streamingContent: Map<string, string> = new Map();
   /** Tool calls fired during the current streaming turn, keyed by threadId. */
   private streamingTools: Map<string, ToolCallRecord[]> = new Map();
+  /**
+   * `Date.now()` of the last progress-bearing relay frame per thread
+   * (streaming_start/token/tool_use/message). Drives `isStale` so a thread
+   * whose stream has gone quiet mid-turn stops animating its spinner.
+   */
+  private lastActivityAt: Map<string, number> = new Map();
   /** Messages waiting to be processed after the current session, keyed by threadId. */
   private queuedMessages: Map<string, string[]> = new Map();
   /** Last received status per thread, keyed by threadId. */
@@ -75,6 +89,22 @@ export class MobileThreadStore {
     return this.streamingContent.has(threadId);
   }
 
+  /** Milliseconds since the last progress-bearing frame; Infinity if none seen. */
+  msSinceActivity(threadId: string): number {
+    const last = this.lastActivityAt.get(threadId);
+    return last === undefined ? Infinity : Date.now() - last;
+  }
+
+  /**
+   * True when a thread is streaming but has produced no new
+   * token/tool/message for STALE_MS — i.e. its turn is wedged. The mobile view
+   * pauses its spinner in this state (parallels ThreadManager.isRunStale on
+   * desktop), capping the client's compositing cost.
+   */
+  isStale(threadId: string): boolean {
+    return this.isStreaming(threadId) && this.msSinceActivity(threadId) > STALE_MS;
+  }
+
   getQueuedMessages(threadId: string): string[] {
     return this.queuedMessages.get(threadId) ?? [];
   }
@@ -107,6 +137,7 @@ export class MobileThreadStore {
         this.threads.delete(frame.threadId);
         this.streamingContent.delete(frame.threadId);
         this.streamingTools.delete(frame.threadId);
+        this.lastActivityAt.delete(frame.threadId);
         this.queuedMessages.delete(frame.threadId);
         this.threadStatus.delete(frame.threadId);
         // Clear permissions for this thread
@@ -136,12 +167,14 @@ export class MobileThreadStore {
       case 'streaming_start':
         this.streamingContent.set(frame.threadId, '');
         this.streamingTools.set(frame.threadId, []);
+        this.lastActivityAt.set(frame.threadId, Date.now());
         this.notify();
         break;
 
       case 'token': {
         const prev = this.streamingContent.get(frame.threadId) ?? '';
         this.streamingContent.set(frame.threadId, prev + frame.text);
+        this.lastActivityAt.set(frame.threadId, Date.now());
         this.notify();
         break;
       }
@@ -149,11 +182,13 @@ export class MobileThreadStore {
       case 'tool_use': {
         const tools = this.streamingTools.get(frame.threadId) ?? [];
         this.streamingTools.set(frame.threadId, [...tools, { name: frame.name, summary: frame.summary }]);
+        this.lastActivityAt.set(frame.threadId, Date.now());
         this.notify();
         break;
       }
 
       case 'message': {
+        this.lastActivityAt.set(frame.threadId, Date.now());
         const thread = this.threads.get(frame.threadId);
         if (thread) {
           this.threads.set(frame.threadId, {
@@ -286,6 +321,7 @@ export class MobileThreadStore {
     this.threads.clear();
     this.streamingContent.clear();
     this.streamingTools.clear();
+    this.lastActivityAt.clear();
     this.pendingPermissions.clear();
     this.pendingQuestions.clear();
     this.queuedMessages.clear();
@@ -308,6 +344,7 @@ export class MobileThreadStore {
     this.threads.clear();
     this.streamingContent.clear();
     this.streamingTools.clear();
+    this.lastActivityAt.clear();
     this.pendingPermissions.clear();
     this.pendingQuestions.clear();
     this.queuedMessages.clear();

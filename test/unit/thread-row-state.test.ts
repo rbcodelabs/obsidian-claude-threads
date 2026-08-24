@@ -56,6 +56,14 @@ describe('classifyThreadRow', () => {
     expect(classifyThreadRow(flags({ isRunning: true, hasPendingPermission: true }))).toBe('awaiting');
   });
 
+  it('plan-parked thread (running + plan pending, surfaced via hasPendingPermission) → awaiting, not running', () => {
+    // The 4 view call sites OR `manager.hasPendingPlan(id)` into the
+    // hasPendingPermission flag so a thread wedged at an ExitPlanMode
+    // plan-approval prompt classifies as the calmer 'awaiting' state rather
+    // than the aggressive 'running' spinner — see fix/stale-run-spinner-cpu.
+    expect(classifyThreadRow(flags({ isRunning: true, hasPendingPermission: true }))).toBe('awaiting');
+  });
+
   it('running wins over hasActiveBackgroundTasks (isRunning checked first)', () => {
     expect(classifyThreadRow(flags({ isRunning: true, hasActiveBackgroundTasks: true, hasPendingPermission: true }))).toBe('awaiting');
   });

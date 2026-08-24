@@ -154,6 +154,9 @@ export class ThreadsView extends ItemView {
   private wakeupBannerEl!: HTMLElement;
   private wakeupCountdownEl: HTMLElement | null = null;
   private wakeupCountdownTimer: ReturnType<typeof setInterval> | null = null;
+  // Lightweight sweep that pauses the open thread's spinners once it is
+  // `isRunning` but wedged (no progress for STALE_MS) — see refreshStale.
+  private staleInterval: ReturnType<typeof setInterval> | null = null;
 
   // Active-loop banner (shown above the input when the active thread has a
   // running /loop). No ticking timer — refreshed on explicit state changes.
@@ -515,6 +518,21 @@ export class ThreadsView extends ItemView {
     // Render the status footer from the active thread's current tags. The
     // StatusLineService (owned by main.ts) keeps statusTags fresh in the background.
     this.renderStatusFooter();
+
+    this.staleInterval = setInterval(() => this.refreshStale(), 15_000);
+  }
+
+  /**
+   * Pauses the open thread's live spinners (streaming thinking-dot/cursor/tool
+   * dots and the status-rail card) once it has been `isRunning` with no
+   * progress for STALE_MS. Toggled on the streaming + status-rail containers so
+   * the descendant `.ct-stale` rules in styles.css apply. Scoped to the single
+   * active thread — the switcher panel's own rows are unaffected.
+   */
+  private refreshStale(): void {
+    const stale = this.activeThreadId ? this.manager.isRunStale(this.activeThreadId) : false;
+    this.streamingEl?.toggleClass('ct-stale', stale);
+    this.statusRailEl?.toggleClass('ct-stale', stale);
   }
 
   /** Refresh list-derived chrome after a batch of threads enters memory. */
@@ -525,6 +543,7 @@ export class ThreadsView extends ItemView {
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     this.stopWakeupCountdown();
+    if (this.staleInterval) clearInterval(this.staleInterval);
     this.dispatchInput?.destroy();
   }
 
@@ -4870,7 +4889,7 @@ export class ThreadsView extends ItemView {
     const allThreads = this.manager.getThreads();
     const buckets = partitionThreads(allThreads, (t) => ({
       isRunning: this.manager.isRunning(t.id),
-      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
       hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
       hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
       lastError: t.lastError,

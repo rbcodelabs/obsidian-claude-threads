@@ -251,6 +251,7 @@
 .ct-app-hidden .ct-cursor,
 .ct-app-hidden .ct-tool-active .ct-tool-pill-name::before,
 .ct-app-hidden .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
+.ct-app-hidden .ct-tool-outer-wrap-header.ct-tool-active .ct-compressed-summary::before,
 .ct-app-hidden .ct-workflow-agent-running .ct-workflow-agent-dot,
 .ct-app-hidden .ct-agents-icon-running,
 .ct-app-hidden .ct-agents-icon-permission,
@@ -262,6 +263,33 @@
 .ct-app-hidden .ct-skills-tab-action--spinning svg,
 .ct-app-hidden .ct-skills-spinner,
 .ct-app-hidden .ct-model-btn.ct-model-btn-escalated {
+  animation-play-state: paused !important;
+}
+
+/* Pause a single wedged thread's infinite spinners while it is `isRunning` but
+   making no progress (parked at an unanswered plan/permission/question prompt,
+   dead transport, etc.). Views toggle `.ct-stale` on a container element for
+   the thread (its dashboard row / kanban card / mobile row, or — for the open
+   chat — the streaming message and status-rail containers) once
+   `ThreadManager.isRunStale(id)` crosses STALE_MS (45s). Same
+   `animation-play-state: paused` mechanism as `.ct-app-hidden`, but scoped
+   per-thread instead of window-wide — a visible, unfocused window otherwise
+   composites a wedged spinner at 60fps forever, pegging the renderer CPU. The
+   indicators mirror the per-thread set in `.ct-app-hidden`; the `.ct-stale`
+   class always sits on an ancestor, so every rule below is a descendant match. */
+.ct-stale .ct-thinking-spinner,
+.ct-stale .ct-status-card-spinner,
+.ct-stale .ct-cursor,
+.ct-stale .ct-tool-active .ct-tool-pill-name::before,
+.ct-stale .ct-tool-group-header.ct-tool-active .ct-compressed-summary::before,
+.ct-stale .ct-tool-outer-wrap-header.ct-tool-active .ct-compressed-summary::before,
+.ct-stale .ct-workflow-agent-running .ct-workflow-agent-dot,
+.ct-stale .ct-agents-icon-running,
+.ct-stale .ct-agents-icon-permission,
+.ct-stale .ct-agents-icon-waiting,
+.ct-stale .ct-kanban-icon-running,
+.ct-stale .ct-mobile-thread-icon-running,
+.ct-stale .ct-spin {
   animation-play-state: paused !important;
 }
 

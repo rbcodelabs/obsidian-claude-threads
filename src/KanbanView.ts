@@ -100,6 +100,9 @@ export class KanbanView extends ItemView {
   /** Per-thread debounce timers for `scheduleActivityRefresh` (one 800ms window each). */
   private activityTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private timeInterval: ReturnType<typeof setInterval> | null = null;
+  // Lightweight sweep to pause spinners of wedged ("stale") running cards
+  // within ~15s — see AgentDashboard.refreshStale for rationale.
+  private staleInterval: ReturnType<typeof setInterval> | null = null;
   private dispatchInput!: DispatchInput;
 
   /**
@@ -132,6 +135,7 @@ export class KanbanView extends ItemView {
       this.handleEvent(threadId, event);
     });
     this.timeInterval = setInterval(() => this.refreshTimes(), 30_000);
+    this.staleInterval = setInterval(() => this.refreshStale(), 15_000);
     this._applyPanelCollapse();
   }
 
@@ -140,8 +144,19 @@ export class KanbanView extends ItemView {
     for (const timer of this.activityTimers.values()) clearTimeout(timer);
     this.activityTimers.clear();
     if (this.timeInterval) clearInterval(this.timeInterval);
+    if (this.staleInterval) clearInterval(this.staleInterval);
     this.dispatchInput?.destroy();
     this._restorePanels();
+  }
+
+  /**
+   * Toggles `.ct-stale` on each running card so styles.css pauses its spinner
+   * once the thread has been `isRunning` with no progress for STALE_MS.
+   */
+  private refreshStale(): void {
+    for (const [id, el] of this.rowEls) {
+      el.toggleClass('ct-stale', this.manager.isRunStale(id));
+    }
   }
 
   /**
@@ -458,7 +473,7 @@ export class KanbanView extends ItemView {
   private bucketize(threads: Thread[]): ColDef[] {
     const buckets = partitionThreads(threads, (t) => ({
       isRunning: this.manager.isRunning(t.id),
-      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
       hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
       hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
       lastError: t.lastError,
@@ -623,7 +638,7 @@ export class KanbanView extends ItemView {
   private sectionsForColumn(threads: Thread[]): ColDef[] {
     const buckets = partitionThreads(threads, (t) => ({
       isRunning: this.manager.isRunning(t.id),
-      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
       hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
       hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
       lastError: t.lastError,
@@ -801,6 +816,7 @@ export class KanbanView extends ItemView {
       ].filter(Boolean).join(' '),
     });
     this.rowEls.set(thread.id, card);
+    card.toggleClass('ct-stale', this.manager.isRunStale(thread.id));
     // Record where this card lives so handleEvent can patch-vs-rebuild. The key
     // is the same combined bucket+group scopeKey the column was rendered under.
     this.cardPlacements.set(thread.id, { bucketKey: placementKey, state });
@@ -974,7 +990,7 @@ export class KanbanView extends ItemView {
   private computeCardPlacement(thread: Thread): { bucketKey: string; state: RowState } {
     const rowState = classifyThreadRow({
       isRunning: this.manager.isRunning(thread.id),
-      hasPendingPermission: this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id),
+      hasPendingPermission: this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id) || this.manager.hasPendingPlan(thread.id),
       hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(thread.id),
       hasPendingWakeup: this.plugin.hasPendingWakeup(thread.id),
       lastError: thread.lastError,

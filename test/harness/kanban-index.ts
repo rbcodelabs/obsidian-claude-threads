@@ -27,6 +27,7 @@ const m = manager as unknown as {
   sessions: Map<string, unknown>;
   pendingPermissions: Map<string, { toolName: string; detail: string }>;
   threadActivity: Map<string, string>;
+  lastActivityAt: Map<string, number>;
 };
 // `isRunning()` reads `session.turnInFlight` (the unified long-lived-session
 // model — see ThreadManager.sessions), so a bare `{}` reads as NOT running and
@@ -37,6 +38,13 @@ m.sessions.set(kanbanRunningThreadId, { turnInFlight: true });
 m.sessions.set(kanbanAwaitingThreadId, { turnInFlight: true });
 m.pendingPermissions.set(kanbanAwaitingThreadId, kanbanAwaitingPermission);
 m.threadActivity.set(kanbanRunningThreadId, kanbanRunningActivity);
+// Seed a fresh activity heartbeat so these actively-running demo threads are
+// NOT classified as stale (isRunStale) — they represent live, progressing work
+// whose spinners should keep animating. Without this the private-map seeding
+// leaves lastActivityAt unset (msSinceActivity === Infinity), which would
+// immediately apply `.ct-stale` and pause the spinners.
+m.lastActivityAt.set(kanbanRunningThreadId, Date.now());
+m.lastActivityAt.set(kanbanAwaitingThreadId, Date.now());
 
 // Scheduled-wakeup state (not running, has a pending wake-up) so the
 // Kanban "Waiting" column renders deterministically in the harness — mirrors
