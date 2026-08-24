@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexMcpServers } from '../../src/CodexSession';
+import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexDeveloperInstructions, codexMcpServers, codexResumeInstructions } from '../../src/CodexSession';
 
 describe('codexMcpServers', () => {
   it('translates stdio and remote MCP transports to Codex config keys', () => {
@@ -16,6 +16,39 @@ describe('codexMcpServers', () => {
     expect(codexMcpServers({
       obsidian: { type: 'sdk', name: 'obsidian', instance: {} as any },
     })).toEqual({});
+  });
+});
+
+describe('Codex agent profile instructions', () => {
+  it('preserves existing developer context and adds the configured role prompts', () => {
+    const instructions = codexDeveloperInstructions({
+      appendSystemPrompt: 'Existing project context.',
+      codex: {
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        agentProfiles: {
+          qa: { description: 'Adversarial verification.', prompt: 'Find edge cases.' },
+        },
+      },
+    } as any);
+
+    expect(instructions).toContain('Existing project context.');
+    expect(instructions).toContain('Profile: qa');
+    expect(instructions).toContain('Find edge cases.');
+  });
+
+  it('uses the same composed instructions when resuming a thread', () => {
+    const options = {
+      appendSystemPrompt: 'Existing project context.',
+      codex: {
+        approvalPolicy: 'on-request', sandbox: 'workspace-write',
+        agentProfiles: { qa: { description: 'Verify.', prompt: 'Find edge cases.' } },
+      },
+    } as any;
+
+    expect(codexResumeInstructions(options)).toEqual({
+      developerInstructions: expect.stringContaining('Find edge cases.'),
+    });
   });
 });
 
