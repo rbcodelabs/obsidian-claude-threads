@@ -51,6 +51,10 @@ export class MobileView extends ItemView {
   private _filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   // Queue rows container
   private queueRowsEl: HTMLElement | null = null;
+  // Running thread-row elements, keyed by threadId, for the stale-spinner sweep.
+  private threadItemEls: Map<string, HTMLElement> = new Map();
+  // Lightweight sweep to pause spinners of wedged ("stale") streaming rows.
+  private staleInterval: ReturnType<typeof setInterval> | null = null;
   // Dismiss state for error card
   private _errorDismissed: Set<string> = new Set();
 
@@ -125,15 +129,30 @@ export class MobileView extends ItemView {
         this.updateConnectionBanner(state);
       });
     }
+
+    this.staleInterval = setInterval(() => this.refreshStale(), 15_000);
   }
 
   async onClose(): Promise<void> {
     this.detachViewportListener();
     this.unsubStore?.();
     this.unsubConnectionState?.();
+    if (this.staleInterval) clearInterval(this.staleInterval);
     this.scrollObserver?.disconnect();
     this.scrollObserver = null;
     this.hideSummaryBanner(true);
+  }
+
+  /**
+   * Toggles `.ct-stale` on each streaming row so styles.css pauses its spinner
+   * once the thread's stream has been quiet for STALE_MS. Runs on an interval
+   * because a wedged thread produces no store notifications to re-render on.
+   */
+  private refreshStale(): void {
+    if (!this.store) return;
+    for (const [id, el] of this.threadItemEls) {
+      el.toggleClass('ct-stale', this.store.isStale(id));
+    }
   }
 
   // ── UI construction ───────────────────────────────────────────────────
@@ -328,6 +347,7 @@ export class MobileView extends ItemView {
 
   private renderThreadList(threads: SerializedThread[], activeId: string | null): void {
     this.threadListEl.empty();
+    this.threadItemEls.clear();
 
     // 3.3 — Apply search filter
     const filter = this._threadFilter.trim().toLowerCase();
@@ -390,6 +410,10 @@ export class MobileView extends ItemView {
     const item = container.createDiv({
       cls: `ct-mobile-thread-item${isActive ? ' ct-mobile-thread-item-active' : ''}${needsInput ? ' ct-mobile-thread-item-permission' : ''}`,
     });
+    if (isStreaming) {
+      this.threadItemEls.set(thread.id, item);
+      item.toggleClass('ct-stale', this.store!.isStale(thread.id));
+    }
 
     // Left: status icon — permission/question badge (both mean "Claude needs your
     // input") takes priority over streaming indicator

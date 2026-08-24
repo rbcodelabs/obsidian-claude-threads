@@ -53,6 +53,8 @@ function makeManager(threads: Thread[], running: Set<string>) {
     isRunning: (id: string) => running.has(id),
     hasPendingPermission: () => false,
     hasPendingQuestion: () => false,
+    hasPendingPlan: () => false,
+    isRunStale: () => false,
     hasActiveBackgroundTasks: () => false,
     getThreadActivity: () => 'Working...',
     getProject: () => undefined,

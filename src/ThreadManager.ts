@@ -19,6 +19,15 @@ import type { Options } from '@anthropic-ai/claude-agent-sdk';
 
 type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 
+/**
+ * A thread that has been `isRunning` this long with no progress-bearing event
+ * is treated as "stale" (wedged at an unanswered prompt, a dead transport, or
+ * otherwise not actually working). Views pause its spinner animations once it
+ * crosses this threshold — see `isRunStale`. Well above any normal streaming
+ * lull, so genuinely-active threads never trip it.
+ */
+export const STALE_MS = 45_000;
+
 export type ThreadEvent =
   | { type: 'token'; text: string }
   | { type: 'tool_use'; record: ToolCallRecord }
@@ -206,6 +215,15 @@ export class ThreadManager {
    * actively waiting for the user to act on the plan card.
    */
   private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => void }> = new Map();
+  /**
+   * Central per-thread activity heartbeat: `Date.now()` of the last
+   * progress-bearing event (token, tool_use, streaming_start, message, task
+   * start/progress, compact) fanned out through `emit()`. Read by
+   * `msSinceActivity`/`isRunStale` so views can pause the spinner of a thread
+   * that is `isRunning` but making no progress. Not serialized — a reload
+   * starts every thread fresh (and a reloaded thread is not `isRunning`).
+   */
+  private lastActivityAt: Map<string, number> = new Map();
   /** Appends each thread's raw SDK event stream to a per-thread JSONL log. */
   private rawLogWriter: RawLogWriter;
   /** Writes message images out to vault attachment files (ADR-0003, PR 1). */
@@ -427,6 +445,7 @@ export class ThreadManager {
     this.pendingUserMessageIds.delete(id);
     this.queuedMessages.delete(id);
     this.threadActivity.delete(id);
+    this.lastActivityAt.delete(id);
     this.threads.delete(id);
     this.emit(id, { type: 'thread_deleted' });
   }
@@ -1954,10 +1973,63 @@ export class ThreadManager {
     this.emit(threadId, { type: 'proposed_reply_changed' });
   }
 
+  /**
+   * Progress-bearing event types that count as "the thread is actually doing
+   * something." Any of these resets the thread's activity heartbeat (see
+   * `lastActivityAt`). `streaming_start` covers send-start, since it is emitted
+   * as each turn begins. Waits (permission/plan/question) deliberately do NOT
+   * appear here: parking at a prompt keeps `isRunning` true but is exactly the
+   * "no progress" condition `isRunStale` exists to detect.
+   */
+  private static readonly ACTIVITY_EVENTS: ReadonlySet<ThreadEvent['type']> = new Set([
+    'streaming_start',
+    'token',
+    'tool_use',
+    'message',
+    'task_started',
+    'task_progress',
+    'compact',
+  ]);
+
   private emit(threadId: string, event: ThreadEvent): void {
+    if (threadId && ThreadManager.ACTIVITY_EVENTS.has(event.type)) {
+      this.lastActivityAt.set(threadId, Date.now());
+    }
     for (const listener of this.listeners) {
       listener(threadId, event);
     }
+  }
+
+  /**
+   * Milliseconds since this thread last emitted a progress-bearing event.
+   * Returns `Infinity` when no activity has ever been recorded (a thread that
+   * has never run is trivially "stale," but `isRunStale` gates on `isRunning`
+   * first so that never matters in practice).
+   */
+  msSinceActivity(id: string): number {
+    const last = this.lastActivityAt.get(id);
+    return last === undefined ? Infinity : Date.now() - last;
+  }
+
+  /**
+   * True when a thread is `isRunning` but has made no progress for `staleMs`
+   * (default `STALE_MS`). Views use this to pause its spinner animations so a
+   * thread wedged at an unanswered prompt stops compositing at 60fps forever.
+   * Does NOT touch run-state: the pending answer still needs the live session,
+   * and the next progress event clears staleness automatically.
+   */
+  isRunStale(id: string, staleMs: number = STALE_MS): boolean {
+    return this.isRunning(id) && this.msSinceActivity(id) > staleMs;
+  }
+
+  /**
+   * True while a thread is parked at an ExitPlanMode plan-approval prompt.
+   * Plan state lives in `pendingPlanResolvers` / `thread.pendingPlan`, separate
+   * from `hasPendingPermission`/`hasPendingQuestion`, so classifiers must OR
+   * this in to treat a plan-parked thread as 'awaiting' rather than 'running'.
+   */
+  hasPendingPlan(id: string): boolean {
+    return this.pendingPlanResolvers.has(id) || this.threads.get(id)?.pendingPlan !== undefined;
   }
 
   /**

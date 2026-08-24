@@ -42,6 +42,9 @@ export class AgentDashboard extends ItemView {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   // Periodic time refresh
   private timeInterval: ReturnType<typeof setInterval> | null = null;
+  // Lightweight periodic sweep to pause spinners of wedged ("stale") running
+  // threads within ~15s — faster than waiting on the 30s time refresh.
+  private staleInterval: ReturnType<typeof setInterval> | null = null;
 
   /** IDs (Thread.scheduledItemId) of currently-expanded rows in the "Scheduled Jobs" section. */
   private expandedScheduledStacks = new Set<string>();
@@ -64,13 +67,26 @@ export class AgentDashboard extends ItemView {
       this.handleEvent(threadId, event);
     });
     this.timeInterval = setInterval(() => this.refreshTimes(), 30_000);
+    this.staleInterval = setInterval(() => this.refreshStale(), 15_000);
   }
 
   async onClose(): Promise<void> {
     this.unsubscribe?.();
     if (this.activityTimer) clearTimeout(this.activityTimer);
     if (this.timeInterval) clearInterval(this.timeInterval);
+    if (this.staleInterval) clearInterval(this.staleInterval);
     this.dispatchComponent?.destroy();
+  }
+
+  /**
+   * Toggles `.ct-stale` on each running row so styles.css pauses its spinner
+   * once the thread has been `isRunning` with no progress for STALE_MS. Cheap
+   * Map walk; safe to call on a short interval and on every render.
+   */
+  private refreshStale(): void {
+    for (const [id, el] of this.rowEls) {
+      el.toggleClass('ct-stale', this.manager.isRunStale(id));
+    }
   }
 
   private buildUI(): void {
@@ -348,7 +364,7 @@ export class AgentDashboard extends ItemView {
       : allThreads;
     const buckets = partitionThreads(threads, (t) => ({
       isRunning: this.manager.isRunning(t.id),
-      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
       hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
       hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
       lastError: t.lastError,
@@ -480,6 +496,7 @@ export class AgentDashboard extends ItemView {
       cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
     });
     this.rowEls.set(thread.id, row);
+    row.toggleClass('ct-stale', this.manager.isRunStale(thread.id));
 
     const iconEl = row.createDiv('ct-agents-icon');
     if (hasPending) {
