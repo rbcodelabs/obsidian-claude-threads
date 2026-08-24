@@ -57,6 +57,10 @@ function finite(value: unknown): number | undefined {
 }
 
 export function timestampMs(value: unknown): number | undefined {
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
   const n = finite(value);
   if (n === undefined) return undefined;
   return n < 1_000_000_000_000 ? n * 1000 : n;
@@ -131,6 +135,31 @@ export function normalizeClaudeRateLimit(info: Record<string, any>, now = Date.n
       canPurchaseCredits: info.canUserPurchaseCredits, hasSavedPaymentMethod: info.hasChargeableSavedPaymentMethod,
     } : undefined,
   };
+}
+
+const CLAUDE_FIXED_WINDOWS = ['five_hour', 'seven_day', 'seven_day_oauth_apps', 'seven_day_opus', 'seven_day_sonnet'] as const;
+
+/** Normalize the proactive SDK usage pull (structured plan rate-limit utilization). */
+export function normalizeClaudeUsageResponse(response: Record<string, any>, now = Date.now()): UsageSnapshot {
+  const limits = response.rate_limits;
+  if (response.rate_limits_available === false || limits == null) {
+    return { provider: 'claude', updatedAt: now, quotaWindows: [] };
+  }
+  const quotaWindows: UsageQuotaWindow[] = [];
+  const push = (label: string, window: Record<string, any>) => {
+    const usedPercent = window.utilization == null ? undefined : percent(window.utilization);
+    quotaWindows.push({
+      label, usedPercent, resetsAt: timestampMs(window.resets_at),
+      status: (usedPercent ?? 0) >= 80 ? 'allowed_warning' : 'allowed',
+    });
+  };
+  for (const key of CLAUDE_FIXED_WINDOWS) {
+    if (limits[key] != null) push(title(key), limits[key]);
+  }
+  for (const scoped of limits.model_scoped ?? []) {
+    if (scoped != null) push(String(scoped.display_name), scoped);
+  }
+  return { provider: 'claude', updatedAt: now, quotaWindows };
 }
 
 function durationLabel(minutes: number | undefined, fallback: string): string {

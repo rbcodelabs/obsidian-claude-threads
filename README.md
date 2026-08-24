@@ -171,7 +171,7 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/compact` | Summarize conversation history to free up context window |
 | `/clear` | Clear conversation history and start a fresh session |
 | `/cost` | Show token usage and cost for the current session |
-| `/usage` | Show provider token totals, quota windows/resets, and account activity where available |
+| `/usage` | Show provider token totals, quota windows/resets, and account activity where available. For Claude subscription sessions the 5-hour and 7-day windows show a live utilization % pulled from the SDK's structured usage API; API-key/Bedrock/Vertex sessions show `—` because plan limits do not apply there. |
 | `/context` | Show a per-category token usage breakdown for the active session (tools, system prompt, skills, MCP tools, conversation, etc.) |
 | `/create-pr` | Ask Claude to push the branch and open a PR (`gh pr create`) — same action as the [git diff bar](#git-diff-bar-create-pr)'s Create PR button |
 | `/create-pr --draft` | Same, but opens a draft PR — same as the git diff bar's Create draft PR button |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, normalizeCodexAccountUsage, normalizeCodexRateLimitResponse, normalizeCodexRateLimits, normalizeCodexTokenUsage } from '../../src/Usage';
+import { mergeUsageSnapshot, normalizeClaudeRateLimit, normalizeClaudeResult, normalizeClaudeUsageResponse, normalizeCodexAccountUsage, normalizeCodexRateLimitResponse, normalizeCodexRateLimits, normalizeCodexTokenUsage, timestampMs } from '../../src/Usage';
 
 describe('usage normalization', () => {
   it('preserves Claude model usage, estimated cost, and quota hints', () => {
@@ -100,5 +100,54 @@ describe('usage normalization', () => {
   it('handles absent and differently-cased provider fields', () => {
     expect(normalizeClaudeRateLimit({ status: 'allowed' })).toMatchObject({ provider: 'claude', quotaWindows: [] });
     expect(normalizeClaudeResult({ total_cost_usd: 0, num_turns: 1 })).toMatchObject({ provider: 'claude', turns: 1 });
+  });
+
+  it('builds live Claude quota windows from the proactive SDK usage pull', () => {
+    expect(normalizeClaudeUsageResponse({
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 84, resets_at: '2026-08-23T20:50:00Z' },
+        seven_day: { utilization: 30, resets_at: '2026-08-29T00:00:00Z' },
+      },
+    })).toMatchObject({
+      provider: 'claude',
+      quotaWindows: [
+        { label: 'Five hour', usedPercent: 84, resetsAt: Date.parse('2026-08-23T20:50:00Z'), status: 'allowed_warning' },
+        { label: 'Seven day', usedPercent: 30, resetsAt: Date.parse('2026-08-29T00:00:00Z'), status: 'allowed' },
+      ],
+    });
+  });
+
+  it('keeps a present Claude window with null utilization but no percent', () => {
+    const snapshot = normalizeClaudeUsageResponse({
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: null, resets_at: '2026-08-23T20:50:00Z' } },
+    });
+    expect(snapshot.quotaWindows).toEqual([
+      { label: 'Five hour', usedPercent: undefined, resetsAt: Date.parse('2026-08-23T20:50:00Z'), status: 'allowed' },
+    ]);
+  });
+
+  it('returns no Claude windows when plan rate limits do not apply', () => {
+    expect(normalizeClaudeUsageResponse({ rate_limits_available: false, rate_limits: null }))
+      .toMatchObject({ provider: 'claude', quotaWindows: [] });
+    expect(normalizeClaudeUsageResponse({ rate_limits_available: true, rate_limits: null }))
+      .toMatchObject({ provider: 'claude', quotaWindows: [] });
+  });
+
+  it('maps model-scoped Claude buckets by display name', () => {
+    expect(normalizeClaudeUsageResponse({
+      rate_limits_available: true,
+      rate_limits: { model_scoped: [{ display_name: 'Fable', utilization: 55, resets_at: '2026-08-29T00:00:00Z' }] },
+    })).toMatchObject({
+      quotaWindows: [{ label: 'Fable', usedPercent: 55, resetsAt: Date.parse('2026-08-29T00:00:00Z'), status: 'allowed' }],
+    });
+  });
+
+  it('parses ISO strings and preserves numeric timestamp behavior', () => {
+    expect(timestampMs('2026-08-23T20:50:00Z')).toBe(Date.parse('2026-08-23T20:50:00Z'));
+    expect(timestampMs('not-a-date')).toBeUndefined();
+    expect(timestampMs(1_800_000_000)).toBe(1_800_000_000_000);
+    expect(timestampMs(1_800_000_000_000)).toBe(1_800_000_000_000);
   });
 });
