@@ -239,7 +239,12 @@ export class Modal {
 }
 
 export function addIcon(name: string, svgContent: string): void {
-  ICONS[name] = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${svgContent}</svg>`;
+  // Real Obsidian's addIcon() wraps custom (non-Lucide) icon content in
+  // `<svg viewBox="0 0 100 100">` — the constant is `Sg = {viewBox:"0 0 100 100"}`
+  // in Obsidian's app.js. It is NOT 24x24; only Lucide's own icons ship with a
+  // 24x24 viewBox baked into their source. Mirror that here so glyphs scaled
+  // for a 100x100 target render at the correct size in harness screenshots too.
+  ICONS[name] = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 100 100">${svgContent}</svg>`;
 }
 
 export function setIcon(el: HTMLElement, name: string): void {
