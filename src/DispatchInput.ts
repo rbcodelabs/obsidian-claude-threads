@@ -5,6 +5,7 @@ import { SttController } from './stt';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import './harnessBrandIcons';
 
 export interface DispatchPayload {
   text: string;
@@ -482,10 +483,7 @@ export class DispatchInput {
     if (!this.selectedHarness) return;
     const name = this.selectedHarness === 'claude' ? 'Claude' : 'Codex';
     this.sendBtn.empty();
-    this.sendBtn.createSpan({
-      cls: `ct-harness-mark ct-harness-mark-${this.selectedHarness}`,
-      text: this.selectedHarness === 'claude' ? 'A' : '◎',
-    });
+    this.createHarnessMark(this.sendBtn, this.selectedHarness);
     const label = `Start task with ${name}; right-click or hold to change agent`;
     this.sendBtn.setAttribute('aria-label', label);
     this.sendBtn.setAttribute('aria-haspopup', 'menu');
@@ -507,7 +505,7 @@ export class DispatchInput {
           'data-harness': harness,
         },
       });
-      item.createSpan({ cls: `ct-harness-mark ct-harness-mark-${harness}`, text: harness === 'claude' ? 'A' : '◎' });
+      this.createHarnessMark(item, harness);
       item.createSpan({ text: name });
       item.addEventListener('click', (event) => {
         event.preventDefault();
@@ -528,6 +526,15 @@ export class DispatchInput {
     document.addEventListener('pointerdown', this.closeHarnessMenuOnPointerDown);
     document.addEventListener('keydown', this.closeHarnessMenuOnEscape);
     menu.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+  }
+
+  private createHarnessMark(container: HTMLElement, harness: 'claude' | 'codex'): void {
+    const icon = harness === 'claude' ? 'claude-spark' : 'openai-blossom';
+    const mark = container.createSpan({
+      cls: `ct-harness-mark ct-harness-mark-${harness}`,
+      attr: { 'aria-hidden': 'true', 'data-icon': icon },
+    });
+    setIcon(mark, icon);
   }
 
   private closeHarnessMenu(restoreFocus = false): void {

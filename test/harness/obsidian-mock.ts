@@ -238,6 +238,10 @@ export class Modal {
   }
 }
 
+export function addIcon(name: string, svgContent: string): void {
+  ICONS[name] = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${svgContent}</svg>`;
+}
+
 export function setIcon(el: HTMLElement, name: string): void {
   const svg = ICONS[name] ?? FALLBACK_SVG;
   el.innerHTML = svg;

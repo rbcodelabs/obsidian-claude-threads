@@ -253,6 +253,8 @@ describe('DispatchInput — harness picker', () => {
     const { textarea, sendButton, onSend } = mountPicker();
 
     expect(sendButton.getAttribute('aria-label')).toContain('Claude');
+    expect(sendButton.querySelector('.ct-harness-mark-claude')?.getAttribute('data-icon')).toBe('claude-spark');
+    expect(sendButton.querySelector('.ct-harness-mark-claude')?.textContent).toBe('');
     textarea.value = 'Do the task';
     sendButton.click();
     await Promise.resolve();
@@ -272,6 +274,8 @@ describe('DispatchInput — harness picker', () => {
 
     const codexOption = root.querySelector<HTMLButtonElement>('[role="menuitemradio"][data-harness="codex"]')!;
     expect(codexOption).toBeTruthy();
+    expect(codexOption.querySelector('.ct-harness-mark-codex')?.getAttribute('data-icon')).toBe('openai-blossom');
+    expect(codexOption.querySelector('.ct-harness-mark-codex')?.textContent).toBe('');
     codexOption.click();
     expect(onSend).not.toHaveBeenCalled();
     expect(sendButton.getAttribute('aria-label')).toContain('Codex');
