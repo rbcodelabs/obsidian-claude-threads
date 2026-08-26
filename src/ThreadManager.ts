@@ -403,6 +403,16 @@ export class ThreadManager {
   getSelectedAgentRun(threadId: string): string | undefined { return this.selectedAgentRuns.get(threadId); }
   selectAgentRun(threadId: string, agentRunId: string): void { this.selectedAgentRuns.set(threadId, agentRunId); this.emit(threadId, { type: 'agent_runs_changed', agentRuns: this.getAgentRuns(threadId) }); }
 
+  /**
+   * Drops the thread's selected agent. Used when the view self-heals a selection
+   * that no longer matches a live run, so the child activity view falls back to
+   * the main conversation instead of rendering an empty pane.
+   */
+  clearSelectedAgentRun(threadId: string): void {
+    if (!this.selectedAgentRuns.delete(threadId)) return;
+    this.emit(threadId, { type: 'agent_runs_changed', agentRuns: this.getAgentRuns(threadId) });
+  }
+
   private persistAgentRuns(thread: Thread): void {
     thread.agentRuns = this.agentRuns.snapshot(thread.id);
     thread.updatedAt = Date.now();
@@ -446,6 +456,7 @@ export class ThreadManager {
     this.queuedMessages.delete(id);
     this.threadActivity.delete(id);
     this.lastActivityAt.delete(id);
+    this.selectedAgentRuns.delete(id);
     this.threads.delete(id);
     this.emit(id, { type: 'thread_deleted' });
   }

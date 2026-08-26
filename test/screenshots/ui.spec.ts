@@ -25,26 +25,90 @@ test.describe('Claude Threads UI', () => {
     await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
   });
 
+  // Seeds a two-agent team on the auth thread and opens it. Everything after this
+  // is driven through real DOM (clicking the pill, clicking a row) rather than
+  // calling private render methods, so these tests exercise the same path a user
+  // does and would catch the pill silently going invisible.
+  const seedAgentTeam = () => {
+    const view = (window as any).__view;
+    const manager = view.manager;
+    const threadId = 'thread-fix-auth';
+    const store = manager.agentRuns;
+    store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-review', description: 'Review authentication flow', role: 'reviewer', model: 'claude-sonnet-4-5' }, Date.now() - 65000);
+    store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-tests', parentNativeAgentId: 'agent-review', description: 'Inspect regression tests', role: 'test engineer' }, Date.now() - 35000);
+    store.observeActivity(threadId, 'claude', 'agent-review', { kind: 'tool', text: 'Reading auth middleware', toolName: 'Read', timestamp: Date.now() - 4000 });
+    store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
+    view.focusThread(threadId);
+  };
+
   test('native agent workspace', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
-    await page.evaluate(() => {
-      const view = (window as any).__view;
-      const manager = view.manager;
-      const threadId = 'thread-fix-auth';
-      const store = manager.agentRuns;
-      const parent = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-review', description: 'Review authentication flow', role: 'reviewer', model: 'claude-sonnet-4-5' }, Date.now() - 65000);
-      const child = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-tests', parentNativeAgentId: 'agent-review', description: 'Inspect regression tests', role: 'test engineer' }, Date.now() - 35000);
-      store.observeActivity(threadId, 'claude', 'agent-review', { kind: 'tool', text: 'Reading auth middleware', toolName: 'Read', timestamp: Date.now() - 4000 });
-      store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
-      manager.selectAgentRun(threadId, child.id);
-      view.focusThread(threadId);
-      view.renderAgentTeam();
-    });
-    await page.waitForSelector('.ct-agent-detail');
-    await expect(page.locator('.ct-agent-tree [role="treeitem"]')).toHaveCount(2);
-    await expect(page.locator('.ct-agent-team')).toHaveScreenshot('native-agent-workspace.png');
+    await page.evaluate(seedAgentTeam);
+
+    // The pill must be visible at rest — no hover — while agents are running.
+    const pill = page.locator('.ct-agent-pill');
+    await expect(pill).toBeVisible();
+    await expect(pill).toHaveText('2 agents working');
+    // The conversation is still the conversation: no inline agent panel above it.
+    await expect(page.locator('.ct-messages .ct-message').first()).toBeVisible();
+
+    await page.click('.ct-agent-pill');
+    await page.waitForSelector('.ct-agent-popover');
+    await expect(pill).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('.ct-agent-popover [role="treeitem"]')).toHaveCount(2);
+    await expect(page.locator('.ct-agent-popover [role="treeitem"]').nth(1)).toHaveAttribute('aria-level', '2');
+    await expect(page.locator('.ct-agent-popover')).toHaveScreenshot('native-agent-popover.png');
+
+    // Escape dismisses and returns focus to the pill.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.ct-agent-popover')).toHaveCount(0);
+    await expect(pill).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('agent activity view replaces the conversation and the breadcrumb returns', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(seedAgentTeam);
+
+    await page.click('.ct-agent-pill');
+    await page.click('.ct-agent-popover [role="treeitem"]:nth-child(2) .ct-agent-row-button');
+
+    // Selecting closes the popover and takes over the message pane.
+    await expect(page.locator('.ct-agent-popover')).toHaveCount(0);
+    await page.waitForSelector('.ct-agent-view-header');
+    await expect(page.locator('.ct-messages .ct-message')).toHaveCount(0);
+    await expect(page.locator('.ct-agent-crumb-current')).toHaveText('test engineer');
+    await expect(page.locator('.ct-agent-crumbs .ct-agent-crumb')).toHaveCount(3);
+    await expect(page.locator('.ct-agent-timeline .ct-agent-event')).toHaveCount(2);
+    // The composer stays live; only the placeholder flags where a send will land.
+    await expect(page.locator('.ct-input')).toBeEnabled();
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Claude (main conversation)');
+    await expect(page.locator('.ct-main')).toHaveScreenshot('native-agent-activity-view.png');
+
+    // The breadcrumb goes back to real conversation messages, not an empty pane.
+    await page.click('.ct-agent-crumbs button:has-text("Main conversation")');
+    await expect(page.locator('.ct-agent-view-header')).toHaveCount(0);
+    await expect(page.locator('.ct-messages .ct-message').first()).toBeVisible();
+    await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Claude');
+    // The pill survives the round trip.
+    await expect(page.locator('.ct-agent-pill')).toBeVisible();
+  });
+
+  test('agent pill disappears and the footer returns to hover-only with no agents', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    // thread-fix-auth is seeded with no agent runs in this test.
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await expect(page.locator('.ct-agent-pill')).toHaveClass(/ct-hidden/);
+    // With the pill hidden the :has() pin stops matching, so the footer collapses.
+    const footerHeight = await page.locator('.ct-input-footer').evaluate(
+      (el) => getComputedStyle(el).maxHeight,
+    );
+    expect(footerHeight).toBe('0px');
   });
 
   for (const viewport of [
@@ -55,19 +119,8 @@ test.describe('Claude Threads UI', () => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto(harnessUrl);
       await page.waitForSelector('.ct-title-row');
+      await page.evaluate(seedAgentTeam);
       await page.evaluate(() => {
-        const view = (window as any).__view;
-        const manager = view.manager;
-        const threadId = 'thread-fix-auth';
-        const store = manager.agentRuns;
-        store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-review', description: 'Review authentication flow', role: 'reviewer', model: 'claude-sonnet-4-5' }, Date.now() - 65000);
-        const child = store.observeStart({ threadId, harness: 'claude', nativeAgentId: 'agent-tests', parentNativeAgentId: 'agent-review', description: 'Inspect regression tests', role: 'test engineer' }, Date.now() - 35000);
-        store.observeActivity(threadId, 'claude', 'agent-review', { kind: 'tool', text: 'Reading auth middleware', toolName: 'Read', timestamp: Date.now() - 4000 });
-        store.observeActivity(threadId, 'claude', 'agent-tests', { kind: 'activity', text: 'Running targeted tests', timestamp: Date.now() - 2000 });
-        manager.selectAgentRun(threadId, child.id);
-        view.focusThread(threadId);
-        view.renderAgentTeam();
-
         // AgentDashboard is not mounted by this harness, so render its real
         // interactive class to verify the shared mobile tap-target contract.
         const dashboardButton = document.createElement('button');
@@ -76,14 +129,18 @@ test.describe('Claude Threads UI', () => {
         document.body.appendChild(dashboardButton);
       });
 
-      await page.waitForSelector('.ct-agent-detail');
+      await expect(page.locator('.ct-agent-pill')).toBeVisible();
+      await expect(page.locator('.ct-agent-pill')).toHaveCSS('min-height', '44px');
+      await page.click('.ct-agent-pill');
+      await page.waitForSelector('.ct-agent-popover');
+
       await expect(page.locator('.ct-agent-row-button').first()).toHaveCSS('min-height', '44px');
       await expect(page.locator('.ct-dashboard-agent')).toHaveCSS('min-height', '44px');
-      const hasHorizontalOverflow = await page.locator('.ct-agent-team').evaluate(
+      const hasHorizontalOverflow = await page.locator('.ct-agent-popover').evaluate(
         (element) => element.scrollWidth > element.clientWidth,
       );
       expect(hasHorizontalOverflow).toBe(false);
-      await expect(page.locator('.ct-agent-team')).toHaveScreenshot(`native-agent-workspace-${viewport.name}.png`);
+      await expect(page.locator('.ct-agent-popover')).toHaveScreenshot(`native-agent-popover-${viewport.name}.png`);
     });
   }
 
