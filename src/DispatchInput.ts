@@ -54,6 +54,12 @@ export interface DispatchInputOptions {
   /** Slot for the caller to inject extra buttons into the footer actions area */
   appendFooterActions?: (container: HTMLElement) => void;
   /**
+   * Slot for read-mostly status chips that sit between the CWD chip and the
+   * footer action buttons. Kept separate from appendFooterActions so metadata
+   * reads as part of the left-hand context group rather than the button cluster.
+   */
+  appendFooterMetadata?: (container: HTMLElement) => void;
+  /**
    * When true, renders a compact single-row layout suitable for wider panels:
    *   [attach · mic]  [textarea (auto-grow)]  [send/stop]
    * No footer row is rendered in this mode.
@@ -237,7 +243,7 @@ export class DispatchInput {
       leftActionsEl!.appendChild(micBtn);
     } else {
       // ── Column layout: footer row or fallback to input-actions column ────
-      const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions);
+      const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions || this.options.appendFooterMetadata);
       if (needsFooter) {
         const inputFooter = this.rootEl.createDiv('ct-input-footer');
 
@@ -253,6 +259,11 @@ export class DispatchInput {
         } else {
           this.cwdChipNameEl = null;
           this.cwdChipEl = null;
+        }
+
+        if (this.options.appendFooterMetadata) {
+          const footerMetaEl = inputFooter.createDiv('ct-input-footer-meta');
+          this.options.appendFooterMetadata(footerMetaEl);
         }
 
         const footerActionsEl = inputFooter.createDiv('ct-input-footer-actions');
