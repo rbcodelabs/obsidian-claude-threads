@@ -24,7 +24,9 @@ import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
 import { partitionThreads } from './threadRowState';
-import { renderAgentTeam } from './agentRuns/renderAgentTeam';
+import { agentLabel, buildAgentBreadcrumbs, summarizeAgentTeam } from './agentRuns/agentTreeModel';
+import { renderAgentPopoverTree } from './agentRuns/renderAgentPopoverTree';
+import { renderAgentActivity } from './agentRuns/renderAgentActivity';
 import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
 import type { DesignArtifact } from './types';
 
@@ -68,8 +70,24 @@ export class ThreadsView extends ItemView {
   private titleTextEl!: HTMLSpanElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
-  private agentTeamEl!: HTMLElement;
   private inputRowEl!: HTMLElement;
+
+  // ── Sub-agent surfaces ────────────────────────────────────────────────────
+  /** Always-visible status pill in the composer footer; hidden when no agents exist. */
+  private agentPillEl: HTMLElement | null = null;
+  /**
+   * The agent-tree popover. Anchored to .ct-panel-wrapper rather than the footer,
+   * because .ct-input-footer carries `overflow: hidden` from the collapsible rule
+   * and would clip anything drawn above the composer.
+   */
+  private agentPopoverEl: HTMLElement | null = null;
+  private agentPopoverOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  /** Timeline body of the in-place child activity view, refreshed live. */
+  private agentViewBodyEl: HTMLElement | null = null;
+  /** Remembered scroll offsets, keyed "<threadId>:main" or "<threadId>:<agentRunId>". */
+  private agentScroll: Map<string, number> = new Map();
+  /** One-shot scroll target consumed by the next main-conversation render. */
+  private pendingMainScroll: number | null = null;
   private moreBtn!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
   private permissionModeBtn!: HTMLButtonElement;
@@ -408,6 +426,12 @@ export class ThreadsView extends ItemView {
       if (event.type === 'thread_created' || event.type === 'thread_deleted') {
         this.renderProjectBar();
       }
+      // Drop remembered scroll offsets for a thread that no longer exists.
+      if (event.type === 'thread_deleted') {
+        for (const key of [...this.agentScroll.keys()]) {
+          if (key.startsWith(`${threadId}:`)) this.agentScroll.delete(key);
+        }
+      }
       // Maintain a per-thread streaming buffer for ALL threads so we can restore
       // the live streaming UI when switching back to a thread still in progress.
       if (event.type === 'streaming_start') {
@@ -544,6 +568,11 @@ export class ThreadsView extends ItemView {
     this.unsubscribe?.();
     this.stopWakeupCountdown();
     if (this.staleInterval) clearInterval(this.staleInterval);
+    // Both popovers register a capture-phase document listener; leaving either
+    // attached leaks a handler that outlives the view.
+    this.closeSwitcherPanel();
+    this.closeAgentPopover();
+    this.agentScroll.clear();
     this.dispatchInput?.destroy();
   }
 
@@ -589,7 +618,6 @@ export class ThreadsView extends ItemView {
     });
 
     this.mainEl = root.createDiv('ct-main');
-    this.agentTeamEl = this.mainEl.createDiv('ct-agent-team ct-hidden');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
 
     const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
@@ -650,6 +678,23 @@ export class ThreadsView extends ItemView {
       extraSkillDirs: githubSkillDirs,
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
+      appendFooterMetadata: (container) => {
+        // Deliberately NOT .ct-footer-pill: that class belongs to the status-line
+        // pills in .ct-context-footer, and several tests locate it unqualified.
+        // This mirrors its visual language in CSS instead of sharing the class.
+        this.agentPillEl = container.createEl('button', {
+          cls: 'ct-agent-pill ct-hidden',
+          attr: { type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
+        });
+        const pillIcon = this.agentPillEl.createSpan('ct-agent-pill-icon');
+        setIcon(pillIcon, 'users');
+        this.agentPillEl.createSpan('ct-agent-pill-text');
+        this.agentPillEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.toggleAgentPopover();
+        });
+        this.renderAgentPill();
+      },
       appendFooterActions: (container) => {
         this.permissionModeBtn = container.createEl('button', {
           cls: 'ct-more-btn ct-permission-mode-btn',
@@ -818,6 +863,8 @@ export class ThreadsView extends ItemView {
 
   private async setActiveThread(id: string): Promise<void> {
     this.closeSwitcherPanel();
+    this.closeAgentPopover();
+    this.rememberAgentScroll();
     const previousId = this.activeThreadId;
 
     // Mark the thread as reviewed when the user explicitly opens it.
@@ -848,8 +895,7 @@ export class ThreadsView extends ItemView {
     this.updateProjectIndicator();
     this.updateModelIndicator();
     this.updatePermissionModeIndicator();
-    const activeThread = this.manager.getThread(id);
-    this.dispatchInput.setPlaceholder(activeThread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude');
+    this.applyComposerPlaceholder();
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
     this.syncEditedFiles();
@@ -2125,13 +2171,24 @@ export class ThreadsView extends ItemView {
 
   private async renderMessages(): Promise<void> {
     this.messagesEl.empty();
+    this.messagesEl.removeClass('ct-messages-agent-view');
+    this.agentViewBodyEl = null;
     this.clearStreamingState();
     this.streamingEl = null;
 
     if (!this.activeThreadId) return;
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
-    this.renderAgentTeam();
+    this.renderAgentPill();
+
+    // A selected sub-agent takes over the message pane entirely. The composer
+    // below stays live; only its placeholder changes.
+    const agentViewId = this.resolveAgentViewId();
+    if (agentViewId) {
+      this.renderAgentConversation(agentViewId);
+      this.setRunningState(this.manager.isRunning(this.activeThreadId));
+      return;
+    }
 
     if (thread.messages.length === 0) {
       const empty = this.messagesEl.createDiv('ct-empty');
@@ -2226,17 +2283,279 @@ export class ThreadsView extends ItemView {
       pendingQ.cardEl = cardEl;
     }
 
-    this.scrollToBottom();
+    // Returning from a child agent view restores where the user left the
+    // conversation; every other render still lands at the bottom.
+    if (this.pendingMainScroll !== null) {
+      const target = this.pendingMainScroll;
+      this.pendingMainScroll = null;
+      requestAnimationFrame(() => { this.messagesEl.scrollTop = target; });
+    } else {
+      this.scrollToBottom();
+    }
     this.setRunningState(this.manager.isRunning(this.activeThreadId));
   }
 
-  private renderAgentTeam(): void {
-    if (!this.activeThreadId || !this.agentTeamEl) return;
-    renderAgentTeam(
-      this.agentTeamEl,
+  // ── Sub-agent pill, popover and in-place activity view ────────────────────
+
+  /**
+   * Refreshes the composer-footer pill. The pill is the only always-visible
+   * agent surface: `.ct-hidden` while a thread has no sub-agents, and while it is
+   * visible a `:has()` rule in styles.css pins the otherwise hover-only footer
+   * open so agent status never hides behind a hover.
+   */
+  private renderAgentPill(): void {
+    if (!this.agentPillEl) return;
+    const runs = this.activeThreadId ? this.manager.getAgentRuns(this.activeThreadId) : [];
+    const summary = summarizeAgentTeam(runs);
+
+    this.agentPillEl.toggleClass('ct-hidden', summary.total === 0);
+    const textEl = this.agentPillEl.querySelector('.ct-agent-pill-text');
+    if (textEl) textEl.textContent = summary.label;
+    for (const tone of ['active', 'failed', 'done', 'idle']) {
+      this.agentPillEl.toggleClass(`ct-agent-pill-${tone}`, tone === summary.tone);
+    }
+    setTooltip(this.agentPillEl, summary.total === 0 ? 'No sub-agents' : `${summary.label} — open the sub-agent list`);
+    if (summary.total === 0) this.closeAgentPopover();
+  }
+
+  private toggleAgentPopover(): void {
+    if (this.agentPopoverEl) {
+      this.closeAgentPopover();
+      this.agentPillEl?.focus();
+      return;
+    }
+    this.openAgentPopover();
+  }
+
+  /**
+   * Opens the agent tree above the composer.
+   *
+   * The host is `.ct-panel-wrapper`, deliberately NOT `.ct-input-footer`: the
+   * footer is the element the collapsible rule gives `overflow: hidden`, so a
+   * popover parented there would be clipped to a 50px strip.
+   */
+  private openAgentPopover(): void {
+    if (!this.activeThreadId || !this.agentPillEl) return;
+    const wrapper = this.mainEl?.querySelector('.ct-panel-wrapper') as HTMLElement | null;
+    if (!wrapper) return;
+
+    const popover = wrapper.createDiv('ct-agent-popover');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Sub-agents in this thread');
+    this.agentPopoverEl = popover;
+    this.agentPillEl.setAttribute('aria-expanded', 'true');
+
+    const header = popover.createDiv('ct-agent-popover-header');
+    header.createSpan({ cls: 'ct-agent-popover-title', text: 'Sub-agents' });
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-agent-popover-close',
+      attr: { type: 'button', 'aria-label': 'Close sub-agent list' },
+    });
+    setIcon(closeBtn, 'x');
+    closeBtn.addEventListener('click', () => {
+      this.closeAgentPopover();
+      this.agentPillEl?.focus();
+    });
+
+    popover.createDiv('ct-agent-popover-list');
+    this.renderAgentPopoverList();
+
+    popover.addEventListener('keydown', (e) => this.onAgentPopoverKeyDown(e));
+
+    // Move focus into the list so arrow keys work without a second click.
+    (popover.querySelector('.ct-agent-row-button') as HTMLElement | null)?.focus();
+
+    // Outside-click dismissal, registered next tick so the click that opened the
+    // popover does not immediately close it again (mirrors openThreadSwitcher).
+    setTimeout(() => {
+      const outsideHandler = (e: MouseEvent) => {
+        if (!popover.contains(e.target as Node) && !this.agentPillEl?.contains(e.target as Node)) {
+          this.closeAgentPopover();
+        }
+      };
+      this.agentPopoverOutsideHandler = outsideHandler;
+      document.addEventListener('mousedown', outsideHandler, true);
+    }, 0);
+  }
+
+  /** Escape closes; Up/Down/Home/End move roving focus through the agent rows. */
+  private onAgentPopoverKeyDown(e: KeyboardEvent): void {
+    const popover = this.agentPopoverEl;
+    if (!popover) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeAgentPopover();
+      this.agentPillEl?.focus();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    const buttons = [...popover.querySelectorAll<HTMLButtonElement>('.ct-agent-row-button')];
+    if (!buttons.length) return;
+    e.preventDefault();
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number;
+    if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = buttons.length - 1;
+    else if (e.key === 'ArrowDown') next = current < 0 ? 0 : (current + 1) % buttons.length;
+    else next = current < 0 ? buttons.length - 1 : (current - 1 + buttons.length) % buttons.length;
+    buttons[next].focus();
+  }
+
+  /** Repaints the popover's tree in place, so live updates don't close it. */
+  private renderAgentPopoverList(): void {
+    const list = this.agentPopoverEl?.querySelector('.ct-agent-popover-list') as HTMLElement | null;
+    if (!list || !this.activeThreadId) return;
+    renderAgentPopoverTree(
+      list,
       this.manager.getAgentRuns(this.activeThreadId),
-      id => { this.manager.selectAgentRun(this.activeThreadId!, id); this.renderAgentTeam(); },
-      this.manager.getSelectedAgentRun(this.activeThreadId),
+      id => { void this.enterAgentView(id); },
+      this.currentAgentViewId(),
+    );
+  }
+
+  private closeAgentPopover(): void {
+    this.agentPopoverEl?.remove();
+    this.agentPopoverEl = null;
+    if (this.agentPopoverOutsideHandler) {
+      document.removeEventListener('mousedown', this.agentPopoverOutsideHandler, true);
+      this.agentPopoverOutsideHandler = null;
+    }
+    this.agentPillEl?.setAttribute('aria-expanded', 'false');
+  }
+
+  /** The selected agent id, but only when it still matches a live run. No side effects. */
+  private currentAgentViewId(): string | undefined {
+    if (!this.activeThreadId) return undefined;
+    const selected = this.manager.getSelectedAgentRun(this.activeThreadId);
+    if (!selected) return undefined;
+    return this.manager.getAgentRuns(this.activeThreadId).some(r => r.id === selected) ? selected : undefined;
+  }
+
+  /**
+   * Same as currentAgentViewId, but self-heals a stale selection so a thread whose
+   * runs were pruned can never get stuck showing an empty child view.
+   */
+  private resolveAgentViewId(): string | undefined {
+    if (!this.activeThreadId) return undefined;
+    if (!this.manager.getSelectedAgentRun(this.activeThreadId)) return undefined;
+    const live = this.currentAgentViewId();
+    if (!live) this.manager.clearSelectedAgentRun(this.activeThreadId);
+    return live;
+  }
+
+  private agentScrollKey(): string | null {
+    if (!this.activeThreadId) return null;
+    return `${this.activeThreadId}:${this.currentAgentViewId() ?? 'main'}`;
+  }
+
+  /** Stashes the current scroll offset before navigating into or out of a child view. */
+  private rememberAgentScroll(): void {
+    const key = this.agentScrollKey();
+    if (!key || !this.messagesEl) return;
+    this.agentScroll.set(key, this.messagesEl.scrollTop);
+  }
+
+  private async enterAgentView(agentRunId: string): Promise<void> {
+    if (!this.activeThreadId) return;
+    this.rememberAgentScroll();
+    this.closeAgentPopover();
+    this.manager.selectAgentRun(this.activeThreadId, agentRunId);
+    await this.renderMessages();
+    this.applyComposerPlaceholder();
+  }
+
+  /** Returns the message pane to the real conversation. No-op when already there. */
+  private async exitAgentView(): Promise<void> {
+    if (!this.activeThreadId) return;
+    if (!this.manager.getSelectedAgentRun(this.activeThreadId)) return;
+    this.rememberAgentScroll();
+    this.manager.clearSelectedAgentRun(this.activeThreadId);
+    this.pendingMainScroll = this.agentScroll.get(`${this.activeThreadId}:main`) ?? null;
+    await this.renderMessages();
+    this.applyComposerPlaceholder();
+  }
+
+  /**
+   * Renders one agent's activity into the message pane, behind a sticky header
+   * whose breadcrumbs walk back to the real conversation.
+   */
+  private renderAgentConversation(agentRunId: string): void {
+    if (!this.activeThreadId) return;
+    const runs = this.manager.getAgentRuns(this.activeThreadId);
+    const run = runs.find(r => r.id === agentRunId);
+    if (!run) return;
+
+    this.messagesEl.addClass('ct-messages-agent-view');
+
+    const header = this.messagesEl.createDiv('ct-agent-view-header');
+    const crumbs = header.createDiv({ cls: 'ct-agent-crumbs', attr: { 'aria-label': 'Agent breadcrumb' } });
+    const mainCrumb = crumbs.createEl('button', {
+      cls: 'ct-agent-crumb',
+      text: 'Main conversation',
+      attr: { type: 'button' },
+    });
+    mainCrumb.addEventListener('click', () => { void this.exitAgentView(); });
+
+    const chain = buildAgentBreadcrumbs(runs, agentRunId);
+    chain.forEach((node, index) => {
+      crumbs.createSpan({ cls: 'ct-agent-crumb-sep', text: '›' });
+      if (index === chain.length - 1) {
+        crumbs.createSpan({
+          cls: 'ct-agent-crumb ct-agent-crumb-current',
+          text: agentLabel(node),
+          attr: { 'aria-current': 'page' },
+        });
+      } else {
+        const crumb = crumbs.createEl('button', { cls: 'ct-agent-crumb', text: agentLabel(node), attr: { type: 'button' } });
+        crumb.addEventListener('click', () => { void this.enterAgentView(node.id); });
+      }
+    });
+
+    const closeBtn = header.createEl('button', {
+      cls: 'ct-agent-view-close',
+      attr: { type: 'button', 'aria-label': 'Back to the main conversation', title: 'Back to the main conversation' },
+    });
+    setIcon(closeBtn, 'x');
+    closeBtn.addEventListener('click', () => { void this.exitAgentView(); });
+
+    const body = this.messagesEl.createDiv('ct-agent-view-body');
+    this.agentViewBodyEl = body;
+    renderAgentActivity(body, run);
+
+    const remembered = this.agentScroll.get(`${this.activeThreadId}:${agentRunId}`);
+    requestAnimationFrame(() => {
+      this.messagesEl.scrollTop = remembered ?? this.messagesEl.scrollHeight;
+    });
+  }
+
+  /**
+   * Repaints the open child view in place on `agent_runs_changed`, keeping the
+   * scroll position unless the user is already parked at the tail. Without the
+   * 40px stick check, every live event would yank a user who scrolled up to read
+   * an earlier step straight back to the bottom.
+   */
+  private refreshAgentActivityView(): void {
+    const body = this.agentViewBodyEl;
+    if (!body || !body.isConnected || !this.activeThreadId) return;
+    const id = this.currentAgentViewId();
+    if (!id) { void this.renderMessages(); return; }
+    const run = this.manager.getAgentRuns(this.activeThreadId).find(r => r.id === id);
+    if (!run) return;
+    const scroller = this.messagesEl;
+    const stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 40;
+    renderAgentActivity(body, run);
+    if (stick) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
+  }
+
+  /** Composer placeholder, flagged when a send would bounce out of a child view. */
+  private applyComposerPlaceholder(): void {
+    if (!this.dispatchInput) return;
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const base = thread?.agentHarness === 'codex' ? 'Message Codex' : 'Message Claude';
+    // Kept short: a long placeholder wraps and clips in a narrow side panel.
+    this.dispatchInput.setPlaceholder(
+      this.currentAgentViewId() ? `${base} (main conversation)` : base,
     );
   }
 
@@ -3543,8 +3862,14 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      // Only reaches here for the active thread — handleEvent is called behind
+      // the `threadId === this.activeThreadId` guard in onOpen. The event itself
+      // also fires for background threads (ThreadManager.persistAgentRuns), and
+      // a busy background thread would otherwise thrash the foreground UI.
       case 'agent_runs_changed': {
-        this.renderAgentTeam();
+        this.renderAgentPill();
+        this.renderAgentPopoverList();
+        this.refreshAgentActivityView();
         break;
       }
 
@@ -4641,6 +4966,11 @@ export class ThreadsView extends ItemView {
     attachment: string | null,
   ): Promise<void> {
     if (!this.activeThreadId) return;
+
+    // A message always goes to the thread, never to a child agent. Leave the
+    // child view first so the send visibly lands in the main conversation
+    // instead of being silently redirected out of sight. No-op when already there.
+    await this.exitAgentView();
 
     this.lastSentTexts.set(this.activeThreadId, typed);
 
