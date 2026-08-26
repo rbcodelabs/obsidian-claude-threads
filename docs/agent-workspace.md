@@ -1,6 +1,14 @@
 # Native agent workspace
 
-Claude Threads preserves harness-native child agents as durable `AgentRun` records. When Claude or Codex reports an agent, the parent conversation shows an **Agent Team** tree. Select an agent to inspect its harness-exposed activity, lifecycle, errors, result, and hierarchy without creating a separate thread.
+Claude Threads preserves harness-native child agents as durable `AgentRun` records. Agent status never crowds out the conversation.
+
+When Claude or Codex reports an agent, a compact pill appears in the composer footer showing how many agents are working (or how many failed, or a plain count once everything has finished). The pill is always visible while agents exist; it disappears, and the footer returns to its normal hover-only behavior, once the thread has no agent runs at all.
+
+Click the pill to open a popover above the composer listing every agent in the thread, indented by parent. Arrow keys move between rows, `Escape` closes it, and clicking outside dismisses it.
+
+Selecting an agent replaces the message pane with that agent's harness-exposed activity, lifecycle, errors, and result, without creating a separate thread. A sticky breadcrumb at the top (`Main conversation › parent › child`) walks back up the tree, and a close button returns to the conversation directly. Your scroll position in the main conversation is restored when you come back.
+
+The composer stays live while a child view is open. Its placeholder notes that a message goes to the main conversation, and sending one visibly returns you there rather than silently redirecting.
 
 ## Choosing the harness at kickoff
 
@@ -15,7 +23,7 @@ The Agent Dashboard also shows compact child-agent entries. Agent role, task, an
 | Claude Agent SDK 0.3.233 | Yes (`task_id`) | Yes (`task_started`, `task_updated`, `task_progress`, notifications) | Used when `parent_task_id` is present | No verified public `Query` method | No verified public `Query` method |
 | Codex app-server | Yes (`receiverThreadIds`, `agentThreadId`) | Yes (`collabAgentToolCall`, `agentsStates`, `subAgentActivity`) | Used when the event provides `senderThreadId`/`parentThreadId` | No verified host-callable path | No verified host-callable path |
 
-The Claude SDK defines model-invoked `SendMessage` and `TaskStop` tool inputs, but its public host-side `Query` surface exposes only whole-query interruption. Claude Threads does not pretend those model tools are direct UI controls. Codex collaboration events similarly prove observation, not a callable host control. Consequently, the detail view explains that direct message and single-agent interrupt are unavailable, and never redirects an attempted child action to `main`.
+The Claude SDK defines model-invoked `SendMessage` and `TaskStop` tool inputs, but its public host-side `Query` surface exposes only whole-query interruption. Claude Threads does not pretend those model tools are direct UI controls. Codex collaboration events similarly prove observation, not a callable host control. Consequently, the agent activity view explains that direct message and single-agent interrupt are unavailable, and never redirects an attempted child action to `main`.
 
 ## Persistence and recovery
 
