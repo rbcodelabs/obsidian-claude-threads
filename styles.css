@@ -27,6 +27,25 @@
   background: transparent;
 }
 
+/* The reset above is (0,1,1); it has to stay that high to beat Obsidian's own
+   `button:not(.clickable-icon)` (also (0,1,1)) and strip its default gray chrome.
+   The side effect is that any button re-applying its own fill with a single
+   class (0,1,0) LOSES to the reset and renders transparent. Individual filled
+   buttons are therefore scoped with `.ct-root ` below (→ (0,2,0)) so their fill
+   out-ranks the reset.
+   `button.mod-cta` is a host-provided fill the plugin never re-styles. In
+   Obsidian its uses all live in Modals (outside `.ct-root`), so the reset
+   never reaches them and this rule is inert there. But a host may render a
+   modal/CTA inside the view root, where the reset would otherwise strip the
+   fill — re-assert it so mod-cta stays filled in that case too. */
+.ct-root button.mod-cta {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.ct-root button.mod-cta:hover {
+  background: var(--interactive-accent-hover);
+}
+
 /* Title bar — replaces the tab bar */
 .ct-title-row {
   position: relative;
@@ -887,7 +906,7 @@
 }
 
 /* Copy button */
-.ct-copy-btn {
+.ct-root .ct-copy-btn {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -1637,8 +1656,8 @@
   color: var(--text-muted);
 }
 
-.ct-queue-confirm-yes,
-.ct-queue-confirm-no {
+.ct-root .ct-queue-confirm-yes,
+.ct-root .ct-queue-confirm-no {
   font-size: var(--font-ui-smaller);
   padding: 2px 8px;
   border-radius: 4px;
@@ -1694,7 +1713,7 @@
   color: var(--text-muted);
 }
 
-.ct-wakeup-banner-cancel {
+.ct-root .ct-wakeup-banner-cancel {
   flex-shrink: 0;
   font-size: var(--font-ui-smaller);
   padding: 2px 10px;
@@ -1707,9 +1726,9 @@
 }
 
 .ct-wakeup-banner-cancel:hover {
-  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
-  border-color: var(--color-red);
-  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
 /* Manager Notes panel (collapsible, above the compose box) */
@@ -1739,7 +1758,7 @@
   color: var(--color-purple, #a882ff);
 }
 
-.ct-manager-notes-close {
+.ct-root .ct-manager-notes-close {
   flex-shrink: 0;
   font-size: var(--font-ui-smaller);
   line-height: 1;
@@ -1804,9 +1823,9 @@
   justify-content: flex-end;
 }
 
-.ct-proposed-reply-approve,
-.ct-proposed-reply-edit,
-.ct-proposed-reply-discard {
+.ct-root .ct-proposed-reply-approve,
+.ct-root .ct-proposed-reply-edit,
+.ct-root .ct-proposed-reply-discard {
   font-size: var(--font-ui-smaller);
   padding: 3px 10px;
   border-radius: 5px;
@@ -1831,9 +1850,9 @@
 }
 
 .ct-proposed-reply-discard:hover {
-  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
-  border-color: var(--color-red);
-  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
 /* Active-loop banner (above the input row) */
@@ -1867,7 +1886,7 @@
   align-items: center;
 }
 
-.ct-loop-banner-stop {
+.ct-root .ct-loop-banner-stop {
   flex-shrink: 0;
   font-size: var(--font-ui-smaller);
   padding: 2px 10px;
@@ -1880,9 +1899,9 @@
 }
 
 .ct-loop-banner-stop:hover {
-  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
-  border-color: var(--color-red);
-  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
 /* Design artifact card */
@@ -1914,7 +1933,7 @@
 }
 .ct-artifact-card-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
 .ct-artifact-card-actions { display: flex; gap: 4px; }
-.ct-artifact-action {
+.ct-root .ct-artifact-action {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2288,7 +2307,7 @@
   height: 15px;
 }
 
-.ct-send-btn {
+.ct-root .ct-send-btn {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
@@ -2364,8 +2383,8 @@
   background: var(--background-modifier-hover);
 }
 
-.ct-stop-btn {
-  background: var(--color-red);
+.ct-root .ct-stop-btn {
+  background: var(--color-red, #e05252);
   color: white;
 }
 
@@ -3288,18 +3307,18 @@
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 
-.ct-permission-deny {
+.ct-root .ct-permission-deny {
   background: var(--background-secondary);
   color: var(--text-muted);
 }
 
 .ct-permission-deny:hover {
-  background: color-mix(in srgb, var(--color-red) 15%, var(--background-secondary));
-  border-color: var(--color-red);
-  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
-.ct-permission-allow {
+.ct-root .ct-permission-allow {
   background: var(--background-secondary);
   color: var(--text-normal);
 }
@@ -3308,7 +3327,7 @@
   background: var(--background-modifier-hover);
 }
 
-.ct-permission-always {
+.ct-root .ct-permission-always {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border-color: var(--interactive-accent);
@@ -3431,7 +3450,7 @@
   font-weight: 500;
 }
 
-.ct-elicitation-cancel {
+.ct-root .ct-elicitation-cancel {
   background: var(--background-secondary);
   color: var(--text-muted);
 }
@@ -3441,8 +3460,8 @@
   color: var(--text-normal);
 }
 
-.ct-elicitation-submit,
-.ct-elicitation-open {
+.ct-root .ct-elicitation-submit,
+.ct-root .ct-elicitation-open {
   background: var(--interactive-accent);
   border-color: var(--interactive-accent);
   color: var(--text-on-accent);
@@ -3588,17 +3607,17 @@
   transition: background 0.1s, color 0.1s, border-color 0.1s;
 }
 
-.ct-plan-reject {
+.ct-root .ct-plan-reject {
   background: var(--background-secondary);
   color: var(--text-muted);
 }
 .ct-plan-reject:hover {
-  background: color-mix(in srgb, var(--color-red) 12%, var(--background-secondary));
-  border-color: var(--color-red);
-  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red, #e05252) 12%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
-.ct-plan-edit {
+.ct-root .ct-plan-edit {
   background: var(--background-secondary);
   color: var(--text-normal);
 }
@@ -3606,7 +3625,7 @@
   background: var(--background-modifier-hover);
 }
 
-.ct-plan-approve {
+.ct-root .ct-plan-approve {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border-color: var(--interactive-accent);
@@ -3669,7 +3688,7 @@
   align-items: center;
 }
 
-.ct-question-card-submit {
+.ct-root .ct-question-card-submit {
   font-size: var(--font-ui-smaller);
   padding: 4px 14px;
   border-radius: 5px;
@@ -3960,7 +3979,7 @@
   border: 1px solid var(--background-modifier-border);
 }
 
-.ct-git-diff-create-btn {
+.ct-root .ct-git-diff-create-btn {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border: none;
@@ -3975,7 +3994,7 @@
   background: var(--interactive-accent-hover);
 }
 
-.ct-git-diff-dropdown-btn {
+.ct-root .ct-git-diff-dropdown-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5981,6 +6000,12 @@ textarea.ct-settings-wide-input {
 .ct-kanban-dispatch .ct-send-btn:hover {
   background: var(--interactive-accent-hover);
 }
+/* Stop button shares this panel and its own (0,1,1) `button` reset, but has no
+   2-class context rule the way send-btn does, so re-assert its fill here. */
+.ct-kanban-dispatch .ct-stop-btn {
+  background: var(--color-red, #e05252);
+  color: white;
+}
 
 /* ── Inline layout (used by Kanban dispatch) ───────────────────────────────── */
 
@@ -6073,6 +6098,12 @@ textarea.ct-settings-wide-input {
   background: var(--interactive-accent-hover);
 }
 
+/* Re-apply red for stop button (no 2-class context rule otherwise). */
+.ct-agents-floating-panel .ct-stop-btn {
+  background: var(--color-red, #e05252);
+  color: white;
+}
+
 /* Padding for the dispatch input section within the floating panel */
 .ct-agents-floating-panel .ct-dispatch-root {
   padding: 6px 8px 8px;
@@ -6106,6 +6137,25 @@ textarea.ct-settings-wide-input {
 /* Reset Obsidian's global button styles within skills root */
 .ct-skills-root button {
   box-shadow: none;
+  background: transparent;
+}
+
+/* Same specificity trap as the .ct-root reset above: the (0,1,1) reset out-ranks
+   the single-class (0,1,0) `.ct-skills-btn` / `--primary` fills, so those buttons
+   render transparent inside the skills view. Re-assert their fills scoped to
+   `.ct-skills-root` (→ (0,2,0)) so they win. The base `.ct-skills-btn` rules are
+   left intact because the same classes are also used in ConfirmModal (a Modal,
+   outside `.ct-skills-root`), where no reset competes and the base fill applies. */
+.ct-skills-root .ct-skills-btn {
+  background: var(--background-secondary);
+}
+.ct-skills-root .ct-skills-btn--primary {
+  background: var(--interactive-accent);
+}
+/* Danger is an outline variant: it shares .ct-skills-btn, so re-assert its
+   transparent base here (after the default) so the fill above doesn't win.
+   Its red border/text and red hover fill are set by the base rule below. */
+.ct-skills-root .ct-skills-btn--danger {
   background: transparent;
 }
 
@@ -6586,12 +6636,12 @@ body.ct-skills-resizing {
 
 .ct-skills-btn--danger {
   background: transparent;
-  border-color: var(--color-red);
-  color: var(--color-red);
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
 .ct-skills-btn--danger:hover:not(:disabled) {
-  background: var(--color-red);
+  background: var(--color-red, #e05252);
   color: #fff;
 }
 
