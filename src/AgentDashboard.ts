@@ -10,6 +10,7 @@ import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirec
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads } from './threadRowState';
+import { agentLabel, flattenAgentTree } from './agentRuns/agentTreeModel';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -598,23 +599,16 @@ export class AgentDashboard extends ItemView {
     const agentRuns = this.manager.getAgentRuns(thread.id);
     if (agentRuns.length) {
       const tree = body.createDiv({ cls: 'ct-dashboard-agent-tree', attr: { role: 'tree', 'aria-label': `Agents in ${thread.title}` } });
-      const byParent = new Map<string | undefined, typeof agentRuns>();
-      for (const agent of agentRuns) {
-        const key = agent.parentAgentRunId;
-        const bucket = byParent.get(key) ?? []; bucket.push(agent); byParent.set(key, bucket);
+      // Shares the cycle-safe flattening used by the composer popover, so a
+      // self-parenting run can never hang this render.
+      for (const { run: agent, level } of flattenAgentTree(agentRuns)) {
+        const button = tree.createEl('button', { cls: `ct-dashboard-agent ct-agent-${agent.status}`, attr: { role: 'treeitem', 'aria-level': String(level), title: `Open ${agent.description}` } });
+        button.createSpan({ cls: 'ct-agent-status-dot' });
+        button.createSpan({ text: agentLabel(agent) });
+        button.addEventListener('click', e => {
+          e.stopPropagation(); this.manager.selectAgentRun(thread.id, agent.id); this.plugin.openThreadInChatView(thread.id);
+        });
       }
-      const appendAgents = (host: HTMLElement, parentId?: string, level = 1) => {
-        for (const agent of byParent.get(parentId) ?? []) {
-          const button = host.createEl('button', { cls: `ct-dashboard-agent ct-agent-${agent.status}`, attr: { role: 'treeitem', 'aria-level': String(level), title: `Open ${agent.description}` } });
-          button.createSpan({ cls: 'ct-agent-status-dot' });
-          button.createSpan({ text: agent.role ?? agent.description });
-          button.addEventListener('click', e => {
-            e.stopPropagation(); this.manager.selectAgentRun(thread.id, agent.id); this.plugin.openThreadInChatView(thread.id);
-          });
-          appendAgents(host, agent.id, level + 1);
-        }
-      };
-      appendAgents(tree);
     }
 
     const meta = row.createDiv('ct-agents-row-meta');
