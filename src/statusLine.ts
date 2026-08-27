@@ -63,13 +63,21 @@ export function planFooter(opts: {
   tags: StatusTag[];
   prUrl?: string;
   barShowsGitInfo: boolean;
+  /**
+   * False only when the sticky `prUrl` provably belongs to a DIFFERENT repo than
+   * the thread's current cwd — a thread moved between projects via
+   * `set_working_directory` keeps its old prUrl forever. Defaults to true so an
+   * unknown/unverifiable repo still renders the pill (the legitimate
+   * after-merge case, where the branch is gone but the PR is still relevant).
+   */
+  prRepoMatches?: boolean;
 }): FooterPlan {
-  const { prUrl, barShowsGitInfo } = opts;
+  const { prUrl, barShowsGitInfo, prRepoMatches = true } = opts;
   const tags = barShowsGitInfo
     ? opts.tags.filter((t) => t.kind !== 'pr' && t.kind !== 'branch')
     : opts.tags;
   const hasPrTag = tags.some((t) => t.kind === 'pr' && !!t.url);
-  const showPrPill = !!prUrl && !hasPrTag && !barShowsGitInfo;
+  const showPrPill = !!prUrl && !hasPrTag && !barShowsGitInfo && prRepoMatches;
   return { tags, showPrPill, empty: !showPrPill && tags.length === 0 };
 }
 

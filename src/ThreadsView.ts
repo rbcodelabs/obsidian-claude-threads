@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
 import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage, escalationCommand } from './slashCommands';
-import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel } from './gitDiffUtils';
+import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel, prUrlMatchesRepo } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -17,7 +17,7 @@ import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVI
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
-import { resolveTagIcon, planFooter } from './statusLine';
+import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
 import { openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
@@ -1039,6 +1039,7 @@ export class ThreadsView extends ItemView {
       tags: thread?.statusTags ?? [],
       prUrl,
       barShowsGitInfo: gitDiffBarVisible(thread?.gitDiff),
+      prRepoMatches: prUrlMatchesRepo(prUrl, thread?.gitDiff?.ownerRepo),
     });
 
     this.contextFooterEl.empty();
@@ -1094,11 +1095,24 @@ export class ThreadsView extends ItemView {
    * no gitDiff info yet, its cwd isn't a git repo, its branch can't be resolved
    * (e.g. detached HEAD), or it's already sitting on the base/default branch
    * (nothing to open a PR against).
+   *
+   * The PR shown here comes from the LIVE status tags, not the thread's sticky
+   * `prUrl`. This bar is branch-scoped UI — it sits next to the branch name, so
+   * labelling it with a PR asserts "this branch's PR". Only the live tag can
+   * back that claim: the status-line script derives it from a branch-scoped
+   * `gh pr view "$branch"` on every poll, so it disappears the moment the branch
+   * has no PR. `thread.prUrl` is thread-scoped *history* — deliberately sticky,
+   * so it survives both a branch switch and a `set_working_directory` into a
+   * different repo entirely (observed: threads carrying a `geode` PR while
+   * sitting in the `obsidian-claude-threads` worktree). It stays sticky for the
+   * Kanban chip, `backfillLegacyProjectNames`, and archive-on-merge — it just
+   * must not drive this button. Safe against transient script failures because
+   * StatusLineService leaves the previous tags intact on exec error.
    */
   renderGitDiffBar(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const gitDiff = thread?.gitDiff;
-    const prUrl = thread?.prUrl;
+    const prUrl = derivePrUrl(thread?.statusTags ?? []);
 
     this.gitDiffBarEl.empty();
 

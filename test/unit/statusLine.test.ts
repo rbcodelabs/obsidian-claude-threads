@@ -186,3 +186,35 @@ describe('planFooter — git diff bar dedupe', () => {
     expect(planFooter({ tags: [], prUrl: undefined, barShowsGitInfo: false }).empty).toBe(true);
   });
 });
+
+describe('planFooter — stale sticky prUrl from another repo', () => {
+  // Observed in real data.json: threads carrying a geode PR while their cwd had
+  // been moved to the obsidian-claude-threads worktree. prUrl is sticky across
+  // set_working_directory, so it outlived the project it belonged to.
+  const GEODE_PR = 'https://github.com/rbcodelabs/geode/pull/121';
+
+  it('hides the sticky PR pill when the PR is provably from another repo', () => {
+    const plan = planFooter({
+      tags: [],
+      prUrl: GEODE_PR,
+      barShowsGitInfo: false,
+      prRepoMatches: false,
+    });
+    expect(plan.showPrPill).toBe(false);
+    expect(plan.empty).toBe(true);
+  });
+
+  it('still shows the pill when the repo matches (after-merge case)', () => {
+    const plan = planFooter({
+      tags: [],
+      prUrl: GEODE_PR,
+      barShowsGitInfo: false,
+      prRepoMatches: true,
+    });
+    expect(plan.showPrPill).toBe(true);
+  });
+
+  it('defaults to showing the pill when repo match is not supplied', () => {
+    expect(planFooter({ tags: [], prUrl: GEODE_PR, barShowsGitInfo: false }).showPrPill).toBe(true);
+  });
+});

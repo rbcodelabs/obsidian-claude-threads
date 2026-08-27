@@ -6,6 +6,8 @@ import {
   gitDiffBarVisible,
   parsePrNumber,
   prButtonLabel,
+  parsePrUrlRepo,
+  prUrlMatchesRepo,
 } from '../../src/gitDiffUtils';
 
 describe('parseShortStat', () => {
@@ -156,5 +158,62 @@ describe('prButtonLabel', () => {
 
   it('falls back to "View PR" for a PR url with no parseable number', () => {
     expect(prButtonLabel('https://github.com/acme/hip-trip/pulls')).toBe('View PR');
+  });
+});
+
+describe('parsePrUrlRepo', () => {
+  it('extracts owner/repo from a PR url', () => {
+    expect(parsePrUrlRepo('https://github.com/rbcodelabs/geode/pull/121')).toEqual({
+      owner: 'rbcodelabs',
+      repo: 'geode',
+    });
+  });
+
+  it('returns null for a non-PR GitHub url', () => {
+    expect(parsePrUrlRepo('https://github.com/rbcodelabs/geode')).toBeNull();
+  });
+
+  it('returns null for empty input', () => {
+    expect(parsePrUrlRepo(undefined)).toBeNull();
+  });
+});
+
+describe('prUrlMatchesRepo', () => {
+  // Real observed staleness: a thread was moved between projects with
+  // set_working_directory, so it sat in obsidian-claude-threads while still
+  // carrying a sticky prUrl pointing at a PR in the geode repo.
+  const GEODE_PR = 'https://github.com/rbcodelabs/geode/pull/121';
+
+  it('rejects a PR from a different repo than the thread cwd', () => {
+    expect(
+      prUrlMatchesRepo(GEODE_PR, { owner: 'rbcodelabs', repo: 'obsidian-claude-threads' }),
+    ).toBe(false);
+  });
+
+  it('accepts a PR from the same repo', () => {
+    expect(prUrlMatchesRepo(GEODE_PR, { owner: 'rbcodelabs', repo: 'geode' })).toBe(true);
+  });
+
+  it('rejects a same-named repo under a different owner', () => {
+    expect(prUrlMatchesRepo(GEODE_PR, { owner: 'someone-else', repo: 'geode' })).toBe(false);
+  });
+
+  // Only ever suppress a PROVABLE mismatch — an unverifiable claim must still
+  // render, so the after-merge archive workflow keeps working.
+  it('accepts when the current repo is unknown (non-GitHub or unresolved remote)', () => {
+    expect(prUrlMatchesRepo(GEODE_PR, undefined)).toBe(true);
+  });
+
+  it('accepts when the url is not a parseable GitHub PR', () => {
+    expect(
+      prUrlMatchesRepo('https://git.example.com/x/y/merge_requests/3', {
+        owner: 'rbcodelabs',
+        repo: 'geode',
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts when there is no PR url at all', () => {
+    expect(prUrlMatchesRepo(undefined, { owner: 'rbcodelabs', repo: 'geode' })).toBe(true);
   });
 });

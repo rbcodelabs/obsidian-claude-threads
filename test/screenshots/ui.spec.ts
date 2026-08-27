@@ -1030,6 +1030,43 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-footer-pill-pr')).toContainText('PR #225');
   });
 
+  test('git diff bar — ignores a stale PR left over from another repo/branch', async ({ page }) => {
+    // Reproduces real data.json state: a thread that once worked in the `geode`
+    // repo (picking up a sticky prUrl for geode PR #121) was later pointed at
+    // the obsidian-claude-threads worktree via set_working_directory. prUrl is
+    // never cleared, so the bar used to label THIS branch's button "PR #121"
+    // and link to an unrelated closed PR in a different repo.
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+
+    await page.evaluate(() => {
+      // Sticky prUrl from the OLD repo...
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'PR #121', url: 'https://github.com/rbcodelabs/geode/pull/121', kind: 'pr' },
+      ]);
+      // ...then the thread moves to a different repo, and the status-line script
+      // (branch-scoped `gh pr view`) finds no PR for the new branch.
+      (window as any).__manager.applyStatusTags('thread-brainstorm', []);
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+
+    // The branch genuinely has no PR → offer to create one, never "PR #121".
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('Create PR');
+    // And the stale cross-repo PR must not leak into the footer either.
+    await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(0);
+  });
+
   test('git diff bar — hidden for a non-git thread and for the base branch', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

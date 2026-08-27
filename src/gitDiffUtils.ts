@@ -100,6 +100,37 @@ export function parsePrNumber(prUrl: string | undefined | null): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+/** Extracts owner/repo from a GitHub pull-request URL, else null. */
+export function parsePrUrlRepo(prUrl: string | undefined | null): OwnerRepo | null {
+  if (!prUrl) return null;
+  const m = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/\d+/);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+/**
+ * Whether a PR url plausibly belongs to the repo the thread is currently in.
+ *
+ * `Thread.prUrl` is deliberately sticky — it survives a branch change AND a
+ * `set_working_directory` that moves the thread to a different project — because
+ * the archive-on-merge release workflow needs to match a thread to its PR after
+ * the branch is gone. The side effect is that a reused thread can carry a PR
+ * from an entirely different repo, which must not be presented as if it were
+ * this repo's PR.
+ *
+ * Returns true when the claim can't be disproved (either side unknown, or a
+ * non-GitHub remote), so this only ever suppresses a *provable* mismatch and
+ * never regresses the legitimate after-merge case.
+ */
+export function prUrlMatchesRepo(
+  prUrl: string | undefined | null,
+  ownerRepo: OwnerRepo | undefined | null,
+): boolean {
+  if (!prUrl || !ownerRepo) return true;
+  const prRepo = parsePrUrlRepo(prUrl);
+  if (!prRepo) return true;
+  return prRepo.owner === ownerRepo.owner && prRepo.repo === ownerRepo.repo;
+}
+
 /**
  * Label for the git diff bar's primary action button.
  *
