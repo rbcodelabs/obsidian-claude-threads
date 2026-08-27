@@ -34,7 +34,7 @@ git -C ~/projects/obsidian-claude-threads worktree add .claude/worktrees/chore/v
 
 Edit `manifest.json` and `package.json` — update `"version"` to the new value.
 
-**Do not manually edit `versions.json`** — the release GitHub Action prepends the new entry automatically when the tag is pushed.
+**Do not manually edit `versions.json`** — the release GitHub Action adds the new entry and commits it back to `main` automatically when the tag is pushed (see the "Commit versions.json back to main" step in `.github/workflows/release.yml`). Expect an extra `chore: add X.Y.Z to versions.json` commit to land on `main` shortly after each release tag — that's expected, not something to `git pull` around or worry about.
 
 Also update the README version badge:
 ```

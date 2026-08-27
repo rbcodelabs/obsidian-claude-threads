@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -64,3 +66,30 @@ jobs:
             dist/styles.css \
             manifest.json \
             versions.json
+
+      - name: Commit versions.json back to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # The versions.json edited above lives only in this runner's working
+          # copy of the tag commit — it was uploaded as a release asset but
+          # never persisted to the repo. Re-apply the same merge against main
+          # so future releases build on the full history instead of whatever
+          # snapshot happened to be on main when the last person hand-edited it.
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+
+          VERSION=$(jq -r '.version' manifest.json)
+          MIN_APP=$(jq -r '.minAppVersion' manifest.json)
+          jq --arg v "$VERSION" --arg m "$MIN_APP" \
+            '{($v): $m} + .' versions.json > versions.tmp && mv versions.tmp versions.json
+
+          if git diff --quiet -- versions.json; then
+            echo "versions.json already up to date on main"
+          else
+            git add versions.json
+            git commit -m "chore: add ${VERSION} to versions.json"
+            git push origin main
+          fi
