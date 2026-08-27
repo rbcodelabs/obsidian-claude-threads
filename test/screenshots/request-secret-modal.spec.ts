@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
 
@@ -26,7 +27,7 @@ test.describe('RequestSecretModal', () => {
     );
     expect(noteVisible).toBe(false);
 
-    await expect(page).toHaveScreenshot('request-secret-modal-normal.png');
+    await shot(page, 'request-secret-modal-normal.png');
   });
 
   test('force mode — "replacing" heading and replacement note', async ({ page }) => {
@@ -44,6 +45,6 @@ test.describe('RequestSecretModal', () => {
     );
     expect(noteVisible).toBe(true);
 
-    await expect(page).toHaveScreenshot('request-secret-modal-force.png');
+    await shot(page, 'request-secret-modal-force.png');
   });
 });

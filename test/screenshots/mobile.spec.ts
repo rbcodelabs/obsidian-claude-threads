@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 /**
  * Mobile visual regression tests.
@@ -48,7 +49,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-pairing'));
     await page.waitForSelector('.ct-mobile-pairing');
     await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot('mobile-pairing.png', { fullPage: true });
+    await shot(page, 'mobile-pairing.png', { fullPage: true });
   });
 
   test('mobile connected view (conversation panel)', async ({ page }) => {
@@ -56,7 +57,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-connected'));
     await page.waitForSelector('.ct-mobile-conv-panel');
     await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot('mobile-connected.png', { fullPage: true });
+    await shot(page, 'mobile-connected.png', { fullPage: true });
   });
 
   test('mobile thread list (iPhone 14 — 390px)', async ({ page }) => {
@@ -64,7 +65,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-thread-list'));
     await page.waitForSelector('.ct-mobile-thread-list');
     await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot('mobile-thread-list.png', { fullPage: true });
+    await shot(page, 'mobile-thread-list.png', { fullPage: true });
   });
 
   test('mobile thread list (iPhone SE — 320px)', async ({ page }) => {
@@ -72,7 +73,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-thread-list', { width: 320, height: 568 }));
     await page.waitForSelector('.ct-mobile-thread-list');
     await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot('mobile-thread-list-se.png', { fullPage: true });
+    await shot(page, 'mobile-thread-list-se.png', { fullPage: true });
   });
 
   test('mobile connected view (iPad — 820px)', async ({ page }) => {
@@ -80,7 +81,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-connected', { width: 820, height: 1180 }));
     await page.waitForSelector('.ct-mobile-conv-panel');
     await page.waitForTimeout(300);
-    await expect(page).toHaveScreenshot('mobile-connected-ipad.png', { fullPage: true });
+    await shot(page, 'mobile-connected-ipad.png', { fullPage: true });
   });
 
   // ── Element-level snapshots ────────────────────────────────────────────────
@@ -92,7 +93,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-connected'));
     await page.waitForSelector('.ct-mobile-input-row');
     await page.waitForTimeout(300);
-    await expect(page.locator('.ct-mobile-input-row')).toHaveScreenshot('mobile-input-toolbar.png');
+    await shot(page.locator('.ct-mobile-input-row'), 'mobile-input-toolbar.png');
   });
 
   test('input toolbar focused (accent border ring)', async ({ page }) => {
@@ -101,7 +102,7 @@ test.describe('Mobile View', () => {
     await page.waitForSelector('.ct-mobile-input');
     await page.locator('.ct-mobile-input').focus();
     await page.waitForTimeout(200);
-    await expect(page.locator('.ct-mobile-input-row')).toHaveScreenshot('mobile-input-toolbar-focused.png');
+    await shot(page.locator('.ct-mobile-input-row'), 'mobile-input-toolbar-focused.png');
   });
 
   test('permission card (deny / allow buttons — 44px tap targets)', async ({ page }) => {
@@ -109,7 +110,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-permission'));
     await page.waitForSelector('.ct-mobile-permission-card');
     await page.waitForTimeout(300);
-    await expect(page.locator('.ct-mobile-permission-card')).toHaveScreenshot('mobile-permission-card.png');
+    await shot(page.locator('.ct-mobile-permission-card'), 'mobile-permission-card.png');
   });
 
   test('question card (single-select + multiSelect, Other, 44px tap targets)', async ({ page }) => {
@@ -117,7 +118,7 @@ test.describe('Mobile View', () => {
     await page.goto(mobileHarnessUrl('mobile-question'));
     await page.waitForSelector('.ct-mobile-question-card');
     await page.waitForTimeout(300);
-    await expect(page.locator('.ct-mobile-question-card')).toHaveScreenshot('mobile-question-card.png');
+    await shot(page.locator('.ct-mobile-question-card'), 'mobile-question-card.png');
   });
 
   test('queue rows (stacked above composer, replace flat banner)', async ({ page }) => {
@@ -126,7 +127,7 @@ test.describe('Mobile View', () => {
     // Phase 3: flat .ct-mobile-queue-banner replaced by .ct-mobile-queue-rows with individual rows
     await page.waitForSelector('.ct-mobile-queue-rows');
     await page.waitForTimeout(300);
-    await expect(page.locator('.ct-mobile-queue-rows')).toHaveScreenshot('mobile-queue-rows.png');
+    await shot(page.locator('.ct-mobile-queue-rows'), 'mobile-queue-rows.png');
   });
 
   // ── Phase 3 element-level snapshots ───────────────────────────────────────
@@ -144,7 +145,7 @@ test.describe('Mobile View', () => {
     // Wait for the card to appear inside the rail
     await page.waitForSelector('.ct-status-card');
     await page.waitForTimeout(200);
-    await expect(page.locator('.ct-mobile-status-rail')).toHaveScreenshot('mobile-status-rail-active.png');
+    await shot(page.locator('.ct-mobile-status-rail'), 'mobile-status-rail-active.png');
   });
 
   test('error card — lastError with dismiss button', async ({ page }) => {
@@ -166,7 +167,7 @@ test.describe('Mobile View', () => {
     });
     await page.waitForSelector('.ct-mobile-error-card');
     await page.waitForTimeout(300);
-    await expect(page.locator('.ct-mobile-error-card')).toHaveScreenshot('mobile-error-card.png');
+    await shot(page.locator('.ct-mobile-error-card'), 'mobile-error-card.png');
   });
 
   test('thread list — search filtered results', async ({ page }) => {
@@ -175,7 +176,7 @@ test.describe('Mobile View', () => {
     await page.waitForSelector('.ct-mobile-search-input');
     await page.locator('.ct-mobile-search-input').fill('auth');
     await page.waitForTimeout(250); // debounce
-    await expect(page.locator('.ct-mobile-list-panel')).toHaveScreenshot('mobile-thread-list-search.png');
+    await shot(page.locator('.ct-mobile-list-panel'), 'mobile-thread-list-search.png');
   });
 
   // ── Live tool-call grouping ────────────────────────────────────────────────
@@ -223,7 +224,7 @@ test.describe('Mobile View', () => {
     // error-triggered auto-expand to worry about either).
     await expect(group.locator('.ct-full-content')).toHaveClass(/ct-hidden/);
 
-    await expect(page).toHaveScreenshot('mobile-live-tool-call-grouping.png', { fullPage: true });
+    await shot(page, 'mobile-live-tool-call-grouping.png', { fullPage: true });
   });
 
   test('live tool-call grouping — expanding still shows every individual call', async ({ page }) => {
