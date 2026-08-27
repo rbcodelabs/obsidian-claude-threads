@@ -3975,22 +3975,33 @@
 
 .ct-git-diff-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex-shrink: 0;
+  gap: 0;
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid var(--background-modifier-border);
 }
 
+/* Obsidian themes (e.g. "Claude Warm") apply `button, .clickable-icon {
+   border-radius: var(--radius-m) }` globally. Our (0,2,0) selectors already
+   out-rank that (0,0,1) rule on specificity alone, but pin every box-model
+   property that could otherwise reintroduce a visible seam — margin (browser/
+   theme default button margin would separate the two segments even with
+   radius zeroed) and box-shadow (belt-and-suspenders on top of the .ct-root
+   button reset above) — with !important so this split button can never regress
+   no matter what a future theme's specificity looks like. */
 .ct-root .ct-git-diff-create-btn {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   border: none;
+  margin: 0 !important;
   padding: 4px 12px;
   font-size: var(--font-ui-smaller);
   font-weight: 600;
   cursor: pointer;
-  border-radius: 0;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 .ct-git-diff-create-btn:hover {
@@ -4005,7 +4016,9 @@
   color: var(--text-on-accent);
   border: none;
   border-left: 1px solid color-mix(in srgb, var(--text-on-accent) 25%, transparent);
-  border-radius: 0;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   padding: 4px 6px;
   cursor: pointer;
 }
