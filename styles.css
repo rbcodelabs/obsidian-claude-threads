@@ -4005,6 +4005,7 @@
   color: var(--text-on-accent);
   border: none;
   border-left: 1px solid color-mix(in srgb, var(--text-on-accent) 25%, transparent);
+  border-radius: 0;
   padding: 4px 6px;
   cursor: pointer;
 }
