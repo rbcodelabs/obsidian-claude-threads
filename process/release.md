@@ -34,7 +34,21 @@ git -C ~/projects/obsidian-claude-threads worktree add .claude/worktrees/chore/v
 
 Edit `manifest.json` and `package.json` — update `"version"` to the new value.
 
-**Do not manually edit `versions.json`** — the release GitHub Action prepends the new entry automatically when the tag is pushed.
+Then sync `versions.json`:
+
+```bash
+npm run sync-versions      # adds the new version (and any missing tags), sorted
+npm run check-versions     # same check CI runs; exits 1 if out of sync
+```
+
+`versions.json` **is** maintained in the repo and must be committed with the bump.
+
+> Historical note: the release Action used to generate `versions.json` at
+> tag-push time and attach it as a release asset without ever committing it
+> back, so the repo copy silently drifted. By v0.27.10 it was missing 106
+> released versions going back to 0.1.0. The Action now only *verifies* the
+> file (`sync-versions.mts --check`), and CI verifies it on every PR so the
+> drift is caught before a tag exists rather than after.
 
 Also update the README version badge:
 ```
@@ -59,7 +73,7 @@ This rebuilds the harness, runs Playwright with `--update-snapshots`, and copies
 ```bash
 npx tsc --noEmit && npm test && npm run test:screenshots
 
-git add manifest.json package.json README.md docs/ test/screenshots/snapshots/
+git add manifest.json package.json package-lock.json versions.json README.md docs/ test/screenshots/snapshots/
 git commit -m "chore: bump version to vX.Y.Z"
 git push -u origin chore/vX.Y.Z-release
 
