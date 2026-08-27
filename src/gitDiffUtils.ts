@@ -67,3 +67,48 @@ export function parseRemoteToOwnerRepo(url: string): OwnerRepo | null {
 export function buildComparePrUrl(owner: string, repo: string, base: string, branch: string): string {
   return `https://github.com/${owner}/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}?expand=1`;
 }
+
+/** Minimal shape of GitDiffInfo needed to decide bar visibility (structural, so
+ *  this module stays free of a types.ts import cycle). */
+export interface GitDiffBarState {
+  isGitRepo: boolean;
+  branch?: string;
+  isBaseBranch?: boolean;
+}
+
+/**
+ * Whether the git diff bar renders for this thread. Single source of truth,
+ * shared by `renderGitDiffBar` (what to draw) and `renderStatusFooter` (whether
+ * a footer pill would be a duplicate of what the bar already shows).
+ *
+ * Hidden when there's no git info yet, the cwd isn't a repo, the branch can't be
+ * resolved (detached HEAD), or we're sitting on the base branch — the last case
+ * matters for dedupe: after a PR merges and the thread returns to `main`, the
+ * bar disappears and the footer PR pill becomes the ONLY surface for that PR.
+ */
+export function gitDiffBarVisible<T extends GitDiffBarState>(
+  gitDiff: T | undefined | null,
+): gitDiff is T {
+  if (!gitDiff) return false;
+  return !!gitDiff.isGitRepo && !gitDiff.isBaseBranch && !!gitDiff.branch;
+}
+
+/** Extracts the numeric PR id from a GitHub pull-request URL, else null. */
+export function parsePrNumber(prUrl: string | undefined | null): number | null {
+  if (!prUrl) return null;
+  const m = prUrl.match(/\/pull\/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/**
+ * Label for the git diff bar's primary action button.
+ *
+ * With a PR url we surface its number ("PR #121") rather than a generic
+ * "View PR", so the bar carries the PR's identity itself and the context footer
+ * no longer needs a separate pill to say which PR this thread belongs to.
+ */
+export function prButtonLabel(prUrl: string | undefined | null): string {
+  if (!prUrl) return 'Create PR';
+  const n = parsePrNumber(prUrl);
+  return n === null ? 'View PR' : `PR #${n}`;
+}

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { parseShortStat, parseRemoteToOwnerRepo, buildComparePrUrl } from '../../src/gitDiffUtils';
+import {
+  parseShortStat,
+  parseRemoteToOwnerRepo,
+  buildComparePrUrl,
+  gitDiffBarVisible,
+  parsePrNumber,
+  prButtonLabel,
+} from '../../src/gitDiffUtils';
 
 describe('parseShortStat', () => {
   it('parses a full "files changed, insertions, deletions" line', () => {
@@ -93,5 +100,61 @@ describe('buildComparePrUrl', () => {
     expect(buildComparePrUrl('acme', 'hip-trip', 'main', 'feat/offer-click-override')).toBe(
       'https://github.com/acme/hip-trip/compare/main...feat%2Foffer-click-override?expand=1',
     );
+  });
+});
+
+describe('gitDiffBarVisible', () => {
+  it('is visible for a feature branch in a git repo', () => {
+    expect(gitDiffBarVisible({ isGitRepo: true, branch: 'fix/thing', isBaseBranch: false })).toBe(true);
+  });
+
+  it('is hidden when the cwd is not a git repo', () => {
+    expect(gitDiffBarVisible({ isGitRepo: false, branch: 'fix/thing' })).toBe(false);
+  });
+
+  it('is hidden on the base branch (nothing to open a PR against)', () => {
+    expect(gitDiffBarVisible({ isGitRepo: true, branch: 'main', isBaseBranch: true })).toBe(false);
+  });
+
+  it('is hidden with no resolvable branch (detached HEAD)', () => {
+    expect(gitDiffBarVisible({ isGitRepo: true, branch: undefined })).toBe(false);
+  });
+
+  it('is hidden when git info has not been populated yet', () => {
+    expect(gitDiffBarVisible(undefined)).toBe(false);
+    expect(gitDiffBarVisible(null)).toBe(false);
+  });
+});
+
+describe('parsePrNumber', () => {
+  it('extracts the number from a GitHub PR url', () => {
+    expect(parsePrNumber('https://github.com/acme/hip-trip/pull/121')).toBe(121);
+  });
+
+  it('extracts the number when the url has a trailing path segment', () => {
+    expect(parsePrNumber('https://github.com/acme/hip-trip/pull/7/files')).toBe(7);
+  });
+
+  it('returns null for a url with no /pull/N segment', () => {
+    expect(parsePrNumber('https://github.com/acme/hip-trip')).toBeNull();
+  });
+
+  it('returns null for empty/undefined input', () => {
+    expect(parsePrNumber('')).toBeNull();
+    expect(parsePrNumber(undefined)).toBeNull();
+  });
+});
+
+describe('prButtonLabel', () => {
+  it('says "Create PR" when the thread has no PR yet', () => {
+    expect(prButtonLabel(undefined)).toBe('Create PR');
+  });
+
+  it('carries the PR number so the footer does not need its own pill', () => {
+    expect(prButtonLabel('https://github.com/acme/hip-trip/pull/121')).toBe('PR #121');
+  });
+
+  it('falls back to "View PR" for a PR url with no parseable number', () => {
+    expect(prButtonLabel('https://github.com/acme/hip-trip/pulls')).toBe('View PR');
   });
 });

@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
 import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage, escalationCommand } from './slashCommands';
-import { buildComparePrUrl } from './gitDiffUtils';
+import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
@@ -17,7 +17,7 @@ import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVI
 import { DispatchInput } from './DispatchInput';
 import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
-import { resolveTagIcon } from './statusLine';
+import { resolveTagIcon, planFooter } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
 import { openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
@@ -1020,21 +1020,35 @@ export class ThreadsView extends ItemView {
    * Render the active thread's status-line pills from its `statusTags` (kept
    * fresh by StatusLineService). A sticky `prUrl` with no live PR tag still
    * renders a leading PR pill, preserving the "PR pill always first" behavior.
+   *
+   * DEDUPE: when the git diff bar is visible it already shows this thread's
+   * branch, diff stat, and a PR button labelled with the PR number — so any
+   * footer 'pr'/'branch' pill would restate the row directly below it. Those
+   * kinds are dropped here in that case, from BOTH the synthesized sticky-prUrl
+   * pill and the script-provided statusTags (a user's status-line command has
+   * no idea what the native bar is rendering, so the plugin has to arbitrate).
+   * Once the bar hides — PR merged, back on the base branch — the suppression
+   * lifts and the footer PR pill becomes the only surface for that PR again.
    */
   renderStatusFooter(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-    const tags = thread?.statusTags ?? [];
     const prUrl = thread?.prUrl;
-    const hasPrTag = tags.some((t) => t.kind === 'pr' && !!t.url);
+
+    // The bar owns branch + PR identity whenever it's on screen.
+    const { tags, showPrPill } = planFooter({
+      tags: thread?.statusTags ?? [],
+      prUrl,
+      barShowsGitInfo: gitDiffBarVisible(thread?.gitDiff),
+    });
 
     this.contextFooterEl.empty();
 
     // Synthesized leading PR pill from sticky prUrl when the live tags don't
     // include a PR tag (e.g. legacy persisted prUrl, or the PR has merged).
-    if (prUrl && !hasPrTag) {
-      const prNumMatch = prUrl.match(/\/pull\/(\d+)/);
+    if (showPrPill) {
+      const prNumMatch = prUrl!.match(/\/pull\/(\d+)/);
       const label = prNumMatch ? `PR #${prNumMatch[1]}` : 'Open PR';
-      this.renderFooterPill({ label, url: prUrl, icon: 'git-pull-request', kind: 'pr' }, 'ct-footer-pill-pr');
+      this.renderFooterPill({ label, url: prUrl!, icon: 'git-pull-request', kind: 'pr' }, 'ct-footer-pill-pr');
     }
 
     for (const tag of tags) {
@@ -1068,7 +1082,9 @@ export class ThreadsView extends ItemView {
       });
     }
 
-    const empty = !prUrl && tags.length === 0 && activeLoops.length === 0 && !hasScheduledOrigin;
+    // Mirrors what was actually rendered above: a prUrl that got deduped away
+    // must not keep an otherwise-empty footer on screen as a blank strip.
+    const empty = !showPrPill && tags.length === 0 && activeLoops.length === 0 && !hasScheduledOrigin;
     this.contextFooterEl.toggleClass('ct-hidden', empty);
   }
 
@@ -1086,7 +1102,7 @@ export class ThreadsView extends ItemView {
 
     this.gitDiffBarEl.empty();
 
-    if (!gitDiff || !gitDiff.isGitRepo || gitDiff.isBaseBranch || !gitDiff.branch) {
+    if (!gitDiffBarVisible(gitDiff)) {
       this.gitDiffBarEl.addClass('ct-hidden');
       return;
     }
@@ -1114,9 +1130,13 @@ export class ThreadsView extends ItemView {
     }
 
     const actions = this.gitDiffBarEl.createDiv('ct-git-diff-actions');
+    // Label carries the PR number ("PR #121") when we have one — this bar is the
+    // single surface for PR identity, so renderStatusFooter suppresses its own
+    // PR pill whenever this bar is visible (see the dedupe note there).
     const createBtn = actions.createEl('button', {
       cls: 'ct-git-diff-create-btn',
-      text: prUrl ? 'View PR' : 'Create PR',
+      text: prButtonLabel(prUrl),
+      attr: prUrl ? { title: prUrl } : {},
     });
     createBtn.addEventListener('click', () => {
       if (prUrl) {
@@ -3975,6 +3995,11 @@ export class ThreadsView extends ItemView {
 
       case 'git_diff': {
         this.renderGitDiffBar();
+        // The footer suppresses its pr/branch pills while the bar is visible, so
+        // a git_diff update that shows/hides the bar must re-render it too —
+        // otherwise the deduped pill stays gone after the bar disappears (or
+        // lingers as a duplicate after it appears).
+        this.renderStatusFooter();
         break;
       }
 
