@@ -13,6 +13,7 @@ import os from 'os';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 import { execFileSync } from 'child_process';
 import { secretStorageKey } from './secretUtils';
+import { resolveWorktreeRoot, worktreePathFor } from './worktreePaths';
 import type {
   InstalledSkillInfo,
   MarketplaceSkill,
@@ -212,6 +213,14 @@ export interface ObsidianMcpServerOptions {
    * the wake-up is actually persisted to disk.
    */
   onScheduleWakeup?: (delayMs: number, prompt: string, reason: string) => Promise<void>;
+  /**
+   * Returns the configured root directory for worktrees created by
+   * `enter_worktree`. Undefined/blank falls back to `~/.geode/worktrees`.
+   *
+   * Read lazily (rather than captured at construction) so a settings change
+   * takes effect on the next tool call instead of requiring a session restart.
+   */
+  getWorktreeRoot?: () => string | undefined;
   /** Creates a persistent thread and queues its initial prompt. */
   createThread?: (params: {
     prompt: string;
@@ -747,6 +756,9 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       repoPath: z.string().optional().describe(
         'Override which git repo to use. Defaults to the current effective working directory.',
       ),
+      worktreeRoot: z.string().optional().describe(
+        'Override the directory worktrees are created under. Defaults to the configured worktree location (~/.geode/worktrees). Must be durable storage — a temp dir is cleared on reboot, taking any uncommitted work with it.',
+      ),
     },
     async (args, _extra) => {
       try {
@@ -771,12 +783,19 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           };
         }
 
-        // Generate a unique worktree directory under os.tmpdir()
-        const worktreeId = crypto.randomUUID().slice(0, 8);
-        const rawWorktreePath = path.join(os.tmpdir(), 'claude-worktrees', worktreeId);
-        fs.mkdirSync(path.dirname(rawWorktreePath), { recursive: true });
-
         const branchName = args.branch ?? `claude/${Date.now()}`;
+
+        // Worktrees go under a durable, app-owned root — NOT os.tmpdir(). macOS
+        // clears $TMPDIR on reboot, which silently destroyed worktrees and any
+        // uncommitted work in them. See src/worktreePaths.ts for the full rationale.
+        const worktreeRoot = resolveWorktreeRoot(args.worktreeRoot ?? options.getWorktreeRoot?.());
+        let rawWorktreePath = worktreePathFor(worktreeRoot, gitRoot, branchName);
+        // Two worktrees off the same branch name would collide; git refuses to
+        // create into a non-empty directory, so disambiguate rather than fail.
+        if (fs.existsSync(rawWorktreePath)) {
+          rawWorktreePath = `${rawWorktreePath}-${crypto.randomUUID().slice(0, 8)}`;
+        }
+        fs.mkdirSync(path.dirname(rawWorktreePath), { recursive: true });
 
         // git worktree add <path> -b <branch> [<base>]
         const gitArgs = ['worktree', 'add', rawWorktreePath, '-b', branchName];
@@ -792,8 +811,9 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           };
         }
 
-        // os.tmpdir() (and therefore rawWorktreePath) resolves under a symlinked path on
-        // macOS (/var/folders/... -> /private/var/folders/...). The Read/Write/Edit tool
+        // The worktree root may resolve through a symlink (notably the legacy
+        // os.tmpdir() layout on macOS, /var/folders/... -> /private/var/folders/...,
+        // but also any user-configured root behind one). The Read/Write/Edit tool
         // sandbox checks the canonical resolved path, while Bash tolerates the symlink form
         // — so leaving this uncanonicalized causes Edit/Write (but not Bash) to fail with
         // spurious "Stream closed" / permission errors for the rest of the worktree session.
