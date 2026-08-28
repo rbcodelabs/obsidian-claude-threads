@@ -15,7 +15,7 @@ A native Obsidian and Geode sidebar plugin for running multiple Claude Code sess
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-slash-commands.png" width="800" alt="Slash command autocomplete showing installed skills from ~/.claude/skills/" />
+  <img src="docs/screenshot-slash-commands.png" width="800" alt="Slash command autocomplete showing installed skills" />
 </p>
 
 <p align="center">
@@ -41,7 +41,7 @@ Claude Threads embeds Claude Code directly in your host sidebar. Each tab is an 
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click closes all other tabs and opens only the files the active Claude or Codex agent touched in this thread, snapping your workspace to the work
 - **Workspace tab syncing** — the host workspace tab title automatically reflects the active thread so you always know which session is which
-- **Slash commands** — built-in context commands plus your full `~/.claude/skills/` library, browseable with `/`
+- **Slash commands** — built-in context commands plus every skill the session can see (`~/.claude/skills/`, vault-installed, and plugin sources), browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
 - **Claude or Bedrock** — authenticate with your Claude account or route every session through Amazon Bedrock (one dropdown in settings)
 - **Goals and loops** — pin a persistent goal on a thread with `/goal`, or re-run a prompt on an interval with `/loop 10m <prompt>`
@@ -187,7 +187,7 @@ Geode's ArtifactView previews the result with live reload, desktop/tablet/mobile
 
 **Command pills** — when you complete a built-in command (type `/goal ` or pick one from the dropdown), it turns into a pill chip at the left of the input box. Type the arguments after it; a single Backspace at the start of the input (or clicking the pill's ×) deletes the whole command. After a command, argument autocomplete kicks in — `/model ` offers `fable|opus|sonnet|haiku|default`.
 
-**Skills** — any `.md` file (or directory) in `~/.claude/skills/` appears below the built-in commands. Selecting one inserts the skill name into your message, which Claude handles via your `CLAUDE.md` configuration.
+**Skills** — every skill available to the session appears below the built-in commands: your `~/.claude/skills/` library (invoked bare, e.g. `/my-skill`), skills the plugin installed into the vault (namespaced under the `vault` plugin, e.g. `/vault:my-skill`), and skills from any configured plugin source (namespaced after themselves, e.g. `/my-skill:my-skill`). The autocomplete shows the name you actually invoke, so what you pick is what resolves.
 
 ### Skills Manager
 
@@ -197,9 +197,11 @@ Open the **Skills Manager** panel from the ribbon (puzzle icon) or command palet
   <img src="docs/screenshot-skills-manager.png" width="800" alt="Skills Manager: source tree on the left with skill/agent detail and editor on the right" />
 </p>
 
-**Installed tab** — shows everything installed as a collapsible source tree. The top-right corner of the tab bar has two icon buttons (Installed tab only): **Import** (+) opens a menu with **Folder…** and **File (.skill)…**, letting you install a skill directly from a local folder or a packaged `.skill`/`.zip` archive without going through GitHub; and **Check for updates** (↻, shown once you have at least one GitHub plugin source) re-fetches staleness for all GitHub plugin sources in parallel — its icon spins while running, and a toast reports the result when it finishes (including which sources failed to check, e.g. if you're offline). An indicator dot appears on the button afterward if any plugin has updates (hover either button for its full status/tooltip). GitHub plugin sources appear as top-level nodes with a badge (`•N`) when updates are available; clicking one expands it to reveal its skills and opens a detail panel with **Update** (git pull, highlighted when updates are available), **Reload** (re-scan from disk), **Reinstall** (delete and re-clone for broken installs), and **Remove Source**. A **Local** node at the bottom groups your standalone skills and agents — click any item to view and edit it. For skills: **Save**, **Reload**, **Reveal in Finder**, **Uninstall**. For agents: **Save**, **Reload**, **Reveal in Finder**, **Delete**.
+**Installed tab** — shows everything installed as a collapsible source tree. The top-right corner of the tab bar has two icon buttons (Installed tab only): **Import** (+) opens a menu with **Folder…** and **File (.skill)…**, letting you install a skill directly from a local folder or a packaged `.skill`/`.zip` archive without going through GitHub; and **Check for updates** (↻, shown once you have at least one GitHub plugin source) re-fetches staleness for all GitHub plugin sources in parallel — its icon spins while running, and a toast reports the result when it finishes (including which sources failed to check, e.g. if you're offline). An indicator dot appears on the button afterward if any plugin has updates (hover either button for its full status/tooltip). GitHub plugin sources appear as top-level nodes with a badge (`•N`) when updates are available; clicking one expands it to reveal its skills and opens a detail panel with **Update** (git pull, highlighted when updates are available), **Reload** (re-scan from disk), **Reinstall** (delete and re-clone for broken installs), and **Remove Source**. Two more nodes sit at the bottom. **Vault** lists the skills this plugin installed into your vault — click one to view and edit it, with **Save**, **Reload**, **Reveal in Finder**, and **Uninstall**. **Claude Code** lists everything in `~/.claude/` (skills *and* agent profiles), marked `read-only`: the plugin shows them because the Claude CLI genuinely loads them into every session, but it never writes to that directory, so those panes offer only **Reload** and **Reveal in Finder**. Edit or remove them with the `claude` CLI, or by hand.
 
-**Browse tab** — search the [skills.sh](https://skills.sh) registry. Results show the skill name, GitHub source, and install count. Click a result to see details and an **Install** button that clones the skill from GitHub into `~/.claude/skills/`.
+> **Where installs go.** Everything the Skills Manager installs or imports lands in `<vault>/.obsidian/plugins/claude-threads/skills/`, beside the plugin's `skill-sources/` clones — never in `~/.claude/`. That folder shares the plugin folder's fate: community-plugin *updates* leave unknown subdirectories alone, but manually uninstalling and reinstalling the plugin will delete your installed skills along with it.
+
+**Browse tab** — search the [skills.sh](https://skills.sh) registry. Results show the skill name, GitHub source, and install count. Click a result to see details and an **Install** button that clones the skill from GitHub into `<vault>/.obsidian/plugins/claude-threads/skills/`. Installed skills are invoked as `/vault:<name>`.
 
 ### @ file mentions
 
@@ -697,13 +699,13 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `skills_list_installed` | — | Lists skills currently installed in `~/.claude/skills/`: name, description, install path, and which configured skill source (if any) each came from. |
+| `skills_list_installed` | — | Lists every visible skill: name, description, install path, and which configured skill source (if any) each came from. Each entry carries `origin` (`vault` or `home`) plus `isEditable`/`isRemovable`, both false for anything under `~/.claude/`. |
 | `skills_search` | `query`, `limit?` | Searches the skills.sh marketplace registry. Returns each match's name, slug, GitHub source, install count, and whether it's already installed. Default limit: 15. |
 | `skills_get` | `identifier` | Returns full detail for one skill, whether installed or not. Pass an installed skill's name, or a marketplace slug in `owner/repo/skill-id` form (as returned by `skills_search`). Installed skills include their full `SKILL.md` content. |
 | `skills_list_sources` | — | Lists configured skill sources (GitHub-cloned or local-path plugin sources) plus the built-in skills.sh registry, with id, name, type, and (for GitHub sources) staleness info. |
 | `skills_check_updates` | — | Checks every configured GitHub-type skill source for upstream commits it's behind (`git fetch` + count). Returns each source's id, name, and either its refreshed `behindCount`/`lastFetched` or an `error` if the check failed (e.g. offline). |
-| `skills_install` | `slug`, `skillId`, `source`, `name` | Installs a skill from the marketplace into `~/.claude/skills/`. Pass the four fields exactly as returned by `skills_search` for the skill you want. |
-| `skills_uninstall` | `name` | Permanently deletes an installed skill by name. |
+| `skills_install` | `slug`, `skillId`, `source`, `name` | Installs a skill from the marketplace into `<vault>/.obsidian/plugins/claude-threads/skills/`. Pass the four fields exactly as returned by `skills_search` for the skill you want. |
+| `skills_uninstall` | `name` | Permanently deletes a vault-installed skill by name. Refuses anything under `~/.claude/skills` — those are Claude Code's, and this tool has no confirmation dialog. |
 | `skills_update` | `sourceId` | Pulls the latest commits for a configured GitHub-type skill source (`git pull` on its local clone), refreshing every skill it provides. Use the source id from `skills_list_sources` — not `"registry"`, which has no single-source update (reinstall individual skills instead). |
 
 ## Settings

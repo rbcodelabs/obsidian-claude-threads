@@ -553,12 +553,12 @@ export interface SkillSource {
   id: string;
   /** Human-readable label, e.g. "Agentic PM Playbook" */
   name: string;
-  /** 'github' = managed clone at ~/.claude/skill-sources/<id>; 'local' = user-provided path */
+  /** 'github' = managed clone at <vault>/<plugin-dir>/skill-sources/<id>; 'local' = user-provided path */
   type: 'github' | 'local';
   // ── github type fields ──────────────────────────────────────────────────────
   /** GitHub repo URL, e.g. "https://github.com/owner/repo" */
   repoUrl?: string;
-  /** Absolute path to the managed clone, e.g. "/Users/foo/.claude/skill-sources/<id>" */
+  /** Absolute path to the managed clone, e.g. "/Users/foo/MyVault/.obsidian/plugins/claude-threads/skill-sources/<id>" */
   clonePath?: string;
   /** ms epoch of the last git fetch (for staleness display) */
   lastFetched?: number;

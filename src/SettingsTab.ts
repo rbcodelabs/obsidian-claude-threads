@@ -587,18 +587,22 @@ class AddSkillSourceModal extends Modal {
       const fsNode = require('fs') as typeof import('fs');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pathNode = require('path') as typeof import('path');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const osNode = require('os') as typeof import('os');
 
       const id = crypto.randomUUID();
       // Store clones inside the vault's plugin folder so they are vault-local
       // and don't bleed across vaults. FileSystemAdapter.getBasePath() gives the
       // absolute vault root; manifest.dir is the plugin folder relative to it.
+      //
+      // No home-directory fallback: this used to land clones in
+      // ~/<manifest.dir>/skill-sources/ whenever the adapter was not a
+      // FileSystemAdapter, writing outside the vault entirely.
       const { FileSystemAdapter } = require('obsidian') as typeof import('obsidian');
-      const vaultRoot = this.plugin.app.vault.adapter instanceof FileSystemAdapter
-        ? this.plugin.app.vault.adapter.getBasePath()
-        : osNode.homedir();
-      const cloneBase = pathNode.join(vaultRoot, this.plugin.manifest.dir!, 'skill-sources');
+      const adapter = this.plugin.app.vault.adapter;
+      if (!(adapter instanceof FileSystemAdapter) || !this.plugin.manifest.dir) {
+        showError('Cannot resolve the vault folder on this platform, so there is nowhere to clone to. Skill sources need a desktop vault on a real filesystem.');
+        return;
+      }
+      const cloneBase = pathNode.join(adapter.getBasePath(), this.plugin.manifest.dir, 'skill-sources');
       const clonePath = pathNode.join(cloneBase, id);
 
       try {
