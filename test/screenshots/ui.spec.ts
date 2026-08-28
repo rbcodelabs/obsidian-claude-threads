@@ -162,6 +162,151 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'wikilink-rendering.png', { fullPage: true });
   });
 
+  test('inline visualization card', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-visualize'));
+
+    // The marker must never survive as text in the bubble.
+    await page.waitForSelector('.ct-visualize-card');
+    const bubbleText = await page.locator('.ct-message-assistant .ct-message-content').innerText();
+    if (bubbleText.includes('visualize{')) {
+      throw new Error('visualize marker leaked into the message as raw text');
+    }
+
+    // The frame is the containment boundary: allow-scripts and nothing else.
+    const frame = page.locator('.ct-visualize-frame');
+    await expect(frame).toHaveAttribute('sandbox', 'allow-scripts');
+    await expect(frame).toHaveAttribute('referrerpolicy', 'no-referrer');
+
+    // The fragment is wrapped into a real document and actually renders.
+    const inner = page.frameLocator('.ct-visualize-frame');
+    await expect(inner.locator('#quarterly-revenue h2')).toHaveText('Quarterly revenue');
+    await expect(inner.locator('.viz-stat-value').first()).toHaveText('$4.2M');
+
+    // Auto-height. This fragment is shorter than the 320px starting height, so
+    // the card must SHRINK to fit it. That direction is the load-bearing
+    // assertion: document.documentElement has no explicit height, so its
+    // scrollHeight is max(content, viewport) and would latch at whatever height
+    // we last set — it can never report a value below the frame. Only a
+    // document.body measurement can shrink.
+    await expect
+      .poll(async () => page.locator('.ct-visualize-body').evaluate((el) => el.clientHeight))
+      .toBeLessThan(320);
+    await expect
+      .poll(async () => page.locator('.ct-visualize-body').evaluate((el) => el.clientHeight))
+      .toBeGreaterThanOrEqual(180);
+    await page.waitForTimeout(400);
+    await expect(page).toHaveScreenshot('inline-visualization.png', { fullPage: true });
+  });
+
+  test('inline visualization follows the host theme, not the OS colour scheme', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+
+    // Repaint the host as a light theme and re-render the thread. Inside a
+    // sandboxed opaque origin, `color-scheme: light dark` resolves against the
+    // OS rather than the app, so the document must instead carry literal
+    // resolved values and an explicit data-theme.
+    await page.evaluate(() => {
+      document.body.classList.remove('theme-dark');
+      document.body.classList.add('theme-light');
+      const root = document.documentElement.style;
+      root.setProperty('--background-primary', 'rgb(255, 255, 255)');
+      root.setProperty('--text-normal', 'rgb(34, 34, 34)');
+      (window as any).__view.focusThread('thread-visualize');
+    });
+    await page.waitForSelector('.ct-visualize-frame');
+
+    const light = await page.locator('.ct-visualize-frame').getAttribute('srcdoc');
+    expect(light).toContain('data-theme="light"');
+    expect(light).toContain('--background:rgb(255, 255, 255)');
+    expect(light).toContain('--foreground:rgb(34, 34, 34)');
+    // No OS-resolved colour anywhere in the generated document.
+    expect(light).not.toContain('color-scheme');
+    expect(light).not.toContain('light-dark(');
+
+    // Flip back to dark; the card must follow the host, not the OS.
+    await page.evaluate(() => {
+      document.body.classList.remove('theme-light');
+      document.body.classList.add('theme-dark');
+      const root = document.documentElement.style;
+      root.setProperty('--background-primary', 'rgb(30, 30, 30)');
+      root.setProperty('--text-normal', 'rgb(220, 221, 222)');
+      (window as any).__view.focusThread('thread-fix-auth');
+      (window as any).__view.focusThread('thread-visualize');
+    });
+    await page.waitForSelector('.ct-visualize-frame');
+    await expect
+      .poll(async () => page.locator('.ct-visualize-frame').getAttribute('srcdoc'))
+      .toContain('data-theme="dark"');
+    const dark = await page.locator('.ct-visualize-frame').getAttribute('srcdoc');
+    expect(dark).toContain('--background:rgb(30, 30, 30)');
+  });
+
+  test('visualization frames do not accumulate across thread switches or in the compressed view', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+
+    const focus = (id: string) => page.evaluate((t) => (window as any).__view.focusThread(t), id);
+
+    await focus('thread-visualize');
+    await page.waitForSelector('.ct-visualize-frame');
+    await expect(page.locator('.ct-visualize-frame')).toHaveCount(1);
+
+    // renderMessages() empties and rebuilds every row on each thread switch.
+    // Without a single view-level observer and per-card generation guards, each
+    // round trip would leave another live frame behind.
+    for (let i = 0; i < 4; i++) {
+      await focus('thread-fix-auth');
+      await focus('thread-visualize');
+    }
+    await page.waitForSelector('.ct-visualize-frame');
+    await expect(page.locator('.ct-visualize-frame')).toHaveCount(1);
+    await expect(page.locator('.ct-visualize-card')).toHaveCount(1);
+
+    // The compressed view renders full content eagerly into a display:none
+    // container. A frame must not mount there: it would parse a document, hit
+    // the CDN, and report height 0 while invisible.
+    await page.evaluate(() => (window as any).__view['toggleCompressView']());
+    await page.waitForSelector('.ct-message-compressed');
+    await page.waitForTimeout(300);
+    await expect(page.locator('.ct-full-content .ct-visualize-card')).toHaveCount(1);
+    await expect(page.locator('.ct-visualize-frame')).toHaveCount(0);
+
+    // A still-streaming message renders inert chrome only: mounting a frame per
+    // token would rebuild the document on every throttled render pass.
+    const streamingFrames = await page.evaluate(async () => {
+      const view = (window as any).__view;
+      const scratch = document.createElement('div');
+      document.querySelector('.ct-messages')!.appendChild(scratch);
+      await view['renderMarkdown'](
+        'visualize{"path":"/Users/mock/viz/quarterly-revenue.html"}',
+        scratch,
+        { streaming: true },
+      );
+      return {
+        cards: scratch.querySelectorAll('.ct-visualize-card').length,
+        statics: scratch.querySelectorAll('.ct-visualize-card.ct-visualize-static').length,
+        frames: scratch.querySelectorAll('iframe').length,
+        popouts: scratch.querySelectorAll('.ct-visualize-action').length,
+        leaked: scratch.textContent!.includes('visualize{'),
+      };
+    });
+    expect(streamingFrames).toEqual({ cards: 1, statics: 1, frames: 0, popouts: 0, leaked: false });
+
+    // Expanding the row makes it visible, so the frame mounts on demand.
+    // Dispatched rather than clicked: the hover-only copy button overlaps the
+    // expand chevron in the harness and intercepts real pointer events.
+    await page.locator('.ct-expand-btn').dispatchEvent('click');
+    await page.waitForSelector('.ct-visualize-frame');
+    await expect(page.locator('.ct-visualize-frame')).toHaveCount(1);
+  });
+
   test('background task notice row', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

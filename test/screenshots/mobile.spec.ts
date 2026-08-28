@@ -190,6 +190,66 @@ test.describe('Mobile View', () => {
   // state stays bounded, exercising the exact same MobileView.renderToolCalls
   // grouping path production frames go through.
 
+  // ── Inline visualization marker ────────────────────────────────────────────
+  //
+  // The mobile client is a relay: the fragment file lives on the desktop
+  // machine's disk, and renderConversation() rebuilds the whole conversation on
+  // every finalized message with no throttle. So a marker renders as inert card
+  // chrome here, never a sandboxed iframe.
+
+  for (const viewport of [
+    { width: 390, height: 844, label: 'iPhone 14' },
+    { width: 375, height: 667, label: 'iPhone SE' },
+  ]) {
+    test(`visualize marker renders as an inert card (${viewport.label} — ${viewport.width}x${viewport.height})`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(mobileHarnessUrl('mobile-connected', { width: viewport.width, height: viewport.height }));
+      await page.waitForSelector('.ct-mobile-conv-panel');
+      await page.evaluate(() => (window as any).__store.setActiveThreadId('thread-visualize'));
+      await page.waitForSelector('.ct-visualize-card');
+
+      // The marker must never survive as raw text.
+      const text = await page.locator('.ct-mobile-messages').innerText();
+      if (text.includes('visualize{')) {
+        throw new Error('visualize marker leaked into the mobile message as raw text');
+      }
+      await expect(page.locator('iframe')).toHaveCount(0);
+      await expect(page.locator('.ct-visualize-card.ct-visualize-static')).toHaveCount(1);
+      await expect(page.locator('.ct-visualize-title')).toHaveText('Quarterly revenue');
+      // The card must not push the conversation into horizontal overflow.
+      const overflow = await page.locator('.ct-mobile-messages').evaluate(
+        (el) => el.scrollWidth - el.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(1);
+
+      await expect(page).toHaveScreenshot(`mobile-visualize-card-${viewport.width}.png`, { fullPage: true });
+    });
+  }
+
+  test('visualize card offers an Open button when the fragment is in the synced vault', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(mobileHarnessUrl('mobile-connected'));
+    await page.waitForSelector('.ct-mobile-conv-panel');
+    // Pretend the fragment synced into the vault. Obsidian Mobile does have a
+    // vault index, so the card can offer a real action in that case.
+    await page.evaluate(() => {
+      const view = (window as any).__mobileView;
+      view.app = {
+        ...view.app,
+        vault: { getAbstractFileByPath: (p: string) => (p === 'viz/quarterly-revenue.html' ? { path: p } : null) },
+        workspace: { openLinkText: () => {} },
+      };
+      (window as any).__store.setActiveThreadId('thread-visualize');
+    });
+    await page.waitForSelector('.ct-visualize-open');
+    await expect(page.locator('.ct-visualize-open')).toHaveText('Open visualization');
+    // 44px is the minimum comfortable tap target; the card is the only
+    // affordance on mobile so it must clear it.
+    const height = await page.locator('.ct-visualize-open').evaluate((el) => (el as HTMLElement).offsetHeight);
+    expect(height).toBeGreaterThanOrEqual(30);
+    await expect(page.locator('.ct-visualize-card')).toHaveScreenshot('mobile-visualize-card-open-button.png');
+  });
+
   test('live tool-call grouping — a burst of same-kind calls collapses into one bounded group', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(mobileHarnessUrl('mobile-connected'));

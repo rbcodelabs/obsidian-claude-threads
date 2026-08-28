@@ -73,7 +73,50 @@ const MCP_SETTINGS_JSON = JSON.stringify(
   2,
 );
 
+// Fixture for the inline `visualize` card screenshot. A Codex fragment: no
+// doctype, no <html>/<body>, and no external resources — the whole point of the
+// card is that the plugin wraps it into a themed, sandboxed document. Kept
+// deterministic (no animation, no randomness, no CDN) so the baseline is stable.
+export const VISUALIZE_FRAGMENT = `<div id="quarterly-revenue">
+  <h2>Quarterly revenue</h2>
+  <div class="viz-grid">
+    <div class="card viz-stat">
+      <span class="text-muted text-small">Bookings</span>
+      <span class="viz-stat-value">$4.2M</span>
+      <span class="text-muted text-small">+12% vs Q2</span>
+    </div>
+    <div class="card viz-stat">
+      <span class="text-muted text-small">Net revenue</span>
+      <span class="viz-stat-value">$3.1M</span>
+      <span class="text-muted text-small">+8% vs Q2</span>
+    </div>
+  </div>
+  <table class="table table-sm">
+    <thead><tr><th>Region</th><th class="text-end">Revenue</th><th>Share</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>North America</td><td class="text-end">$1.8M</td>
+        <td><div class="progress" role="progressbar" aria-label="North America share" aria-valuenow="58" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:58%"></div></div></td>
+      </tr>
+      <tr>
+        <td>Europe</td><td class="text-end">$0.9M</td>
+        <td><div class="progress" role="progressbar" aria-label="Europe share" aria-valuenow="29" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:29%"></div></div></td>
+      </tr>
+      <tr>
+        <td>APAC</td><td class="text-end">$0.4M</td>
+        <td><div class="progress" role="progressbar" aria-label="APAC share" aria-valuenow="13" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:13%"></div></div></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="viz-row">
+    <span class="viz-badge">Q3 2026</span>
+    <button type="button" class="btn btn-primary">Export</button>
+    <button type="button" class="btn">Compare</button>
+  </div>
+</div>`;
+
 function resolveContent(filePath: string): string {
+  if (/\.html?$/i.test(filePath)) return VISUALIZE_FRAGMENT;
   if (filePath.endsWith('settings.json')) return MCP_SETTINGS_JSON;
   for (const s of SKILLS) {
     if (filePath.includes(s.name)) return s.content;
@@ -99,7 +142,14 @@ export const writeFileSync = (_p: string, _data: string, _enc?: string) => undef
 
 export const promises = {
   readdir: async (_path: string, _opts?: unknown) => makeEntries(),
-  stat: async (_path: string) => ({ isDirectory: () => false }),
+  // isFile/size/mtimeMs are read by visualizeRenderer's fragment guards; the
+  // fixed mtime keeps its document cache key stable across a screenshot run.
+  stat: async (p: string) => ({
+    isDirectory: () => false,
+    isFile: () => true,
+    size: resolveContent(p).length,
+    mtimeMs: 1_700_000_000_000,
+  }),
   realpath: async (p: string) => p,
   readFile: async (p: string, _enc: string) => resolveContent(p),
   writeFile: async (_p: string, _data: string, _enc: string) => {},

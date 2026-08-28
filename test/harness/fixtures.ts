@@ -235,6 +235,33 @@ You can open any of them directly from here.`,
   },
 ];
 
+// ─── Thread: inline visualization ────────────────────────────────────────────
+// Used by ui.spec.ts's "inline visualization card" test. Codex's `visualize`
+// plugin emits a bare marker on its own line where the visual belongs; without
+// the inline renderer it leaks into the bubble as raw text. The fragment the
+// path points at is served by test/harness/mocks/fs.ts.
+
+const threadVisualizeMessages: ChatMessage[] = [
+  {
+    id: 'msg-viz-1',
+    role: 'user',
+    content: 'How did revenue break down by region last quarter?',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-viz-2',
+    role: 'assistant',
+    content: `North America still carries the quarter, but APAC is the fastest riser off a small base.
+
+visualize{"path":"/Users/mock/viz/quarterly-revenue.html","title":"Quarterly revenue"}
+
+Europe is flat quarter over quarter.`,
+    timestamp: T3 + 12000,
+    cost: 0.0012,
+    summary: 'Broke down quarterly revenue by region with an inline visualization.',
+  },
+];
+
 // ─── Thread: background-task notice row ──────────────────────────────────────
 // Used by ui.spec.ts's "background task notice row" test. Exercises the
 // persisted `notice` message rendered when a background subagent/Workflow
@@ -569,6 +596,14 @@ export const fixtureThreads: Thread[] = [
     messages: thread5Messages,
     createdAt: T3 - 120000,
     updatedAt: T3 + 15000,
+  },
+  {
+    id: 'thread-visualize',
+    title: 'Inline visualization',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: threadVisualizeMessages,
+    createdAt: T3 - 130000,
+    updatedAt: T3 + 12000,
   },
   {
     id: 'thread-tasks',

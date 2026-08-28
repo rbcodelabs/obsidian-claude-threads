@@ -9,6 +9,7 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
 import path from 'path';
 import os from 'os';
+import * as fsp from 'fs/promises';
 import type ClaudeThreadsPlugin from './main';
 import { isDefaultThreadTitle } from './thread-title-utils';
 import { formatToolName, getToolIcon } from './ClaudeSession';
@@ -29,6 +30,8 @@ import { renderAgentPopoverTree } from './agentRuns/renderAgentPopoverTree';
 import { renderAgentActivity } from './agentRuns/renderAgentActivity';
 import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
 import type { DesignArtifact } from './types';
+import { extractVisualizeMarkers } from './visualizeMarker';
+import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -45,6 +48,12 @@ export class ThreadsView extends ItemView {
   private streamingEl: HTMLElement | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
+  /**
+   * Owns every inline `visualize` card in this view: one IntersectionObserver
+   * and one `message` listener shared by all of them. Created with the message
+   * scroller in buildUI(), torn down in onClose().
+   */
+  private visualizeManager: VisualizeMountManager | null = null;
   private streamingRenderTimer: ReturnType<typeof setTimeout> | null = null;
   /** A render is queued whenever new streamed text arrives. */
   private streamingRenderDirty = false;
@@ -574,6 +583,33 @@ export class ThreadsView extends ItemView {
     this.closeAgentPopover();
     this.agentScroll.clear();
     this.dispatchInput?.destroy();
+    // Leaves an IntersectionObserver and a window-level message listener
+    // attached if skipped.
+    this.visualizeManager?.detach();
+    this.visualizeManager = null;
+  }
+
+  /**
+   * Dependency seam for the inline visualization renderer: filesystem access,
+   * theme resolution, and link opening, all injected so the renderer itself
+   * stays free of Node built-ins and Obsidian workspace calls.
+   */
+  private buildVisualizeHost(): ConstructorParameters<typeof VisualizeMountManager>[1] {
+    const fileFs: VisualizeFs = {
+      stat: (target) => fsp.stat(target),
+      readFile: (target, encoding) => fsp.readFile(target, encoding),
+      mkdir: (target, options) => fsp.mkdir(target, options),
+      writeFile: (target, data, encoding) => fsp.writeFile(target, data, encoding),
+      tmpDir: () => os.tmpdir(),
+    };
+    return {
+      fs: fileFs,
+      resolveTokens: () => resolveVisualizeTokens(this.rootEl ?? this.containerEl),
+      theme: () => (document.body.classList.contains('theme-dark') ? 'dark' : 'light'),
+      openUrl: (url) => this.openLink(url),
+      notify: (message) => new Notice(message),
+      leafHeight: () => this.messagesEl?.clientHeight || 0,
+    };
   }
 
   private buildUI(): void {
@@ -619,6 +655,9 @@ export class ThreadsView extends ItemView {
 
     this.mainEl = root.createDiv('ct-main');
     this.messagesEl = this.mainEl.createDiv('ct-messages');
+    this.visualizeManager?.detach();
+    this.visualizeManager = new VisualizeMountManager(this.messagesEl, this.buildVisualizeHost());
+    this.visualizeManager.attach();
 
     const panelWrapper = this.mainEl.createDiv('ct-panel-wrapper');
     const floatingPanel = panelWrapper.createDiv('ct-floating-panel ct-panel-collapsible');
@@ -1481,18 +1520,12 @@ export class ThreadsView extends ItemView {
         const rel = filePath.slice(vaultBase.length + 1);
         const file = this.app.vault.getAbstractFileByPath(rel);
         if (file) {
-          // For HTML files, prefer the Web Viewer if it is enabled
+          // For HTML files, prefer the Web Viewer if it is enabled. Shares the
+          // single leaf-reuse implementation with every other in-app link.
           const ext = rel.split('.').pop()?.toLowerCase();
-          if (ext === 'html' || ext === 'htm') {
-            const webviewerPlugin = (this.app as any).internalPlugins?.getPluginById('webviewer');
-            if (webviewerPlugin?.enabled) {
-              const fileUrl = 'file://' + filePath.split(path.sep).join('/');
-              const existing = this.app.workspace.getLeavesOfType('webviewer');
-              const leaf = existing.length > 0 ? existing[0] : this.app.workspace.getLeaf('tab');
-              this.app.workspace.revealLeaf(leaf);
-              await leaf.setViewState({ type: 'webviewer', active: true, state: { url: fileUrl } });
-              return;
-            }
+          if ((ext === 'html' || ext === 'htm') && isWebViewerEnabled(this.app)) {
+            this.openLink('file://' + filePath.split(path.sep).join('/'));
+            return;
           }
           const leaf = this.app.workspace.getLeaf(false);
           await (leaf as any).openFile(file);
@@ -1895,13 +1928,26 @@ export class ThreadsView extends ItemView {
     });
   }
 
-  private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
+  private async renderMarkdown(
+    markdown: string,
+    el: HTMLElement,
+    options: { streaming?: boolean } = {},
+  ): Promise<void> {
+    // Codex's `visualize` plugin puts a bare `visualize{…}` marker on its own
+    // line where an inline visual belongs. Rewrite those lines into anchor
+    // placeholders here, before marked runs, so the markdown is parsed exactly
+    // once — splitting into segments and parsing each would break ordered-list
+    // numbering, reference links, and footnotes that span a marker.
+    const visualize = this.plugin.settings.enableInlineVisualizations !== false
+      ? extractVisualizeMarkers(markdown, { streaming: options.streaming })
+      : { text: markdown, markers: [] };
+
     // Pre-process [[wikilinks]] and [[target|alias]] into inline HTML anchors
     // before handing off to marked. marked passes inline HTML through unchanged,
     // so GFM table parsing (and all other markdown features) work correctly.
     // This replaces the previous MarkdownRenderer.render() approach which did not
     // render GFM pipe tables in this non-document context.
-    const processed = markdown.replace(
+    const processed = visualize.text.replace(
       /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
       (_match, target: string, alias?: string) => {
         const label = (alias ?? target.split('/').pop() ?? target).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c] ?? c));
@@ -1910,6 +1956,10 @@ export class ThreadsView extends ItemView {
       },
     );
     el.appendChild(sanitizeHTMLToDom(await marked.parse(processed)));
+    // Swap the placeholders for live cards. Iframes mount only on settled
+    // messages — during streaming the marker renders as inert card chrome, so
+    // a frame is never rebuilt on every token.
+    this.visualizeManager?.hydrate(el, visualize.markers, { interactive: !options.streaming });
     // Wrap tables in a scrollable container so wide tables don't overflow.
     el.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
       const wrapper = document.createElement('div');
@@ -3696,7 +3746,7 @@ export class ThreadsView extends ItemView {
     const content = this.streamingContent;
     try {
       contentEl.empty();
-      await this.renderMarkdown(content, contentEl);
+      await this.renderMarkdown(content, contentEl, { streaming: true });
       // The user may have switched threads or the turn may have completed
       // while marked.parse() was pending. Never update or scroll a stale view.
       if (generation !== this.streamingRenderGeneration || contentEl !== this.streamingContentEl) return;
