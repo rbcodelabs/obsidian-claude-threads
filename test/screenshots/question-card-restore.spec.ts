@@ -8,6 +8,7 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -56,7 +57,7 @@ test.describe('AskUserQuestion — inline card (pendingQuestions)', () => {
     await expect(page.locator('.ct-question-option')).toHaveCount(3);
     await expect(page.locator('.ct-question-option-other')).toHaveCount(1);
 
-    await expect(page).toHaveScreenshot('question-card-restored.png', { fullPage: true });
+    await shot(page, 'question-card-restored.png', { fullPage: true });
   });
 
   test('typing a custom answer in "Other" implicitly selects it and is sent verbatim', async ({ page }) => {
