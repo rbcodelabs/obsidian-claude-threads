@@ -1,12 +1,17 @@
 /**
  * Headless skill-management module: list/search/install/uninstall/update logic
- * for the `~/.claude/skills/` marketplace and configured SkillSources.
+ * for installed skills and configured SkillSources.
  *
  * This is the single source of truth for skill management — both
  * `SkillsManagerView.ts` (the UI) and the `skills_*` MCP tools in
  * `ObsidianTools.ts` delegate here. Zero DOM/UI dependencies: no
  * `ItemView`/`containerEl`, no `Notice`, no rendering. Callers own presentation
  * (Notices, re-renders, progress UI) and persistence of `SkillSource[]` mutations.
+ *
+ * Write policy: everything this module creates or deletes lives under
+ * `SkillRoots.pluginRoot` (`<vault>/<plugin-dir>/skills`). `~/.claude/skills`
+ * and `~/.claude/agents` are listed so the UI can show what the Claude CLI
+ * loads, but are never written to. See `skillPaths.ts`.
  */
 import { requestUrl } from 'obsidian';
 import fs from 'fs';
@@ -16,19 +21,96 @@ import * as os from 'os';
 import { execSync } from 'child_process';
 import type { SkillSource } from './types';
 import { getSkillsDirForSource } from './claudeSettings';
+import {
+  type SkillRoots,
+  getSkillRoots,
+  requirePluginRoot,
+  canEditSkill,
+  canRemoveSkill,
+  enumerateSkillDirs,
+  ensureVaultSkillsPluginManifest,
+  expandHome,
+} from './skillPaths';
 
 /** Resolve configured sources to roots containing Codex skill directories. */
-export function codexSkillRoots(skillSources: SkillSource[] = [], bundledSkillsRoot?: string): string[] {
+export function codexSkillRoots(
+  skillSources: SkillSource[] = [],
+  bundledSkillsRoot?: string,
+  pluginSkillsRoot?: string,
+): string[] {
   const roots: string[] = [];
   for (const source of skillSources) {
     if (source.type === 'github' && source.clonePath) {
       roots.push(getSkillsDirForSource(source.clonePath));
     } else if (source.type === 'local' && source.skillsPath) {
-      roots.push(source.skillsPath.replace(/^~/, os.homedir()));
+      roots.push(expandHome(source.skillsPath, os.homedir()));
     }
   }
   if (bundledSkillsRoot) roots.push(bundledSkillsRoot);
+  if (pluginSkillsRoot) roots.push(pluginSkillsRoot);
   return [...new Set(roots.map((root) => path.resolve(root)))];
+}
+
+/**
+ * Builds the `opts.plugins` list handed to the Claude Agent SDK.
+ *
+ * Two different registration shapes, deliberately:
+ *
+ * - **GitHub / local sources** register one `{type:'local'}` per skill
+ *   directory, which the SDK names `<skill>:<skill>`. Ugly, but it is what
+ *   Rick's existing ~40 slash commands already read as; changing it is a
+ *   separate decision and a separate PR.
+ * - **The vault skills root** registers ONCE, as a plugin root holding a
+ *   generated `.claude-plugin/plugin.json` plus the `skills/` subdir, which
+ *   the SDK names `vault:<skill>`. Verified against the real `claude` CLI:
+ *   the root form works and produces strictly better names than per-skill
+ *   registration.
+ */
+export function buildSkillPlugins(options: {
+  skillSources?: SkillSource[];
+  /** `<vault>/<plugin-dir>/skills`, or '' when unresolvable. */
+  pluginSkillsRoot?: string;
+  /** Absolute path to the bundled thread-orchestrator skill directory. */
+  bundledSkillPath?: string;
+  fsModule?: typeof import('fs');
+}): Array<{ type: 'local'; path: string }> {
+  const fsModule = options.fsModule ?? fs;
+  const plugins: Array<{ type: 'local'; path: string }> = [];
+
+  for (const src of options.skillSources ?? []) {
+    let skillsDir: string;
+    if (src.type === 'github' && src.clonePath) {
+      skillsDir = getSkillsDirForSource(src.clonePath);
+    } else if (src.type === 'local' && src.skillsPath) {
+      skillsDir = expandHome(src.skillsPath, os.homedir());
+    } else {
+      continue;
+    }
+    for (const dir of enumerateSkillDirs(skillsDir, fsModule)) {
+      plugins.push({ type: 'local', path: dir });
+    }
+  }
+
+  // Vault-installed skills, registered as a single plugin so they share one
+  // prefix. Skipped entirely when the root holds no skills, so the generated
+  // manifest is never written for users who have installed nothing.
+  if (options.pluginSkillsRoot && enumerateSkillDirs(options.pluginSkillsRoot, fsModule).length > 0) {
+    const vaultPluginRoot = ensureVaultSkillsPluginManifest(options.pluginSkillsRoot, fsModule);
+    if (vaultPluginRoot) plugins.push({ type: 'local', path: vaultPluginRoot });
+  }
+
+  // Bundled thread-orchestrator skill — ships inside the plugin's own dist/
+  // (copied there by esbuild.config.mjs from resources/skills/), so it is
+  // discoverable in every session with nothing copied into ~/.claude/skills/.
+  if (options.bundledSkillPath) {
+    try {
+      if (fsModule.existsSync(path.join(options.bundledSkillPath, 'SKILL.md'))) {
+        plugins.push({ type: 'local', path: options.bundledSkillPath });
+      }
+    } catch { /* bundled skill missing — plugin dist may be stale, skip silently */ }
+  }
+
+  return plugins;
 }
 
 // ── Frontmatter parsing ───────────────────────────────────────────────────────
@@ -80,10 +162,13 @@ export function parseFrontmatter(content: string): { name: string; description: 
 
 // ── Installed skills ──────────────────────────────────────────────────────────
 
+/** Which root a skill was found in. `'home'` entries are strictly read-only. */
+export type SkillOrigin = 'vault' | 'home';
+
 export interface InstalledSkillInfo {
   name: string;
   description: string;
-  /** Path inside ~/.claude/skills/ (may be a symlink) */
+  /** Path inside the root it was found in (may be a symlink) */
   skillPath: string;
   /** Resolved real path after following symlinks */
   realPath: string;
@@ -94,19 +179,28 @@ export interface InstalledSkillInfo {
   content: string;
   /** Name of the configured SkillSource this skill's real path belongs to, if any */
   sourceName?: string;
+  /** `'vault'` = installed by this plugin; `'home'` = Claude-Code-managed, read-only. */
+  origin: SkillOrigin;
+  /** Whether this plugin may write to `skillMdPath`. False for everything under `~/.claude/`. */
+  isEditable: boolean;
+  /** Whether this plugin may delete `skillPath`. False for everything under `~/.claude/`. */
+  isRemovable: boolean;
 }
 
 /**
- * Scans `~/.claude/skills/` and returns every installed skill (directories
- * containing a SKILL.md, or standalone .md files), annotated with which
- * configured SkillSource (if any) a symlinked skill belongs to.
+ * Scans one skills root and returns every skill it holds (directories
+ * containing a SKILL.md, or standalone .md files).
  */
-export async function listInstalledSkills(skillSources: SkillSource[] = []): Promise<InstalledSkillInfo[]> {
-  const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+async function scanSkillsRoot(
+  root: string,
+  origin: SkillOrigin,
+  roots: SkillRoots,
+): Promise<InstalledSkillInfo[]> {
+  if (!root) return [];
 
   let entries: import('fs').Dirent[];
   try {
-    entries = await fsp.readdir(skillsDir, { withFileTypes: true });
+    entries = await fsp.readdir(root, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -114,7 +208,7 @@ export async function listInstalledSkills(skillSources: SkillSource[] = []): Pro
   const skills: InstalledSkillInfo[] = [];
 
   for (const entry of entries) {
-    const skillPath = path.join(skillsDir, entry.name);
+    const skillPath = path.join(root, entry.name);
 
     try {
       const isSymlink = entry.isSymbolicLink();
@@ -158,13 +252,44 @@ export async function listInstalledSkills(skillSources: SkillSource[] = []): Pro
         isDirectory,
         skillMdPath,
         content,
+        origin,
+        isEditable: canEditSkill({ skillPath, realPath }, roots),
+        isRemovable: canRemoveSkill({ skillPath }, roots),
       });
     } catch (err) {
       console.warn(`[ClaudeThreads] Skipping skill entry "${entry.name}":`, err);
     }
   }
 
-  skills.sort((a, b) => a.name.localeCompare(b.name));
+  return skills;
+}
+
+/**
+ * Returns every skill visible to a session: the plugin's own vault-local
+ * installs plus whatever Claude Code has in `~/.claude/skills/`, annotated with
+ * which configured SkillSource (if any) a symlinked skill belongs to.
+ *
+ * Home entries are included because the CLI genuinely loads them into every
+ * session — hiding them would be misleading — but they come back with
+ * `origin: 'home'` and both gates false.
+ */
+export async function listInstalledSkills(
+  skillSources: SkillSource[] = [],
+  roots: SkillRoots = getSkillRoots(),
+): Promise<InstalledSkillInfo[]> {
+  const [vaultSkills, homeSkills] = await Promise.all([
+    scanSkillsRoot(roots.pluginRoot, 'vault', roots),
+    scanSkillsRoot(roots.homeRoot, 'home', roots),
+  ]);
+
+  const skills = [...vaultSkills, ...homeSkills];
+
+  // Vault entries sort ahead of same-named home entries so that every
+  // find-by-name lookup (detail, uninstall) resolves to the writable one.
+  skills.sort((a, b) =>
+    a.name.localeCompare(b.name) ||
+    (a.origin === b.origin ? 0 : a.origin === 'vault' ? -1 : 1),
+  );
 
   // Compute sourceName for symlinked skills by matching against configured SkillSources
   if (skillSources.length > 0) {
@@ -172,7 +297,7 @@ export async function listInstalledSkills(skillSources: SkillSource[] = []): Pro
       if (!skill.isSymlink) continue;
       for (const source of skillSources) {
         const sourcePath = source.type === 'github' ? source.clonePath : (source.skillsPath ?? '');
-        const expandedSourcePath = (sourcePath ?? '').replace(/^~/, os.homedir());
+        const expandedSourcePath = expandHome(sourcePath ?? '', os.homedir());
         if (expandedSourcePath && skill.realPath.startsWith(expandedSourcePath)) {
           skill.sourceName = source.name;
           break;
@@ -184,22 +309,49 @@ export async function listInstalledSkills(skillSources: SkillSource[] = []): Pro
   return skills;
 }
 
-/** Removes an installed skill's directory/file entirely. Caller resolves the path first (e.g. via `listInstalledSkills`). */
-export async function uninstallSkillByPath(skillPath: string): Promise<void> {
+/** Error message shared by every guard that refuses to touch `~/.claude/`. */
+function readOnlyRootMessage(skillPath: string): string {
+  return `Refusing to remove "${skillPath}": it lives outside the vault skills folder. ` +
+    'Skills in ~/.claude/skills are managed by Claude Code and are read-only to this plugin — remove it with the `claude` CLI or by hand.';
+}
+
+/**
+ * Removes an installed skill's directory/file entirely. Caller resolves the
+ * path first (e.g. via `listInstalledSkills`).
+ *
+ * Throws for anything outside `roots.pluginRoot`. This is the last line of
+ * defense for the agent-callable `skills_uninstall` MCP tool, which has no
+ * confirmation dialog.
+ */
+export async function uninstallSkillByPath(
+  skillPath: string,
+  roots: SkillRoots = getSkillRoots(),
+): Promise<void> {
+  if (!canRemoveSkill({ skillPath }, roots)) {
+    throw new Error(readOnlyRootMessage(skillPath));
+  }
   await fsp.rm(skillPath, { recursive: true, force: true });
 }
 
-/** Looks up an installed skill by name and removes it. Throws if no skill with that name is installed. */
+/**
+ * Looks up an installed skill by name and removes it. Throws if no skill with
+ * that name is installed, or if the match is a read-only home skill.
+ *
+ * On a name collision across roots the vault copy wins, so shadowing a home
+ * skill and then uninstalling it removes only the vault copy.
+ */
 export async function uninstallSkillByName(
   name: string,
   skillSources: SkillSource[] = [],
+  roots: SkillRoots = getSkillRoots(),
 ): Promise<{ skillPath: string }> {
-  const installed = await listInstalledSkills(skillSources);
-  const match = installed.find((s) => s.name === name);
+  const installed = await listInstalledSkills(skillSources, roots);
+  const match = installed.find((s) => s.name === name && s.origin === 'vault')
+    ?? installed.find((s) => s.name === name);
   if (!match) {
     throw new Error(`No installed skill named "${name}"`);
   }
-  await uninstallSkillByPath(match.skillPath);
+  await uninstallSkillByPath(match.skillPath, roots);
   return { skillPath: match.skillPath };
 }
 
@@ -325,6 +477,12 @@ export interface SkillDetailResult {
   realPath?: string;
   isSymlink?: boolean;
   sourceName?: string;
+  /** `'vault'` (plugin-managed) or `'home'` (Claude-Code-managed, read-only). Installed skills only. */
+  origin?: SkillOrigin;
+  /** Whether this plugin may write to the skill's SKILL.md. Installed skills only. */
+  isEditable?: boolean;
+  /** Whether this plugin may delete the skill. Installed skills only. */
+  isRemovable?: boolean;
   /** Marketplace fields — only present when `installed` is false. */
   slug?: string;
   skillId?: string;
@@ -339,9 +497,12 @@ export interface SkillDetailResult {
 export async function getSkillDetail(
   identifier: string,
   skillSources: SkillSource[] = [],
+  roots: SkillRoots = getSkillRoots(),
 ): Promise<SkillDetailResult> {
-  const installed = await listInstalledSkills(skillSources);
-  const match = installed.find((s) => s.name === identifier || path.basename(s.skillPath) === identifier);
+  const installed = await listInstalledSkills(skillSources, roots);
+  const matches = (s: InstalledSkillInfo) => s.name === identifier || path.basename(s.skillPath) === identifier;
+  // Vault copy wins on a cross-root name collision, matching uninstallSkillByName.
+  const match = installed.find((s) => matches(s) && s.origin === 'vault') ?? installed.find(matches);
   if (match) {
     return {
       name: match.name,
@@ -352,6 +513,9 @@ export async function getSkillDetail(
       realPath: match.realPath,
       isSymlink: match.isSymlink,
       sourceName: match.sourceName,
+      origin: match.origin,
+      isEditable: match.isEditable,
+      isRemovable: match.isRemovable,
     };
   }
 
@@ -503,25 +667,47 @@ export interface InstallSkillParams {
   source: string;
 }
 
+export interface InstallSkillOptions {
+  /**
+   * Where to install. Defaults to `roots.pluginRoot`. Passing `''` explicitly
+   * throws rather than falling back — there is no legal home-directory target.
+   */
+  installRoot?: string;
+  /**
+   * Called with human-readable progress messages ("Cloning…", "Locating skill
+   * files…", "Copying files…") for UI callers — purely informational, has no
+   * effect on the install itself.
+   */
+  onProgress?: (message: string) => void;
+  roots?: SkillRoots;
+}
+
 /**
  * Installs a skill from the marketplace by shallow-cloning its GitHub source
  * repo to a tmpdir, locating the skill's directory within it, and copying it
- * into `~/.claude/skills/<skillId>`.
+ * into `<vault>/<plugin-dir>/skills/<skillId>`.
  *
- * `onProgress`, if given, is called with human-readable progress messages
- * ("Cloning…", "Locating skill files…", "Copying files…") for UI callers —
- * purely informational, has no effect on the install itself.
+ * Takes an options object rather than positional params: a second positional
+ * argument would have silently kept working at both call sites while quietly
+ * meaning something different.
  */
 export async function installSkillFromMarketplace(
   params: InstallSkillParams,
-  onProgress?: (message: string) => void,
+  options: InstallSkillOptions = {},
 ): Promise<{ name: string; targetDir: string }> {
   if (!params.source) {
     throw new Error('No GitHub source available for this skill');
   }
 
+  const onProgress = options.onProgress;
+  const roots = options.roots ?? getSkillRoots();
+  // requirePluginRoot throws a named error for an unresolvable/empty root
+  // instead of letting the install land somewhere unintended.
+  const skillsDir = requirePluginRoot({
+    ...roots,
+    pluginRoot: options.installRoot ?? roots.pluginRoot,
+  });
   const tmpDir = path.join(os.tmpdir(), `ct-skill-${Date.now()}`);
-  const skillsDir = path.join(os.homedir(), '.claude', 'skills');
   const targetDir = path.join(skillsDir, params.skillId);
 
   try {
@@ -529,6 +715,15 @@ export async function installSkillFromMarketplace(
 
     if (fs.existsSync(targetDir)) {
       throw new Error(`A skill named "${params.skillId}" is already installed`);
+    }
+
+    // A same-named skill in ~/.claude/skills is a warning, not a block: home
+    // skills can no longer be uninstalled through the plugin, so blocking here
+    // would make them permanently un-shadowable.
+    if (roots.homeRoot && fs.existsSync(path.join(roots.homeRoot, params.skillId))) {
+      console.warn(
+        `[ClaudeThreads] "${params.skillId}" also exists in ~/.claude/skills; the vault copy will shadow it in the Skills Manager.`,
+      );
     }
 
     onProgress?.(`Cloning ${params.source}…`);
@@ -718,6 +913,14 @@ export async function importSkillFromPath(
 
   await fsModule.promises.mkdir(skillsDir, { recursive: true });
   await copySkillFiles(locatedDir, targetDir);
+
+  // Strip .git the same way installSkillFromMarketplace does. Imports now land
+  // inside the vault, where a stray nested repo would confuse both Obsidian
+  // Sync and any git tooling pointed at the vault.
+  const dotGit = pathModule.join(targetDir, '.git');
+  if (fsModule.existsSync(dotGit)) {
+    await fsModule.promises.rm(dotGit, { recursive: true, force: true });
+  }
 
   return { id, name, targetDir };
 }

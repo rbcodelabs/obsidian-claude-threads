@@ -1777,9 +1777,12 @@ export class SkillsManagerView extends ItemView {
     try {
       await installSkillFromMarketplace(
         { slug: skill.slug, skillId: skill.skillId, name: skill.name, source: skill.source },
-        (message) => {
-          this.installOutput = message;
-          this.renderDetail();
+        {
+          installRoot: this.plugin.getPluginSkillsRoot(),
+          onProgress: (message: string) => {
+            this.installOutput = message;
+            this.renderDetail();
+          },
         },
       );
 
