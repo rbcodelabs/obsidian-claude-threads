@@ -6,11 +6,38 @@ Never edit files in the main checkout. Always work in a git worktree:
 
 ```bash
 # 1. Create worktree on a new branch
-git -C ~/projects/obsidian-claude-threads worktree add .claude/worktrees/<branch> -b <branch>
+git -C ~/projects/obsidian-claude-threads \
+  worktree add ~/.geode/worktrees/obsidian-claude-threads/<branch> -b <branch>
 
-# 2. Make changes inside the worktree
+# 2. Commit the first meaningful change immediately — do not accumulate
+#    uncommitted work (see "Commit early" below)
 # 3. Push branch, open PR — leave worktree in place until the PR merges
 ```
+
+`enter_worktree` uses this same location automatically (`~/.geode/worktrees/<repo>/<branch>`,
+overridable via **Settings → Worktree location**). The root is named for the app, not a
+harness, because Codex sessions call `enter_worktree` just as Claude sessions do.
+
+### Commit early — worktrees are not backups
+
+Uncommitted work in a worktree has exactly one copy, and several routine things
+delete worktrees: `exit_worktree`, the `worktree-cleanup` skill, and the Agent
+tool's auto-cleanup.
+
+Historically the worst offender was storage: worktrees were created under
+`os.tmpdir()`, which macOS **clears on reboot**. That is not a grace-period
+reaper — the next restart takes everything, silently. A full feature
+implementation was lost this way (see the `feat/per-thread-persistence`
+post-mortem): the branch was created, the work was finished, nothing was ever
+committed, and a reboot ~6 hours later erased it. `git reflog` showed the branch
+with zero commits.
+
+The default root is now durable, which removes the reboot hazard — but the rule
+stands regardless of location:
+
+- **Commit before any verification/QA phase begins.** "Implementation complete,
+  uncommitted, no push" is a blocker, not a status line.
+- **Push the branch (draft PR is fine) before deploying a dev build anywhere.**
 
 Branch naming conventions:
 - `feat/<short-description>` — new features
