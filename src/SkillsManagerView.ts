@@ -1055,6 +1055,15 @@ export class SkillsManagerView extends ItemView {
         ? 'Managed by Claude Code. This plugin never writes to ~/.claude/ — edit or remove it with the `claude` CLI, or by hand.'
         : 'This skill is a link to a directory outside the vault. Editing here would write straight into that source, so it is shown read-only.',
     });
+    // Leftover from the removed "Link" button: a symlink in ~/.claude/skills
+    // pointing into a source that is now registered with every session
+    // directly. The skill is loaded twice, and only the user can clear it.
+    if (skill.origin === 'home' && skill.isSymlink && skill.sourceName) {
+      callout.createEl('div', {
+        text: `Legacy link into "${skill.sourceName}", which is already registered with every session. Safe to delete by hand — it only makes this skill load twice.`,
+      });
+    }
+
     const installRoot = this.plugin.getPluginSkillsRoot();
     if (installRoot) {
       callout.createEl('div', {
