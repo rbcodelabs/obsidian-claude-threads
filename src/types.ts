@@ -290,6 +290,13 @@ export interface Thread {
    * DERIVED from `statusTags` by StatusLineService (a tag with kind:'pr' or a /pull/N url).
    * Sticky: only overwritten when a poll yields a PR tag, never cleared on absence, so the
    * release archive-on-merge workflow can still match a thread after its PR merges.
+   *
+   * THREAD-SCOPED HISTORY, NOT BRANCH STATE. Because it is never cleared, it
+   * outlives both the branch it came from and — when a thread is moved with
+   * `set_working_directory` — the repository itself. Do NOT use it to label
+   * branch-scoped UI (that's what the live kind:'pr' tag in `statusTags` is
+   * for, since the status-line script derives it per-branch on every poll).
+   * See `renderGitDiffBar` and `prUrlMatchesRepo` in gitDiffUtils.ts.
    */
   prUrl?: string;
   /**

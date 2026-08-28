@@ -487,6 +487,10 @@ Projects group threads by vault sub-folder and inject shared context into every 
 
 A row of pills below the input area shows live context for each thread — git branch, an open PR, a running dev server URL, AWS session status, or anything else you want. It's powered by a shell command (Settings → **Context footer command**) that the plugin runs **per thread, in the background**, against that thread's working directory. Desktop only.
 
+> **Note:** `pr` and `branch` pills are hidden while the [git diff bar](#git-diff-bar-create-pr) is on screen, since that bar already shows the branch and a PR button labelled with the PR number. Your script doesn't need to know about this — emit whatever tags you like and the plugin drops the redundant ones.
+>
+> **Keep emitting the `pr` tag even though it's usually hidden.** It isn't just a pill: it's the only source of a thread's PR association. The plugin derives `prUrl` from it, which drives the diff bar's **PR #N** button, the Kanban PR chip, and the archive-on-merge release workflow. Drop the tag to "save" a `gh` call and those all go dark. A `pr` tag whose repo provably differs from the thread's current repo is ignored, so a thread moved between projects won't keep advertising its old PR.
+
 <p align="center">
   <img src="docs/screenshot-status-line.png" width="800" alt="Status-line footer pills — dev URL, git branch, a clickable PR pill, and an AWS status pill below the message input" />
 </p>
@@ -534,7 +538,11 @@ A **Create PR** split button sits on the right:
 
 The bar is hidden when the cwd isn't a git repo, when the branch can't be resolved (e.g. detached HEAD), or when you're already sitting on the base/default branch (nothing to open a PR against).
 
-Once a PR exists for the thread (tracked via the same sticky `prUrl` used by the [status-line PR pill](#status-line-context-footer)), the primary button switches to **View PR**, opening it the same way pill links do, and a **View PR** item is prepended to the dropdown — the other three actions stay available in case you want to open another PR later.
+Once the **current branch** has a PR, the primary button switches to the PR's number — **PR #121** — opening it the same way pill links do, with the full URL as a tooltip, and a **View PR** item is prepended to the dropdown; the other three actions stay available in case you want to open another PR later.
+
+That PR comes from the live `pr` tag emitted by your [context footer command](#status-line-context-footer) (typically a branch-scoped `gh pr view "$branch"`), *not* from the thread's sticky `prUrl`. The distinction matters: `prUrl` is thread-scoped history that is deliberately never cleared — it survives a branch switch and even a `set_working_directory` into a different repository — so that the archive-on-merge release workflow can still match a thread to its PR after the branch is deleted. Reusing a long-lived thread for a second task would otherwise leave the bar advertising a stale, unrelated PR next to the new branch's name. If no context footer command is configured, the button simply stays on **Create PR**.
+
+Because the bar already names the branch and the PR, it is treated as the single surface for that information: while it's visible, the [context footer](#status-line-context-footer) suppresses its own `pr` and `branch` pills so the same branch and PR number aren't printed twice in adjacent rows. This applies both to pills your status-line command emits and to the footer's built-in sticky-`prUrl` pill. The suppression is conditional — as soon as the bar hides (PR merged and the thread is back on the base branch, a non-git cwd, or a detached HEAD), the footer PR pill reappears as the only remaining surface for that PR.
 
 ### Safe plugin reload
 

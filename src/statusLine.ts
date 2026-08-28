@@ -35,6 +35,52 @@ export function derivePrUrl(tags: StatusTag[]): string | undefined {
   return urlTag?.url;
 }
 
+/** What `renderStatusFooter` should actually draw, after git-diff-bar dedupe. */
+export interface FooterPlan {
+  /** Script tags to render, minus any the git diff bar already covers. */
+  tags: StatusTag[];
+  /** Whether to render the synthesized leading PR pill from the sticky prUrl. */
+  showPrPill: boolean;
+  /** True when nothing at all would render from tags/prUrl (footer hides). */
+  empty: boolean;
+}
+
+/**
+ * Decide the footer's contents, given the live status tags, the thread's sticky
+ * prUrl, and whether the native git diff bar is currently on screen.
+ *
+ * The git diff bar already shows branch, diff stat, and a PR button labelled
+ * with the PR number, so while it's visible a footer 'pr'/'branch' pill would
+ * just restate the row below it. Suppress both the script-provided tags of
+ * those kinds and the synthesized sticky-prUrl pill in that case. When the bar
+ * is hidden (PR merged and back on the base branch, non-git cwd, detached HEAD)
+ * the suppression lifts, so the footer remains the fallback surface for the PR.
+ *
+ * `empty` deliberately reflects what was actually kept, not the raw inputs — a
+ * prUrl that got deduped away must not hold an otherwise-empty footer open.
+ */
+export function planFooter(opts: {
+  tags: StatusTag[];
+  prUrl?: string;
+  barShowsGitInfo: boolean;
+  /**
+   * False only when the sticky `prUrl` provably belongs to a DIFFERENT repo than
+   * the thread's current cwd — a thread moved between projects via
+   * `set_working_directory` keeps its old prUrl forever. Defaults to true so an
+   * unknown/unverifiable repo still renders the pill (the legitimate
+   * after-merge case, where the branch is gone but the PR is still relevant).
+   */
+  prRepoMatches?: boolean;
+}): FooterPlan {
+  const { prUrl, barShowsGitInfo, prRepoMatches = true } = opts;
+  const tags = barShowsGitInfo
+    ? opts.tags.filter((t) => t.kind !== 'pr' && t.kind !== 'branch')
+    : opts.tags;
+  const hasPrTag = tags.some((t) => t.kind === 'pr' && !!t.url);
+  const showPrPill = !!prUrl && !hasPrTag && !barShowsGitInfo && prRepoMatches;
+  return { tags, showPrPill, empty: !showPrPill && tags.length === 0 };
+}
+
 /** Coerce an arbitrary parsed JSON value into a clean StatusTag, or null. */
 function coerceTag(raw: unknown): StatusTag | null {
   if (!raw || typeof raw !== 'object') return null;

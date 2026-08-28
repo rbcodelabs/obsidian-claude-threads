@@ -974,7 +974,13 @@ test.describe('Claude Threads UI', () => {
       ]);
     });
     await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
-    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('View PR');
+    // The bar's button carries the PR number itself...
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('PR #225');
+    // ...so the context footer must NOT also render a PR pill for the same PR.
+    // (Regression: the footer previously showed "PR #225" directly above a bar
+    // that already said so — either from the script's kind:'pr' tag or, once
+    // that tag was removed, from the synthesized sticky-prUrl pill.)
+    await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(0);
     await shot(page, 'git-diff-bar-view-pr.png', { fullPage: true });
 
     // Open the split-button dropdown: View PR is prepended above the other 3 actions.
@@ -982,6 +988,84 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.menu');
     const menuItems = await page.locator('.menu .menu-item').allTextContents();
     expect(menuItems).toEqual(['View PR', 'Create PR', 'Create draft PR', 'Manually create PR']);
+  });
+
+  test('context footer keeps the PR pill once the git diff bar hides', async ({ page }) => {
+    // The dedupe is conditional, not a blanket removal: when the bar goes away
+    // (PR merged → thread back on the base branch) the footer pill is the only
+    // remaining surface for the PR, so it has to come back.
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+
+    // Feature branch + open PR → bar visible, footer PR pill suppressed.
+    await page.evaluate(() => {
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'PR #225', url: 'https://github.com/acme/hip-trip/pull/225', kind: 'pr' },
+      ]);
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+    await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(0);
+
+    // PR merged, back on main → bar hides and the footer pill returns.
+    await page.evaluate(() => {
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'main',
+        baseBranch: 'main',
+        isBaseBranch: true,
+      });
+    });
+    await expect(page.locator('.ct-git-diff-bar')).toHaveClass(/ct-hidden/);
+    await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(1);
+    await expect(page.locator('.ct-footer-pill-pr')).toContainText('PR #225');
+  });
+
+  test('git diff bar — ignores a stale PR left over from another repo/branch', async ({ page }) => {
+    // Reproduces real data.json state: a thread that once worked in the `geode`
+    // repo (picking up a sticky prUrl for geode PR #121) was later pointed at
+    // the obsidian-claude-threads worktree via set_working_directory. prUrl is
+    // never cleared, so the bar used to label THIS branch's button "PR #121"
+    // and link to an unrelated closed PR in a different repo.
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.waitForTimeout(150);
+
+    await page.evaluate(() => {
+      // Sticky prUrl from the OLD repo...
+      (window as any).__manager.applyStatusTags('thread-brainstorm', [
+        { label: 'PR #121', url: 'https://github.com/rbcodelabs/geode/pull/121', kind: 'pr' },
+      ]);
+      // ...then the thread moves to a different repo, and the status-line script
+      // (branch-scoped `gh pr view`) finds no PR for the new branch.
+      (window as any).__manager.applyStatusTags('thread-brainstorm', []);
+      (window as any).__manager.applyGitDiff('thread-brainstorm', {
+        isGitRepo: true,
+        branch: 'feat/social-nudge',
+        baseBranch: 'main',
+        insertions: 60,
+        deletions: 4,
+        ownerRepo: { owner: 'acme', repo: 'hip-trip' },
+      });
+    });
+    await page.waitForSelector('.ct-git-diff-bar:not(.ct-hidden)');
+
+    // The branch genuinely has no PR → offer to create one, never "PR #121".
+    await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('Create PR');
+    // And the stale cross-repo PR must not leak into the footer either.
+    await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(0);
   });
 
   test('git diff bar — hidden for a non-git thread and for the base branch', async ({ page }) => {

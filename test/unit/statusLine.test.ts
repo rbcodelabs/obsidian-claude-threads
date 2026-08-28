@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseStatusLine, derivePrUrl, resolveTagIcon } from '../../src/statusLine';
+import { parseStatusLine, derivePrUrl, resolveTagIcon, planFooter } from '../../src/statusLine';
 import type { StatusTag } from '../../src/types';
 
 describe('parseStatusLine — JSON', () => {
@@ -130,5 +130,91 @@ describe('resolveTagIcon', () => {
   it('falls back to a generic tag icon for unknown kinds', () => {
     expect(resolveTagIcon({ label: 'x' })).toBe('tag');
     expect(resolveTagIcon({ label: 'x', kind: 'custom' })).toBe('tag');
+  });
+});
+
+describe('planFooter — git diff bar dedupe', () => {
+  const PR_URL = 'https://github.com/acme/hip-trip/pull/121';
+
+  it('drops the synthesized PR pill while the git diff bar is visible', () => {
+    // The exact duplicate that shipped: bar shows "PR #121", footer showed it too.
+    const plan = planFooter({ tags: [], prUrl: PR_URL, barShowsGitInfo: true });
+    expect(plan.showPrPill).toBe(false);
+    expect(plan.empty).toBe(true);
+  });
+
+  it('keeps the PR pill once the bar hides (PR merged, back on base branch)', () => {
+    const plan = planFooter({ tags: [], prUrl: PR_URL, barShowsGitInfo: false });
+    expect(plan.showPrPill).toBe(true);
+    expect(plan.empty).toBe(false);
+  });
+
+  it('drops script-provided pr and branch tags while the bar is visible', () => {
+    const tags: StatusTag[] = [
+      { label: 'PR #121', url: PR_URL, kind: 'pr' },
+      { label: 'fix/pr-dropdown-border-radius', kind: 'branch' },
+      { label: 'http://localhost:3000', url: 'http://localhost:3000', kind: 'dev' },
+    ];
+    const plan = planFooter({ tags, prUrl: PR_URL, barShowsGitInfo: true });
+    expect(plan.tags.map((t) => t.kind)).toEqual(['dev']);
+    expect(plan.showPrPill).toBe(false);
+  });
+
+  it('keeps non-git tags (dev/preview/aws) untouched — the bar never shows those', () => {
+    const tags: StatusTag[] = [
+      { label: 'http://localhost:3000', url: 'http://localhost:3000', kind: 'dev' },
+      { label: 'Preview', url: 'https://x.vercel.app', kind: 'preview' },
+      { label: 'AWS ok', kind: 'aws' },
+    ];
+    const plan = planFooter({ tags, prUrl: undefined, barShowsGitInfo: true });
+    expect(plan.tags).toHaveLength(3);
+    expect(plan.empty).toBe(false);
+  });
+
+  it('keeps pr and branch tags when the bar is hidden', () => {
+    const tags: StatusTag[] = [
+      { label: 'PR #121', url: PR_URL, kind: 'pr' },
+      { label: 'main', kind: 'branch' },
+    ];
+    const plan = planFooter({ tags, prUrl: PR_URL, barShowsGitInfo: false });
+    expect(plan.tags).toHaveLength(2);
+    // A live pr tag already renders, so the synthesized pill must not double it.
+    expect(plan.showPrPill).toBe(false);
+  });
+
+  it('reports empty when there is nothing to show at all', () => {
+    expect(planFooter({ tags: [], prUrl: undefined, barShowsGitInfo: false }).empty).toBe(true);
+  });
+});
+
+describe('planFooter — stale sticky prUrl from another repo', () => {
+  // Observed in real data.json: threads carrying a geode PR while their cwd had
+  // been moved to the obsidian-claude-threads worktree. prUrl is sticky across
+  // set_working_directory, so it outlived the project it belonged to.
+  const GEODE_PR = 'https://github.com/rbcodelabs/geode/pull/121';
+
+  it('hides the sticky PR pill when the PR is provably from another repo', () => {
+    const plan = planFooter({
+      tags: [],
+      prUrl: GEODE_PR,
+      barShowsGitInfo: false,
+      prRepoMatches: false,
+    });
+    expect(plan.showPrPill).toBe(false);
+    expect(plan.empty).toBe(true);
+  });
+
+  it('still shows the pill when the repo matches (after-merge case)', () => {
+    const plan = planFooter({
+      tags: [],
+      prUrl: GEODE_PR,
+      barShowsGitInfo: false,
+      prRepoMatches: true,
+    });
+    expect(plan.showPrPill).toBe(true);
+  });
+
+  it('defaults to showing the pill when repo match is not supplied', () => {
+    expect(planFooter({ tags: [], prUrl: GEODE_PR, barShowsGitInfo: false }).showPrPill).toBe(true);
   });
 });
