@@ -1,6 +1,3 @@
-import path from 'path';
-import os from 'os';
-
 /**
  * Where `enter_worktree` puts the worktrees it creates.
  *
@@ -22,7 +19,19 @@ import os from 'os';
  * the directory after one harness would be wrong for the other. Genuinely
  * Claude-owned paths (`~/.claude/skills`, `~/.claude/agents`) keep that prefix;
  * worktrees do not.
+ *
+ * ## Node builtins are required lazily
+ *
+ * This module is statically imported by `ThreadManager`, which also loads on
+ * mobile where `path`/`os` are unavailable. Following the same convention as
+ * `pathUtils.ts`, the builtins are `require`d inside functions so merely
+ * importing this module is safe — only calling it needs a Node environment.
  */
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const nodePath = () => require('path') as typeof import('path');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const nodeOs = () => require('os') as typeof import('os');
 
 /** Directory name used by the legacy `os.tmpdir()` layout. Still recognised for repair/migration. */
 export const LEGACY_WORKTREE_DIR_NAME = 'claude-worktrees';
@@ -34,12 +43,12 @@ export const LEGACY_WORKTREE_DIR_NAME = 'claude-worktrees';
  * repo so no `.gitignore` entry is needed and `git status` stays clean.
  */
 export function defaultWorktreeRoot(): string {
-  return path.join(os.homedir(), '.geode', 'worktrees');
+  return nodePath().join(nodeOs().homedir(), '.geode', 'worktrees');
 }
 
 /** The legacy `<os.tmpdir()>/claude-worktrees` container. */
 export function legacyWorktreeRoot(): string {
-  return path.join(os.tmpdir(), LEGACY_WORKTREE_DIR_NAME);
+  return nodePath().join(nodeOs().tmpdir(), LEGACY_WORKTREE_DIR_NAME);
 }
 
 /**
@@ -51,9 +60,9 @@ export function legacyWorktreeRoot(): string {
 export function resolveWorktreeRoot(configured?: string | null): string {
   const raw = configured?.trim();
   if (!raw) return defaultWorktreeRoot();
-  if (raw === '~') return os.homedir();
-  if (raw.startsWith('~/')) return path.join(os.homedir(), raw.slice(2));
-  return path.resolve(raw);
+  if (raw === '~') return nodeOs().homedir();
+  if (raw.startsWith('~/')) return nodePath().join(nodeOs().homedir(), raw.slice(2));
+  return nodePath().resolve(raw);
 }
 
 /**
@@ -68,7 +77,7 @@ export function sanitizeBranchForPath(branch: string): string {
     .split('/')
     .map((s) => s.replace(/[\0<>:"\\|?*]/g, '-').trim())
     .filter((s) => s.length > 0 && s !== '.' && s !== '..');
-  return segments.join(path.sep) || 'worktree';
+  return segments.join(nodePath().sep) || 'worktree';
 }
 
 /**
@@ -79,19 +88,21 @@ export function sanitizeBranchForPath(branch: string): string {
  * `<uuid8>` directories, which gave no clue what work was inside.
  */
 export function worktreePathFor(root: string, gitRoot: string, branch: string): string {
-  return path.join(root, path.basename(gitRoot), sanitizeBranchForPath(branch));
+  const p = nodePath();
+  return p.join(root, p.basename(gitRoot), sanitizeBranchForPath(branch));
 }
 
 /**
  * True when `p` sits inside `container`.
  *
- * Compares with a trailing separator so `/a/bc` is not treated as living inside
- * `/a/b`, and treats the container itself as outside (callers repair paths
- * *within* a container, never the container itself).
+ * Uses path.relative rather than a string prefix so `/a/bc` is not treated as
+ * living inside `/a/b`, and treats the container itself as outside (callers
+ * repair paths *within* a container, never the container itself).
  */
 export function isInsideDir(p: string, container: string): boolean {
-  const rel = path.relative(container, p);
-  return rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+  const np = nodePath();
+  const rel = np.relative(container, p);
+  return rel.length > 0 && !rel.startsWith('..') && !np.isAbsolute(rel);
 }
 
 /**

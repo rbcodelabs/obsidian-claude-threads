@@ -7,6 +7,7 @@ import { collectPendingImageExternalizations } from './imageExternalization';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
+import { legacyWorktreeRoot, resolveWorktreeRoot } from './worktreePaths';
 import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
@@ -548,9 +549,6 @@ export class ThreadManager {
     const nodePath = require('path') as typeof import('path');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const os = require('os') as typeof import('os');
-
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { legacyWorktreeRoot, resolveWorktreeRoot } = require('./worktreePaths') as typeof import('./worktreePaths');
 
     // Two containers must be recognised:
     //  - the current root (default ~/.geode/worktrees, or the configured override)
