@@ -115,8 +115,11 @@ export const VISUALIZE_FRAGMENT = `<div id="quarterly-revenue">
   </div>
 </div>`;
 
+/** Only the visualize fixture path serves the fragment — see isVisualizePath. */
+const VISUALIZE_PATH_RE = /\/viz\/[^/]+\.html?$/i;
+
 function resolveContent(filePath: string): string {
-  if (/\.html?$/i.test(filePath)) return VISUALIZE_FRAGMENT;
+  if (VISUALIZE_PATH_RE.test(filePath)) return VISUALIZE_FRAGMENT;
   if (filePath.endsWith('settings.json')) return MCP_SETTINGS_JSON;
   for (const s of SKILLS) {
     if (filePath.includes(s.name)) return s.content;
@@ -142,14 +145,23 @@ export const writeFileSync = (_p: string, _data: string, _enc?: string) => undef
 
 export const promises = {
   readdir: async (_path: string, _opts?: unknown) => makeEntries(),
-  // isFile/size/mtimeMs are read by visualizeRenderer's fragment guards; the
-  // fixed mtime keeps its document cache key stable across a screenshot run.
-  stat: async (p: string) => ({
-    isDirectory: () => false,
-    isFile: () => true,
-    size: resolveContent(p).length,
-    mtimeMs: 1_700_000_000_000,
-  }),
+  // isFile/size/mtimeMs are read by visualizeRenderer's fragment guards, and
+  // the fixed mtime keeps its document cache key stable across a screenshot
+  // run. They are reported ONLY for the visualize fixture path: every other
+  // caller in the harness has to keep seeing the original shape, because a
+  // stat that suddenly claims isFile() for every path changes what unrelated
+  // code does (attachment and diff lookups especially) and shows up as
+  // intermittent scroll-offset diffs in screenshots that have nothing to do
+  // with visualizations.
+  stat: async (p: string) =>
+    VISUALIZE_PATH_RE.test(p)
+      ? {
+          isDirectory: () => false,
+          isFile: () => true,
+          size: resolveContent(p).length,
+          mtimeMs: 1_700_000_000_000,
+        }
+      : { isDirectory: () => false },
   realpath: async (p: string) => p,
   readFile: async (p: string, _enc: string) => resolveContent(p),
   writeFile: async (_p: string, _data: string, _enc: string) => {},
