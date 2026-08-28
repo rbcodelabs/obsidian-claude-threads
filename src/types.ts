@@ -735,6 +735,12 @@ export interface PluginSettings {
    * Defaults to true so the tool is available out of the box.
    */
   enableWebViewerTool?: boolean;
+  /**
+   * When true, a `visualize{"path":…}` content reference in an assistant
+   * message renders as a live sandboxed visualization inline instead of raw
+   * text. Desktop only. Defaults to true.
+   */
+  enableInlineVisualizations?: boolean;
   /** Registered local skill collections browsable from the Skills Manager. */
   skillSources: SkillSource[];
   /** Width in px of the Skills Manager's left list panel, set by dragging the divider. */
@@ -789,6 +795,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   },
   scheduledItems: [],
   enableWebViewerTool: true,
+  enableInlineVisualizations: true,
   kanbanGroupBy: 'status',
   kanbanCollapseSide: 'none',
   stackScheduledThreads: true,

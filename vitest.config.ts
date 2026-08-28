@@ -10,6 +10,8 @@ export default defineConfig({
       ['test/unit/MobileView.test.ts', 'jsdom'],
       // DispatchInput tests need a real DOM (createDiv, createEl, etc.)
       ['test/unit/DispatchInput.test.ts', 'jsdom'],
+      // The visualize renderer mounts iframes and listens for postMessage
+      ['test/unit/visualize-renderer.test.ts', 'jsdom'],
     ],
   },
   resolve: {

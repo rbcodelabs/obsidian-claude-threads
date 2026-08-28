@@ -16,6 +16,13 @@ import type { SerializedThread, SerializedMessage, PendingPermission, PendingQue
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
+import {
+  VISUALIZE_SLOT_ATTR,
+  VISUALIZE_SLOT_CLASS,
+  basename,
+  extractVisualizeMarkers,
+  type VisualizeMarker,
+} from './visualizeMarker';
 
 export const MOBILE_VIEW_TYPE = 'claude-threads:mobile';
 
@@ -520,11 +527,17 @@ export class MobileView extends ItemView {
   }
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
+    // Codex `visualize{…}` content references become inert cards here. The
+    // mobile client is a relay: the fragment lives on the desktop machine's
+    // disk, and renderConversation() rebuilds the whole list on every finalized
+    // message with no throttle, so mounting sandboxed iframes is doubly wrong.
+    const visualize = extractVisualizeMarkers(markdown);
+
     // Pre-process [[wikilinks]] and [[target|alias]] into inline HTML anchors
     // before handing off to marked. Mirrors the ThreadsView approach — see that
     // method for the full rationale (short version: MarkdownRenderer.render()
     // does not parse GFM pipe tables in this non-document context).
-    const processed = markdown.replace(
+    const processed = visualize.text.replace(
       /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
       (_match, target: string, alias?: string) => {
         const label = (alias ?? target.split('/').pop() ?? target).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c] ?? c));
@@ -533,6 +546,7 @@ export class MobileView extends ItemView {
       },
     );
     el.appendChild(sanitizeHTMLToDom(await marked.parse(processed)));
+    this.hydrateVisualizeSlots(el, visualize.markers);
     // Wrap tables in a scrollable container so wide tables don't overflow.
     el.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
       const wrapper = document.createElement('div');
@@ -548,6 +562,92 @@ export class MobileView extends ItemView {
         void this.app.workspace.openLinkText(href, '', false);
       });
     });
+  }
+
+  /**
+   * Resolve a desktop-side absolute path to a vault file, if the fragment
+   * happens to live inside the synced vault.
+   *
+   * The mobile client never sees the desktop's vault root, so the absolute path
+   * cannot be trimmed arithmetically. Instead the path's suffixes are probed
+   * longest-first against the vault index: each probe is a map lookup, and the
+   * longest match is by construction the correct one.
+   */
+  private resolveVaultCopy(absolutePath: string): string | null {
+    const segments = absolutePath.replace(/\\/g, '/').split('/').filter(Boolean);
+    try {
+      for (let start = 0; start < segments.length; start++) {
+        const candidate = segments.slice(start).join('/');
+        if (this.app.vault.getAbstractFileByPath(candidate)) return candidate;
+      }
+    } catch {
+      // No vault index available (relay-only client): fall through to the
+      // desktop-only card rather than failing the whole message render.
+    }
+    return null;
+  }
+
+  /**
+   * Replace visualize placeholders with inert card chrome. When the fragment is
+   * also present in the synced vault, the card gets a button that opens it;
+   * otherwise it just names the file, since a phone cannot reach the desktop's
+   * filesystem.
+   */
+  private hydrateVisualizeSlots(root: HTMLElement, markers: VisualizeMarker[]): void {
+    if (markers.length === 0) return;
+    const slots = root.querySelectorAll<HTMLAnchorElement>(`a.${VISUALIZE_SLOT_CLASS}[${VISUALIZE_SLOT_ATTR}]`);
+    for (const slot of Array.from(slots)) {
+      const marker = markers[Number(slot.getAttribute(VISUALIZE_SLOT_ATTR))];
+      if (!marker) {
+        slot.remove();
+        continue;
+      }
+      const card = this.buildMobileVisualizeCard(marker);
+      const parent = slot.parentElement;
+      const target = parent && parent.tagName === 'P' && (parent.textContent ?? '').trim() === (slot.textContent ?? '').trim()
+        ? parent
+        : slot;
+      target.replaceWith(card);
+    }
+  }
+
+  private buildMobileVisualizeCard(marker: VisualizeMarker): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'ct-visualize-card ct-visualize-static';
+
+    const header = document.createElement('div');
+    header.className = 'ct-visualize-header';
+    const icon = document.createElement('span');
+    icon.className = 'ct-visualize-icon';
+    setIcon(icon, 'bar-chart-3');
+    header.appendChild(icon);
+
+    const title = document.createElement('span');
+    title.className = 'ct-visualize-title';
+    title.textContent = marker.title ?? basename(marker.path);
+    title.title = marker.path;
+    header.appendChild(title);
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'ct-visualize-body ct-visualize-placeholder';
+    const vaultPath = this.resolveVaultCopy(marker.path);
+    if (vaultPath) {
+      const open = document.createElement('button');
+      open.className = 'ct-visualize-action ct-visualize-open';
+      open.type = 'button';
+      open.textContent = 'Open visualization';
+      open.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.app.workspace.openLinkText(vaultPath, '', false);
+      });
+      body.appendChild(open);
+    } else {
+      body.textContent = 'Visualization renders on desktop';
+    }
+    card.appendChild(body);
+    return card;
   }
 
   /**

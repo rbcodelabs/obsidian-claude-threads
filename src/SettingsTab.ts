@@ -1476,6 +1476,20 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     }
 
     new Setting(containerEl)
+      .setName('Inline visualizations')
+      .setDesc(
+        'Render a visualize{…} content reference from Codex as a live sandboxed chart inside the message, with a pop-out to full size. Desktop only.',
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.enableInlineVisualizations !== false)
+          .onChange(async (value) => {
+            this.plugin.settings.enableInlineVisualizations = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Hidden built-in tools')
       .setDesc('Comma-separated Claude Code built-in tools to hide from sessions. Cron* tools are hidden by default — the plugin has its own scheduler.')
       .addText((text) =>

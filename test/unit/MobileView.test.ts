@@ -1135,3 +1135,81 @@ describe('MobileView — cleanup', () => {
     expect(listenersBefore.size).toBeLessThan(countBefore);
   });
 });
+
+// ── Inline visualization markers ───────────────────────────────────────────
+//
+// The mobile client is a relay: the fragment file lives on the desktop
+// machine, and renderConversation() rebuilds the whole list on every finalized
+// message with no throttle. So markers become inert card chrome here, never an
+// iframe. When the fragment also happens to be inside the synced vault, the
+// card gets a working "Open visualization" button.
+
+describe('MobileView — visualize markers', () => {
+  async function renderAssistant(content: string, vaultFiles: string[] = []): Promise<HTMLElement> {
+    const { view, store } = await buildView();
+    const opened: string[] = [];
+    (view as never as { app: unknown }).app = {
+      vault: { getAbstractFileByPath: (p: string) => (vaultFiles.includes(p) ? { path: p } : null) },
+      workspace: { openLinkText: (p: string) => { opened.push(p); } },
+    };
+    (view as never as { openedLinks: string[] }).openedLinks = opened;
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid', messages: [makeMessage({ id: 'm1', role: 'assistant', content })] })],
+      activeThreadId: 'tid',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    (messagesEl as never as { view: MobileView }).view = view;
+    return messagesEl;
+  }
+
+  it('renders a card instead of leaking the raw marker as text', async () => {
+    const el = await renderAssistant('Here:\n\nvisualize{"path":"/desktop/Charts/rev.html"}');
+    expect(el.textContent).not.toContain('visualize{');
+    expect(el.querySelector('.ct-visualize-card')).not.toBeNull();
+  });
+
+  it('never mounts an iframe on mobile', async () => {
+    const el = await renderAssistant('visualize{"path":"/desktop/Charts/rev.html"}');
+    expect(el.querySelector('iframe')).toBeNull();
+    expect(el.querySelector('.ct-visualize-card')?.classList.contains('ct-visualize-static')).toBe(true);
+  });
+
+  it('shows the title in the card header', async () => {
+    const el = await renderAssistant('visualize{"path":"/desktop/Charts/rev.html","title":"Revenue"}');
+    expect(el.querySelector('.ct-visualize-title')?.textContent).toBe('Revenue');
+  });
+
+  it('falls back to a desktop-only note when the file is not in the vault', async () => {
+    const el = await renderAssistant('visualize{"path":"/desktop/Charts/rev.html"}');
+    expect(el.querySelector('.ct-visualize-open')).toBeNull();
+    expect(el.querySelector('.ct-visualize-body')?.textContent).toMatch(/desktop/i);
+  });
+
+  it('offers an Open visualization button when the fragment is in the synced vault', async () => {
+    const el = await renderAssistant(
+      'visualize{"path":"/Users/rick/Documents/Personal/Charts/rev.html"}',
+      ['Charts/rev.html'],
+    );
+    const button = el.querySelector('.ct-visualize-open') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    expect(button.textContent).toBe('Open visualization');
+  });
+
+  it('opens the longest matching vault path when the button is tapped', async () => {
+    const el = await renderAssistant(
+      'visualize{"path":"/Users/rick/Documents/Personal/Charts/rev.html"}',
+      ['Charts/rev.html', 'rev.html'],
+    );
+    (el.querySelector('.ct-visualize-open') as HTMLButtonElement).click();
+    const view = (el as never as { view: MobileView }).view;
+    expect((view as never as { openedLinks: string[] }).openedLinks).toEqual(['Charts/rev.html']);
+  });
+
+  it('leaves a marker inside a fenced code block alone', async () => {
+    const el = await renderAssistant('```text\nvisualize{"path":"/a.html"}\n```');
+    expect(el.querySelector('.ct-visualize-card')).toBeNull();
+    expect(el.textContent).toContain('visualize{');
+  });
+});

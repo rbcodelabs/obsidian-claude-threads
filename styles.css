@@ -1950,6 +1950,136 @@
 .ct-artifact-action-icon { display: inline-flex; }
 .ct-artifact-action-icon svg { width: 14px; height: 14px; }
 
+/* Inline visualization card (Codex `visualize{…}` content references) */
+.ct-visualize-card {
+  margin: 10px 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+  overflow: hidden;
+}
+
+.ct-visualize-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+.ct-visualize-icon {
+  display: inline-flex;
+  color: var(--text-accent);
+}
+.ct-visualize-icon svg { width: 14px; height: 14px; }
+
+.ct-visualize-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-interface, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ct-root .ct-visualize-action,
+.ct-mobile-root .ct-visualize-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--font-interface, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.ct-visualize-action:hover { border-color: var(--interactive-accent); color: var(--text-accent); }
+/* Mobile has no iframe, so the button is the card's only affordance and needs
+   a real touch target rather than an icon-sized one. */
+.ct-mobile-root .ct-visualize-open {
+  min-height: 34px;
+  padding: 6px 12px;
+  border-color: var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+.ct-visualize-action-icon svg,
+.ct-visualize-action svg { width: 14px; height: 14px; }
+
+.ct-visualize-body {
+  position: relative;
+  width: 100%;
+}
+
+.ct-visualize-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--background-primary);
+}
+
+/* Inert state: streaming, mobile, or a fragment that failed to load. */
+.ct-visualize-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 12px 10px;
+  color: var(--text-faint);
+  font-family: var(--font-interface, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--font-ui-smaller);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.ct-visualize-error {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: color-mix(in srgb, var(--color-red, #e05252) 12%, var(--background-primary));
+  color: var(--text-normal);
+  font-family: var(--font-interface, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--font-ui-smaller);
+}
+
+/* At the height cap the frame is clipped, so fade the seam rather than nesting
+   a second scrollbar inside the message list — the pop-out is the way out. */
+/* Accent the pop-out when the card is capped: it is the only way to see the
+   rest, so it stops being a secondary affordance. */
+.ct-visualize-capped .ct-visualize-action {
+  border-color: var(--interactive-accent);
+  color: var(--text-accent);
+}
+
+.ct-visualize-capped .ct-visualize-body::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, var(--background-primary));
+  pointer-events: none;
+}
+
+/* `mode: "wide"`. .ct-message-content has overflow-x: auto, so a negative
+   margin larger than its own 10px padding would produce a horizontal scrollbar
+   instead of a breakout; escaping .ct-message entirely would break
+   .ct-copy-btn's absolute positioning. Cancel exactly that padding and let
+   max-width do the rest. Never give the iframe a min-width. */
+.ct-visualize-wide {
+  margin-inline: -10px;
+  width: calc(100% + 20px);
+  max-width: 1024px;
+}
+
 /* Edited-files card */
 .ct-edited-files {
   padding: 4px 8px;
