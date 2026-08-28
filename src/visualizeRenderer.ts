@@ -219,6 +219,12 @@ export class VisualizeMountManager {
    */
   hydrate(root: HTMLElement, markers: VisualizeMarker[], options: { interactive: boolean }): void {
     if (markers.length === 0) return;
+    // renderMessages() empties and rebuilds every row, so the cards from the
+    // previous render are already detached by the time we get here. They are
+    // dropped now rather than at detach() time, because until they are the map
+    // grows on every thread switch and each stale entry keeps a live iframe
+    // alive off-DOM.
+    this.pruneDetachedCards();
     const slots = root.querySelectorAll<HTMLAnchorElement>(`a.${VISUALIZE_SLOT_CLASS}[${VISUALIZE_SLOT_ATTR}]`);
     for (const slot of Array.from(slots)) {
       const index = Number(slot.getAttribute(VISUALIZE_SLOT_ATTR));
@@ -306,9 +312,63 @@ export class VisualizeMountManager {
       loading: false,
     };
     this.cards.set(cardEl, card);
-    if (this.observer) this.observer.observe(cardEl);
-    else void this.mount(card);
+    if (this.observer) {
+      this.observer.observe(cardEl);
+      // observe() alone is not enough. An IntersectionObserver reports
+      // *changes*, and its one initial observation is delivered async — if that
+      // notification is missed or coalesced (as happens when a card is built,
+      // detached and rebuilt inside a single task, e.g. two focusThread calls
+      // in a row), nothing ever fires again for a card that is sitting still,
+      // and it stays blank forever with no path back. This second, geometric
+      // check closes that hole; mount() is idempotent, so when the observer
+      // does fire normally this is a no-op.
+      this.scheduleInitialMount(card);
+    } else {
+      void this.mount(card);
+    }
     return cardEl;
+  }
+
+  /** Drop cards whose element is no longer in the document. */
+  private pruneDetachedCards(): void {
+    for (const [el, card] of Array.from(this.cards.entries())) {
+      if (el.isConnected) continue;
+      this.observer?.unobserve(el);
+      this.unmount(card);
+      this.cards.delete(el);
+    }
+  }
+
+  /** True when `el` is inside the scroller's mount margin right now. */
+  private isWithinMountMargin(el: HTMLElement): boolean {
+    const root = this.scrollerEl.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    // A zero-size root means the view is not laid out yet (or is hidden). Treat
+    // that as "not visible" rather than mounting every card in the thread.
+    if (root.width === 0 && root.height === 0) return false;
+    // Same for the card itself. A `display:none` element reports an all-zero
+    // rect, which would otherwise read as "at the origin, therefore near the
+    // top of the scroller" and mount. That is exactly the case the compressed
+    // view creates — it renders full content eagerly into a hidden container —
+    // and mounting there parses a document and hits the CDN for something the
+    // user cannot see, which then reports height 0.
+    if (rect.width === 0 && rect.height === 0) return false;
+    return rect.top < root.bottom + MOUNT_MARGIN_PX && rect.bottom > root.top - MOUNT_MARGIN_PX;
+  }
+
+  /**
+   * Backstop for the observer's initial delivery. Runs after layout so the
+   * card has real geometry, and mounts only if the observer has not already.
+   */
+  private scheduleInitialMount(card: MountedCard): void {
+    const view = this.scrollerEl.ownerDocument?.defaultView;
+    const run = () => {
+      if (this.cards.get(card.cardEl) !== card) return;
+      if (card.iframe || card.loading || !card.cardEl.isConnected) return;
+      if (this.isWithinMountMargin(card.cardEl)) void this.mount(card);
+    };
+    if (typeof view?.requestAnimationFrame === 'function') view.requestAnimationFrame(run);
+    else run();
   }
 
   // ── Mount / unmount ────────────────────────────────────────────────────────

@@ -238,6 +238,42 @@ describe('hydrate', () => {
     expect(h.manager.cardCount).toBe(0);
   });
 
+  it('drops cards whose row was replaced, instead of growing the map on every render', async () => {
+    const h = makeHarness();
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    const first = hydrateSource(h, 'visualize{"path":"/tmp/a.html"}');
+    await flush();
+    expect(h.manager.cardCount).toBe(1);
+
+    // What renderMessages() does on a thread switch: the old row is discarded
+    // wholesale and a fresh one is built for the same content.
+    first.remove();
+    hydrateSource(h, 'visualize{"path":"/tmp/a.html"}');
+    await flush();
+
+    // Without pruning this is 2, and climbs by one on every switch.
+    expect(h.manager.cardCount).toBe(1);
+  });
+
+  it('tears down the iframe of a card that left the document', async () => {
+    const h = makeHarness();
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+
+    const first = hydrateSource(h, 'visualize{"path":"/tmp/a.html"}');
+    await flush();
+    const staleFrame = first.querySelector('iframe');
+    expect(staleFrame).not.toBeNull();
+
+    first.remove();
+    hydrateSource(h, 'visualize{"path":"/tmp/a.html"}');
+    await flush();
+
+    // The detached row must not still be holding a live frame — that frame has
+    // its own scripts, timers and CDN requests running.
+    expect(first.querySelector('iframe')).toBeNull();
+  });
+
   it('drops an orphan slot whose marker index does not exist', () => {
     const h = makeHarness();
     const el = document.createElement('div');
