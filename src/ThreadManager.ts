@@ -9,7 +9,8 @@ import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
 import { legacyWorktreeRoot, resolveWorktreeRoot } from './worktreePaths';
 import { debugLog } from './logger';
-import { codexSkillRoots } from './skillManager';
+import { codexSkillRoots, buildSkillPlugins } from './skillManager';
+import { pluginSkillsRootFrom } from './skillPaths';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
 import { AgentRunStore } from './agentRuns/AgentRunStore';
 import { loadAgentProfiles, type AgentProfileMap } from './AgentProfiles';
@@ -1315,6 +1316,9 @@ export class ThreadManager {
           this.pluginResourceDir
             ? require('path').join(this.pluginResourceDir, 'resources', 'skills')
             : undefined,
+          // Vault-installed skills. Codex discovers by parent root, so it gets
+          // the skills dir itself rather than the generated plugin root Claude uses.
+          pluginSkillsRootFrom(this.pluginResourceDir ?? ''),
         ),
         dynamicTools: codexDynamicTools,
         mcpServers: codexMcpServers,
@@ -1870,53 +1874,30 @@ export class ThreadManager {
       opts.persistSession = false;
     }
 
-    // GitHub skill source plugins — enumerate each skill subdir and pass as individual
-    // local plugins. --plugin-dir / plugins:{type:'local'} requires the path to be an
-    // individual skill directory (containing SKILL.md), not the repo root.
+    // Skill plugins. Nothing is ever copied into ~/.claude/skills/ to make a
+    // skill loadable — the SDK takes paths directly.
+    //
+    // Configured sources register one local plugin per skill directory, which
+    // the SDK names `<skill>:<skill>`. The vault skills root registers once, as
+    // a plugin root holding a generated `.claude-plugin/plugin.json` plus its
+    // `skills/` subdir, which the SDK names `vault:<skill>`. (An earlier
+    // comment here claimed plugins:{type:'local'} requires an individual skill
+    // directory rather than a plugin root. That is wrong: verified against the
+    // real `claude` CLI, the root form registers fine and yields better names.)
     {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('fs') as typeof import('fs');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const path = require('path') as typeof import('path');
-      const plugins: import('@anthropic-ai/claude-agent-sdk').SdkPluginConfig[] = [];
-      for (const src of (s.skillSources ?? [])) {
-        if (src.type !== 'github' || !src.clonePath) continue;
-        // Resolve skills dir: read plugin.json if present, else fall back to <clone>/skills
-        let skillsDir = path.join(src.clonePath, 'skills');
-        try {
-          const manifestPath = path.join(src.clonePath, '.claude-plugin', 'plugin.json');
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Record<string, unknown>;
-          if (typeof manifest.skills === 'string') {
-            skillsDir = path.join(src.clonePath, manifest.skills);
-          }
-        } catch { /* no manifest or bad JSON — use default */ }
-
-        try {
-          const entries = fs.readdirSync(skillsDir);
-          for (const entry of entries) {
-            const entryPath = path.join(skillsDir, entry);
-            try {
-              if (!fs.statSync(entryPath).isDirectory()) continue;
-              if (!fs.existsSync(path.join(entryPath, 'SKILL.md'))) continue;
-              plugins.push({ type: 'local', path: entryPath });
-            } catch { continue; }
-          }
-        } catch { /* skills dir missing or unreadable */ }
-      }
-
-      // Bundled thread-orchestrator skill — ships inside the plugin's own dist/
-      // (copied there by esbuild.config.mjs from resources/skills/), so it is
-      // discoverable in every session with nothing manually copied into
-      // ~/.claude/skills/. Registered unconditionally (not gated by any
-      // setting) alongside the GitHub-sourced skill plugins above.
-      if (this.pluginResourceDir) {
-        const bundledSkillPath = path.join(this.pluginResourceDir, 'resources', 'skills', 'thread-orchestrator');
-        try {
-          if (fs.existsSync(path.join(bundledSkillPath, 'SKILL.md'))) {
-            plugins.push({ type: 'local', path: bundledSkillPath });
-          }
-        } catch { /* bundled skill missing — plugin dist may be stale, skip silently */ }
-      }
+      const plugins = buildSkillPlugins({
+        skillSources: s.skillSources ?? [],
+        pluginSkillsRoot: pluginSkillsRootFrom(this.pluginResourceDir ?? ''),
+        // Bundled thread-orchestrator skill — ships inside the plugin's own
+        // dist/ (copied there by esbuild.config.mjs from resources/skills/),
+        // so it is discoverable in every session. Registered unconditionally,
+        // not gated by any setting.
+        bundledSkillPath: this.pluginResourceDir
+          ? path.join(this.pluginResourceDir, 'resources', 'skills', 'thread-orchestrator')
+          : undefined,
+      });
 
       if (plugins.length > 0) opts.plugins = plugins;
     }

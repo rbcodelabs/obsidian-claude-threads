@@ -46,7 +46,6 @@ import {
   listGithubSourceSkills,
   installSkillFromMarketplace,
   codexSkillRoots,
-  buildSkillPlugins,
 } from '../../src/skillManager';
 import { computeSkillRoots, setSkillRoots, resetSkillRoots, type SkillRoots } from '../../src/skillPaths';
 
@@ -614,86 +613,5 @@ describe('installSkillFromMarketplace', () => {
   });
 });
 
-// ── buildSkillPlugins (session opts.plugins enumeration) ─────────────────────
-
-describe('buildSkillPlugins', () => {
-  it('returns nothing when there are no sources and no vault root', () => {
-    expect(buildSkillPlugins({})).toEqual([]);
-    expect(buildSkillPlugins({ pluginSkillsRoot: '' })).toEqual([]);
-  });
-
-  it('enumerates github source skills individually, as before', () => {
-    const clonePath = path.join(tmpVault, 'clone');
-    writeSkillIn(path.join(clonePath, 'skills'), 'gh-one', 'x', 'gh-one');
-    writeSkillIn(path.join(clonePath, 'skills'), 'gh-two', 'x', 'gh-two');
-
-    expect(buildSkillPlugins({
-      skillSources: [{ id: 'g', name: 'G', type: 'github', clonePath }],
-    })).toEqual([
-      { type: 'local', path: path.join(clonePath, 'skills', 'gh-one') },
-      { type: 'local', path: path.join(clonePath, 'skills', 'gh-two') },
-    ]);
-  });
-
-  it('respects a custom skills dir from the source plugin manifest', () => {
-    const clonePath = path.join(tmpVault, 'clone2');
-    fs.mkdirSync(path.join(clonePath, '.claude-plugin'), { recursive: true });
-    fs.writeFileSync(
-      path.join(clonePath, '.claude-plugin', 'plugin.json'),
-      JSON.stringify({ name: 'p', skills: 'custom' }),
-      'utf-8',
-    );
-    writeSkillIn(path.join(clonePath, 'custom'), 'nested', 'x', 'nested');
-
-    expect(buildSkillPlugins({
-      skillSources: [{ id: 'g', name: 'G', type: 'github', clonePath }],
-    })).toEqual([{ type: 'local', path: path.join(clonePath, 'custom', 'nested') }]);
-  });
-
-  it('now enumerates local sources too, which previously registered nothing', () => {
-    const skillsPath = path.join(tmpVault, 'local-source');
-    writeSkillIn(skillsPath, 'local-one', 'x', 'local-one');
-
-    expect(buildSkillPlugins({
-      skillSources: [{ id: 'l', name: 'L', type: 'local', skillsPath }],
-    })).toEqual([{ type: 'local', path: path.join(skillsPath, 'local-one') }]);
-  });
-
-  it('registers the vault root ONCE as a plugin root, generating its manifest', () => {
-    writeVaultSkill('vault-one');
-    writeVaultSkill('vault-two');
-
-    const result = buildSkillPlugins({ pluginSkillsRoot: roots.pluginRoot });
-
-    const vaultPluginRoot = path.dirname(roots.pluginRoot);
-    expect(result).toEqual([{ type: 'local', path: vaultPluginRoot }]);
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(vaultPluginRoot, '.claude-plugin', 'plugin.json'), 'utf-8'),
-    );
-    expect(manifest.name).toBe('vault');
-  });
-
-  it('writes no manifest and registers nothing when the vault root holds no skills', () => {
-    fs.mkdirSync(roots.pluginRoot, { recursive: true });
-    expect(buildSkillPlugins({ pluginSkillsRoot: roots.pluginRoot })).toEqual([]);
-    expect(fs.existsSync(path.join(path.dirname(roots.pluginRoot), '.claude-plugin'))).toBe(false);
-  });
-
-  it('appends the bundled skill only when its SKILL.md exists', () => {
-    const bundled = path.join(tmpVault, 'bundled', 'thread-orchestrator');
-    expect(buildSkillPlugins({ bundledSkillPath: bundled })).toEqual([]);
-
-    fs.mkdirSync(bundled, { recursive: true });
-    fs.writeFileSync(path.join(bundled, 'SKILL.md'), '---\nname: thread-orchestrator\n---\n', 'utf-8');
-    expect(buildSkillPlugins({ bundledSkillPath: bundled })).toEqual([{ type: 'local', path: bundled }]);
-  });
-
-  it('never registers anything under ~/.claude/skills', () => {
-    writeHomeSkill('home-skill');
-    const result = buildSkillPlugins({
-      skillSources: [],
-      pluginSkillsRoot: roots.pluginRoot,
-    });
-    expect(result.some((p) => p.path.includes(path.join('.claude', 'skills')))).toBe(false);
-  });
-});
+// buildSkillPlugins lives in this module but is covered end-to-end (pure
+// enumeration plus the real ThreadManager wiring) in session-plugins.test.ts.
