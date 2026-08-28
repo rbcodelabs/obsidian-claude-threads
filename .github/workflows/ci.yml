@@ -29,3 +29,9 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      # Catch versions.json drift on the PR, not at tag-push time. Failing in
+      # the release workflow would mean the tag is already pushed and has to be
+      # deleted and re-cut; failing here is just a normal red check.
+      - name: Verify versions.json is in sync
+        run: npm run check-versions

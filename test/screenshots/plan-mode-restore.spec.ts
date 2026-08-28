@@ -7,6 +7,7 @@
  */
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -57,7 +58,7 @@ test.describe('Plan mode — restored card (pendingPlan)', () => {
     await expect(page.locator('.ct-plan-md')).toBeVisible();
     await expect(page.locator('.ct-plan-textarea')).not.toBeVisible();
 
-    await expect(page).toHaveScreenshot('plan-mode-restored.png', { fullPage: true });
+    await shot(page, 'plan-mode-restored.png', { fullPage: true });
   });
 
   test('approve calls sendMessage with plan text and clears pendingPlan', async ({ page }) => {

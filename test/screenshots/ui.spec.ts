@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -22,7 +23,7 @@ test.describe('Claude Threads UI', () => {
     // Switch to the HipTrip thread which shows a markdown table (use API since tabs were removed)
     await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('main-view.png', { fullPage: true });
+    await shot(page, 'main-view.png', { fullPage: true });
   });
 
   // Seeds a two-agent team on the auth thread and opens it. Everything after this
@@ -59,7 +60,7 @@ test.describe('Claude Threads UI', () => {
     await expect(pill).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.ct-agent-popover [role="treeitem"]')).toHaveCount(2);
     await expect(page.locator('.ct-agent-popover [role="treeitem"]').nth(1)).toHaveAttribute('aria-level', '2');
-    await expect(page.locator('.ct-agent-popover')).toHaveScreenshot('native-agent-popover.png');
+    await shot(page.locator('.ct-agent-popover'), 'native-agent-popover.png');
 
     // Escape dismisses and returns focus to the pill.
     await page.keyboard.press('Escape');
@@ -86,7 +87,7 @@ test.describe('Claude Threads UI', () => {
     // The composer stays live; only the placeholder flags where a send will land.
     await expect(page.locator('.ct-input')).toBeEnabled();
     await expect(page.locator('.ct-input')).toHaveAttribute('placeholder', 'Message Claude (main conversation)');
-    await expect(page.locator('.ct-main')).toHaveScreenshot('native-agent-activity-view.png');
+    await shot(page.locator('.ct-main'), 'native-agent-activity-view.png');
 
     // The breadcrumb goes back to real conversation messages, not an empty pane.
     await page.click('.ct-agent-crumbs button:has-text("Main conversation")');
@@ -140,7 +141,7 @@ test.describe('Claude Threads UI', () => {
         (element) => element.scrollWidth > element.clientWidth,
       );
       expect(hasHorizontalOverflow).toBe(false);
-      await expect(page.locator('.ct-agent-popover')).toHaveScreenshot(`native-agent-popover-${viewport.name}.png`);
+      await shot(page.locator('.ct-agent-popover'), `native-agent-popover-${viewport.name}.png`);
     });
   }
 
@@ -158,7 +159,7 @@ test.describe('Claude Threads UI', () => {
     if (rawBrackets.includes('[[')) {
       throw new Error('[[wikilinks]] were not rendered — raw bracket text found in message');
     }
-    await expect(page).toHaveScreenshot('wikilink-rendering.png', { fullPage: true });
+    await shot(page, 'wikilink-rendering.png', { fullPage: true });
   });
 
   test('background task notice row', async ({ page }) => {
@@ -171,7 +172,7 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-notice'));
     await page.waitForSelector('.ct-notice-row');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('background-task-notice-row.png', { fullPage: true });
+    await shot(page, 'background-task-notice-row.png', { fullPage: true });
   });
 
   test('slash command autocomplete', async ({ page }) => {
@@ -183,7 +184,7 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-input');
     await page.type('.ct-input', '/bra');
     await page.waitForSelector('.ct-skill-dropdown');
-    await expect(page).toHaveScreenshot('slash-commands.png', { fullPage: true });
+    await shot(page, 'slash-commands.png', { fullPage: true });
   });
 
   test('design artifact card actions', async ({ page }) => {
@@ -204,7 +205,7 @@ test.describe('Claude Threads UI', () => {
     });
     await page.hover('.ct-floating-panel');
     await page.waitForSelector('.ct-artifact-card:not(.ct-hidden)');
-    await expect(page).toHaveScreenshot('design-artifact-card.png', { fullPage: true });
+    await shot(page, 'design-artifact-card.png', { fullPage: true });
   });
 
   test('permission card', async ({ page }) => {
@@ -222,7 +223,7 @@ test.describe('Claude Threads UI', () => {
       );
     });
     await page.waitForSelector('.ct-permission-card');
-    await expect(page).toHaveScreenshot('permission-card.png', { fullPage: true });
+    await shot(page, 'permission-card.png', { fullPage: true });
   });
 
   test('permission card reappears after switching away and back', async ({ page }) => {
@@ -272,7 +273,7 @@ test.describe('Claude Threads UI', () => {
       );
     });
     await page.waitForSelector('.ct-elicitation-card');
-    await expect(page).toHaveScreenshot('mcp-elicitation-form-card.png', { fullPage: true });
+    await shot(page, 'mcp-elicitation-form-card.png', { fullPage: true });
   });
 
   test('scheduled wake-up banner', async ({ page }) => {
@@ -291,7 +292,7 @@ test.describe('Claude Threads UI', () => {
     });
     await page.waitForSelector('.ct-wakeup-banner:not(.ct-hidden)');
     await expect(page.locator('.ct-wakeup-banner')).toContainText('in 4m');
-    await expect(page).toHaveScreenshot('wakeup-banner.png', { fullPage: true });
+    await shot(page, 'wakeup-banner.png', { fullPage: true });
   });
 
   test('regression: wake-up banner appears automatically on run_state_settled — no thread switch needed', async ({ page }) => {
@@ -349,7 +350,7 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-loop-banner')).toContainText('Looping every 5m');
     await expect(page.locator('.ct-loop-banner-stop')).toBeVisible();
     await expect(page.locator('.ct-footer-pill')).toContainText('Looping every 5m');
-    await expect(page).toHaveScreenshot('loop-banner.png', { fullPage: true });
+    await shot(page, 'loop-banner.png', { fullPage: true });
   });
 
   test('scheduled origin footer pill', async ({ page }) => {
@@ -368,7 +369,7 @@ test.describe('Claude Threads UI', () => {
     });
     await page.waitForSelector('.ct-footer-pill');
     await expect(page.locator('.ct-footer-pill')).toContainText('Scheduled: Nightly build check');
-    await expect(page).toHaveScreenshot('scheduled-origin-pill.png', { fullPage: true });
+    await shot(page, 'scheduled-origin-pill.png', { fullPage: true });
   });
 
   test('fork conversation menu item', async ({ page }) => {
@@ -380,7 +381,7 @@ test.describe('Claude Threads UI', () => {
     // Open the more menu
     await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
-    await expect(page).toHaveScreenshot('fork-menu.png', { fullPage: true });
+    await shot(page, 'fork-menu.png', { fullPage: true });
   });
 
   test('model switcher menu', async ({ page }) => {
@@ -394,7 +395,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.menu');
     // Move mouse away so no menu item is in hover state
     await page.mouse.move(0, 0);
-    await expect(page).toHaveScreenshot('model-switcher-menu.png', { fullPage: true });
+    await shot(page, 'model-switcher-menu.png', { fullPage: true });
   });
 
   // Modal IS mocked in obsidian-mock.ts and renders .modal-container into document.body on open()
@@ -409,7 +410,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.menu');
     await page.getByText('Fork conversation').click();
     await page.waitForSelector('.modal-container');
-    await expect(page).toHaveScreenshot('fork-modal-initial.png', { fullPage: true });
+    await shot(page, 'fork-modal-initial.png', { fullPage: true });
   });
 
   // Modal IS mocked in obsidian-mock.ts and renders .modal-container into document.body on open()
@@ -429,7 +430,7 @@ test.describe('Claude Threads UI', () => {
     // Wait for the textarea to appear (mock resolves instantly)
     await page.waitForSelector('.ct-fork-textarea', { state: 'visible' });
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('fork-modal-review.png', { fullPage: true });
+    await shot(page, 'fork-modal-review.png', { fullPage: true });
   });
 
   test('edited files card with focus button', async ({ page }) => {
@@ -442,7 +443,7 @@ test.describe('Claude Threads UI', () => {
     // Hover to reveal the focus button (opacity: 0 normally, 1 on hover)
     await page.hover('.ct-edited-files');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('edited-files-focus.png', { fullPage: true });
+    await shot(page, 'edited-files-focus.png', { fullPage: true });
   });
 
   // ─── 0.3.0 feature tests ─────────────────────────────────────────────────────
@@ -468,7 +469,7 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-input');
     await page.type('.ct-input', '@hip');
     await page.waitForSelector('.ct-file-dropdown');
-    await expect(page).toHaveScreenshot('file-mention.png', { fullPage: true });
+    await shot(page, 'file-mention.png', { fullPage: true });
   });
 
   test('context recap banner', async ({ page }) => {
@@ -491,7 +492,7 @@ test.describe('Claude Threads UI', () => {
     });
 
     await page.waitForSelector('.ct-summary-banner');
-    await expect(page).toHaveScreenshot('context-recap-banner.png', { fullPage: true });
+    await shot(page, 'context-recap-banner.png', { fullPage: true });
   });
 
   // Agent Dashboard is not instantiated or exposed in the test harness (index.ts only
@@ -518,7 +519,7 @@ test.describe('Claude Threads UI', () => {
     });
 
     await page.waitForSelector('.ct-agents-permission-actions');
-    await expect(page).toHaveScreenshot('dashboard-permission-buttons.png', { fullPage: true });
+    await shot(page, 'dashboard-permission-buttons.png', { fullPage: true });
   });
 
   // Wake lock status bar is wired up in main.ts (WakeLockService + Obsidian status bar API).
@@ -543,7 +544,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.menu');
     // Move mouse away so no menu item is in hover state
     await page.mouse.move(0, 0);
-    await expect(page).toHaveScreenshot('compress-view-menu.png', { fullPage: true });
+    await shot(page, 'compress-view-menu.png', { fullPage: true });
   });
 
   test('compressed messages', async ({ page }) => {
@@ -562,7 +563,7 @@ test.describe('Claude Threads UI', () => {
     // Wait for the compressed layout to render (3 consecutive assistant msgs → grouped block)
     await page.waitForSelector('.ct-message-compressed');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('compress-view-active.png', { fullPage: true });
+    await shot(page, 'compress-view-active.png', { fullPage: true });
   });
 
   test('compressed message expand', async ({ page }) => {
@@ -584,7 +585,7 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-expand-btn');
     await page.waitForSelector('.ct-full-content:not(.ct-hidden)');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('compress-view-expanded.png', { fullPage: true });
+    await shot(page, 'compress-view-expanded.png', { fullPage: true });
   });
 
   test('streaming tool pills above panel', async ({ page }) => {
@@ -636,7 +637,7 @@ test.describe('Claude Threads UI', () => {
 
     // Wait for rAF + any ResizeObserver callbacks to settle
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('streaming-tool-pills.png', { fullPage: true });
+    await shot(page, 'streaming-tool-pills.png', { fullPage: true });
   });
 
   test('tool result images rendered inline in assistant message', async ({ page }) => {
@@ -651,7 +652,7 @@ test.describe('Claude Threads UI', () => {
     // The fixture has a message with toolResultImages — verify the img is in the DOM
     const imgCount = await page.locator('.ct-tool-result-images img').count();
     if (imgCount === 0) throw new Error('No .ct-tool-result-images img found — toolResultImages not rendered');
-    await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
+    await shot(page, 'tool-result-images.png', { fullPage: true });
   });
 
   // ─── Skills Manager ──────────────────────────────────────────────────────
@@ -662,7 +663,7 @@ test.describe('Claude Threads UI', () => {
     await page.goto(skillsUrl);
     await page.waitForSelector('.ct-skills-count');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('skills-manager-installed.png', { fullPage: true });
+    await shot(page, 'skills-manager-installed.png', { fullPage: true });
   });
 
   test('skills manager — browse tab', async ({ page }) => {
@@ -672,7 +673,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-skills-tabs');
     await page.getByText('Browse').click();
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('skills-manager-browse.png', { fullPage: true });
+    await shot(page, 'skills-manager-browse.png', { fullPage: true });
   });
 
   // ─── Settings tab ────────────────────────────────────────────────────────
@@ -683,7 +684,7 @@ test.describe('Claude Threads UI', () => {
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('settings-general.png', { fullPage: true });
+    await shot(page, 'settings-general.png', { fullPage: true });
   });
 
   test('settings — claude tab', async ({ page }) => {
@@ -696,7 +697,7 @@ test.describe('Claude Threads UI', () => {
     // settings-claude.png name to match the tab id.
     await page.click('.ct-settings-tab-btn:has-text("Agent")');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('settings-claude.png', { fullPage: true });
+    await shot(page, 'settings-claude.png', { fullPage: true });
   });
 
   test('settings — tools tab', async ({ page }) => {
@@ -706,7 +707,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("Tools")');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('settings-tools.png', { fullPage: true });
+    await shot(page, 'settings-tools.png', { fullPage: true });
   });
 
   test('settings — mcp tab', async ({ page }) => {
@@ -724,7 +725,7 @@ test.describe('Claude Threads UI', () => {
       if (app) app.style.height = 'auto';
     });
     await page.waitForTimeout(50);
-    await expect(page).toHaveScreenshot('settings-mcp.png', { fullPage: true });
+    await shot(page, 'settings-mcp.png', { fullPage: true });
   });
 
   test('settings — mcp edit server form', async ({ page }) => {
@@ -743,7 +744,7 @@ test.describe('Claude Threads UI', () => {
       .click();
     await page.waitForSelector('.modal-overlay');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('settings-mcp-edit.png', { fullPage: true });
+    await shot(page, 'settings-mcp-edit.png', { fullPage: true });
   });
 
   test('sub-agent task pill while working', async ({ page }) => {
@@ -758,7 +759,7 @@ test.describe('Claude Threads UI', () => {
     // The fixture has a message with toolResultImages — verify the img is in the DOM
     const imgCount = await page.locator('.ct-tool-result-images img').count();
     if (imgCount === 0) throw new Error('No .ct-tool-result-images img found — toolResultImages not rendered');
-    await expect(page).toHaveScreenshot('tool-result-images.png', { fullPage: true });
+    await shot(page, 'tool-result-images.png', { fullPage: true });
 
     // Simulate the state after an Agent tool call commits: the "Sub-agent working"
     // placeholder is created, then task_started prepends a task pill to it.
@@ -791,7 +792,7 @@ test.describe('Claude Threads UI', () => {
     });
 
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('subagent-task-pill.png', { fullPage: true });
+    await shot(page, 'subagent-task-pill.png', { fullPage: true });
   });
 
   test('workflow progress block while running', async ({ page }) => {
@@ -857,7 +858,7 @@ test.describe('Claude Threads UI', () => {
     });
 
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('workflow-block-running.png', { fullPage: true });
+    await shot(page, 'workflow-block-running.png', { fullPage: true });
 
     // Simulate workflow completion
     await page.evaluate(() => {
@@ -869,7 +870,7 @@ test.describe('Claude Threads UI', () => {
       }
     });
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('workflow-block-done.png', { fullPage: true });
+    await shot(page, 'workflow-block-done.png', { fullPage: true });
   });
 
   test('task list card', async ({ page }) => {
@@ -887,7 +888,7 @@ test.describe('Claude Threads UI', () => {
     }
     await expect(page.locator('.ct-task-row-completed')).toHaveCount(4);
     await expect(page.locator('.ct-task-row-in_progress')).toHaveCount(1);
-    await expect(page).toHaveScreenshot('task-list-card.png', { fullPage: true });
+    await shot(page, 'task-list-card.png', { fullPage: true });
 
     // Collapse on header click
     await page.click('.ct-task-card-header');
@@ -914,7 +915,7 @@ test.describe('Claude Threads UI', () => {
     // Four pills, in order, with the PR pill rendered.
     await expect(page.locator('.ct-footer-pill')).toHaveCount(4);
     await expect(page.locator('.ct-footer-pill-warn')).toHaveCount(1);
-    await expect(page).toHaveScreenshot('status-line-tags.png', { fullPage: true });
+    await shot(page, 'status-line-tags.png', { fullPage: true });
   });
 
   test('git diff bar — branch, diff stat, and Create PR split button', async ({ page }) => {
@@ -941,14 +942,14 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-git-diff-stat-add')).toHaveText('+60');
     await expect(page.locator('.ct-git-diff-stat-del')).toHaveText('-4');
     await expect(page.locator('.ct-git-diff-create-btn')).toHaveText('Create PR');
-    await expect(page).toHaveScreenshot('git-diff-bar.png', { fullPage: true });
+    await shot(page, 'git-diff-bar.png', { fullPage: true });
 
     // Open the split-button dropdown: 3 actions.
     await page.click('.ct-git-diff-dropdown-btn');
     await page.waitForSelector('.menu');
     const menuItems = await page.locator('.menu .menu-item').allTextContents();
     expect(menuItems).toEqual(['Create PR', 'Create draft PR', 'Manually create PR']);
-    await expect(page).toHaveScreenshot('git-diff-bar-menu.png', { fullPage: true });
+    await shot(page, 'git-diff-bar-menu.png', { fullPage: true });
   });
 
   test('git diff bar — View PR when the thread already has an open PR', async ({ page }) => {
@@ -980,7 +981,7 @@ test.describe('Claude Threads UI', () => {
     // that already said so — either from the script's kind:'pr' tag or, once
     // that tag was removed, from the synthesized sticky-prUrl pill.)
     await expect(page.locator('.ct-footer-pill-pr')).toHaveCount(0);
-    await expect(page).toHaveScreenshot('git-diff-bar-view-pr.png', { fullPage: true });
+    await shot(page, 'git-diff-bar-view-pr.png', { fullPage: true });
 
     // Open the split-button dropdown: View PR is prepended above the other 3 actions.
     await page.click('.ct-git-diff-dropdown-btn');
@@ -1120,7 +1121,7 @@ test.describe('Claude Threads UI', () => {
     await expect(waitingCol.locator('.ct-kanban-icon-waiting')).toHaveCount(1);
     await expect(waitingCol).toContainText('Resumes');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('kanban-status.png', { fullPage: true });
+    await shot(page, 'kanban-status.png', { fullPage: true });
   });
 
   test('kanban kickoff harness picker selects without dispatching', async ({ page }) => {
@@ -1145,7 +1146,7 @@ test.describe('Claude Threads UI', () => {
     await harnessButton.click({ button: 'right' });
     const reopenedMenu = page.locator('.ct-harness-menu');
     await expect(reopenedMenu).toBeVisible();
-    await expect(reopenedMenu).toHaveScreenshot('kanban-harness-picker.png');
+    await shot(reopenedMenu, 'kanban-harness-picker.png');
   });
 
   test('kanban board — group by folder swimlanes', async ({ page }) => {
@@ -1161,7 +1162,7 @@ test.describe('Claude Threads UI', () => {
       throw new Error(`Unexpected swimlane order. Expected ${expected.join(', ')} — got ${lanes.join(', ')}`);
     }
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('kanban-folder-swimlanes.png', { fullPage: true });
+    await shot(page, 'kanban-folder-swimlanes.png', { fullPage: true });
   });
 
   test('kanban board — group by project columns', async ({ page }) => {
@@ -1214,7 +1215,7 @@ test.describe('Claude Threads UI', () => {
     await expect(hiptripNewLabel.locator('.ct-kanban-badge')).toHaveCount(1);
 
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('kanban-project-columns.png', { fullPage: true });
+    await shot(page, 'kanban-project-columns.png', { fullPage: true });
   });
 
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {
@@ -1268,7 +1269,7 @@ test.describe('Claude Threads UI', () => {
     await expect(badgedCard.locator('.ct-orchestrator-badge')).toHaveCount(1);
     await expect(page.locator('.ct-orchestrator-badge')).toHaveCount(1);
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('kanban-orchestrator-badge.png', { fullPage: true });
+    await shot(page, 'kanban-orchestrator-badge.png', { fullPage: true });
   });
 
   // ─── Status area redesign ─────────────────────────────────────────────────
@@ -1300,7 +1301,7 @@ test.describe('Claude Threads UI', () => {
       view['renderQueueRows']();
     });
     await page.waitForSelector('.ct-queue-row');
-    await expect(page).toHaveScreenshot('queue-rows.png', { fullPage: true });
+    await shot(page, 'queue-rows.png', { fullPage: true });
   });
 
   test('status rail — active-work card with spinner', async ({ page }) => {
@@ -1315,7 +1316,7 @@ test.describe('Claude Threads UI', () => {
       view['showStatusCard']('active', 'Compacting context…');
     });
     await page.waitForSelector('.ct-status-card-active');
-    await expect(page).toHaveScreenshot('status-rail-active-card.png', { fullPage: true });
+    await shot(page, 'status-rail-active-card.png', { fullPage: true });
   });
 
   test('thinking spinner — shown before first token', async ({ page }) => {
@@ -1332,7 +1333,7 @@ test.describe('Claude Threads UI', () => {
     });
     await page.waitForSelector('.ct-thinking-spinner');
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('thinking-spinner.png', { fullPage: true });
+    await shot(page, 'thinking-spinner.png', { fullPage: true });
   });
 
   test('model escalation tip — popover above model button', async ({ page }) => {
@@ -1350,7 +1351,7 @@ test.describe('Claude Threads UI', () => {
     // the tip at full opacity for the snapshot.
     await page.addStyleTag({ content: '.ct-escalation-tip { animation: none !important; opacity: 1 !important; transform: translateX(-50%) !important; }' });
     await page.waitForTimeout(100);
-    await expect(page).toHaveScreenshot('model-escalation-tip.png', { fullPage: true });
+    await shot(page, 'model-escalation-tip.png', { fullPage: true });
   });
 
   test('model escalation — button stays highlighted for the whole turn', async ({ page }) => {
@@ -1372,7 +1373,7 @@ test.describe('Claude Threads UI', () => {
         '.ct-escalation-tip { display: none !important; } .ct-model-btn-escalated { animation: none !important; }',
     });
     await page.waitForTimeout(100);
-    await expect(page).toHaveScreenshot('model-escalation-turn-button.png', { fullPage: true });
+    await shot(page, 'model-escalation-turn-button.png', { fullPage: true });
     // Turn end clears the indicator.
     await page.evaluate(() => {
       const view = (window as any).__view;
@@ -1399,7 +1400,7 @@ test.describe('Claude Threads UI', () => {
     });
     await page.waitForSelector('.ct-status-card-active');
     await expect(page.locator('.ct-status-card-active')).toContainText('Planning...');
-    await expect(page).toHaveScreenshot('plan-mode-planning.png', { fullPage: true });
+    await shot(page, 'plan-mode-planning.png', { fullPage: true });
   });
 
   test('plan mode — approve/reject card', async ({ page }) => {
@@ -1436,7 +1437,7 @@ test.describe('Claude Threads UI', () => {
     // Default view should show rendered markdown, not a textarea
     await expect(page.locator('.ct-plan-md')).toBeVisible();
     await expect(page.locator('.ct-plan-textarea')).not.toBeVisible();
-    await expect(page).toHaveScreenshot('plan-mode-approve-reject.png', { fullPage: true });
+    await shot(page, 'plan-mode-approve-reject.png', { fullPage: true });
   });
 
   test('context usage panel', async ({ page }) => {
@@ -1466,7 +1467,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-context-usage-card');
     await expect(page.locator('.ct-context-usage-card')).toBeVisible();
     await expect(page.locator('.ct-context-usage-title')).toContainText('Context usage');
-    await expect(page).toHaveScreenshot('context-usage-panel.png', { fullPage: true });
+    await shot(page, 'context-usage-panel.png', { fullPage: true });
   });
 
   for (const usageViewport of [
@@ -1508,7 +1509,7 @@ test.describe('Claude Threads UI', () => {
       await expect(card.locator('.ct-usage-account')).toHaveCount(0);
       expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await expect(page).toHaveScreenshot(usageViewport.golden, { fullPage: true });
+      await shot(page, usageViewport.golden, { fullPage: true });
     });
   }
 

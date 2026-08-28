@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -75,7 +76,7 @@ test('completed builtin command becomes a pill', async ({ page }) => {
   await expect(pill).toContainText('/goal');
   await expect(page.locator('.ct-input')).toHaveValue('');
   await page.type('.ct-input', 'ship the release');
-  await expect(page).toHaveScreenshot('command-pill.png');
+  await shot(page, 'command-pill.png');
 });
 
 test('selecting a builtin from the dropdown creates a pill', async ({ page }) => {

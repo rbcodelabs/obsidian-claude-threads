@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -98,7 +99,7 @@ test.describe('Bridge-aware edits', () => {
     await page.evaluate(() => {
       document.querySelector('.ct-floating-panel')?.classList.remove('ct-panel-collapsible');
     });
-    await expect(page).toHaveScreenshot('edited-files-bridge.png', { fullPage: true });
+    await shot(page, 'edited-files-bridge.png', { fullPage: true });
   });
 
   test('absolute bridge-repo path in message text becomes an internal link', async ({ page }) => {
@@ -139,6 +140,6 @@ test.describe('Bridge-aware edits', () => {
     // A repo path outside the bridged source folder is NOT linkified.
     await expect(page.locator('a.internal-link', { hasText: 'notes.txt' })).toHaveCount(0);
 
-    await expect(page).toHaveScreenshot('message-bridge-link.png', { fullPage: true });
+    await shot(page, 'message-bridge-link.png', { fullPage: true });
   });
 });

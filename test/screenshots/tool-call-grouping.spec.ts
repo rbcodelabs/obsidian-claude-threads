@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -37,7 +38,7 @@ test.describe('Tool-call grouping', () => {
     const editingGroup = page.locator('.ct-tool-group').nth(1);
     await expect(editingGroup.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-collapsed.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-collapsed.png', { fullPage: true });
   });
 
   test('clicking a group header expands it', async ({ page }) => {
@@ -45,7 +46,7 @@ test.describe('Tool-call grouping', () => {
     await exploringGroup.locator('.ct-expand-btn').click();
     await expect(exploringGroup.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('tool-call-grouping-expanded.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-expanded.png', { fullPage: true });
   });
 
   test('error group auto-expands and is visually flagged', async ({ page }) => {
@@ -54,7 +55,7 @@ test.describe('Tool-call grouping', () => {
     await expect(editingGroup.locator('.ct-tool-group-header')).toHaveClass(/ct-tool-error/);
     // At least one pill inside the group carries the error tint class.
     await expect(editingGroup.locator('.ct-tool-pill.ct-tool-error')).toHaveCount(1);
-    await expect(editingGroup).toHaveScreenshot('tool-call-grouping-error-expanded.png');
+    await shot(editingGroup, 'tool-call-grouping-error-expanded.png');
   });
 
   test('isolated calls still render as plain ungrouped pills', async ({ page }) => {
@@ -62,7 +63,7 @@ test.describe('Tool-call grouping', () => {
     // calls — WebFetch, Write, and the trailing Read in this fixture.
     const isolatedPills = page.locator('.ct-tools > .ct-tool-pill');
     await expect(isolatedPills).toHaveCount(3);
-    await expect(isolatedPills.first()).toHaveScreenshot('tool-call-grouping-isolated-pill.png');
+    await shot(isolatedPills.first(), 'tool-call-grouping-isolated-pill.png');
   });
 });
 
@@ -99,7 +100,7 @@ test.describe('Outer-wrap tool-call grouping (finalized)', () => {
     const outerWrap = outerWraps.nth(0); // msg-t8-2 — no error
     await expect(outerWrap.locator(':scope > .ct-full-content')).toHaveClass(/ct-hidden/);
     await expect(outerWrap.locator('.ct-tool-outer-wrap-header .ct-compressed-summary')).toHaveText('22 tool calls, 10 steps');
-    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-collapsed.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-outer-wrap-collapsed.png', { fullPage: true });
   });
 
   test('clicking the outer expand button reveals content structurally identical to the flat path', async ({ page }) => {
@@ -116,7 +117,7 @@ test.describe('Outer-wrap tool-call grouping (finalized)', () => {
     await expect(fullContent.locator(':scope > .ct-tool-pill')).toHaveCount(3);
 
     await page.waitForTimeout(200);
-    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-expanded.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-outer-wrap-expanded.png', { fullPage: true });
   });
 
   test('a buried error auto-expands BOTH the outer wrap and the inner group containing it', async ({ page }) => {
@@ -134,7 +135,7 @@ test.describe('Outer-wrap tool-call grouping (finalized)', () => {
     await expect(editingGroup.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
     await expect(editingGroup.locator('.ct-tool-pill.ct-tool-error')).toHaveCount(1);
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-error-auto-expanded.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-outer-wrap-error-auto-expanded.png', { fullPage: true });
   });
 });
 
@@ -173,7 +174,7 @@ test.describe('Fragmented tool-only messages (view-layer merge)', () => {
     // 'exploring' call in the concatenated tool list) — 2 groups total.
     await expect(page.locator('.ct-tool-group')).toHaveCount(2);
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-fragmented-merged.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-fragmented-merged.png', { fullPage: true });
   });
 });
 
@@ -248,7 +249,7 @@ test.describe('Live tool-call grouping', () => {
     // NOT force-expand just because it's live.
     await expect(group.locator('.ct-full-content')).toHaveClass(/ct-hidden/);
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-live-collapsed.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-live-collapsed.png', { fullPage: true });
   });
 
   test('the in-flight tool still shows its own active indicator alongside resolved siblings', async ({ page }) => {
@@ -415,7 +416,7 @@ test.describe('Live tool-call grouping', () => {
     await expect(groupAfter.locator('.ct-compressed-summary')).toHaveText('Exploring (5)');
     await expect(groupAfter.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-fragmented-live-merged.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-fragmented-live-merged.png', { fullPage: true });
   });
 
   // ─── Outer-wrap tier while LIVE — the live-updating "current tool" header ──
@@ -453,7 +454,7 @@ test.describe('Live tool-call grouping', () => {
     await expect(header.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-name')).toHaveText('Edit');
     await expect(header.locator('.ct-tool-outer-wrap-live-summary .ct-tool-pill-text')).toHaveText('call #7');
 
-    await expect(page).toHaveScreenshot('tool-call-grouping-outer-wrap-live-current-command.png', { fullPage: true });
+    await shot(page, 'tool-call-grouping-outer-wrap-live-current-command.png', { fullPage: true });
 
     // Fire one more tool_use event for a DIFFERENT tool — concrete proof the
     // header live-updates rather than freezing at its first render.

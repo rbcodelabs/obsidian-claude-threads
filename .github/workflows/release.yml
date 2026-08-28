@@ -39,13 +39,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Update versions.json
-        run: |
-          VERSION=$(jq -r '.version' manifest.json)
-          MIN_APP=$(jq -r '.minAppVersion' manifest.json)
-          # Prepend new version entry (jq merges left-to-right, so put new key first)
-          jq --arg v "$VERSION" --arg m "$MIN_APP" \
-            '{($v): $m} + .' versions.json > versions.tmp && mv versions.tmp versions.json
+      - name: Verify versions.json is in sync
+        # This used to *mutate* versions.json here and ship the result as an
+        # asset without ever committing it back, so the repo copy drifted --
+        # by v0.27.10 it was missing 106 released versions going back to 0.1.0.
+        # versions.json is now maintained in the repo (npm run sync-versions,
+        # wired into `npm version`), and this step only guards it.
+        run: node scripts/sync-versions.mts --check
 
       - name: Create release and upload assets
         env:
