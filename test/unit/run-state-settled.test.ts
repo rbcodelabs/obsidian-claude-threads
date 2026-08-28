@@ -127,35 +127,6 @@ function makeWakeupStore() {
   };
 }
 
-// ── Mirrors of the view-layer decision logic ────────────────────────────────
-
-/**
- * Mirrors ThreadsView.refreshWakeupBanner()'s visibility decision, wired the
- * same way handleEvent() wires it: recompute only on 'wakeup_changed' and
- * 'run_state_settled' (the exact two cases in the real switch).
- */
-function makeWakeupBannerMirror(
-  manager: ThreadManagerInstance,
-  wakeups: ReturnType<typeof makeWakeupStore>,
-  threadId: string,
-) {
-  let visible = false;
-  const recompute = () => {
-    visible = wakeups.hasPending(threadId) && !manager.isRunning(threadId);
-  };
-  const unsubscribe = manager.subscribe((id, event) => {
-    if (id !== threadId) return;
-    if (event.type === 'wakeup_changed' || event.type === 'run_state_settled') {
-      recompute();
-    }
-  });
-  recompute();
-  return {
-    get visible() { return visible; },
-    unsubscribe,
-  };
-}
-
 /**
  * Mirrors the AgentDashboard/KanbanView bucketing decision (running >
  * waiting > other), wired the same way their handleEvent() switches are:
@@ -284,37 +255,6 @@ describe('ThreadManager — run_state_settled (single-session model)', () => {
     expect(events).toContain('error');
     expect(events).toContain('run_state_settled');
     expect(manager.isRunning(thread.id)).toBe(false);
-  });
-});
-
-describe('wake-up banner visibility — regression for the stuck-until-thread-switch bug', () => {
-  it('stays hidden while a turn is in flight, then becomes visible automatically on run_state_settled — no extra trigger', async () => {
-    const manager = makeManager();
-    const thread = manager.createThread('T', process.cwd());
-    const wakeups = makeWakeupStore();
-    const banner = makeWakeupBannerMirror(manager, wakeups, thread.id);
-
-    expect(banner.visible).toBe(false);
-
-    await manager.sendMessage(thread.id, 'Hi');
-
-    // A wake-up is registered mid-turn, exactly like the ScheduleWakeup MCP
-    // tool calling back into the plugin while the thread is still running.
-    wakeups.register(thread.id, { fireAt: Date.now() + 60_000, reason: 'check CI status' });
-    manager.notifyWakeupChanged(thread.id);
-    expect(banner.visible).toBe(false); // still running — must stay hidden
-
-    mock.callbacks!.onDone('sess-1', 0.001, 1);
-    // The banner mirror only recomputes on 'wakeup_changed'/'run_state_settled',
-    // so this assertion fails unless run_state_settled actually fires and
-    // isRunning() has already settled to false by the time it does.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(manager.isRunning(thread.id)).toBe(false);
-    expect(banner.visible).toBe(true);
-
-    banner.unsubscribe();
   });
 });
 

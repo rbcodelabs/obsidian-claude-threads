@@ -9,11 +9,12 @@ const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/cla
 const manager = new ThreadManager(settings);
 manager.loadThreads(fixtureThreads);
 
-// Minimal scheduler mock — ThreadsView reads this for the /loop footer pill
-// and banner (renderStatusFooter / refreshLoopBanner). No fixture thread has
+// Minimal scheduler mock — ThreadsView reads this for the scheduled-activity
+// pill and popover. No fixture thread has
 // a loop by default, so listItems() starts empty; tests that need to
 // exercise the loop UI can call __setLoop below.
-const loopItems = new Map<string, { id: string; targetThreadId: string; prompt: string; schedule: { type: 'interval'; intervalSeconds: number }; enabled: boolean; nextRun?: number }>();
+const loopItems = new Map<string, any>();
+let nextDeleteError: Error | null = null;
 const mockScheduler = {
   listItems: () => [...loopItems.values()],
   createItem: (params: any) => {
@@ -21,8 +22,13 @@ const mockScheduler = {
     loopItems.set(item.id, item);
     return item;
   },
-  deleteItem: (id: string) => {
+  deleteItem: async (id: string) => {
     loopItems.delete(id);
+    if (nextDeleteError) {
+      const error = nextDeleteError;
+      nextDeleteError = null;
+      throw error;
+    }
   },
   updateItem: (id: string, patch: any) => {
     const existing = loopItems.get(id);
@@ -31,6 +37,12 @@ const mockScheduler = {
     loopItems.set(id, updated);
     return updated;
   },
+};
+(window as any).__failNextScheduleDelete = (message: string) => { nextDeleteError = new Error(message); };
+(window as any).__removeWakeupsSilently = (threadId: string) => {
+  for (const item of [...loopItems.values()]) {
+    if (item.origin === 'wakeup' && item.targetThreadId === threadId) loopItems.delete(item.id);
+  }
 };
 
 const mockPlugin = {
@@ -47,11 +59,17 @@ const mockPlugin = {
   },
   saveSettings: async () => {},
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
-  getPendingWakeups: (threadId: string) =>
-    [...(pendingWakeups.get(threadId) ?? [])].sort((a, b) => a.fireAt - b.fireAt),
-  hasPendingWakeup: (threadId: string) => (pendingWakeups.get(threadId)?.length ?? 0) > 0,
+  getPendingWakeups: (threadId: string) => [...loopItems.values()]
+    .filter((item: any) => item.origin === 'wakeup' && item.enabled && item.targetThreadId === threadId)
+    .map((item: any) => ({ fireAt: item.nextRun ?? item.schedule.fireAt, reason: item.name.replace(/^Wakeup: /, '') }))
+    .filter((item: any) => item.fireAt != null)
+    .sort((a: any, b: any) => a.fireAt - b.fireAt),
+  hasPendingWakeup: (threadId: string) => [...loopItems.values()]
+    .some((item: any) => item.origin === 'wakeup' && item.enabled && item.targetThreadId === threadId),
   cancelWakeups: (threadId: string) => {
-    pendingWakeups.delete(threadId);
+    for (const item of [...loopItems.values()]) {
+      if (item.origin === 'wakeup' && item.enabled && item.targetThreadId === threadId) loopItems.delete(item.id);
+    }
     manager.notifyWakeupChanged(threadId);
   },
 };
@@ -77,11 +95,20 @@ const mockPlugin = {
   thread.scheduledItemName = scheduledItemName;
 };
 
-// Mutable wake-up state so screenshot tests can drive the waiting indicator
-// through the real notifyWakeupChanged → handleEvent → refreshWakeupBanner path.
-const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();
+// Seed durable wakeup items so screenshot tests exercise the same scheduler
+// source of truth used by the production pill, dashboard, and Kanban surfaces.
 (window as any).__setWakeup = (threadId: string, fireAt: number, reason: string) => {
-  pendingWakeups.set(threadId, [{ timerId: 0, fireAt, reason }]);
+  const id = `wakeup-${loopItems.size + 1}`;
+  loopItems.set(id, {
+    id,
+    name: `Wakeup: ${reason}`,
+    prompt: reason,
+    origin: 'wakeup',
+    schedule: { type: 'once', fireAt },
+    enabled: true,
+    targetThreadId: threadId,
+    nextRun: fireAt,
+  });
   manager.notifyWakeupChanged(threadId);
 };
 
@@ -89,12 +116,8 @@ const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason
 // `sessions`/`lingeringSessions` are TS `private` on ThreadManager (compile-time
 // only — erased at runtime), so poking them here is the same technique the
 // Kanban harness already uses to seed Working/Awaiting state. This lets
-// screenshot tests drive the exact real-world sequence that used to leave the
-// wake-up banner stuck: mark the thread running, register a wake-up (banner
-// must stay hidden), mark it no-longer-running (still no event — banner must
-// STILL stay hidden), then fire the real `run_state_settled` event through
-// the real ThreadManager → ThreadsView.handleEvent → refreshWakeupBanner
-// pipeline and confirm the banner appears with no other trigger.
+// screenshot tests drive the run-state transition while scheduled activity is
+// present, confirming that the compact pill remains accurate throughout.
 const mgrInternals = manager as unknown as {
   sessions: Map<string, unknown>;
   emit(threadId: string, event: { type: string }): void;
@@ -102,8 +125,8 @@ const mgrInternals = manager as unknown as {
 (window as any).__setThreadRunning = (threadId: string, running: boolean) => {
   // `isRunning()` reads `session.turnInFlight` (the unified long-lived-session
   // model — see ThreadManager.sessions), so a bare `{}` reads as NOT running.
-  // Seed the flag so Working/Awaiting classification and the wake-up banner's
-  // isRunning() gate behave as they do against a real busy session.
+  // Seed the flag so Working/Awaiting classification behaves as it does against
+  // a real busy session.
   if (running) mgrInternals.sessions.set(threadId, { turnInFlight: true });
   else mgrInternals.sessions.delete(threadId);
 };

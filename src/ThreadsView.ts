@@ -32,6 +32,7 @@ import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
 import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
 import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
+import { deleteScheduledActivity, scheduledActivityForThread, scheduledActivitySummary, type ScheduledActivity } from './scheduledActivity';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -91,6 +92,10 @@ export class ThreadsView extends ItemView {
    */
   private agentPopoverEl: HTMLElement | null = null;
   private agentPopoverOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  private schedulePillEl: HTMLButtonElement | null = null;
+  private schedulePopoverEl: HTMLElement | null = null;
+  private schedulePopoverOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  private schedulePopoverOutsideTimer: ReturnType<typeof setTimeout> | null = null;
   /** Timeline body of the in-place child activity view, refreshed live. */
   private agentViewBodyEl: HTMLElement | null = null;
   /** Remembered scroll offsets, keyed "<threadId>:main" or "<threadId>:<agentRunId>". */
@@ -176,18 +181,11 @@ export class ThreadsView extends ItemView {
   // behavior — it stays visible at rest, like the input row itself.
   private gitDiffBarEl!: HTMLElement;
 
-  // Scheduled wake-up banner (shown above the input when the active thread has
-  // a pending ScheduleWakeup). The countdown ticks every second while visible.
-  private wakeupBannerEl!: HTMLElement;
-  private wakeupCountdownEl: HTMLElement | null = null;
+  // Live countdown for the scheduled-activity pill and its open popover.
   private wakeupCountdownTimer: ReturnType<typeof setInterval> | null = null;
   // Lightweight sweep that pauses the open thread's spinners once it is
   // `isRunning` but wedged (no progress for STALE_MS) — see refreshStale.
   private staleInterval: ReturnType<typeof setInterval> | null = null;
-
-  // Active-loop banner (shown above the input when the active thread has a
-  // running /loop). No ticking timer — refreshed on explicit state changes.
-  private loopBannerEl!: HTMLElement;
 
   // (status rail state tracked via activeWorkCardEl / rateLimitCardEl / toastEl fields above)
 
@@ -581,6 +579,7 @@ export class ThreadsView extends ItemView {
     // attached leaks a handler that outlives the view.
     this.closeSwitcherPanel();
     this.closeAgentPopover();
+    this.closeSchedulePopover();
     this.agentScroll.clear();
     this.dispatchInput?.destroy();
     // Leaves an IntersectionObserver and a window-level message listener
@@ -664,8 +663,6 @@ export class ThreadsView extends ItemView {
     this.floatingPanelEl = floatingPanel;
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
-    this.wakeupBannerEl = panelContext.createDiv('ct-wakeup-banner ct-hidden');
-    this.loopBannerEl = panelContext.createDiv('ct-loop-banner ct-hidden');
     this.managerNotesPanelEl = panelContext.createDiv('ct-manager-notes-panel ct-hidden');
     this.proposedReplyBannerEl = panelContext.createDiv('ct-proposed-reply-banner ct-hidden');
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
@@ -718,6 +715,27 @@ export class ThreadsView extends ItemView {
       onInput: () => this.scheduleDraftSave(),
       onChipChange: () => this.scheduleDraftSave(),
       appendFooterMetadata: (container) => {
+        this.schedulePillEl = container.createEl('button', {
+          cls: 'ct-schedule-pill ct-hidden',
+          attr: {
+            type: 'button',
+            title: 'View scheduled activity',
+            'aria-label': 'View scheduled activity',
+            'aria-haspopup': 'dialog',
+            'aria-expanded': 'false',
+          },
+        });
+        const scheduleIcon = this.schedulePillEl.createSpan('ct-schedule-pill-icon');
+        setIcon(scheduleIcon, 'clock-3');
+        this.schedulePillEl.createSpan('ct-schedule-pill-text');
+        const chevron = this.schedulePillEl.createSpan('ct-schedule-pill-chevron');
+        setIcon(chevron, 'chevron-up');
+        this.schedulePillEl.addEventListener('click', (event) => {
+          event.stopPropagation();
+          this.toggleSchedulePopover();
+        });
+        this.renderScheduledActivity();
+
         // Deliberately NOT .ct-footer-pill: that class belongs to the status-line
         // pills in .ct-context-footer, and several tests locate it unqualified.
         // This mirrors its visual language in CSS instead of sharing the class.
@@ -903,6 +921,7 @@ export class ThreadsView extends ItemView {
   private async setActiveThread(id: string): Promise<void> {
     this.closeSwitcherPanel();
     this.closeAgentPopover();
+    this.closeSchedulePopover();
     this.rememberAgentScroll();
     const previousId = this.activeThreadId;
 
@@ -1095,21 +1114,6 @@ export class ThreadsView extends ItemView {
       this.renderFooterPill(tag, tag.kind === 'pr' ? 'ct-footer-pill-pr' : undefined);
     }
 
-    // Synthesized loop pill: shown whenever the active thread has a running
-    // /loop, independent of statusTags (which are populated by the external
-    // status-line command, not the built-in scheduler).
-    const activeLoops = this.activeThreadId
-      ? this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === this.activeThreadId)
-      : [];
-    if (activeLoops.length > 0) {
-      const secs = activeLoops[0].schedule.intervalSeconds ?? 0;
-      this.renderFooterPill({
-        label: `Looping every ${formatLoopInterval(secs)}`,
-        icon: 'repeat',
-        kind: 'loop',
-      });
-    }
-
     // Synthesized "Scheduled: <name>" pill: shown when this thread was
     // created by a cron fire (Scheduler.createThread), independent of
     // statusTags/activeLoops — this is origin metadata, not a live loop.
@@ -1124,7 +1128,7 @@ export class ThreadsView extends ItemView {
 
     // Mirrors what was actually rendered above: a prUrl that got deduped away
     // must not keep an otherwise-empty footer on screen as a blank strip.
-    const empty = !showPrPill && tags.length === 0 && activeLoops.length === 0 && !hasScheduledOrigin;
+    const empty = !showPrPill && tags.length === 0 && !hasScheduledOrigin;
     this.contextFooterEl.toggleClass('ct-hidden', empty);
   }
 
@@ -1580,8 +1584,7 @@ export class ThreadsView extends ItemView {
     // Re-render queue rows in case the thread changed.
     this.renderQueueRows();
 
-    // Loop banner/pill depend on the active thread — refresh on every switch.
-    this.refreshLoopBanner();
+    this.renderScheduledActivity();
     this.renderStatusFooter();
 
     // Thread-orchestrator UI depends on the active thread — refresh on every switch.
@@ -3765,7 +3768,7 @@ export class ThreadsView extends ItemView {
     switch (event.type) {
       case 'wakeup_changed': {
         // A wake-up was registered, fired, or cancelled on the active thread.
-        this.refreshWakeupBanner();
+        this.renderScheduledActivity();
         break;
       }
 
@@ -3783,8 +3786,7 @@ export class ThreadsView extends ItemView {
         // The session generation has fully unwound and isRunning() has reached
         // its final settled value — re-check banners that gate on isRunning()
         // so they don't stay stale until an unrelated re-render forces them.
-        this.refreshWakeupBanner();
-        this.refreshLoopBanner();
+        this.renderScheduledActivity();
         break;
       }
 
@@ -4733,98 +4735,149 @@ export class ThreadsView extends ItemView {
     }
     // Queue rows should always reflect current queue state.
     this.renderQueueRows();
-    // A running thread can't simultaneously be waiting on a wake-up.
-    this.refreshWakeupBanner();
-    // "Loop running…" vs "next ~HH:MM" depends on run state.
-    this.refreshLoopBanner();
+    this.renderScheduledActivity();
   }
 
-  // ── Scheduled wake-up banner ────────────────────────────────────────────
-  /**
-   * Show/hide the wake-up banner for the active thread and (re)build its
-   * contents. Called on thread switch, run-state change, and wakeup_changed
-   * events. Starts a 1s countdown ticker while visible; stops it when hidden.
-   */
-  private refreshWakeupBanner(): void {
-    if (!this.wakeupBannerEl) return;
-    const threadId = this.activeThreadId;
-    const next = threadId ? this.plugin.getPendingWakeups(threadId)[0] : undefined;
+  private scheduledActivity(): ScheduledActivity[] {
+    return scheduledActivityForThread(this.plugin.scheduler.listItems(), this.activeThreadId);
+  }
 
-    if (!next || (threadId && this.manager.isRunning(threadId))) {
-      this.wakeupBannerEl.addClass('ct-hidden');
-      this.wakeupBannerEl.empty();
-      this.wakeupCountdownEl = null;
+  private renderScheduledActivity(rebuildPopover = true): void {
+    if (!this.schedulePillEl) return;
+    const activity = this.scheduledActivity();
+    this.schedulePillEl.toggleClass('ct-hidden', activity.length === 0);
+    const label = scheduledActivitySummary(activity);
+    const text = this.schedulePillEl.querySelector('.ct-schedule-pill-text');
+    if (text) text.textContent = label;
+    this.schedulePillEl.setAttribute('aria-label', label ? `${label}. View scheduled activity` : 'View scheduled activity');
+    if (activity.length === 0) {
+      this.closeSchedulePopover();
       this.stopWakeupCountdown();
       return;
     }
-
-    this.wakeupBannerEl.empty();
-    this.wakeupBannerEl.removeClass('ct-hidden');
-
-    const text = this.wakeupBannerEl.createSpan({ cls: 'ct-wakeup-banner-text' });
-    text.createSpan({ cls: 'ct-wakeup-banner-icon', text: '⏳' });
-    text.createSpan({ text: ' Resumes ' });
-    this.wakeupCountdownEl = text.createSpan({ cls: 'ct-wakeup-banner-countdown', text: formatWakeupCountdown(next.fireAt) });
-    if (next.reason) {
-      text.createSpan({ cls: 'ct-wakeup-banner-reason', text: ` — ${next.reason}` });
-    }
-
-    const cancel = this.wakeupBannerEl.createEl('button', { cls: 'ct-wakeup-banner-cancel', text: 'Cancel' });
-    cancel.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (threadId) this.plugin.cancelWakeups(threadId);
-    });
-
     this.startWakeupCountdown();
+    if (this.schedulePopoverEl) {
+      if (rebuildPopover) this.renderSchedulePopoverRows();
+      else this.reconcileSchedulePopover(activity);
+    }
   }
 
-  // ── Loop banner ──────────────────────────────────────────────────────────
-  /**
-   * Show/hide the loop banner for the active thread and (re)build its
-   * contents. Called on thread switch, loop create/stop, and run-state
-   * change. Unlike the wake-up banner, there's no ticking countdown here —
-   * "Loop running…" vs "next ~HH:MM" is only recomputed on explicit refresh.
-   */
-  private refreshLoopBanner(): void {
-    if (!this.loopBannerEl) return;
-    const threadId = this.activeThreadId;
-    const loop = threadId
-      ? this.plugin.scheduler.listItems().find((i) => i.targetThreadId === threadId)
-      : undefined;
+  private toggleSchedulePopover(): void {
+    if (this.schedulePopoverEl) {
+      this.closeSchedulePopover();
+      this.schedulePillEl?.focus();
+    } else {
+      this.openSchedulePopover();
+    }
+  }
 
-    if (!loop) {
-      this.loopBannerEl.addClass('ct-hidden');
-      this.loopBannerEl.empty();
+  private openSchedulePopover(): void {
+    if (!this.schedulePillEl || this.scheduledActivity().length === 0) return;
+    const wrapper = this.mainEl.querySelector('.ct-panel-wrapper') as HTMLElement | null;
+    if (!wrapper) return;
+    const popover = wrapper.createDiv('ct-schedule-popover');
+    popover.setAttribute('role', 'dialog');
+    popover.setAttribute('aria-label', 'Scheduled activity');
+    this.schedulePopoverEl = popover;
+    this.schedulePillEl.setAttribute('aria-expanded', 'true');
+    const header = popover.createDiv('ct-schedule-popover-header');
+    header.createSpan({ cls: 'ct-schedule-popover-title', text: 'Scheduled activity' });
+    const close = header.createEl('button', { cls: 'ct-schedule-popover-close', attr: { type: 'button', 'aria-label': 'Close scheduled activity' } });
+    setIcon(close, 'x');
+    close.addEventListener('click', () => { this.closeSchedulePopover(); this.schedulePillEl?.focus(); });
+    popover.createDiv('ct-schedule-popover-list');
+    this.renderSchedulePopoverRows();
+    popover.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.closeSchedulePopover();
+        this.schedulePillEl?.focus();
+      }
+    });
+    this.schedulePopoverOutsideTimer = setTimeout(() => {
+      this.schedulePopoverOutsideTimer = null;
+      if (this.schedulePopoverEl !== popover || !popover.isConnected) return;
+      this.schedulePopoverOutsideHandler = (event: MouseEvent) => {
+        if (!popover.contains(event.target as Node) && !this.schedulePillEl?.contains(event.target as Node)) this.closeSchedulePopover();
+      };
+      document.addEventListener('mousedown', this.schedulePopoverOutsideHandler, true);
+    }, 0);
+    (popover.querySelector('.ct-schedule-action') as HTMLElement | null)?.focus();
+  }
+
+  private closeSchedulePopover(): void {
+    this.schedulePopoverEl?.remove();
+    this.schedulePopoverEl = null;
+    this.schedulePillEl?.setAttribute('aria-expanded', 'false');
+    if (this.schedulePopoverOutsideTimer !== null) clearTimeout(this.schedulePopoverOutsideTimer);
+    this.schedulePopoverOutsideTimer = null;
+    if (this.schedulePopoverOutsideHandler) document.removeEventListener('mousedown', this.schedulePopoverOutsideHandler, true);
+    this.schedulePopoverOutsideHandler = null;
+  }
+
+  private renderSchedulePopoverRows(activity = this.scheduledActivity()): void {
+    const list = this.schedulePopoverEl?.querySelector('.ct-schedule-popover-list') as HTMLElement | null;
+    if (!list) return;
+    list.empty();
+    for (const entry of activity) {
+      const row = list.createDiv(`ct-schedule-row ct-schedule-row-${entry.kind}`);
+      row.dataset.scheduleId = entry.id;
+      const icon = row.createDiv('ct-schedule-row-icon');
+      setIcon(icon, entry.kind === 'wakeup' ? 'hourglass' : 'repeat');
+      const body = row.createDiv('ct-schedule-row-body');
+      body.createDiv({ cls: 'ct-schedule-row-type', text: entry.kind === 'wakeup' ? 'One-time wakeup' : 'Recurring loop' });
+      body.createDiv({ cls: 'ct-schedule-row-detail', text: this.scheduleActivityDetail(entry) });
+      body.createDiv({ cls: 'ct-schedule-row-label', text: entry.label });
+      const action = row.createEl('button', { cls: 'ct-schedule-action', text: entry.kind === 'wakeup' ? 'Cancel' : 'Stop', attr: { type: 'button', 'aria-label': `${entry.kind === 'wakeup' ? 'Cancel' : 'Stop'} ${entry.label}` } });
+      action.addEventListener('click', async () => {
+        try {
+          await deleteScheduledActivity(
+            entry,
+            (id) => this.plugin.scheduler.deleteItem(id),
+            (threadId) => this.manager.notifyWakeupChanged(threadId),
+          );
+          this.renderScheduledActivity();
+          this.renderStatusFooter();
+          (this.schedulePopoverEl?.querySelector('.ct-schedule-action') as HTMLElement | null)?.focus();
+        } catch (error) {
+          this.renderScheduledActivity();
+          const subject = entry.kind === 'wakeup' ? 'Wakeup canceled' : 'Loop stopped';
+          this.showCommandDivider(`${subject} in this session, but persistence failed (${(error as Error).message}). It may return after reload.`, true);
+        }
+      });
+    }
+  }
+
+  private scheduleActivityDetail(activity: ScheduledActivity): string {
+    return activity.kind === 'wakeup'
+      ? `${formatWakeupCountdown(activity.nextRun)} · ${new Date(activity.nextRun).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : `Every ${formatLoopInterval(activity.intervalSeconds ?? 0)} · next ${Number.isFinite(activity.nextRun) ? new Date(activity.nextRun).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'pending'}`;
+  }
+
+  private reconcileSchedulePopover(activity: ScheduledActivity[]): void {
+    const rows = [...(this.schedulePopoverEl?.querySelectorAll<HTMLElement>('.ct-schedule-row') ?? [])];
+    const renderedIds = rows.map((row) => row.dataset.scheduleId ?? '');
+    const activityIds = activity.map((entry) => entry.id);
+    const sameMembershipAndOrder = renderedIds.length === activityIds.length
+      && renderedIds.every((id, index) => id === activityIds[index]);
+    if (!sameMembershipAndOrder) {
+      const focusedId = document.activeElement instanceof HTMLElement
+        ? document.activeElement.closest<HTMLElement>('.ct-schedule-row')?.dataset.scheduleId
+        : undefined;
+      this.renderSchedulePopoverRows(activity);
+      if (focusedId) {
+        const focusedRow = [...(this.schedulePopoverEl?.querySelectorAll<HTMLElement>('.ct-schedule-row') ?? [])]
+          .find((row) => row.dataset.scheduleId === focusedId);
+        focusedRow?.querySelector<HTMLElement>('.ct-schedule-action')?.focus();
+      }
       return;
     }
-
-    this.loopBannerEl.empty();
-    this.loopBannerEl.removeClass('ct-hidden');
-
-    const text = this.loopBannerEl.createSpan({ cls: 'ct-loop-banner-text' });
-    const iconEl = text.createSpan({ cls: 'ct-loop-banner-icon' });
-    setIcon(iconEl, 'repeat');
-
-    if (threadId && this.manager.isRunning(threadId)) {
-      text.createSpan({ text: ' Loop running…' });
-    } else {
-      const next = loop.nextRun ? new Date(loop.nextRun) : null;
-      const label = next
-        ? `next ~${next.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-        : 'next run pending';
-      text.createSpan({ text: ` Looping every ${formatLoopInterval(loop.schedule.intervalSeconds ?? 0)} — ${label}` });
+    const byId = new Map(activity.map((entry) => [entry.id, entry]));
+    for (const row of rows) {
+      const entry = row.dataset.scheduleId ? byId.get(row.dataset.scheduleId) : undefined;
+      const detail = row.querySelector<HTMLElement>('.ct-schedule-row-detail');
+      if (entry && detail) detail.textContent = this.scheduleActivityDetail(entry);
     }
-
-    const stop = this.loopBannerEl.createEl('button', { cls: 'ct-loop-banner-stop', text: 'Stop' });
-    stop.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!threadId) return;
-      const loops = this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
-      await Promise.all(loops.map((l) => this.plugin.scheduler.deleteItem(l.id)));
-      this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
-      this.refreshLoopBanner();
-      this.renderStatusFooter();
-    });
   }
 
   private startWakeupCountdown(): void {
@@ -4839,18 +4892,9 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  /** Update just the countdown text each second; rebuild/hide when it changes shape. */
+  /** Refresh countdown and next-run text without requiring the popover to reopen. */
   private tickWakeupCountdown(): void {
-    const threadId = this.activeThreadId;
-    const next = threadId ? this.plugin.getPendingWakeups(threadId)[0] : undefined;
-    if (!next) {
-      // Fired or cancelled out from under us — rebuild handles hiding + cleanup.
-      this.refreshWakeupBanner();
-      return;
-    }
-    if (this.wakeupCountdownEl) {
-      this.wakeupCountdownEl.setText(formatWakeupCountdown(next.fireAt));
-    }
+    this.renderScheduledActivity(false);
   }
 
   private scrollToBottom(): void {
@@ -4978,7 +5022,9 @@ export class ThreadsView extends ItemView {
     if (!this.activeThreadId) return;
     const threadId = this.activeThreadId;
     const loopsForThread = () =>
-      this.plugin.scheduler.listItems().filter((i) => i.targetThreadId === threadId);
+      this.plugin.scheduler.listItems().filter((i) =>
+        i.enabled && i.targetThreadId === threadId && i.schedule.type === 'interval',
+      );
 
     if (!arg) {
       const loops = loopsForThread();
@@ -5004,7 +5050,7 @@ export class ThreadsView extends ItemView {
       }
       await Promise.all(loops.map((loop) => this.plugin.scheduler.deleteItem(loop.id)));
       this.showCommandDivider(`Stopped ${loops.length} loop${loops.length > 1 ? 's' : ''}.`);
-      this.refreshLoopBanner();
+      this.renderScheduledActivity();
       this.renderStatusFooter();
       return;
     }
@@ -5037,7 +5083,7 @@ export class ThreadsView extends ItemView {
     this.showCommandDivider(
       `Loop started: "${parsed.prompt.slice(0, 60)}" every ${formatLoopInterval(parsed.intervalSeconds)}${replacedNote}. Stop with /loop stop.`,
     );
-    this.refreshLoopBanner();
+    this.renderScheduledActivity();
     this.renderStatusFooter();
 
     // Kick off the loop immediately rather than waiting for the first

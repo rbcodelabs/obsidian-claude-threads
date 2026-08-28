@@ -256,9 +256,12 @@ restarts**. If a loop tick arrives before the thread's previous turn has finishe
 retried shortly after rather than piling up as a queued duplicate. A thread can only
 have one active loop at a time — starting a new `/loop` replaces whichever loop was
 already running there. `/loop` alone lists the thread's loop with its next run time;
-`/loop stop` (or `off`/`cancel`/`clear`) stops it. While a loop is active, a banner
-above the input shows its status ("Loop running…" or the next run time) with a **Stop**
-button, and a matching pill appears in the thread's status footer.
+`/loop stop` (or `off`/`cancel`/`clear`) stops it. While a loop is active, a compact
+scheduled-activity pill in the composer footer shows the interval. Click the pill
+to see its next run and prompt, then use the row's **Stop** control. One-time
+`ScheduleWakeup` entries appear in the same popover as distinct wakeup rows with
+their own **Cancel** controls; when both are present the pill summarizes the next
+item and adds a count (for example, `Resumes in 4m · +1`).
 
 ### Dispatching with commands
 
@@ -600,7 +603,7 @@ Control the current thread's session state.
 | Tool | Parameters | Description |
 |---|---|---|
 | `set_working_directory` | `path` | Changes the working directory for this session. Accepts an absolute path; `~` is expanded. Takes effect on the next turn. |
-| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agent Dashboard and the [Kanban board](#kanban-board), and a banner above the chat input — each with a one-click Cancel. |
+| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agent Dashboard and the [Kanban board](#kanban-board). In the thread composer, a compact `Resumes in …` pill opens scheduled activity with the wakeup reason, exact time, and an item-specific **Cancel** control. |
 | `EnterWorktree` | `branch?`, `baseBranch?`, `repoPath?` | Creates a git worktree for the current repo and switches the session cwd to it. Automatically routed to the plugin's MCP implementation, which tracks the in-session cwd correctly after `set_working_directory`. |
 | `ExitWorktree` | `worktreePath?`, `force?` | Removes the worktree and restores the session cwd to the original repo root. Defaults to the current effective cwd. Pass `force: true` to remove even if there are uncommitted changes. |
 | `threads_create` | `prompt`, `title?`, `cwd?`, `projectId?` | Creates a persistent thread and immediately queues its initial prompt. Working directory and project inherit from the caller when omitted; pass `projectId: null` to clear the project. |
