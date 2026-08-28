@@ -15,10 +15,10 @@ export function relativeTime(ts: number): string {
 /**
  * Formats the remaining time until a scheduled wake-up fires as a short,
  * human phrase: "now", "in 45s", "in 4m", "in 1h 5m". Used by both the Agent
- * Dashboard waiting rows and the chat-view wake-up banner.
+ * Dashboard waiting rows and the chat-view scheduled-activity pill.
  */
-export function formatWakeupCountdown(fireAt: number): string {
-  const remaining = fireAt - Date.now();
+export function formatWakeupCountdown(fireAt: number, now = Date.now()): string {
+  const remaining = fireAt - now;
   if (remaining <= 0) return 'now';
   const totalSeconds = Math.round(remaining / 1000);
   if (totalSeconds < 60) return `in ${totalSeconds}s`;

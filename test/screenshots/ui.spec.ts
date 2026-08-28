@@ -421,7 +421,7 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'mcp-elicitation-form-card.png', { fullPage: true });
   });
 
-  test('scheduled wake-up banner', async ({ page }) => {
+  test('scheduled wake-up pill and popover', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
@@ -435,18 +435,23 @@ test.describe('Claude Threads UI', () => {
       const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
       (window as any).__setWakeup('thread-fix-auth', fireAt, 'check CI status');
     });
-    await page.waitForSelector('.ct-wakeup-banner:not(.ct-hidden)');
-    await expect(page.locator('.ct-wakeup-banner')).toContainText('in 4m');
-    await shot(page, 'wakeup-banner.png', { fullPage: true });
+    const pill = page.locator('.ct-schedule-pill');
+    await expect(pill).toBeVisible();
+    await expect(pill).toContainText('Resumes in 4m');
+    await expect(page.getByText('Looping every 0s')).toHaveCount(0);
+    await pill.click();
+    await expect(page.locator('.ct-schedule-popover')).toBeVisible();
+    await expect(page.locator('.ct-schedule-row')).toHaveCount(1);
+    await expect(page.locator('.ct-schedule-row')).toContainText('One-time wakeup');
+    await expect(page.locator('.ct-schedule-action')).toHaveText('Cancel');
+    await page.clock.setFixedTime(new Date('2026-01-15T10:01:01Z'));
+    await page.waitForTimeout(1_100);
+    await expect(pill).toContainText('Resumes in 2m');
   });
 
-  test('regression: wake-up banner appears automatically on run_state_settled — no thread switch needed', async ({ page }) => {
-    // Reproduces the fix/scheduled-wakeup-visibility bug end to end through the
-    // real ThreadManager -> ThreadsView.handleEvent -> refreshWakeupBanner
-    // pipeline (not a direct render() call): a thread whose session moved into
-    // ThreadManager's `lingeringSessions` before 'done' fired used to leave the
-    // banner stuck hidden forever, because isRunning() was still true at that
-    // instant and nothing re-checked it once the session actually settled.
+  test('regression: scheduled pill remains accurate through run_state_settled without a thread switch', async ({ page }) => {
+    // Drive the real ThreadManager → ThreadsView event path while a wakeup is
+    // pending; the pill remains inspectable both during and after the run.
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
@@ -463,22 +468,17 @@ test.describe('Claude Threads UI', () => {
       w.__setThreadRunning(threadId, true);
       w.__setWakeup(threadId, fireAt, 'check CI status');
     });
-    // Banner must stay hidden — isRunning() is still true.
-    await expect(page.locator('.ct-wakeup-banner')).toHaveClass(/ct-hidden/);
+    // Scheduled activity remains inspectable while the thread is running.
+    await expect(page.locator('.ct-schedule-pill')).toBeVisible();
 
     await page.evaluate(() => (window as any).__setThreadRunning('thread-fix-auth', false));
-    // isRunning() just went false, but no event fired yet — the banner must
-    // NOT flip on its own; only an explicit event triggers a re-check.
-    await expect(page.locator('.ct-wakeup-banner')).toHaveClass(/ct-hidden/);
+    await expect(page.locator('.ct-schedule-pill')).toBeVisible();
 
     await page.evaluate(() => (window as any).__fireRunStateSettled('thread-fix-auth'));
-    // This is the fix under test: the banner appears from the event alone,
-    // with no focusThread()/thread-switch call anywhere in this test.
-    await page.waitForSelector('.ct-wakeup-banner:not(.ct-hidden)');
-    await expect(page.locator('.ct-wakeup-banner')).toContainText('in 4m');
+    await expect(page.locator('.ct-schedule-pill')).toContainText('in 4m');
   });
 
-  test('active loop banner and footer pill', async ({ page }) => {
+  test('combined scheduled activity has one pill and item-specific controls', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
@@ -489,14 +489,111 @@ test.describe('Claude Threads UI', () => {
     // Seed a loop targeting the active thread — mirrors what /loop 5m ... does.
     await page.evaluate(() => {
       (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
+      const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
+      (window as any).__setWakeup('thread-fix-auth', fireAt, 'check CI status');
       (window as any).__view.renderThreadInfo();
     });
-    await page.waitForSelector('.ct-loop-banner:not(.ct-hidden)');
-    await expect(page.locator('.ct-loop-banner')).toContainText('Looping every 5m');
-    await expect(page.locator('.ct-loop-banner-stop')).toBeVisible();
-    await expect(page.locator('.ct-footer-pill')).toContainText('Looping every 5m');
-    await shot(page, 'loop-banner.png', { fullPage: true });
+    const pill = page.locator('.ct-schedule-pill');
+    await expect(pill).toHaveCount(1);
+    await expect(pill).toContainText('Resumes in 4m · +1');
+    await pill.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.ct-schedule-row')).toHaveCount(2);
+    await expect(page.locator('.ct-schedule-action')).toHaveText(['Cancel', 'Stop']);
+    const stopAction = page.locator('.ct-schedule-action', { hasText: 'Stop' });
+    await stopAction.focus();
+    await page.waitForTimeout(1_100);
+    await expect(stopAction).toBeFocused();
+    await shot(page, 'scheduled-activity-combined.png', { fullPage: true });
+    await stopAction.click();
+    await expect(page.locator('.ct-schedule-row')).toHaveCount(1);
+    await expect(page.locator('.ct-schedule-row')).toContainText('One-time wakeup');
+    await expect(pill).toContainText('Resumes in 4m');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.ct-schedule-popover')).toHaveCount(0);
+    await pill.click();
+    await page.locator('.ct-messages').click({ position: { x: 10, y: 10 } });
+    await expect(page.locator('.ct-schedule-popover')).toHaveCount(0);
+    await pill.click();
+    await page.locator('.ct-schedule-action', { hasText: 'Cancel' }).click();
+    await expect(pill).toHaveClass(/ct-hidden/);
+    await expect(page.locator('.ct-schedule-popover')).toHaveCount(0);
   });
+
+  test('loop-only activity opens with Space and closes when switching threads', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
+      (window as any).__view.focusThread('thread-fix-auth');
+    });
+    const pill = page.locator('.ct-schedule-pill');
+    await expect(pill).toContainText('Every 5m');
+    await pill.focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('.ct-schedule-popover')).toBeVisible();
+    await expect(page.locator('.ct-schedule-row-loop')).toContainText('Recurring loop');
+    await expect(page.locator('.ct-schedule-action')).toHaveText('Stop');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await expect(page.locator('.ct-schedule-popover')).toHaveCount(0);
+  });
+
+  test('timer tick reconciles a fired wakeup while preserving the remaining loop row', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
+      (window as any).__setWakeup('thread-fix-auth', Date.now() + 240_000, 'check CI status');
+      (window as any).__view.focusThread('thread-fix-auth');
+    });
+    const pill = page.locator('.ct-schedule-pill');
+    await pill.click();
+    const stop = page.locator('.ct-schedule-action', { hasText: 'Stop' });
+    await stop.focus();
+    await page.evaluate(() => (window as any).__removeWakeupsSilently('thread-fix-auth'));
+    await page.waitForTimeout(1_100);
+
+    await expect(page.locator('.ct-schedule-row-wakeup')).toHaveCount(0);
+    await expect(page.locator('.ct-schedule-row-loop')).toHaveCount(1);
+    await expect(page.locator('.ct-schedule-action')).toHaveText('Stop');
+    await expect(page.locator('.ct-schedule-action')).toBeFocused();
+    await expect(pill).toContainText('Every 5m');
+  });
+
+  test('schedule deletion failure stays visible and reports the error', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => {
+      (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
+      (window as any).__failNextScheduleDelete('disk full');
+      (window as any).__view.focusThread('thread-fix-auth');
+    });
+    await page.locator('.ct-schedule-pill').click();
+    await page.locator('.ct-schedule-action').click();
+    await expect(page.locator('.ct-error')).toContainText('Loop stopped in this session, but persistence failed (disk full). It may return after reload.');
+    await expect(page.locator('.ct-schedule-popover')).toHaveCount(0);
+    await expect(page.locator('.ct-schedule-pill')).toHaveClass(/ct-hidden/);
+  });
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
+    test(`scheduled activity narrow layout (${viewport.width}x${viewport.height})`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.goto(harnessUrl);
+      await page.waitForSelector('.ct-title-row');
+      await page.evaluate(() => {
+        const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
+        (window as any).__setWakeup('thread-fix-auth', fireAt, 'check CI status');
+        (window as any).__view.focusThread('thread-fix-auth');
+      });
+      await page.locator('.ct-schedule-pill').click();
+      await expect(page.locator('.ct-schedule-action')).toHaveCSS('min-height', '44px');
+      const overflow = await page.locator('.ct-schedule-popover').evaluate((el) => el.scrollWidth > el.clientWidth);
+      expect(overflow).toBe(false);
+    });
+  }
 
   test('scheduled origin footer pill', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
@@ -510,10 +607,12 @@ test.describe('Claude Threads UI', () => {
     // does when a cron item fires and creates a new thread.
     await page.evaluate(() => {
       (window as any).__setScheduledOrigin('thread-fix-auth', 'sched-1', 'Nightly build check');
+      (window as any).__setLoop('thread-fix-auth', 'check the build', 300);
       (window as any).__view.renderThreadInfo();
     });
     await page.waitForSelector('.ct-footer-pill');
     await expect(page.locator('.ct-footer-pill')).toContainText('Scheduled: Nightly build check');
+    await expect(page.locator('.ct-schedule-pill')).toContainText('Every 5m');
     await shot(page, 'scheduled-origin-pill.png', { fullPage: true });
   });
 
@@ -1364,7 +1463,7 @@ test.describe('Claude Threads UI', () => {
   });
 
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {
-    // Same root-cause bug as the wake-up banner test above, on the dashboard
+    // Same run-state-settling root cause as the scheduled-pill test above, on the dashboard
     // side: KanbanView.handleEvent's isStateChange didn't include
     // wakeup_changed/run_state_settled, so a thread that finished with a
     // pending wake-up stayed bucketed under "Working" until an unrelated
