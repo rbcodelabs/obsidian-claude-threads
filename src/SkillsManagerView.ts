@@ -19,6 +19,7 @@ import {
   type InstalledSkillInfo,
   type MarketplaceSkill,
 } from './skillManager';
+import { canEditSkill } from './skillPaths';
 
 // Re-exported so existing unit tests (test/unit/findSkillDir.test.ts,
 // importSkill.test.ts, parseFrontmatter.test.ts) that import these helpers
@@ -49,7 +50,6 @@ interface LocalSkill {
   description: string;
   skillsPath: string;   // expanded skillsPath from source
   skillDir: string;     // full path to this skill's directory
-  isLinked: boolean;
   /** True when this skill comes from a github-type source (registered via settings.json, no symlink needed) */
   isGithubSource?: boolean;
 }
@@ -163,7 +163,7 @@ export class SkillsManagerView extends ItemView {
   private githubSourceSkillsMap: Map<string, LocalSkill[]> = new Map();
   /** Source ids whose skills are currently being loaded */
   private githubSourceSkillsLoadingSet: Set<string> = new Set();
-  /** Which source tree nodes are expanded (source id or '__local__') */
+  /** Which source tree nodes are expanded (a source id, or one of the group keys below) */
   private expandedSources: Set<string> = new Set();
   /** Selected child skill within a GitHub source node */
   private selectedGithubSourceSkill: { skill: LocalSkill; source: import('./types').SkillSource } | null = null;
@@ -192,6 +192,15 @@ export class SkillsManagerView extends ItemView {
     this.plugin = plugin;
   }
 
+  /** Shown wherever an install/import is attempted without a resolvable vault skills folder. */
+  private static readonly NO_INSTALL_ROOT_MESSAGE =
+    'Cannot resolve the vault skills folder, so there is nowhere to install to. Skill installs need a desktop vault on a real filesystem.';
+
+  /** Tree group key: skills this plugin installed into the vault. Editable. */
+  private static readonly VAULT_GROUP = '__vault__';
+  /** Tree group key: everything under ~/.claude/ — skills and agents alike. Read-only. */
+  private static readonly CLAUDE_GROUP = '__claude__';
+
   getViewType(): string { return SKILLS_VIEW_TYPE; }
   getDisplayText(): string { return 'Skills Manager'; }
   getIcon(): string { return 'puzzle'; }
@@ -199,9 +208,13 @@ export class SkillsManagerView extends ItemView {
   async onOpen(): Promise<void> {
     this.buildShell();
 
-    // Expand all sources (including __local__) by default
+    // Expand all sources (including both local groups) by default
     const githubSources = (this.plugin.settings.skillSources ?? []).filter(s => s.type === 'github');
-    this.expandedSources = new Set([...githubSources.map(s => s.id), '__local__']);
+    this.expandedSources = new Set([
+      ...githubSources.map(s => s.id),
+      SkillsManagerView.VAULT_GROUP,
+      SkillsManagerView.CLAUDE_GROUP,
+    ]);
 
     await Promise.all([this.loadInstalledSkills(), this.loadInstalledAgents()]);
 
@@ -382,10 +395,13 @@ export class SkillsManagerView extends ItemView {
     this.tabActionsEl.empty();
     if (this.activeTab !== 'installed') return;
 
+    const canInstall = !!this.plugin.getPluginSkillsRoot();
     const importBtn = this.tabActionsEl.createEl('button', { cls: 'clickable-icon ct-skills-tab-action' });
     setIcon(importBtn, 'plus');
-    setTooltip(importBtn, 'Import skill');
+    importBtn.disabled = !canInstall;
+    setTooltip(importBtn, canInstall ? 'Import skill' : SkillsManagerView.NO_INSTALL_ROOT_MESSAGE);
     importBtn.addEventListener('click', (e) => {
+      if (!canInstall) return;
       const menu = new Menu();
       menu.addItem(item =>
         item
@@ -521,12 +537,13 @@ export class SkillsManagerView extends ItemView {
     });
 
     // ── Count line ───────────────────────────────────────────────────────────
-    const skillCount = this.installedSkills.length;
+    const vaultCount = this.installedSkills.filter(s => s.origin === 'vault').length;
+    const homeCount = this.installedSkills.length - vaultCount;
     const agentCount = this.installedAgents.length;
     const sourceCount = githubSources.length;
     const countParts: string[] = [];
-    if (skillCount > 0) countParts.push(`${skillCount} skill${skillCount !== 1 ? 's' : ''}`);
-    if (agentCount > 0) countParts.push(`${agentCount} agent${agentCount !== 1 ? 's' : ''}`);
+    if (vaultCount > 0) countParts.push(`${vaultCount} vault skill${vaultCount !== 1 ? 's' : ''}`);
+    if (homeCount + agentCount > 0) countParts.push(`${homeCount + agentCount} read-only`);
     if (sourceCount > 0) countParts.push(`${sourceCount} plugin${sourceCount !== 1 ? 's' : ''}`);
     this.listEl.createEl('div', { cls: 'ct-skills-count', text: countParts.join(' · ') || 'Nothing installed' });
 
@@ -612,67 +629,109 @@ export class SkillsManagerView extends ItemView {
       }
     }
 
-    // ── Local node ────────────────────────────────────────────────────────────
-    const localSkills = this.installedSkills.filter(s => !s.sourceName);
-    const localAgents = this.installedAgents;
+    // ── Vault node (this plugin's own installs — editable) ───────────────────
+    // Split from the old single "Local" node so the read-only half is obvious
+    // at a glance rather than only after clicking into a detail pane.
+    const matchesQuery = (name: string, description?: string) =>
+      !q || name.toLowerCase().includes(q) || (description?.toLowerCase().includes(q) ?? false);
 
-    const filteredLocalSkills = q ? localSkills.filter(s => s.name.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q)) : localSkills;
-    const filteredLocalAgents = q ? localAgents.filter(a => a.name.toLowerCase().includes(q) || a.description?.toLowerCase().includes(q)) : localAgents;
-    const hasLocalItems = localSkills.length > 0 || localAgents.length > 0;
-    const hasLocalMatches = filteredLocalSkills.length > 0 || filteredLocalAgents.length > 0;
+    const vaultSkills = this.installedSkills.filter(s => !s.sourceName && s.origin === 'vault');
+    const homeSkills = this.installedSkills.filter(s => !s.sourceName && s.origin !== 'vault');
+    const filteredVaultSkills = vaultSkills.filter(s => matchesQuery(s.name, s.description));
+    const filteredHomeSkills = homeSkills.filter(s => matchesQuery(s.name, s.description));
+    const filteredAgents = this.installedAgents.filter(a => matchesQuery(a.name, a.description));
 
-    if (hasLocalItems && (!q || hasLocalMatches)) {
-      const localExpanded = this.expandedSources.has('__local__');
-      const localRow = inner.createEl('div', { cls: 'ct-skills-tree-source' });
-      const localToggle = localRow.createEl('span', { cls: 'ct-skills-tree-toggle' });
-      setIcon(localToggle, localExpanded ? 'chevron-down' : 'chevron-right');
-      localRow.createEl('span', { cls: 'ct-skills-tree-source-name', text: 'Local' });
-      localRow.addEventListener('click', () => {
-        if (this.expandedSources.has('__local__')) this.expandedSources.delete('__local__');
-        else this.expandedSources.add('__local__');
-        this.renderList();
+    this.renderTreeGroup(inner, {
+      key: SkillsManagerView.VAULT_GROUP,
+      label: 'Vault',
+      hasAnyItems: vaultSkills.length > 0,
+      skills: filteredVaultSkills,
+      agents: [],
+    });
+
+    // ── Claude Code node (~/.claude/ — skills AND agents, all read-only) ─────
+    this.renderTreeGroup(inner, {
+      key: SkillsManagerView.CLAUDE_GROUP,
+      label: 'Claude Code',
+      badge: 'read-only',
+      hasAnyItems: homeSkills.length > 0 || this.installedAgents.length > 0,
+      // Agents first, matching the old ordering within the merged node.
+      skills: filteredHomeSkills,
+      agents: filteredAgents,
+    });
+  }
+
+  /** Renders one collapsible group of installed skills and/or agents in the Installed tree. */
+  private renderTreeGroup(
+    inner: HTMLElement,
+    group: {
+      key: string;
+      label: string;
+      badge?: string;
+      hasAnyItems: boolean;
+      skills: InstalledSkill[];
+      agents: InstalledAgent[];
+    },
+  ): void {
+    const hasMatches = group.skills.length > 0 || group.agents.length > 0;
+    // Hide the group entirely when it is empty, or when a filter excludes all
+    // of its children — but keep it while unfiltered so an empty Vault node
+    // does not vanish and leave the user wondering where installs go.
+    if (!group.hasAnyItems) return;
+    if (this.installedFilter && !hasMatches) return;
+
+    const isExpanded = this.expandedSources.has(group.key);
+    const row = inner.createEl('div', { cls: 'ct-skills-tree-source' });
+    const toggle = row.createEl('span', { cls: 'ct-skills-tree-toggle' });
+    setIcon(toggle, isExpanded ? 'chevron-down' : 'chevron-right');
+    row.createEl('span', { cls: 'ct-skills-tree-source-name', text: group.label });
+    if (group.badge) {
+      row.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--readonly', text: group.badge });
+    }
+    row.addEventListener('click', () => {
+      if (this.expandedSources.has(group.key)) this.expandedSources.delete(group.key);
+      else this.expandedSources.add(group.key);
+      this.renderList();
+    });
+
+    if (!isExpanded) return;
+
+    for (const agent of group.agents) {
+      const isActive = this.selectedAgent?.name === agent.name;
+      const childRow = inner.createEl('div', {
+        cls: 'ct-skills-tree-child' + (isActive ? ' ct-skills-tree-child--active' : ''),
       });
+      childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: agent.name });
+      childRow.createEl('span', { cls: 'ct-skills-tree-child-badge ct-skills-tree-child-badge--agent', text: 'agent' });
+      childRow.addEventListener('click', () => {
+        this.selectedAgent = agent;
+        this.selectedInstalled = null;
+        this.selectedGithubSource = null;
+        this.selectedGithubSourceSkill = null;
+        this.agentEditContent = agent.content;
+        this.isAgentDirty = false;
+        this.renderList();
+        this.renderDetail();
+      });
+    }
 
-      if (localExpanded) {
-        // Agents first
-        for (const agent of filteredLocalAgents) {
-          const isAgentActive = this.selectedAgent?.name === agent.name;
-          const childRow = inner.createEl('div', {
-            cls: 'ct-skills-tree-child' + (isAgentActive ? ' ct-skills-tree-child--active' : ''),
-          });
-          childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: agent.name });
-          childRow.createEl('span', { cls: 'ct-skills-tree-child-badge ct-skills-tree-child-badge--agent', text: 'agent' });
-          childRow.addEventListener('click', () => {
-            this.selectedAgent = agent;
-            this.selectedInstalled = null;
-            this.selectedGithubSource = null;
-            this.selectedGithubSourceSkill = null;
-            this.agentEditContent = agent.content;
-            this.isAgentDirty = false;
-            this.renderList();
-            this.renderDetail();
-          });
-        }
-        // Then local skills
-        for (const skill of filteredLocalSkills) {
-          const isSkillActive = this.selectedInstalled?.name === skill.name;
-          const childRow = inner.createEl('div', {
-            cls: 'ct-skills-tree-child' + (isSkillActive ? ' ct-skills-tree-child--active' : ''),
-          });
-          childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
-          childRow.createEl('span', { cls: 'ct-skills-tree-child-badge', text: 'skill' });
-          childRow.addEventListener('click', () => {
-            this.selectedInstalled = skill;
-            this.selectedGithubSource = null;
-            this.selectedAgent = null;
-            this.selectedGithubSourceSkill = null;
-            this.editContent = skill.content;
-            this.isDirty = false;
-            this.renderList();
-            this.renderDetail();
-          });
-        }
-      }
+    for (const skill of group.skills) {
+      const isActive = this.selectedInstalled?.skillPath === skill.skillPath;
+      const childRow = inner.createEl('div', {
+        cls: 'ct-skills-tree-child' + (isActive ? ' ct-skills-tree-child--active' : ''),
+      });
+      childRow.createEl('span', { cls: 'ct-skills-tree-child-name', text: skill.name });
+      childRow.createEl('span', { cls: 'ct-skills-tree-child-badge', text: 'skill' });
+      childRow.addEventListener('click', () => {
+        this.selectedInstalled = skill;
+        this.selectedGithubSource = null;
+        this.selectedAgent = null;
+        this.selectedGithubSourceSkill = null;
+        this.editContent = skill.content;
+        this.isDirty = false;
+        this.renderList();
+        this.renderDetail();
+      });
     }
   }
 
@@ -812,10 +871,6 @@ export class SkillsManagerView extends ItemView {
         main.createEl('div', { cls: 'ct-skills-card-desc', text: skill.description });
       }
 
-      if (skill.isLinked) {
-        card.createEl('span', { cls: 'ct-skills-badge', text: 'linked' });
-      }
-
       card.addEventListener('click', () => {
         this.selectedLocalSkill = skill;
         this.renderList();
@@ -897,6 +952,11 @@ export class SkillsManagerView extends ItemView {
       return;
     }
 
+    if (!skill.isEditable) {
+      this.renderReadOnlySkillDetail(skill);
+      return;
+    }
+
     // Header
     const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
     header.createEl('div', { cls: 'ct-skills-detail-name', text: skill.name });
@@ -966,52 +1026,99 @@ export class SkillsManagerView extends ItemView {
     uninstallBtn.addEventListener('click', () => void this.uninstallSkill(skill));
   }
 
+  /**
+   * Viewer for a skill this plugin must not modify: anything in
+   * `~/.claude/skills`, and any symlink whose target sits outside the vault.
+   *
+   * Deliberately registers NO input listener on the textarea. A `readonly`
+   * textarea can still fire `input` under some IMEs and paste paths, and the
+   * dirty flag it would set has no Save button to clear it — it would leak a
+   * phantom "unsaved changes" dot into whatever the user selected next.
+   */
+  private renderReadOnlySkillDetail(skill: InstalledSkill): void {
+    const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
+    const nameRow = header.createEl('div', { cls: 'ct-skills-detail-name-row' });
+    nameRow.createEl('span', { cls: 'ct-skills-detail-name', text: skill.name });
+    nameRow.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--readonly', text: 'read-only' });
+
+    // Keep showing "link → target": for a symlinked entry that IS the
+    // explanation for why this pane is read-only.
+    const pathRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
+    pathRow.createEl('span', {
+      cls: 'ct-skills-detail-path-text',
+      text: skill.isSymlink ? `${skill.skillPath} → ${skill.realPath}` : skill.realPath,
+    });
+
+    const callout = this.detailEl.createEl('div', { cls: 'ct-skills-callout' });
+    callout.createEl('div', {
+      text: skill.origin === 'home'
+        ? 'Managed by Claude Code. This plugin never writes to ~/.claude/ — edit or remove it with the `claude` CLI, or by hand.'
+        : 'This skill is a link to a directory outside the vault. Editing here would write straight into that source, so it is shown read-only.',
+    });
+    const installRoot = this.plugin.getPluginSkillsRoot();
+    if (installRoot) {
+      callout.createEl('div', {
+        cls: 'ct-skills-callout-sub',
+        text: `Skills you install or import go to ${installRoot}`,
+      });
+    }
+
+    const editorWrap = this.detailEl.createEl('div', { cls: 'ct-skills-editor-wrap' });
+    editorWrap.createEl('div', { cls: 'ct-skills-editor-label', text: 'SKILL.md (read-only)' });
+    const textarea = editorWrap.createEl('textarea', {
+      cls: 'ct-skills-textarea',
+      attr: { readonly: 'true' },
+    });
+    textarea.value = skill.content;
+
+    const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
+    const revealBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reveal in Finder' });
+    revealBtn.addEventListener('click', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const electron = require('electron') as { shell?: { showItemInFolder: (path: string) => void } };
+      electron.shell?.showItemInFolder(skill.skillMdPath);
+    });
+    const reloadBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reload' });
+    reloadBtn.addEventListener('click', () => void this.reloadSkillContent(skill));
+  }
+
+  /**
+   * Viewer for an agent profile. `~/.claude/agents/` is read-only for the same
+   * reason `~/.claude/skills/` is, so this pane has no Save and no Delete.
+   */
   private renderAgentDetail(agent: InstalledAgent): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require('path') as typeof import('path');
 
     // Header
     const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
-    header.createEl('div', { cls: 'ct-skills-detail-name', text: agent.name });
+    const nameRow = header.createEl('div', { cls: 'ct-skills-detail-name-row' });
+    nameRow.createEl('span', { cls: 'ct-skills-detail-name', text: agent.name });
+    nameRow.createEl('span', { cls: 'ct-skills-badge ct-skills-badge--readonly', text: 'read-only' });
 
     const pathRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
     pathRow.createEl('span', { text: agent.agentPath, cls: 'ct-skills-detail-path-text' });
 
-    // Editor section
+    const callout = this.detailEl.createEl('div', { cls: 'ct-skills-callout' });
+    callout.createEl('div', {
+      text: 'Managed by Claude Code. This plugin never writes to ~/.claude/ — edit or delete this agent with the `claude` CLI, or by hand.',
+    });
+
+    // Editor section — read-only, and with no input listener, for the same
+    // reason as renderReadOnlySkillDetail: a dirty flag with no Save button to
+    // clear it would leak into the next selection.
     const editorWrap = this.detailEl.createEl('div', { cls: 'ct-skills-editor-wrap' });
-    const labelRow = editorWrap.createEl('div', { cls: 'ct-skills-editor-label' });
-    labelRow.createEl('span', { text: `agents/${path.basename(agent.agentPath)}` });
-    if (this.isAgentDirty) {
-      labelRow.createEl('span', { cls: 'ct-skills-dirty-dot', text: '●', attr: { title: 'Unsaved changes' } });
-    }
-
-    const textarea = editorWrap.createEl('textarea', { cls: 'ct-skills-textarea' });
-    textarea.value = this.agentEditContent;
-    textarea.addEventListener('input', () => {
-      this.agentEditContent = textarea.value;
-      this.isAgentDirty = this.agentEditContent !== agent.content;
-      // Patch dirty indicator without a full re-render
-      const dot = this.detailEl.querySelector('.ct-skills-dirty-dot');
-      if (this.isAgentDirty && !dot) {
-        const lbl = this.detailEl.querySelector('.ct-skills-editor-label');
-        lbl?.createEl('span', { cls: 'ct-skills-dirty-dot', text: '●', attr: { title: 'Unsaved changes' } });
-      } else if (!this.isAgentDirty && dot) {
-        dot.remove();
-      }
-      const saveBtn = this.detailEl.querySelector<HTMLButtonElement>('.ct-skills-btn-save');
-      if (saveBtn) saveBtn.disabled = !this.isAgentDirty;
+    editorWrap.createEl('div', {
+      cls: 'ct-skills-editor-label',
+      text: `agents/${path.basename(agent.agentPath)} (read-only)`,
     });
+    const textarea = editorWrap.createEl('textarea', {
+      cls: 'ct-skills-textarea',
+      attr: { readonly: 'true' },
+    });
+    textarea.value = agent.content;
 
-    // Primary actions
     const actions = this.detailEl.createEl('div', { cls: 'ct-skills-actions' });
-
-    const saveBtn = actions.createEl('button', {
-      cls: 'ct-skills-btn ct-skills-btn--primary ct-skills-btn-save',
-      text: 'Save',
-      attr: { disabled: this.isAgentDirty ? null : 'true' },
-    });
-    saveBtn.disabled = !this.isAgentDirty;
-    saveBtn.addEventListener('click', () => void this.saveAgentContent(agent, textarea));
 
     const reloadBtn = actions.createEl('button', { cls: 'ct-skills-btn', text: 'Reload' });
     reloadBtn.addEventListener('click', () => void this.reloadAgentContent(agent));
@@ -1025,35 +1132,6 @@ export class SkillsManagerView extends ItemView {
       const electron = require('electron') as { shell?: { showItemInFolder: (path: string) => void } };
       electron.shell?.showItemInFolder(agent.agentPath);
     });
-
-    // Danger zone
-    const danger = this.detailEl.createEl('div', { cls: 'ct-skills-danger-zone' });
-    const deleteBtn = danger.createEl('button', {
-      cls: 'ct-skills-btn ct-skills-btn--danger',
-      text: 'Delete',
-    });
-    deleteBtn.addEventListener('click', () => {
-      new ConfirmModal(
-        this.app,
-        `Delete "${agent.name}" from ~/.claude/agents/? This cannot be undone.`,
-        'Delete',
-        (confirmed) => { if (confirmed) void this.doDeleteAgent(agent); },
-      ).open();
-    });
-  }
-
-  private async saveAgentContent(agent: InstalledAgent, textarea: HTMLTextAreaElement): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    try {
-      await fs.promises.writeFile(agent.agentPath, this.agentEditContent, 'utf-8');
-      agent.content = this.agentEditContent;
-      this.isAgentDirty = false;
-      new Notice(`Saved ${agent.name}`);
-      this.renderDetail();
-    } catch (err) {
-      new Notice(`Failed to save: ${String(err)}`);
-    }
   }
 
   private async reloadAgentContent(agent: InstalledAgent): Promise<void> {
@@ -1067,25 +1145,6 @@ export class SkillsManagerView extends ItemView {
       this.renderDetail();
     } catch (err) {
       new Notice(`Failed to reload: ${String(err)}`);
-    }
-  }
-
-  private async doDeleteAgent(agent: InstalledAgent): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    try {
-      await fs.promises.unlink(agent.agentPath);
-      new Notice(`Deleted ${agent.name}`);
-      this.installedAgents = this.installedAgents.filter((a) => a.name !== agent.name);
-      if (this.selectedAgent?.name === agent.name) {
-        this.selectedAgent = null;
-        this.agentEditContent = '';
-        this.isAgentDirty = false;
-      }
-      this.renderList();
-      this.renderDetail();
-    } catch (err) {
-      new Notice(`Failed to delete: ${String(err)}`);
     }
   }
 
@@ -1229,7 +1288,6 @@ export class SkillsManagerView extends ItemView {
       description: s.description,
       skillsPath: skillsDir,
       skillDir: s.skillDir,
-      isLinked: false,
       isGithubSource: true,
     }));
 
@@ -1377,21 +1435,15 @@ export class SkillsManagerView extends ItemView {
       descSection.createEl('p', { cls: 'ct-skills-desc-text', text: skill.description });
     }
 
-    // Install area
+    // Availability. There is nothing to install: configured sources are
+    // registered with each session by path, so every skill they provide is
+    // already loaded. The old "Link" button symlinked into ~/.claude/skills,
+    // which this plugin no longer writes to.
     const installArea = this.detailEl.createEl('div', { cls: 'ct-skills-install-area' });
-
-    if (skill.isLinked) {
-      const badge = installArea.createEl('div', { cls: 'ct-skills-installed-badge' });
-      const iconEl = badge.createEl('span', { cls: 'ct-skills-installed-icon' });
-      setIcon(iconEl, 'check-circle');
-      badge.createEl('span', { text: 'Already linked' });
-    } else {
-      const linkBtn = installArea.createEl('button', {
-        cls: 'ct-skills-btn ct-skills-btn--primary',
-        text: 'Link',
-      });
-      linkBtn.addEventListener('click', () => void this.linkLocalSkill(skill));
-    }
+    const badge = installArea.createEl('div', { cls: 'ct-skills-installed-badge' });
+    const iconEl = badge.createEl('span', { cls: 'ct-skills-installed-icon' });
+    setIcon(iconEl, 'check-circle');
+    badge.createEl('span', { text: 'Available through this source — no install needed' });
 
     // Pull Updates button (local sources only, if source has repoPath)
     if (source?.repoPath) {
@@ -1454,27 +1506,6 @@ export class SkillsManagerView extends ItemView {
       this.renderList();
     } catch (err) {
       new Notice(`Reinstall failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  private async linkLocalSkill(skill: LocalSkill): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
-
-    const linkPath = path.join(os.homedir(), '.claude', 'skills', skill.id);
-    try {
-      await fs.promises.symlink(skill.skillDir, linkPath);
-      skill.isLinked = true;
-      new Notice(`Linked ${skill.name}`);
-      void this.loadInstalledSkills();
-      this.renderList();
-      this.renderDetail();
-    } catch (err) {
-      new Notice(`Failed to link: ${String(err)}`);
     }
   }
 
@@ -1553,17 +1584,12 @@ export class SkillsManagerView extends ItemView {
 
         const { name, description } = parseFrontmatter(content);
 
-        const isLinked = isGithubSource
-          ? false
-          : fs.existsSync(path.join(os.homedir(), '.claude', 'skills', entry.name));
-
         skills.push({
           id: entry.name,
           name: name || entry.name,
           description,
           skillsPath: skillsDir,
           skillDir,
-          isLinked,
           isGithubSource,
         });
       }
@@ -1612,9 +1638,11 @@ export class SkillsManagerView extends ItemView {
     const skillSources = this.plugin.settings.skillSources ?? [];
     this.installedSkills = await listInstalledSkills(skillSources);
 
-    // Keep selected skill in sync after reload
+    // Keep selected skill in sync after reload. Matched on skillPath, not name:
+    // a vault skill can legitimately shadow a same-named home skill, and
+    // matching by name would silently swap the selection between the two.
     if (this.selectedInstalled) {
-      const refreshed = this.installedSkills.find((s) => s.name === this.selectedInstalled!.name);
+      const refreshed = this.installedSkills.find((s) => s.skillPath === this.selectedInstalled!.skillPath);
       if (refreshed) {
         this.selectedInstalled = refreshed;
         if (!this.isDirty) this.editContent = refreshed.content;
@@ -1711,6 +1739,13 @@ export class SkillsManagerView extends ItemView {
   private async saveSkillContent(skill: InstalledSkill, textarea: HTMLTextAreaElement): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
+    // Belt and braces: renderInstalledDetail already routes non-editable skills
+    // to a pane with no Save button, but this is the function that used to
+    // write through a symlink into a user's git repo with no warning.
+    if (!canEditSkill(skill)) {
+      new Notice(`"${skill.name}" is read-only — this plugin does not write outside the vault skills folder.`);
+      return;
+    }
     try {
       await fs.promises.writeFile(skill.skillMdPath, this.editContent, 'utf-8');
       skill.content = this.editContent;
@@ -1737,9 +1772,11 @@ export class SkillsManagerView extends ItemView {
   }
 
   private uninstallSkill(skill: InstalledSkill): void {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathNode = require('path') as typeof import('path');
     new ConfirmModal(
       this.app,
-      `Remove "${skill.name}" from ~/.claude/skills/? This cannot be undone.`,
+      `Remove "${skill.name}" from ${pathNode.dirname(skill.skillPath)}/? This cannot be undone.`,
       'Uninstall',
       (confirmed) => {
         if (confirmed) void this.doUninstall(skill);
@@ -1769,6 +1806,11 @@ export class SkillsManagerView extends ItemView {
       new Notice('No GitHub source available for this skill');
       return;
     }
+    const installRoot = this.plugin.getPluginSkillsRoot();
+    if (!installRoot) {
+      new Notice(SkillsManagerView.NO_INSTALL_ROOT_MESSAGE);
+      return;
+    }
 
     this.installingSlug = skill.slug;
     this.installOutput = '';
@@ -1778,7 +1820,7 @@ export class SkillsManagerView extends ItemView {
       await installSkillFromMarketplace(
         { slug: skill.slug, skillId: skill.skillId, name: skill.name, source: skill.source },
         {
-          installRoot: this.plugin.getPluginSkillsRoot(),
+          installRoot,
           onProgress: (message: string) => {
             this.installOutput = message;
             this.renderDetail();
@@ -1820,10 +1862,12 @@ export class SkillsManagerView extends ItemView {
     const fs = require('fs') as typeof import('fs');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const path = require('path') as typeof import('path');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os');
 
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+    const skillsDir = this.plugin.getPluginSkillsRoot();
+    if (!skillsDir) {
+      new Notice(SkillsManagerView.NO_INSTALL_ROOT_MESSAGE);
+      return;
+    }
 
     try {
       const { name } = await importSkillFromPath(folderPath, skillsDir, fs, path);
@@ -1852,7 +1896,11 @@ export class SkillsManagerView extends ItemView {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const os = require('os') as typeof import('os');
 
-    const skillsDir = path.join(os.homedir(), '.claude', 'skills');
+    const skillsDir = this.plugin.getPluginSkillsRoot();
+    if (!skillsDir) {
+      new Notice(SkillsManagerView.NO_INSTALL_ROOT_MESSAGE);
+      return;
+    }
     const tmpDir = path.join(os.tmpdir(), `ct-skill-${Date.now()}`);
 
     try {

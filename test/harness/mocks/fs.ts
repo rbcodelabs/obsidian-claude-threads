@@ -1,3 +1,11 @@
+// Directory fixtures. readdir/readdirSync are path-aware: returning the same
+// entries for every path made the Skills Manager render each skill twice (once
+// as a skill, once as an "agent") and made it impossible to screenshot the
+// vault-vs-read-only split at all.
+export const HOME_SKILLS_DIR = '/Users/mock/.claude/skills';
+export const HOME_AGENTS_DIR = '/Users/mock/.claude/agents';
+export const VAULT_SKILLS_DIR = '/Users/mock/vault/.obsidian/plugins/claude-threads/skills';
+
 const SKILLS: Array<{ name: string; description: string; content: string }> = [
   {
     name: 'brain-dump',
@@ -31,13 +39,48 @@ const SKILLS: Array<{ name: string; description: string; content: string }> = [
   },
 ];
 
+// Skills this plugin installed into the vault — editable.
+const VAULT_SKILLS: Array<{ name: string; description: string; content: string }> = [
+  {
+    name: 'release-manager',
+    description: 'Triage, merge, and ship every open PR on a repo as one batch.',
+    content: '',
+  },
+  {
+    name: 'stash',
+    description: 'Park the current work as a resumable handoff note in the vault.',
+    content: '',
+  },
+];
+
+// Agent profiles in ~/.claude/agents — read-only.
+const AGENTS: Array<{ name: string; description: string; content: string }> = [
+  {
+    name: 'engineer',
+    description: 'Senior engineer — implements features, fixes bugs, refactors.',
+    content: '',
+  },
+  {
+    name: 'reviewer',
+    description: 'Code reviewer — audits a diff for correctness and security.',
+    content: '',
+  },
+];
+
 // build content from name/description
-for (const s of SKILLS) {
+for (const s of [...SKILLS, ...VAULT_SKILLS, ...AGENTS]) {
   s.content = `---\nname: ${s.name}\ndescription: ${s.description}\n---\n\n# ${s.name}\n\nThis skill teaches Claude how to ${s.description.toLowerCase()}\n`;
 }
 
-function makeEntries() {
-  return SKILLS.map((s) => ({
+function fixtureFor(dirPath: string) {
+  if (dirPath.startsWith(HOME_AGENTS_DIR)) return AGENTS;
+  if (dirPath.startsWith(VAULT_SKILLS_DIR)) return VAULT_SKILLS;
+  if (dirPath.startsWith(HOME_SKILLS_DIR)) return SKILLS;
+  return [];
+}
+
+function makeEntries(dirPath: string) {
+  return fixtureFor(dirPath).map((s) => ({
     name: `${s.name}.md`,
     isSymbolicLink: () => false,
     isDirectory: () => false,
@@ -121,7 +164,7 @@ const VISUALIZE_PATH_RE = /\/viz\/[^/]+\.html?$/i;
 function resolveContent(filePath: string): string {
   if (VISUALIZE_PATH_RE.test(filePath)) return VISUALIZE_FRAGMENT;
   if (filePath.endsWith('settings.json')) return MCP_SETTINGS_JSON;
-  for (const s of SKILLS) {
+  for (const s of [...SKILLS, ...VAULT_SKILLS, ...AGENTS]) {
     if (filePath.includes(s.name)) return s.content;
   }
   return '';
@@ -133,7 +176,7 @@ function resolveContent(filePath: string): string {
 // are required for dynamic require() calls in SkillsManagerView to work.)
 
 export const existsSync = (_p: string) => false;
-export const readdirSync = (_p: string) => SKILLS.map((s) => `${s.name}.md`);
+export const readdirSync = (p: string) => fixtureFor(p).map((s) => `${s.name}.md`);
 export const readFileSync = (p: string, _enc: string): string => resolveContent(p);
 export const statSync = (_p: string) => ({ isDirectory: () => false });
 // realpathSync/mkdirSync/writeFileSync are no-ops in the harness — the MCP
@@ -144,7 +187,7 @@ export const mkdirSync = (_p: string, _opts?: unknown) => undefined;
 export const writeFileSync = (_p: string, _data: string, _enc?: string) => undefined;
 
 export const promises = {
-  readdir: async (_path: string, _opts?: unknown) => makeEntries(),
+  readdir: async (dirPath: string, _opts?: unknown) => makeEntries(dirPath),
   // isFile/size/mtimeMs are read by visualizeRenderer's fragment guards, and
   // the fixed mtime keeps its document cache key stable across a screenshot
   // run. They are reported ONLY for the visualize fixture path: every other

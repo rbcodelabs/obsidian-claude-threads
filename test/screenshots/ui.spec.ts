@@ -910,6 +910,56 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'skills-manager-installed.png', { fullPage: true });
   });
 
+  // The two specs above only ever capture the empty detail state, so they
+  // would pass without proving anything about the editor. These click into a
+  // row and assert what the pane offers — the first coverage that path has had.
+
+  test('skills manager — Claude Code skill detail is read-only', async ({ page }) => {
+    const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
+    await page.setViewportSize({ width: 640, height: 700 });
+    await page.goto(skillsUrl);
+    await page.waitForSelector('.ct-skills-count');
+    // 'brain-dump' lives in the ~/.claude/skills fixture.
+    await page.locator('.ct-skills-tree-child-name', { hasText: 'brain-dump' }).click();
+    await page.waitForSelector('.ct-skills-callout');
+
+    await expect(page.locator('.ct-skills-btn-save')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Uninstall' })).toHaveCount(0);
+    await expect(page.locator('.ct-skills-detail-name-row .ct-skills-badge--readonly')).toHaveCount(1);
+    await expect(page.locator('.ct-skills-textarea[readonly]')).toHaveCount(1);
+
+    await shot(page, 'skills-manager-readonly-detail.png', { fullPage: true });
+  });
+
+  test('skills manager — vault skill detail is editable', async ({ page }) => {
+    const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
+    await page.setViewportSize({ width: 640, height: 700 });
+    await page.goto(skillsUrl);
+    await page.waitForSelector('.ct-skills-count');
+    // 'release-manager' lives in the vault skills fixture.
+    await page.locator('.ct-skills-tree-child-name', { hasText: 'release-manager' }).click();
+    await page.waitForSelector('.ct-skills-btn-save');
+
+    await expect(page.getByRole('button', { name: 'Uninstall' })).toHaveCount(1);
+    await expect(page.locator('.ct-skills-badge--readonly')).toHaveCount(1); // the Claude Code group header only
+    await expect(page.locator('.ct-skills-textarea[readonly]')).toHaveCount(0);
+
+    await shot(page, 'skills-manager-vault-detail.png', { fullPage: true });
+  });
+
+  test('skills manager — agent detail is read-only', async ({ page }) => {
+    const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
+    await page.setViewportSize({ width: 640, height: 700 });
+    await page.goto(skillsUrl);
+    await page.waitForSelector('.ct-skills-count');
+    await page.locator('.ct-skills-tree-child-name', { hasText: 'engineer' }).click();
+    await page.waitForSelector('.ct-skills-callout');
+
+    await expect(page.locator('.ct-skills-btn-save')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+    await expect(page.locator('.ct-skills-textarea[readonly]')).toHaveCount(1);
+  });
+
   test('skills manager — browse tab', async ({ page }) => {
     const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
     await page.setViewportSize({ width: 640, height: 700 });
