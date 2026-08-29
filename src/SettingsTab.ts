@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Platform, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
-import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
+import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { telemetry } from './telemetry';
@@ -8,6 +8,7 @@ import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
 import type { AgentDashboard } from './AgentDashboard';
 import type { RawMcpServer } from './claudeSettingsMcpEditor';
+import { classifyScheduledItems, formatNextOccurrence } from './scheduledWorkView';
 
 // View-type string constants, mirrored as local literals (see main.ts) so referencing
 // them never triggers a static import of the desktop-only KanbanView/AgentDashboard
@@ -74,6 +75,10 @@ function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = fals
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const days = (schedule.daysOfWeek ?? []).map((d) => dayNames[d] ?? d).join(', ');
     return `Weekly on ${days} at ${schedule.timeOfDay ?? '?'}` + activeHoursSuffix + gatedSuffix;
+  }
+  if (schedule.type === 'once') {
+    const when = schedule.fireAt ? new Date(schedule.fireAt).toLocaleString() : '?';
+    return `Once at ${when}` + activeHoursSuffix + gatedSuffix;
   }
   return 'Unknown schedule';
 }
@@ -948,7 +953,7 @@ class McpServerModal extends Modal {
 // Settings tab
 // ───────────────────────────────────────────────────────────────────────────
 
-type SettingsTabId = 'general' | 'claude' | 'tools' | 'vault' | 'features' | 'remote' | 'skills' | 'mcp';
+type SettingsTabId = 'general' | 'claude' | 'tools' | 'vault' | 'features' | 'scheduled' | 'remote' | 'skills' | 'mcp';
 
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -956,6 +961,7 @@ const TABS: { id: SettingsTabId; label: string }[] = [
   { id: 'tools', label: 'Tools' },
   { id: 'vault', label: 'Vault' },
   { id: 'features', label: 'Features' },
+  { id: 'scheduled', label: 'Scheduled' },
   { id: 'remote', label: 'Remote' },
   { id: 'skills', label: 'Skills' },
   { id: 'mcp', label: 'MCP' },
@@ -1051,6 +1057,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       case 'tools': this.renderToolsTab(body); break;
       case 'vault': this.renderVaultTab(body); break;
       case 'features': this.renderFeaturesTab(body); break;
+      case 'scheduled': this.renderScheduledTab(body); break;
       case 'remote': this.renderRemoteTab(body); break;
       case 'skills': this.renderSkillsTab(body); break;
       case 'mcp': this.renderMcpTab(body); break;
@@ -1920,43 +1927,165 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       }
     }
 
-    // — Scheduled tasks —
-    new Setting(containerEl)
-      .setName('Scheduled tasks')
-      .setDesc('Recurring tasks that open a new thread on a schedule. Create one by asking Claude: "set up a daily task at 9am to…"')
+  }
+
+  // ── Scheduled ───────────────────────────────────────────────────────────
+
+  private renderScheduledTab(containerEl: HTMLElement): void {
+    const header = new Setting(containerEl)
+      .setName('Scheduled work')
+      .setDesc('See what runs next, review recent outcomes, and manage recurring jobs, loops, and wakeups.')
       .setHeading();
 
-    const scheduledList = containerEl.createDiv({ cls: 'ct-scheduled-list' });
-    const renderScheduledItems = () => {
-      scheduledList.empty();
-      const items = this.plugin.settings.scheduledItems ?? [];
-      if (items.length === 0) {
-        scheduledList.createEl('p', { text: 'No scheduled tasks yet. Ask Claude to create one.', cls: 'ct-settings-empty' });
-        return;
+    header.addButton((btn) =>
+      btn
+        .setButtonText('Create with Claude')
+        .setCta()
+        .onClick(() => {
+          const prompt =
+            'Help me create scheduled work. Ask me what should happen, when it should run, and whether it needs active hours or a deterministic gate. Then use CronCreate once the schedule is clear.';
+          void this.plugin.dispatchNewThread(prompt, undefined, 'Create scheduled work').then(async (threadId) => {
+            await this.plugin.openThreadInChatView(threadId);
+          });
+        }),
+    );
+
+    const dashboard = containerEl.createDiv({ cls: 'ct-scheduled-dashboard' });
+    const renderDashboard = () => {
+      dashboard.empty();
+      const groups = classifyScheduledItems(this.plugin.settings.scheduledItems ?? []);
+
+      const nextUpSection = dashboard.createEl('section', { cls: 'ct-scheduled-section ct-scheduled-next-up' });
+      nextUpSection.createEl('h2', { text: 'Next up' });
+      nextUpSection.createEl('p', {
+        text: 'Enabled work ordered by its durable next run time.',
+        cls: 'ct-scheduled-section-desc',
+      });
+      if (groups.nextUp.length === 0) {
+        nextUpSection.createEl('p', { text: 'Nothing is currently scheduled to run.', cls: 'ct-settings-empty' });
+      } else {
+        const list = nextUpSection.createDiv({ cls: 'ct-scheduled-next-list' });
+        for (const item of groups.nextUp) {
+          const occurrence = formatNextOccurrence(item);
+          if (!occurrence) continue;
+          const row = list.createDiv({ cls: 'ct-scheduled-next-row' + (occurrence.overdue ? ' is-overdue' : '') });
+          row.createEl('span', { text: item.name, cls: 'ct-scheduled-next-name' });
+          const timing = row.createDiv({ cls: 'ct-scheduled-next-timing' });
+          timing.createEl('span', { text: occurrence.label, cls: 'ct-scheduled-next-label' });
+          timing.createEl('strong', { text: occurrence.relative });
+          timing.createEl('span', { text: occurrence.exact, cls: 'ct-scheduled-exact' });
+        }
       }
-      for (const item of items) {
-        const desc = formatScheduleDescription(item.schedule, !!item.gate?.command);
-        const lastRunStr = item.lastRun ? `Last run: ${new Date(item.lastRun).toLocaleString()}` : 'Never run';
-        const nextRunStr = item.enabled && item.nextRun ? `Next: ${new Date(item.nextRun).toLocaleString()}` : '';
-        new Setting(scheduledList)
-          .setName(item.name)
-          .setDesc(`${desc} - ${lastRunStr}${nextRunStr ? ' - ' + nextRunStr : ''}`)
-          .addToggle((toggle) =>
-            toggle.setValue(item.enabled).onChange(async (val) => {
-              await this.plugin.scheduler.updateItem(item.id, { enabled: val });
-              renderScheduledItems();
-            }),
-          )
-          .addButton((btn) =>
-            btn.setIcon('trash').setWarning().setTooltip('Delete').onClick(async () => {
-              await this.plugin.scheduler.deleteItem(item.id);
-              renderScheduledItems();
-            }),
-          );
-        renderRunHistory(scheduledList, item.runHistory ?? []);
-      }
+
+      this.renderScheduledGroup(
+        dashboard,
+        'Recurring jobs',
+        'Schedules that create a new thread when they run.',
+        groups.recurring,
+        renderDashboard,
+      );
+      this.renderScheduledGroup(
+        dashboard,
+        'Thread loops & wakeups',
+        'Work that resumes or repeats inside an existing thread.',
+        groups.threadSpecific,
+        renderDashboard,
+      );
     };
-    renderScheduledItems();
+
+    renderDashboard();
+  }
+
+  private renderScheduledGroup(
+    containerEl: HTMLElement,
+    title: string,
+    description: string,
+    items: ScheduledItem[],
+    refresh: () => void,
+  ): void {
+    const section = containerEl.createEl('section', { cls: 'ct-scheduled-section' });
+    section.createEl('h2', { text: title });
+    section.createEl('p', { text: description, cls: 'ct-scheduled-section-desc' });
+
+    if (items.length === 0) {
+      section.createEl('p', { text: 'None yet.', cls: 'ct-settings-empty' });
+      return;
+    }
+
+    const projectNames = new Map(this.plugin.manager.getProjects().map((project) => [project.id, project.name]));
+    for (const item of items) {
+      const card = section.createDiv({ cls: 'ct-scheduled-card' });
+      const occurrence = formatNextOccurrence(item);
+      const titleRow = card.createDiv({ cls: 'ct-scheduled-card-title-row' });
+      titleRow.createEl('h3', { text: item.name });
+      titleRow.createEl('span', {
+        text: item.enabled ? (occurrence?.overdue ? 'Catching up' : 'Enabled') : 'Paused',
+        cls: `ct-scheduled-status ${item.enabled ? (occurrence?.overdue ? 'is-overdue' : 'is-enabled') : 'is-paused'}`,
+      });
+
+      card.createEl('p', {
+        text: formatScheduleDescription(item.schedule, !!item.gate?.command),
+        cls: 'ct-scheduled-card-schedule',
+      });
+
+      const metadata = card.createDiv({ cls: 'ct-scheduled-metadata' });
+      this.renderScheduledMetadata(metadata, 'Last run', item.lastRun ? new Date(item.lastRun).toLocaleString() : 'Never');
+      if (occurrence) {
+        this.renderScheduledMetadata(metadata, occurrence.label, `${occurrence.relative} · ${occurrence.exact}`);
+      }
+      if (item.schedule.activeHours) {
+        this.renderScheduledMetadata(
+          metadata,
+          'Active hours',
+          `${item.schedule.activeHours.start}–${item.schedule.activeHours.end} local time`,
+        );
+      }
+      this.renderScheduledMetadata(metadata, 'Project', item.projectId ? (projectNames.get(item.projectId) ?? 'Unknown project') : 'None');
+      this.renderScheduledMetadata(metadata, 'Working directory', item.cwd ?? this.plugin.getEffectiveCwd());
+      if (item.gate?.command) {
+        const timeout = item.gate.timeoutSeconds ?? 30;
+        const failureMode = item.gate.failOpen === false ? 'fail closed' : 'fail open';
+        this.renderScheduledMetadata(metadata, 'Gate', `${item.gate.command} · ${timeout}s timeout · ${failureMode}`, true);
+      } else {
+        this.renderScheduledMetadata(metadata, 'Gate', 'None');
+      }
+
+      const actions = new Setting(card).setClass('ct-scheduled-actions');
+      actions.addButton((btn) =>
+        btn.setButtonText(item.enabled ? 'Pause' : 'Resume').onClick(async () => {
+          await this.plugin.scheduler.updateItem(item.id, { enabled: !item.enabled });
+          refresh();
+        }),
+      );
+
+      if (item.lastThreadId && this.plugin.manager.getThread(item.lastThreadId)) {
+        actions.addButton((btn) =>
+          btn.setButtonText('Open last run').onClick(() => {
+            void this.plugin.openThreadInChatView(item.lastThreadId as string);
+          }),
+        );
+      }
+
+      actions.addButton((btn) =>
+        btn.setButtonText('Delete').setWarning().setTooltip('Delete scheduled work').onClick(async () => {
+          await this.plugin.scheduler.deleteItem(item.id);
+          refresh();
+        }),
+      );
+
+      renderRunHistory(card, item.runHistory ?? []);
+    }
+  }
+
+  private renderScheduledMetadata(
+    containerEl: HTMLElement,
+    label: string,
+    value: string,
+    code = false,
+  ): void {
+    const row = containerEl.createDiv({ cls: 'ct-scheduled-meta-row' });
+    row.createEl('span', { text: label, cls: 'ct-scheduled-meta-label' });
+    row.createEl(code ? 'code' : 'span', { text: value, cls: 'ct-scheduled-meta-value' });
   }
 
   // ── Remote ──────────────────────────────────────────────────────────────

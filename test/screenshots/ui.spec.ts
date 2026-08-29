@@ -1004,6 +1004,41 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'settings-tools.png', { fullPage: true });
   });
 
+  test('settings — scheduled work dashboard', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("Scheduled")');
+    await expect(page.getByRole('heading', { name: 'Next up' })).toBeVisible();
+    await expect(page.getByText('Overdue — catching up', { exact: true })).toBeVisible();
+    await expect(page.getByText('Next check').first()).toBeVisible();
+    await expect(page.getByText('Thread loops & wakeups')).toBeVisible();
+    await expect(page.getByText('Thread Orchestrator heartbeat')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Create with Claude' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await page.evaluate(() => {
+      const app = document.getElementById('app');
+      const content = app?.querySelector<HTMLElement>('.vertical-tab-content');
+      if (app) app.style.height = 'auto';
+      if (content) {
+        content.style.flex = 'none';
+        content.style.overflow = 'visible';
+      }
+    });
+    await page.waitForTimeout(200);
+    await shot(page, 'settings-scheduled.png', { fullPage: true });
+
+    await page.getByRole('button', { name: 'Create with Claude' }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls)).toEqual({
+      dispatches: [{
+        prompt: 'Help me create scheduled work. Ask me what should happen, when it should run, and whether it needs active hours or a deterministic gate. Then use CronCreate once the schedule is clear.',
+        title: 'Create scheduled work',
+      }],
+      openedThreadIds: ['thread-created'],
+    });
+  });
+
   test('settings — mcp tab', async ({ page }) => {
     const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
     await page.setViewportSize({ width: 860, height: 820 });
