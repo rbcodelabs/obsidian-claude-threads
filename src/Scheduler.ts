@@ -1,4 +1,6 @@
 import type { ScheduledItem, ScheduledItemSchedule, RunEvent } from './types';
+import cron, { type ScheduledTask } from 'node-cron';
+import { sharedScheduleCoordinator } from './ScheduleCoordinator';
 
 /**
  * Fields that can be updated on a ScheduledItem. The `schedule` field accepts
@@ -110,6 +112,8 @@ const GATE_OUTPUT_PLACEHOLDER = '{{gateOutput}}';
  * reference the same cap.
  */
 export const RUN_HISTORY_MAX = 50;
+/** Native timers are deliberately chunked to avoid the signed 32-bit delay ceiling. */
+export const MAX_SCHEDULER_TIMEOUT_MS = 86_400_000;
 
 /**
  * Append a run outcome to an item's bounded history ring buffer, mutating the
@@ -145,11 +149,11 @@ export function computeNextRun(item: ScheduledItem, fromNow = false): number {
   }
 
   if (schedule.type === 'daily') {
-    return nextTimeOfDay(schedule.timeOfDay ?? '09:00', now);
+    return nextCalendarRun(item, now);
   }
 
   if (schedule.type === 'weekly') {
-    return nextWeeklyRun(schedule.timeOfDay ?? '09:00', schedule.daysOfWeek ?? [1], now);
+    return nextCalendarRun(item, now);
   }
 
   if (schedule.type === 'once') {
@@ -160,6 +164,43 @@ export function computeNextRun(item: ScheduledItem, fromNow = false): number {
   }
 
   return now + 86400 * 1000;
+}
+
+function cronExpression(schedule: ScheduledItemSchedule): string {
+  const [hour = '9', minute = '0'] = (schedule.timeOfDay ?? '09:00').split(':');
+  const days = schedule.type === 'weekly' ? (schedule.daysOfWeek ?? [1]).join(',') : '*';
+  return `${Number(minute)} ${Number(hour)} * * ${days}`;
+}
+
+function nextCalendarRun(item: ScheduledItem, fromMs: number): number {
+  // node-cron calculates in local time and owns DST/calendar edge cases. Its
+  // public getNextRun API only returns a value for a started task, so start and
+  // immediately destroy this calculation-only task.
+  let task: ScheduledTask | undefined;
+  try {
+    task = cron.createTask(cronExpression(item.schedule), () => undefined);
+    task.start();
+    const candidate = task.getNextRun()?.getTime();
+    if (candidate && isValidCalendarCandidate(item.schedule, fromMs, candidate)) return candidate;
+    // 4.2.1's public matcher is the primary calculator. Keep a defensive
+    // local-time fallback for an invalid/null result (including its known
+    // far-future weekday walker edge case) so persisted nextRun stays sane.
+    return item.schedule.type === 'weekly'
+      ? nextWeeklyRun(item.schedule.timeOfDay ?? '09:00', item.schedule.daysOfWeek ?? [1], fromMs)
+      : nextTimeOfDay(item.schedule.timeOfDay ?? '09:00', fromMs);
+  } finally {
+    task?.destroy();
+  }
+}
+
+function isValidCalendarCandidate(schedule: ScheduledItemSchedule, fromMs: number, candidateMs: number): boolean {
+  if (candidateMs <= fromMs) return false;
+  const candidate = new Date(candidateMs);
+  const [hour = '9', minute = '0'] = (schedule.timeOfDay ?? '09:00').split(':');
+  if (candidate.getHours() !== Number(hour) || candidate.getMinutes() !== Number(minute)) return false;
+  if (schedule.type === 'daily') return candidateMs - fromMs <= 26 * 60 * 60 * 1000;
+  return (schedule.daysOfWeek ?? [1]).includes(candidate.getDay()) &&
+    candidateMs - fromMs <= 8 * 24 * 60 * 60 * 1000;
 }
 
 // Returns true when `atMs` falls within the schedule's configured
@@ -279,7 +320,10 @@ const CATCHUP_STAGGER_MAX_MS = 30_000;
 
 export class Scheduler {
   private timers = new Map<string, number>();
+  private calendarTasks = new Map<string, ScheduledTask>();
   private items: ScheduledItem[] = [];
+  private coordinator = sharedScheduleCoordinator();
+  private coordinatorRegistration?: symbol;
   // Cheap reentrancy guard: prevents two overlapping fire() calls for the same
   // item (e.g. two timer callbacks racing within the same instance) from both
   // reaching thread creation. Cleared in a finally so it never gets stuck.
@@ -294,6 +338,7 @@ export class Scheduler {
   start(items: ScheduledItem[]): void {
     // Take an internal copy — do not mutate the passed-in array reference
     this.items = items.map((i) => ({ ...i }));
+    this.activateCoordinator(true);
     this.catchUpCount = 0;
     for (const item of this.items) {
       if (item.enabled) {
@@ -308,16 +353,17 @@ export class Scheduler {
       window.clearTimeout(id);
     }
     this.timers.clear();
+    for (const task of this.calendarTasks.values()) task.destroy();
+    this.calendarTasks.clear();
+    if (this.coordinatorRegistration) {
+      this.coordinator.deactivate(this.coordinatorRegistration);
+      this.coordinatorRegistration = undefined;
+    }
   }
 
   // Internal: arm a setTimeout for an item, handling missed runs.
   private armTimer(item: ScheduledItem): void {
-    // Cancel any existing timer for this item
-    const existing = this.timers.get(item.id);
-    if (existing !== undefined) {
-      window.clearTimeout(existing);
-      this.timers.delete(item.id);
-    }
+    this.cancelWakeSources(item.id);
 
     if (!item.enabled) return;
 
@@ -348,15 +394,61 @@ export class Scheduler {
       delayMs = next - now;
     }
 
+    if (
+      delayMs > 0 &&
+      item.nextRun &&
+      item.nextRun >= now &&
+      (item.schedule.type === 'daily' || item.schedule.type === 'weekly')
+    ) {
+      const task = cron.createTask(
+        cronExpression(item.schedule),
+        (context) => this.requestFire(item.id, context.date.getTime()).catch(console.error),
+        { noOverlap: true },
+      );
+      task.on('execution:missed', () => {
+        this.requestFire(item.id, Date.now()).catch(console.error);
+      });
+      task.start();
+      this.calendarTasks.set(item.id, task);
+      return;
+    }
+
+    const cappedDelay = Math.min(Math.max(0, delayMs), MAX_SCHEDULER_TIMEOUT_MS);
+    const dueAt = item.nextRun ?? now + cappedDelay;
     const id = window.setTimeout(() => {
-      this.fire(item).catch(console.error);
-    }, delayMs) as unknown as number;
+      this.requestFire(item.id, dueAt).catch(console.error);
+    }, cappedDelay) as unknown as number;
 
     this.timers.set(item.id, id);
   }
 
+  private cancelWakeSources(id: string): void {
+    const existing = this.timers.get(id);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+      this.timers.delete(id);
+    }
+    const task = this.calendarTasks.get(id);
+    if (task) {
+      task.destroy();
+      this.calendarTasks.delete(id);
+    }
+  }
+
+  private async requestFire(id: string, _wakeAt: number): Promise<void> {
+    const current = this.items.find((candidate) => candidate.id === id);
+    if (!current || !current.enabled) return;
+    if (!current.nextRun || Date.now() < current.nextRun) {
+      this.armTimer(current);
+      return;
+    }
+    await this.fire(current, current.nextRun);
+  }
+
   // Internal: fire a scheduled item — create thread, update timestamps, rearm.
-  private async fire(item: ScheduledItem): Promise<void> {
+  private async fire(item: ScheduledItem, dueAt?: number): Promise<void> {
+    const forceDirectFire = dueAt === undefined;
+    dueAt ??= item.nextRun ?? Date.now();
     // Cheap reentrancy guard: two overlapping calls for the same item (e.g. two
     // timer callbacks racing within this single instance) must not both reach
     // thread creation. The second call short-circuits here; the first clears
@@ -365,10 +457,10 @@ export class Scheduler {
     this.firing.add(item.id);
 
     try {
-      this.timers.delete(item.id);
+      this.cancelWakeSources(item.id);
 
       // Re-fetch the current item state in case it was updated while the timer was pending
-      const current = this.items.find((i) => i.id === item.id);
+      let current = this.items.find((i) => i.id === item.id);
       if (!current || !current.enabled) return;
 
       // Active-hours gate: a cycle that comes due outside the item's
@@ -381,10 +473,14 @@ export class Scheduler {
       // night only to be skipped each time. Placed before claimFire/thread
       // creation so a skipped cycle never contends for the fencing token.
       if (current.schedule.activeHours && !isWithinActiveHours(current.schedule, Date.now())) {
-        current.nextRun = nextTimeOfDay(current.schedule.activeHours.start, Date.now());
-        recordRunEvent(current, { ts: Date.now(), outcome: 'skipped-active-hours' });
         try {
-          await this.options.saveItem({ ...current });
+          const updated = await this.coordinator.update(current.id, (fresh) => {
+            fresh.nextRun = nextTimeOfDay(fresh.schedule.activeHours!.start, Date.now());
+            recordRunEvent(fresh, { ts: Date.now(), outcome: 'skipped-active-hours' });
+            fresh.lastSkipReason = 'active-hours';
+            return fresh;
+          });
+          current = this.replaceLocal(updated);
         } catch (err) {
           console.error(
             `[Scheduler] Failed to persist active-hours skip for "${current.name}" (${current.id}):`,
@@ -404,6 +500,7 @@ export class Scheduler {
       // lives in the outer scope) can read it when recording the run-history
       // outcome — a gate skip is not a fire but still a completed cycle.
       let gateSkip = false;
+      let claimToken: string | undefined;
       try {
         // Loop items target an existing thread; fall back to a new thread if it's gone.
         const reuseTarget =
@@ -420,8 +517,9 @@ export class Scheduler {
           // cycle, not a new one, and skips the lastRun/rearm bookkeeping
           // that claimFire's fencing token (nextRun) is tied to.
           const retryMs = Math.min(15_000, (current.schedule.intervalSeconds ?? 60) * 1000);
+          const retryItem = current;
           const id = window.setTimeout(() => {
-            this.fire(current).catch(console.error);
+            this.fire(retryItem).catch(console.error);
           }, retryMs) as unknown as number;
           this.timers.set(item.id, id);
           return;
@@ -440,6 +538,7 @@ export class Scheduler {
             // fresh state we got and rearm against it so future cycles
             // aren't lost.
             if (claim.fresh) {
+              await this.coordinator.adopt(claim.fresh);
               const idx = this.items.findIndex((i) => i.id === claim.fresh!.id);
               const merged = { ...claim.fresh };
               if (idx >= 0) {
@@ -452,6 +551,22 @@ export class Scheduler {
             return;
           }
         }
+
+        const durableClaim = await this.coordinator.claim(
+          current.id,
+          dueAt,
+          (fresh) => computeNextRun(fresh, true),
+          forceDirectFire,
+        );
+        if (!durableClaim.claimed || !durableClaim.item?._scheduleClaimToken) {
+          if (durableClaim.item) {
+            current = this.replaceLocal(durableClaim.item);
+            this.armTimer(current);
+          }
+          return;
+        }
+        current = this.replaceLocal(durableClaim.item);
+        claimToken = current._scheduleClaimToken;
 
         // Deterministic pre-check gate: run the item's gate command (if any)
         // before creating a thread or sending a message, so cycles with
@@ -517,6 +632,18 @@ export class Scheduler {
         }
 
         if (!gateSkip) {
+          // Async gates create a window in which the item can be disabled or
+          // edited. Re-authorize the persisted claim immediately before the
+          // first irreversible external effect.
+          const authorization = await this.coordinator.authorize(current.id, claimToken!);
+          if (!authorization.claimed) {
+            const abandoned = await this.coordinator.abandon(current.id, claimToken!);
+            if (abandoned) {
+              current = this.replaceLocal(abandoned);
+              this.armTimer(current);
+            }
+            return;
+          }
           if (reuseTarget) {
             await this.options.sendMessage(reuseTarget, promptToSend);
             current.lastThreadId = reuseTarget;
@@ -539,58 +666,46 @@ export class Scheduler {
         console.error(`[Scheduler] Failed to fire scheduled item "${current.name}" (${current.id}):`, err);
       }
 
-      if (current.schedule.type === 'once') {
-        // One-shot item (e.g. ScheduleWakeup): there is no next cycle to
-        // rearm for, so remove it from memory and disk instead of updating
-        // lastRun/nextRun. This is what makes ScheduleWakeup entries
-        // self-cleaning and keeps CronList from accumulating fired wakeups.
-        const idx = this.items.findIndex((i) => i.id === current.id);
-        if (idx >= 0) this.items.splice(idx, 1);
-        try {
-          await this.options.removeItem(current.id);
-        } catch (err) {
-          console.error(
-            `[Scheduler] Failed to persist removal of one-shot item "${current.name}" (${current.id}):`,
-            err,
-          );
-        }
+      if (!claimToken) {
+        // A persistence/claim failure never authorizes an external dispatch.
+        if (current.enabled) this.armTimer(current);
+        return;
+      }
+
+      const completedAt = Date.now();
+      const event: RunEvent = {
+        ts: completedAt,
+        outcome: fireError ? 'error' : gateSkip ? 'skipped-gate' : 'fired',
+      };
+      if (fireError) {
+        event.note = fireError;
+      } else if (gateSkip) {
+        event.gateExitCode = current.lastGateExitCode;
       } else {
-        current.lastRun = Date.now();
-        current.nextRun = computeNextRun(current, true);
+        if (current.lastThreadId) event.threadId = current.lastThreadId;
+        if (current.lastGateError) event.note = `fired open despite gate error: ${current.lastGateError}`;
+      }
 
-        // Record this cycle's outcome in the durable run history. Precedence:
-        // an error firing the thread wins over everything; otherwise a gate
-        // skip; otherwise it fired. A gate that could not be evaluated but
-        // fired open (failOpen) is still a 'fired' outcome, annotated so the
-        // history distinguishes it from a clean fire.
-        const event: RunEvent = {
-          ts: current.lastRun,
-          outcome: fireError ? 'error' : gateSkip ? 'skipped-gate' : 'fired',
-        };
-        if (fireError) {
-          event.note = fireError;
-        } else if (gateSkip) {
-          event.gateExitCode = current.lastGateExitCode;
+      try {
+        const currentId = current.id;
+        const finalized = await this.coordinator.finalize(currentId, claimToken, {
+          completedAt,
+          event,
+          lastThreadId: current.lastThreadId,
+          lastSkipReason: current.lastSkipReason,
+          lastGateExitCode: current.lastGateExitCode,
+          lastGateError: current.lastGateError,
+        });
+        if (!finalized) {
+          const idx = this.items.findIndex((candidate) => candidate.id === currentId);
+          if (idx >= 0) this.items.splice(idx, 1);
+          this.cancelWakeSources(currentId);
         } else {
-          if (current.lastThreadId) event.threadId = current.lastThreadId;
-          if (current.lastGateError) {
-            event.note = `fired open despite gate error: ${current.lastGateError}`;
-          }
+          current = this.replaceLocal(finalized);
+          this.armTimer(current);
         }
-        recordRunEvent(current, event);
-
-        // Await the save so failures are visible, but this method is only ever
-        // invoked fire-and-forget from a setTimeout callback (already
-        // .catch(console.error)'d there) — do not rethrow, just log and
-        // continue to armTimer regardless of save outcome.
-        try {
-          await this.options.saveItem({ ...current });
-        } catch (err) {
-          console.error(`[Scheduler] Failed to persist post-fire state for "${current.name}" (${current.id}):`, err);
-        }
-
-        // Rearm for the next run
-        this.armTimer(current);
+      } catch (err) {
+        console.error(`[Scheduler] Failed to persist post-fire state for "${current.name}" (${current.id}):`, err);
       }
     } finally {
       this.firing.delete(item.id);
@@ -603,6 +718,7 @@ export class Scheduler {
     const item: ScheduledItem = {
       ...params,
       id: crypto.randomUUID(),
+      _scheduleRevision: 1,
     };
 
     // Compute the initial nextRun
@@ -617,13 +733,15 @@ export class Scheduler {
     }
 
     try {
-      await this.options.saveItem({ ...item });
+      this.activateCoordinator();
+      const persisted = await this.coordinator.create(item);
+      this.replaceLocal(persisted);
     } catch (err) {
       console.error(`[Scheduler] Failed to persist new item "${item.name}" (${item.id}):`, err);
       throw err;
     }
 
-    return { ...item };
+    return this.publicCopy(this.getLocal(item.id)!);
   }
 
   async updateItem(id: string, patch: SchedulerItemPatch): Promise<ScheduledItem> {
@@ -660,13 +778,23 @@ export class Scheduler {
     this.armTimer(updated);
 
     try {
-      await this.options.saveItem({ ...updated });
+      this.activateCoordinator();
+      const persisted = await this.coordinator.update(id, (fresh) => {
+        const freshSchedule: ScheduledItemSchedule = patch.schedule
+          ? { ...fresh.schedule, ...patch.schedule }
+          : fresh.schedule;
+        const { schedule: _ignoredSchedule, ...freshRestPatch } = patch;
+        const merged: ScheduledItem = { ...fresh, ...freshRestPatch, schedule: freshSchedule };
+        if (scheduleChanged) merged.nextRun = computeNextRun(merged, true);
+        return merged;
+      });
+      this.replaceLocal(persisted);
     } catch (err) {
       console.error(`[Scheduler] Failed to persist update to "${updated.name}" (${updated.id}):`, err);
       throw err;
     }
 
-    return { ...updated };
+    return this.publicCopy(this.getLocal(id)!);
   }
 
   async deleteItem(id: string): Promise<void> {
@@ -674,17 +802,14 @@ export class Scheduler {
     if (idx < 0) return;
 
     // Cancel timer
-    const timerId = this.timers.get(id);
-    if (timerId !== undefined) {
-      window.clearTimeout(timerId);
-      this.timers.delete(id);
-    }
+    this.cancelWakeSources(id);
 
     // Synchronous mutation happens before the first await.
     this.items.splice(idx, 1);
 
     try {
-      await this.options.removeItem(id);
+      this.activateCoordinator();
+      await this.coordinator.delete(id);
     } catch (err) {
       console.error(`[Scheduler] Failed to persist deletion of item ${id}:`, err);
       throw err;
@@ -692,11 +817,46 @@ export class Scheduler {
   }
 
   listItems(): ScheduledItem[] {
-    return this.items.map((i) => ({ ...i }));
+    return this.items.map((i) => this.publicCopy(i));
   }
 
   getItem(id: string): ScheduledItem | undefined {
     const item = this.items.find((i) => i.id === id);
-    return item ? { ...item } : undefined;
+    return item ? this.publicCopy(item) : undefined;
+  }
+
+  private getLocal(id: string): ScheduledItem | undefined {
+    return this.items.find((item) => item.id === id);
+  }
+
+  private activateCoordinator(refresh = false): void {
+    if (this.coordinatorRegistration && !refresh) return;
+    this.coordinatorRegistration = this.coordinator.activate(
+      this.items,
+      {
+        saveItem: this.options.saveItem,
+        removeItem: this.options.removeItem,
+      },
+      this.coordinatorRegistration,
+    );
+  }
+
+  private replaceLocal(item: ScheduledItem): ScheduledItem {
+    const copy = { ...item, schedule: { ...item.schedule } };
+    const index = this.items.findIndex((candidate) => candidate.id === item.id);
+    if (index >= 0) this.items[index] = copy;
+    else this.items.push(copy);
+    return copy;
+  }
+
+  private publicCopy(item: ScheduledItem): ScheduledItem {
+    const {
+      _scheduleRevision: _revision,
+      _scheduleClaimToken: _claimToken,
+      _scheduleClaimDueAt: _claimDueAt,
+      _scheduleClaimRevision: _claimRevision,
+      ...publicItem
+    } = item;
+    return { ...publicItem, schedule: { ...publicItem.schedule } };
   }
 }

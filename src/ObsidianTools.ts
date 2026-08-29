@@ -1953,7 +1953,16 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         if (!options.onCronList) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'CronList is not available in this context.' }) }], isError: true };
         }
-        const items = options.onCronList();
+        const items = options.onCronList().map((item) => {
+          const {
+            _scheduleRevision: _revision,
+            _scheduleClaimToken: _claimToken,
+            _scheduleClaimDueAt: _claimDueAt,
+            _scheduleClaimRevision: _claimRevision,
+            ...publicItem
+          } = item;
+          return publicItem;
+        });
         return { content: [{ type: 'text' as const, text: JSON.stringify(items, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

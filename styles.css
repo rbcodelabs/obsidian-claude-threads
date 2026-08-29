@@ -5904,6 +5904,151 @@
   margin: 4px 0 12px;
 }
 
+/* Scheduled work dashboard */
+.ct-scheduled-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ct-scheduled-section > h2 {
+  margin: 0 0 4px;
+  font-size: var(--font-ui-medium);
+}
+
+.ct-scheduled-section-desc {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ct-scheduled-next-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ct-scheduled-next-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.ct-scheduled-next-row.is-overdue {
+  border-color: var(--color-orange);
+}
+
+.ct-scheduled-next-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ct-scheduled-next-timing {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  text-align: right;
+  font-size: var(--font-ui-small);
+}
+
+.ct-scheduled-next-label,
+.ct-scheduled-exact {
+  color: var(--text-muted);
+}
+
+.ct-scheduled-exact {
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+}
+
+.ct-scheduled-card {
+  margin-bottom: 12px;
+  padding: 14px 16px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary-alt);
+}
+
+.ct-scheduled-card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ct-scheduled-card-title-row h3 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+}
+
+.ct-scheduled-status {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.ct-scheduled-status.is-enabled {
+  color: var(--color-green);
+}
+
+.ct-scheduled-status.is-overdue {
+  color: var(--color-orange);
+}
+
+.ct-scheduled-card-schedule {
+  margin: 5px 0 12px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.ct-scheduled-metadata {
+  display: grid;
+  grid-template-columns: minmax(105px, auto) minmax(0, 1fr);
+  gap: 5px 12px;
+  margin-bottom: 8px;
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-scheduled-meta-row {
+  display: contents;
+}
+
+.ct-scheduled-meta-label {
+  color: var(--text-muted);
+}
+
+.ct-scheduled-meta-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-normal);
+}
+
+.ct-scheduled-actions.setting-item {
+  min-height: 0;
+  padding: 8px 0;
+  border: 0;
+}
+
+.ct-scheduled-actions .setting-item-info {
+  display: none;
+}
+
+.ct-scheduled-card .ct-run-history {
+  margin: 0 0 8px;
+}
+
 /* Per-scheduled-item run history (collapsible under each item's settings row) */
 .ct-run-history {
   margin: -4px 0 14px;

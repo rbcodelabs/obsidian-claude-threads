@@ -19,15 +19,26 @@ const fixtureProjects: Project[] = [
   },
 ];
 
+const FIXTURE_NOW = new Date('2026-08-29T14:00:00-04:00').getTime();
+Date.now = () => FIXTURE_NOW;
+
 const fixtureScheduled: ScheduledItem[] = [
   {
     id: 'sched-1',
     name: 'Morning inbox triage',
     prompt: 'Triage my email inbox and summarize anything urgent.',
-    schedule: { type: 'daily', timeOfDay: '09:00' },
+    schedule: { type: 'daily', timeOfDay: '09:00', activeHours: { start: '07:00', end: '18:00' } },
     enabled: true,
-    lastRun: 1764576000000,
-    nextRun: 1764662400000,
+    cwd: '/Users/mock/work/acme',
+    projectId: 'proj-1',
+    lastRun: FIXTURE_NOW - 24 * 60 * 60_000,
+    nextRun: FIXTURE_NOW - 5 * 60_000,
+    lastThreadId: 'thread-morning',
+    gate: { command: 'test -s inbox/pending.txt', timeoutSeconds: 15 },
+    runHistory: [
+      { ts: FIXTURE_NOW - 48 * 60 * 60_000, outcome: 'skipped-gate', gateExitCode: 1 },
+      { ts: FIXTURE_NOW - 24 * 60 * 60_000, outcome: 'fired' },
+    ],
   },
   {
     id: 'sched-2',
@@ -35,6 +46,44 @@ const fixtureScheduled: ScheduledItem[] = [
     prompt: 'Review and triage all open PRs.',
     schedule: { type: 'weekly', daysOfWeek: [1], timeOfDay: '08:30' },
     enabled: false,
+  },
+  {
+    id: 'sched-3',
+    name: 'Project pulse',
+    prompt: 'Summarize project progress.',
+    schedule: { type: 'interval', intervalSeconds: 4 * 60 * 60 },
+    enabled: true,
+    nextRun: FIXTURE_NOW + 42 * 60_000,
+    projectId: 'proj-1',
+  },
+  {
+    id: 'loop-1',
+    name: 'Loop: watch CI',
+    prompt: 'Check whether CI has finished.',
+    schedule: { type: 'interval', intervalSeconds: 10 * 60 },
+    enabled: true,
+    nextRun: FIXTURE_NOW + 8 * 60_000,
+    targetThreadId: 'thread-ci',
+  },
+  {
+    id: 'wakeup-1',
+    name: 'Wakeup: deployment check',
+    prompt: 'Resume and inspect the deployment.',
+    schedule: { type: 'once', fireAt: FIXTURE_NOW + 20 * 60_000 },
+    enabled: true,
+    nextRun: FIXTURE_NOW + 20 * 60_000,
+    targetThreadId: 'thread-deploy',
+    origin: 'wakeup',
+  },
+  {
+    id: 'heartbeat-1',
+    name: 'Thread Orchestrator heartbeat',
+    prompt: 'Review threads.',
+    schedule: { type: 'interval', intervalSeconds: 60 * 60 },
+    enabled: true,
+    nextRun: FIXTURE_NOW + 5 * 60_000,
+    targetThreadId: 'thread-orchestrator',
+    isOrchestratorHeartbeat: true,
   },
 ];
 
@@ -50,6 +99,14 @@ const settings: PluginSettings = {
   scheduledItems: fixtureScheduled,
 };
 
+const scheduledCreateCalls: {
+  dispatches: Array<{ prompt: string; title: string | undefined }>;
+  openedThreadIds: string[];
+} = {
+  dispatches: [],
+  openedThreadIds: [],
+};
+
 const mockPlugin = {
   app: mockApp,
   settings,
@@ -59,6 +116,7 @@ const mockPlugin = {
     deleteProject: () => {},
     createProject: () => {},
     updateSettings: () => {},
+    getThread: (id: string) => id === 'thread-morning' ? { id, title: 'Morning inbox triage run' } : undefined,
   },
   scheduler: {
     updateItem: () => {},
@@ -71,6 +129,13 @@ const mockPlugin = {
   saveSettings: async () => {},
   getView: () => null,
   getEffectiveCwd: () => '/Users/mock/vault',
+  dispatchNewThread: async (prompt: string, _images: unknown, title: string | undefined) => {
+    scheduledCreateCalls.dispatches.push({ prompt, title });
+    return 'thread-created';
+  },
+  openThreadInChatView: async (threadId: string) => {
+    scheduledCreateCalls.openedThreadIds.push(threadId);
+  },
 };
 
 const tab = new ClaudeThreadsSettingTab(mockApp as any, mockPlugin as any);
@@ -80,6 +145,7 @@ tab.display();
 
 // Expose for Playwright
 (window as any).__settingsTab = tab;
+(window as any).__scheduledCreateCalls = scheduledCreateCalls;
 
 /**
  * Opens a RequestSecretModal and resolves when the user saves or cancels.
