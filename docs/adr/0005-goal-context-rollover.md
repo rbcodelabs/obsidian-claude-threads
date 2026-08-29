@@ -24,6 +24,9 @@ ThreadManager owns a desired and applied goal-context revision per thread.
   cancels an older pending or starting kickoff.
 - After the goal is persisted, the caller requests a revision-specific context
   refresh and, for a non-empty goal, exactly one kickoff.
+- While persistence is pending, later user turns are held without refreshing.
+  A failed save restores the prior goal/revision and releases those turns
+  through the unchanged adapter.
 - If an adapter is busy, awaiting an interactive callback, or has active
   background work, refresh waits. At the next safe boundary the old adapter is
   closed and removed.

@@ -98,6 +98,7 @@ const mockPlugin = {
 // switching without launching a real harness process from the static UI
 // fixture. Session rollover itself is covered by the ThreadManager unit suite.
 manager.requestGoalKickoff = async (threadId: string, revision: number, message: string) => {
+  manager.commitThreadGoal(threadId, revision);
   goalKickoffs.push({ threadId, revision, message });
   return true;
 };

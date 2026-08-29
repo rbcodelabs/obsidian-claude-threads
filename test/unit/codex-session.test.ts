@@ -20,6 +20,19 @@ describe('codexMcpServers', () => {
 });
 
 describe('Codex agent profile instructions', () => {
+  it('replaces goal developer instructions on both thread start and thread resume', () => {
+    const refreshed = {
+      appendSystemPrompt: '## Active Goal\nShip the latest release',
+      codex: { approvalPolicy: 'on-request', sandbox: 'workspace-write' },
+    } as any;
+
+    expect(codexDeveloperInstructions(refreshed)).toContain('Ship the latest release');
+    expect(codexDeveloperInstructions(refreshed)).not.toContain('Old goal');
+    expect(codexResumeInstructions(refreshed)).toEqual({
+      developerInstructions: '## Active Goal\nShip the latest release',
+    });
+  });
+
   it('preserves existing developer context and adds the configured role prompts', () => {
     const instructions = codexDeveloperInstructions({
       appendSystemPrompt: 'Existing project context.',

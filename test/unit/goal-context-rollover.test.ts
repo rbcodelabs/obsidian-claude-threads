@@ -8,6 +8,7 @@ const mock = vi.hoisted(() => ({
   sessions: [] as any[],
   blockNextStart: false,
   releaseStart: null as null | (() => void),
+  rejectStart: null as null | ((error: Error) => void),
 }));
 
 function makeFakeSession(harness: 'claude' | 'codex') {
@@ -30,7 +31,10 @@ function makeFakeSession(harness: 'claude' | 'codex') {
       this.starts.push(next);
       if (mock.blockNextStart) {
         mock.blockNextStart = false;
-        await new Promise<void>((resolve) => { mock.releaseStart = resolve; });
+        await new Promise<void>((resolve, reject) => {
+          mock.releaseStart = resolve;
+          mock.rejectStart = reject;
+        });
       }
     },
     send(text: string) { this.sent.push(text); turnInFlight = true; },
@@ -69,6 +73,7 @@ beforeEach(() => {
   mock.sessions = [];
   mock.blockNextStart = false;
   mock.releaseStart = null;
+  mock.rejectStart = null;
 });
 
 describe.each(['claude', 'codex'] as const)('goal context rollover — %s', (harness) => {
@@ -282,4 +287,48 @@ it('rolling back a failed persistence restores the applied revision and does not
   expect(thread.goal).toBeUndefined();
   expect(manager.getQueuedCount(thread.id)).toBe(0);
   expect(first.sent).toEqual(['hello', 'still works']);
+});
+
+it('a send during failed persistence stays on the old adapter after rollback', async () => {
+  const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+  const thread = manager.createThread('T', process.cwd());
+  await manager.sendMessage(thread.id, 'hello');
+  const first = mock.sessions[0] as FakeSession;
+  first.finish('same-session');
+  await settle();
+
+  const revision = manager.setThreadGoal(thread.id, 'Never persisted');
+  await manager.sendMessage(thread.id, 'sent while save is pending');
+  expect(manager.getQueuedCount(thread.id)).toBe(1);
+  expect(mock.sessions).toHaveLength(1);
+
+  manager.rollbackThreadGoal(thread.id, revision, undefined);
+  await settle();
+  expect(mock.sessions).toHaveLength(1);
+  expect(first.closeCount).toBe(0);
+  expect(first.sent).toEqual(['hello', 'sent while save is pending']);
+});
+
+it.each(['delete', 'shutdown', 'destroy'] as const)('%s ignores a rejected adapter start after cancellation', async (action) => {
+  const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+  const thread = manager.createThread('T', process.cwd());
+  const errors: Error[] = [];
+  manager.subscribe((_id, event) => { if (event.type === 'error') errors.push(event.error); });
+  await manager.sendMessage(thread.id, 'hello');
+  (mock.sessions[0] as FakeSession).finish('same-session');
+  await settle();
+  mock.blockNextStart = true;
+  const revision = manager.setThreadGoal(thread.id, 'Goal');
+  const result = manager.requestGoalKickoff(thread.id, revision, goalKickoffMessage('Goal'));
+  await settle();
+
+  if (action === 'delete') manager.deleteThread(thread.id);
+  else if (action === 'shutdown') await manager.gracefulShutdown(1);
+  else manager.destroy();
+  mock.rejectStart?.(new Error('start cancelled'));
+  await settle();
+
+  expect(errors).toEqual([]);
+  if (action !== 'delete') expect(thread.lastError).toBeUndefined();
+  await expect(result).resolves.toBe(false);
 });

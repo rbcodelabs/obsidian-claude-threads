@@ -26,6 +26,7 @@ interface GoalContextState {
   appliedRevision: number;
   refreshRequested: boolean;
   processing: boolean;
+  persistencePendingRevision?: number;
   pendingKickoff?: {
     revision: number;
     message: string;
@@ -762,6 +763,7 @@ export class ThreadManager {
     const state = this.getGoalContextState(id);
     state.desiredRevision += 1;
     state.refreshRequested = false;
+    state.persistencePendingRevision = state.desiredRevision;
     if (state.pendingKickoff) {
       state.pendingKickoff.resolve(false);
       delete state.pendingKickoff;
@@ -786,13 +788,24 @@ export class ThreadManager {
     delete state.pendingKickoff;
     delete state.inFlightKickoff;
     state.desiredRevision = state.appliedRevision;
+    delete state.persistencePendingRevision;
     state.refreshRequested = false;
+    this.scheduleQueuedMessageFlush(id);
+  }
+
+  /** Mark a goal revision durable before any context refresh may consume it. */
+  commitThreadGoal(id: string, revision: number): boolean {
+    const state = this.goalContextStates.get(id);
+    if (!state || state.desiredRevision !== revision) return false;
+    if (state.persistencePendingRevision !== undefined && state.persistencePendingRevision !== revision) return false;
+    delete state.persistencePendingRevision;
+    return true;
   }
 
   /** Refresh the adapter for a persisted goal change without sending a turn. */
   requestGoalContextRefresh(id: string, revision: number): void {
     const state = this.goalContextStates.get(id);
-    if (!state || revision !== state.desiredRevision || !this.threads.has(id)) return;
+    if (!state || revision !== state.desiredRevision || !this.threads.has(id) || !this.commitThreadGoal(id, revision)) return;
     state.refreshRequested = true;
     this.scheduleGoalContextProcessing(id);
   }
@@ -804,7 +817,12 @@ export class ThreadManager {
    */
   requestGoalKickoff(id: string, revision: number, message: string): Promise<boolean> {
     const state = this.goalContextStates.get(id);
-    if (!state || revision !== state.desiredRevision || !this.threads.has(id)) {
+    if (
+      !state
+      || revision !== state.desiredRevision
+      || !this.threads.has(id)
+      || !this.commitThreadGoal(id, revision)
+    ) {
       return Promise.resolve(false);
     }
     if (state.pendingKickoff) state.pendingKickoff.resolve(false);
@@ -1139,6 +1157,19 @@ export class ThreadManager {
     queueMicrotask(() => { void this.processGoalContextChange(threadId); });
   }
 
+  private scheduleQueuedMessageFlush(threadId: string): void {
+    queueMicrotask(() => {
+      const state = this.goalContextStates.get(threadId);
+      if (!state || state.persistencePendingRevision !== undefined || state.desiredRevision !== state.appliedRevision) return;
+      const queued = this.queuedMessages.get(threadId) ?? [];
+      this.queuedMessages.delete(threadId);
+      for (const item of queued) {
+        this.emit(threadId, { type: 'dequeued', text: item.text, images: item.images });
+        void this.sendMessage(threadId, item.text, item.images);
+      }
+    });
+  }
+
   /**
    * Retire stale initialization context only when the adapter is fully idle.
    * Closing is synchronous; the next send lazily creates a replacement and
@@ -1220,6 +1251,15 @@ export class ThreadManager {
         await session.start(options);
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
+        if (
+          this.goalContextStates.get(threadId) !== state
+          || this.threads.get(threadId) !== thread
+          || state.desiredRevision !== revision
+        ) {
+          session.close();
+          if (this.sessions.get(threadId) === session) this.sessions.delete(threadId);
+          return false;
+        }
         thread.status = 'error';
         thread.lastError = error.message;
         this.emit(threadId, { type: 'error', error });
@@ -1279,13 +1319,18 @@ export class ThreadManager {
 
     const goalState = this.getGoalContextState(threadId);
     const currentSession = this.sessions.get(threadId);
-    if (currentSession && goalState.desiredRevision !== goalState.appliedRevision) {
+    if (
+      goalState.persistencePendingRevision !== undefined
+      || (currentSession && goalState.desiredRevision !== goalState.appliedRevision)
+    ) {
       const queue = this.queuedMessages.get(threadId) ?? [];
       queue.push({ text: userText, images });
       this.queuedMessages.set(threadId, queue);
       this.emit(threadId, { type: 'queued', text: userText, images });
-      goalState.refreshRequested = true;
-      this.scheduleGoalContextProcessing(threadId);
+      if (goalState.persistencePendingRevision === undefined) {
+        goalState.refreshRequested = true;
+        this.scheduleGoalContextProcessing(threadId);
+      }
       return;
     }
 
