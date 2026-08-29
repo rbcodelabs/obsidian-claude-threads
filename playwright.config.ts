@@ -30,6 +30,6 @@ export default defineConfig({
       maxDiffPixels: 25,
     },
   },
-  projects: [{ name: 'chromium', use: { channel: 'chromium' } }],
+  projects: [{ name: 'chromium' }],
   snapshotDir: './test/screenshots/snapshots',
 });

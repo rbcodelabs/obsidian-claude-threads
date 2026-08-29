@@ -4,6 +4,7 @@
  * Renders MobileView in one of several states controlled by the ?view= query param:
  *   ?view=mobile-pairing      — no relay/store configured (shows pairing screen)
  *   ?view=mobile-connected    — mock relay + seeded MobileThreadStore, first thread active (conv panel)
+ *   ?view=mobile-codex-tools  — Codex-native tool-record regression fixture active
  *   ?view=mobile-thread-list  — seeded store, NO active thread (shows thread list panel)
  *   ?view=mobile-permission   — active thread with a pending permission request card
  *   ?view=mobile-question     — active thread with a pending AskUserQuestion card (single-select + multiSelect)
@@ -57,7 +58,9 @@ const app = document.getElementById('app')!;
 function serializedFixtures(activeThreadId: string | null) {
   return {
     type: 'snapshot' as const,
-    threads: fixtureThreads.map((t) => ({
+    threads: fixtureThreads
+      .filter((t) => t.id !== 'thread-codex-native-tool-calls' || activeThreadId === t.id)
+      .map((t) => ({
       id: t.id,
       title: t.title,
       cwd: t.cwd,
@@ -88,6 +91,18 @@ if (view === 'mobile-connected') {
   store.applyFrame(serializedFixtures(fixtureThreads[0].id));
   store.applyFrame({ type: 'streaming_start', threadId: fixtureThreads[0].id });
   store.applyFrame({ type: 'token', threadId: fixtureThreads[0].id, text: 'Working on it...' });
+
+  const mobileView = new MobileView(mockLeaf as any, relay as any, store);
+  app.appendChild(mobileView.containerEl);
+  mobileView.onOpen();
+  (window as any).__mobileView = mobileView;
+  (window as any).__store = store;
+
+} else if (view === 'mobile-codex-tools') {
+  const threadId = 'thread-codex-native-tool-calls';
+  const store = new MobileThreadStore();
+  const relay = new MockRelayClient();
+  store.applyFrame(serializedFixtures(threadId));
 
   const mobileView = new MobileView(mockLeaf as any, relay as any, store);
   app.appendChild(mobileView.containerEl);

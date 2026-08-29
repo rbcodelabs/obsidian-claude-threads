@@ -307,4 +307,29 @@ test.describe('Mobile View', () => {
     await expect(group.locator('.ct-full-content')).not.toHaveClass(/ct-hidden/);
     await expect(group.locator('.ct-full-content .ct-tool-pill')).toHaveCount(5);
   });
+
+  for (const viewport of [
+    { width: 390, height: 844, label: 'iPhone 14' },
+    { width: 375, height: 667, label: 'iPhone SE' },
+  ]) {
+    test(`Codex-native command records render with terminal semantics (${viewport.label})`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(mobileHarnessUrl('mobile-codex-tools', viewport));
+      await page.waitForSelector('.ct-mobile-conv-panel');
+
+      const group = page.locator('.ct-mobile-messages .ct-tool-group').first();
+      await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (3)');
+      await expect(group.locator('.ct-tool-group-header .lucide-terminal')).toHaveCount(1);
+      await group.locator('.ct-expand-btn').click();
+      await expect(group.locator('.ct-tool-pill-name')).toHaveText(['Bash', 'Bash', 'Bash']);
+      await expect(group.locator('.ct-full-content .lucide-terminal')).toHaveCount(3);
+
+      const overflow = await page.locator('.ct-mobile-messages').evaluate(
+        (el) => el.scrollWidth - el.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(1);
+
+      await shot(page, `mobile-codex-native-tools-${viewport.width}.png`, { fullPage: true });
+    });
+  }
 });

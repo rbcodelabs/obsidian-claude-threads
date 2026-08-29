@@ -143,6 +143,15 @@ describe('groupToolCalls', () => {
     const result = groupToolCalls(tools);
     expect(result).toEqual([{ kind: 'group', activityKind: 'editing', tools }]);
   });
+
+  it.each([
+    { names: ['commandExecution', 'commandExecution'], activityKind: 'exploring' as const },
+    { names: ['fileChange', 'fileChange'], activityKind: 'editing' as const },
+    { names: ['webSearch', 'webSearch'], activityKind: 'researching' as const },
+  ])('groups raw Codex $names records as $activityKind', ({ names, activityKind }) => {
+    const tools = names.map((name, index) => tool(name, { toolUseId: `codex-${index}` }));
+    expect(groupToolCalls(tools)).toEqual([{ kind: 'group', activityKind, tools }]);
+  });
 });
 
 // ─── smoothToolGroups ──────────────────────────────────────────────────────

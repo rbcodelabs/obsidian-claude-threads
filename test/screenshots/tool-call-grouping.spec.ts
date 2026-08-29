@@ -67,6 +67,29 @@ test.describe('Tool-call grouping', () => {
   });
 });
 
+test.describe('Codex-native tool-call rendering', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-codex-native-tool-calls'));
+    await page.waitForSelector('.ct-tool-group');
+  });
+
+  test('renders commandExecution as an Exploring group with terminal icons and readable labels', async ({ page }) => {
+    const group = page.locator('.ct-tool-group').first();
+    await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (3)');
+    await expect(group.locator('.ct-tool-group-header .lucide-terminal')).toHaveCount(1);
+
+    await group.locator('.ct-expand-btn').click();
+    await expect(group.locator('.ct-tool-pill-name')).toHaveText(['Bash', 'Bash', 'Bash']);
+    await expect(group.locator('.ct-full-content .lucide-terminal')).toHaveCount(3);
+
+    await shot(page, 'tool-call-grouping-codex-native.png', { fullPage: true });
+  });
+});
+
 // ─── Outer-wrap tier (post-smoothing entry count > OUTER_WRAP_ENTRY_THRESHOLD) ──
 // Fixture: 'thread-outer-wrap-tool-calls' (test/harness/fixtures.ts) — TWO
 // assistant messages, each with enough tool calls that
