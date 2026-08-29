@@ -35,7 +35,7 @@ function normalizeToolName(raw: string): NormalizedToolName {
   const key = (server && bare.startsWith(server + '_'))
     ? bare.slice(server.length + 1)
     : bare;
-  const alias = CODEX_TOOL_ALIASES[key];
+  const alias = server === null ? CODEX_TOOL_ALIASES[key] : undefined;
   if (alias) return alias;
   return { key, display: key.replace(/_/g, ' ') };
 }

@@ -20,9 +20,21 @@ describe('host-neutral tool display', () => {
     const codexName = 'obsidian:obsidian_search_vault';
     const claudeName = 'mcp__obsidian__obsidian_search_vault';
 
+    expect(formatToolName(codexName)).toBe('search vault');
+    expect(getToolIcon(codexName)).toBe('vault');
+    expect(getActivityKind(codexName)).toBe('working');
     expect(formatToolName(codexName)).toBe(formatToolName(claudeName));
     expect(getToolIcon(codexName)).toBe(getToolIcon(claudeName));
     expect(getActivityKind(codexName)).toBe(getActivityKind(claudeName));
+  });
+
+  it.each([
+    { raw: 'custom:commandExecution', display: 'commandExecution' },
+    { raw: 'mcp__custom__fileChange', display: 'fileChange' },
+  ])('does not apply native Codex aliases across the $raw MCP namespace', ({ raw, display }) => {
+    expect(formatToolName(raw)).toBe(display);
+    expect(getToolIcon(raw)).toBe('wrench');
+    expect(getActivityKind(raw)).toBe('working');
   });
 
   it('formats canonical fully-qualified names without leaking the server name', () => {
