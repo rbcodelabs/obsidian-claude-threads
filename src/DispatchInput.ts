@@ -84,10 +84,27 @@ export interface DispatchInputOptions {
   getPttKey?: () => string;
   /**
    * Extra directories to scan for skills in addition to ~/.claude/skills/.
-   * Pass the skills directories from GitHub plugin sources so they appear in
-   * the /command autocomplete immediately (before the session fires commands_changed).
+   * Pass the skills directories from configured plugin sources and the vault
+   * skills root so they appear in the /command autocomplete immediately
+   * (before the session fires commands_changed).
    */
-  extraSkillDirs?: string[];
+  extraSkillDirs?: ExtraSkillDir[];
+}
+
+/** A directory of skill subdirectories, plus how its skills are namespaced as slash commands. */
+export interface ExtraSkillDir {
+  /** Directory containing one subdirectory per skill. */
+  dir: string;
+  /**
+   * Shared namespace prefix for every skill in `dir`, e.g. `vault` → `/vault:foo`.
+   * Omit for directories whose skills are registered as one local plugin each,
+   * which the SDK names after the skill itself → `/foo:foo`.
+   *
+   * Getting this right matters: the names shown before the first session must
+   * match the ones `commands_changed` reports afterwards, or autocomplete
+   * offers a command string that does not resolve.
+   */
+  prefix?: string;
 }
 
 export class DispatchInput {
@@ -790,8 +807,11 @@ export class DispatchInput {
       }
     } catch { /* ignore missing dir */ }
 
-    // Also scan extra dirs supplied by the caller (e.g. GitHub plugin source skill dirs)
-    for (const extraDir of (this.options.extraSkillDirs ?? [])) {
+    // Also scan extra dirs supplied by the caller (plugin sources, vault skills
+    // root). Unlike the ~/.claude/skills scan above — whose skills the CLI
+    // loads bare — these are registered as plugins and are only invocable under
+    // a namespace, so the name shown here has to carry the prefix.
+    for (const { dir: extraDir, prefix } of (this.options.extraSkillDirs ?? [])) {
       try {
         for (const entry of fs.readdirSync(extraDir)) {
           const entryPath = path.join(extraDir, entry);
@@ -801,7 +821,7 @@ export class DispatchInput {
             const skillFile = candidates.find(f => fs.existsSync(path.join(entryPath, f)));
             if (!skillFile) continue;
             const desc = this.readSkillDescription(path.join(entryPath, skillFile));
-            allSkills.push({ name: entry, description: desc });
+            allSkills.push({ name: `${prefix ?? entry}:${entry}`, description: desc });
           } catch { continue; }
         }
       } catch { /* ignore missing dir */ }

@@ -292,7 +292,7 @@ export interface ObsidianMcpServerOptions {
    * has opted out in settings. Defaults to true.
    */
   enableOpenUrl?: boolean;
-  /** Returns every skill currently installed in ~/.claude/skills/ (content omitted — use onSkillsGet for a specific skill's full SKILL.md). */
+  /** Returns every visible skill — vault-installed and read-only ~/.claude/skills entries alike (content omitted — use onSkillsGet for a specific skill's full SKILL.md). */
   onSkillsListInstalled?: () => Promise<Array<Omit<InstalledSkillInfo, 'content'>>>;
   /** Searches the skills.sh marketplace registry for the given query. */
   onSkillsSearch?: (query: string, limit?: number) => Promise<MarketplaceSkill[]>;
@@ -302,9 +302,9 @@ export interface ObsidianMcpServerOptions {
   onSkillsListSources?: () => SkillSourceListItem[];
   /** Checks every configured GitHub-type skill source for how many commits behind origin it is. */
   onSkillsCheckUpdates?: () => Promise<SourceUpdateCheckResult[]>;
-  /** Installs a skill from the marketplace (as returned by onSkillsSearch) into ~/.claude/skills/. */
+  /** Installs a skill from the marketplace (as returned by onSkillsSearch) into the vault's skills folder. */
   onSkillsInstall?: (params: InstallSkillParams) => Promise<{ name: string; targetDir: string }>;
-  /** Uninstalls (deletes) an installed skill by name. */
+  /** Uninstalls (deletes) a vault-installed skill by name. Rejects for read-only ~/.claude/skills entries. */
   onSkillsUninstall?: (name: string) => Promise<{ skillPath: string }>;
   /** Pulls the latest commits for a configured GitHub-type skill source by its source id. */
   onSkillsUpdate?: (sourceId: string) => Promise<{ behindCount: number; lastFetched: number }>;
@@ -2123,7 +2123,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundSkillsListInstalled = tool(
     'skills_list_installed',
-    "Lists skills currently installed in ~/.claude/skills/, with name, description, install path, and which configured skill source (if any) each came from. Use skills_get for a specific skill's full SKILL.md content.",
+    "Lists every skill visible to this session, with name, description, install path, and which configured skill source (if any) each came from. Each entry carries `origin` ('vault' = installed by the plugin into the vault, 'home' = managed by Claude Code in ~/.claude/skills) plus `isEditable` and `isRemovable`, which are false for everything under ~/.claude/. Use skills_get for a specific skill's full SKILL.md content.",
     {},
     async (_args, _extra) => {
       try {
@@ -2218,7 +2218,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundSkillsInstall = tool(
     'skills_install',
-    'Installs a skill from the skills.sh marketplace into ~/.claude/skills/. Pass the slug/skillId/source/name exactly as returned by skills_search for the skill you want to install.',
+    "Installs a skill from the skills.sh marketplace into the vault's own skills folder (<vault>/<plugin-dir>/skills/). Never writes to ~/.claude/. Pass the slug/skillId/source/name exactly as returned by skills_search for the skill you want to install.",
     {
       slug: z.string().describe('Full skills.sh id, e.g. "owner/repo/skill-name" (from skills_search results)'),
       skillId: z.string().describe('Bare skill folder name — the install directory basename (from skills_search results)'),
@@ -2246,9 +2246,9 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundSkillsUninstall = tool(
     'skills_uninstall',
-    'Uninstalls (permanently deletes) an installed skill by name from ~/.claude/skills/.',
+    'Uninstalls (permanently deletes) a skill the plugin installed into the vault. Skills in ~/.claude/skills are managed by Claude Code and are read-only here — this tool refuses them rather than deleting them.',
     {
-      name: z.string().describe('Name of the installed skill to uninstall (as returned by skills_list_installed)'),
+      name: z.string().describe('Name of the skill to uninstall (as returned by skills_list_installed, where isRemovable is true)'),
     },
     async (args, _extra) => {
       try {

@@ -6557,6 +6557,38 @@ body.ct-skills-resizing {
   margin-bottom: 4px;
 }
 
+/* Name + status badge on one line (read-only skill and agent detail panes). */
+.ct-skills-detail-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ct-skills-detail-name-row .ct-skills-detail-name {
+  margin-bottom: 0;
+}
+
+/* Explains why a detail pane has no Save/Uninstall, and where installs do go. */
+.ct-skills-callout {
+  margin: 10px 14px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.ct-skills-callout-sub {
+  margin-top: 4px;
+  font-family: var(--font-monospace);
+  font-size: 10px;
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
 .ct-skills-detail-path {
   font-size: 10px;
   color: var(--text-faint);
@@ -7349,6 +7381,19 @@ body.ct-skills-resizing {
 .ct-skills-badge--updates {
   color: var(--color-orange);
   background: transparent;
+}
+
+/* Marks anything under ~/.claude/ — Claude-Code-managed, never written by this
+   plugin. Deliberately more compact than the other badges (no uppercase, no
+   letter-spacing): it shares a narrow tree row with the group name, which
+   would otherwise ellipsis away to "Claude Co…". */
+.ct-skills-badge--readonly {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 1px 4px;
+  flex-shrink: 0;
 }
 
 /* ── Plugin card in Installed tab ───────────────────────────────────────── */

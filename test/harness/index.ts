@@ -59,6 +59,11 @@ const mockPlugin = {
   },
   saveSettings: async () => {},
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
+  // Empty on purpose: this harness has no vault skills fixture, and the
+  // Skills Manager harness (skills-index.ts) is where the populated case is
+  // screenshotted. Must still be present — ThreadsView calls it while
+  // building the /-autocomplete skill dirs.
+  getPluginSkillsRoot: () => '',
   getPendingWakeups: (threadId: string) => [...loopItems.values()]
     .filter((item: any) => item.origin === 'wakeup' && item.enabled && item.targetThreadId === threadId)
     .map((item: any) => ({ fireAt: item.nextRun ?? item.schedule.fireAt, reason: item.name.replace(/^Wakeup: /, '') }))

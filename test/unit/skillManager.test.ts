@@ -7,11 +7,16 @@
  * the skills_* MCP tools in ObsidianTools.ts delegate here.
  *
  * `requestUrl` (from 'obsidian') is mocked so marketplace-search/description
- * tests don't hit the real network. `listInstalledSkills` and friends read
- * from `~/.claude/skills/`, which is hardcoded (matching the pre-refactor
- * behavior in SkillsManagerView) — tests redirect that by overriding
- * `process.env.HOME` to a temp directory for the duration of each test, since
- * Node's `os.homedir()` reads `$HOME` on every call rather than caching it.
+ * tests don't hit the real network.
+ *
+ * Two roots, two sandboxes. `homeRoot` still derives from `os.homedir()`, so
+ * `process.env.HOME` is overridden to a temp dir for the duration of each test
+ * (Node's `os.homedir()` reads `$HOME` on every call rather than caching it).
+ * `pluginRoot` is a second temp dir standing in for the vault, installed via
+ * `setSkillRoots`. Both are wrapped in `fs.realpathSync`: on macOS
+ * `os.tmpdir()` lives under `/var`, itself a symlink to `/private/var`, and
+ * `computeSkillRoots` canonicalizes — so uncanonicalized fixtures would fail
+ * every containment check for the wrong reason.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -42,26 +47,36 @@ import {
   installSkillFromMarketplace,
   codexSkillRoots,
 } from '../../src/skillManager';
+import { computeSkillRoots, setSkillRoots, resetSkillRoots, type SkillRoots } from '../../src/skillPaths';
 
-// ── Home dir sandbox ──────────────────────────────────────────────────────────
+// ── Two-root sandbox ──────────────────────────────────────────────────────────
+
+const MANIFEST_DIR = '.obsidian/plugins/claude-threads';
 
 let realHome: string | undefined;
 let tmpHome: string;
+let tmpVault: string;
+let roots: SkillRoots;
 
 beforeEach(() => {
   realHome = process.env.HOME;
-  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-home-'));
+  tmpHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-home-')));
+  tmpVault = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-vault-')));
   process.env.HOME = tmpHome;
+  roots = computeSkillRoots(tmpVault, MANIFEST_DIR, tmpHome);
+  setSkillRoots(roots);
 });
 
 afterEach(() => {
+  resetSkillRoots();
   if (realHome !== undefined) process.env.HOME = realHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+  fs.rmSync(tmpVault, { recursive: true, force: true });
   mockRequestUrl.mockReset();
 });
 
-function writeInstalledSkill(name: string, description = 'a test skill', dirName = name): string {
-  const skillDir = path.join(tmpHome, '.claude', 'skills', dirName);
+function writeSkillIn(root: string, name: string, description: string, dirName: string): string {
+  const skillDir = path.join(root, dirName);
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(
     path.join(skillDir, 'SKILL.md'),
@@ -71,8 +86,18 @@ function writeInstalledSkill(name: string, description = 'a test skill', dirName
   return skillDir;
 }
 
+/** Writes a read-only, Claude-Code-managed skill into ~/.claude/skills/. */
+function writeHomeSkill(name: string, description = 'a test skill', dirName = name): string {
+  return writeSkillIn(roots.homeRoot, name, description, dirName);
+}
+
+/** Writes a plugin-installed skill into <vault>/<plugin-dir>/skills/. */
+function writeVaultSkill(name: string, description = 'a test skill', dirName = name): string {
+  return writeSkillIn(roots.pluginRoot, name, description, dirName);
+}
+
 describe('codexSkillRoots', () => {
-  it('resolves GitHub, local, and bundled roots for app-server discovery', () => {
+  it('resolves GitHub, local, bundled, and vault roots for app-server discovery', () => {
     const cloneRoot = path.join(tmpHome, 'source');
     fs.mkdirSync(path.join(cloneRoot, '.claude-plugin'), { recursive: true });
     fs.writeFileSync(
@@ -83,25 +108,30 @@ describe('codexSkillRoots', () => {
     expect(codexSkillRoots([
       { id: 'github', name: 'GitHub', type: 'github', clonePath: cloneRoot },
       { id: 'local', name: 'Local', type: 'local', skillsPath: '~/local-skills' },
-    ], path.join(tmpHome, 'bundled'))).toEqual([
+    ], path.join(tmpHome, 'bundled'), roots.pluginRoot)).toEqual([
       path.resolve(cloneRoot, 'custom-skills'),
       path.resolve(tmpHome, 'local-skills'),
       path.resolve(tmpHome, 'bundled'),
+      path.resolve(roots.pluginRoot),
     ]);
+  });
+
+  it('omits the vault root when it is unresolvable', () => {
+    expect(codexSkillRoots([], undefined, '')).toEqual([]);
   });
 });
 
 // ── listInstalledSkills ────────────────────────────────────────────────────
 
 describe('listInstalledSkills', () => {
-  it('returns an empty array when ~/.claude/skills does not exist', async () => {
+  it('returns an empty array when neither root exists', async () => {
     const result = await listInstalledSkills();
     expect(result).toEqual([]);
   });
 
   it('lists skills installed as directories with SKILL.md', async () => {
-    writeInstalledSkill('alpha-skill', 'does alpha things');
-    writeInstalledSkill('beta-skill', 'does beta things');
+    writeHomeSkill('alpha-skill', 'does alpha things');
+    writeHomeSkill('beta-skill', 'does beta things');
 
     const result = await listInstalledSkills();
 
@@ -112,8 +142,45 @@ describe('listInstalledSkills', () => {
     expect(result[0].content).toContain('does alpha things');
   });
 
+  it('merges both roots and tags each entry with its origin and gates', async () => {
+    writeHomeSkill('home-skill', 'from claude code');
+    writeVaultSkill('vault-skill', 'from the plugin');
+
+    const result = await listInstalledSkills();
+
+    expect(result.map((s) => [s.name, s.origin, s.isEditable, s.isRemovable])).toEqual([
+      ['home-skill', 'home', false, false],
+      ['vault-skill', 'vault', true, true],
+    ]);
+  });
+
+  it('sorts the vault copy ahead of a same-named home copy so lookups resolve to the writable one', async () => {
+    writeHomeSkill('dupe', 'home version');
+    writeVaultSkill('dupe', 'vault version');
+
+    const result = await listInstalledSkills();
+    expect(result.map((s) => s.origin)).toEqual(['vault', 'home']);
+    expect(result[0].description).toBe('vault version');
+  });
+
+  it('marks a vault symlink pointing outside the vault as removable but not editable', async () => {
+    const external = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-repo-')));
+    const target = writeSkillIn(external, 'linked', 'in a user repo', 'linked');
+    fs.mkdirSync(roots.pluginRoot, { recursive: true });
+    fs.symlinkSync(target, path.join(roots.pluginRoot, 'linked'));
+
+    try {
+      const [skill] = await listInstalledSkills();
+      expect(skill.origin).toBe('vault');
+      expect(skill.isEditable).toBe(false); // no write-through into the user's repo
+      expect(skill.isRemovable).toBe(true); // rm unlinks, it does not follow
+    } finally {
+      fs.rmSync(external, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to the directory name when frontmatter has no name', async () => {
-    const skillDir = path.join(tmpHome, '.claude', 'skills', 'no-name-skill');
+    const skillDir = path.join(roots.homeRoot, 'no-name-skill');
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\ndescription: nameless\n---\n', 'utf-8');
 
@@ -135,7 +202,7 @@ describe('listInstalledSkills', () => {
     fs.mkdirSync(realSkillDir, { recursive: true });
     fs.writeFileSync(path.join(realSkillDir, 'SKILL.md'), '---\nname: linked-skill\ndescription: linked\n---\n', 'utf-8');
 
-    const installedDir = path.join(tmpHome, '.claude', 'skills');
+    const installedDir = roots.homeRoot;
     fs.mkdirSync(installedDir, { recursive: true });
     fs.symlinkSync(realSkillDir, path.join(installedDir, 'linked-skill'));
 
@@ -154,9 +221,8 @@ describe('listInstalledSkills', () => {
   });
 
   it('skips non-.md, non-directory entries', async () => {
-    const skillsDir = path.join(tmpHome, '.claude', 'skills');
-    fs.mkdirSync(skillsDir, { recursive: true });
-    fs.writeFileSync(path.join(skillsDir, 'README.txt'), 'not a skill', 'utf-8');
+    fs.mkdirSync(roots.homeRoot, { recursive: true });
+    fs.writeFileSync(path.join(roots.homeRoot, 'README.txt'), 'not a skill', 'utf-8');
 
     const result = await listInstalledSkills();
     expect(result).toEqual([]);
@@ -166,19 +232,56 @@ describe('listInstalledSkills', () => {
 // ── uninstallSkillByPath / uninstallSkillByName ───────────────────────────────
 
 describe('uninstallSkillByPath', () => {
-  it('removes the skill directory entirely', async () => {
-    const skillDir = writeInstalledSkill('to-remove');
+  it('removes a vault skill directory entirely', async () => {
+    const skillDir = writeVaultSkill('to-remove');
     await uninstallSkillByPath(skillDir);
     expect(fs.existsSync(skillDir)).toBe(false);
+  });
+
+  it('refuses to remove anything in ~/.claude/skills, and leaves it on disk', async () => {
+    const skillDir = writeHomeSkill('protected');
+    await expect(uninstallSkillByPath(skillDir)).rejects.toThrow(/managed by Claude Code/);
+    expect(fs.existsSync(skillDir)).toBe(true);
+  });
+
+  it('refuses a sibling directory that merely shares the vault root as a string prefix', async () => {
+    const sibling = path.join(`${roots.pluginRoot}-evil`, 'foo');
+    fs.mkdirSync(sibling, { recursive: true });
+    await expect(uninstallSkillByPath(sibling)).rejects.toThrow(/outside the vault skills folder/);
+    expect(fs.existsSync(sibling)).toBe(true);
+  });
+
+  it("refuses everything when pluginRoot is '' (mobile / no FileSystemAdapter)", async () => {
+    const skillDir = writeVaultSkill('would-be-removable');
+    const noVault = computeSkillRoots('', '', tmpHome);
+    await expect(uninstallSkillByPath(skillDir, noVault)).rejects.toThrow(/outside the vault skills folder/);
+    expect(fs.existsSync(skillDir)).toBe(true);
   });
 });
 
 describe('uninstallSkillByName', () => {
-  it('finds and removes an installed skill by name', async () => {
-    const skillDir = writeInstalledSkill('named-skill');
+  it('finds and removes an installed vault skill by name', async () => {
+    const skillDir = writeVaultSkill('named-skill');
     const result = await uninstallSkillByName('named-skill');
     expect(result.skillPath).toBe(skillDir);
     expect(fs.existsSync(skillDir)).toBe(false);
+  });
+
+  it('throws for a home-only name and leaves the directory intact', async () => {
+    const skillDir = writeHomeSkill('home-only');
+    await expect(uninstallSkillByName('home-only')).rejects.toThrow(/managed by Claude Code/);
+    expect(fs.existsSync(path.join(skillDir, 'SKILL.md'))).toBe(true);
+  });
+
+  it('removes only the vault copy on a cross-root name collision', async () => {
+    const homeDir = writeHomeSkill('dupe', 'home version');
+    const vaultDir = writeVaultSkill('dupe', 'vault version');
+
+    const result = await uninstallSkillByName('dupe');
+
+    expect(result.skillPath).toBe(vaultDir);
+    expect(fs.existsSync(vaultDir)).toBe(false);
+    expect(fs.existsSync(homeDir)).toBe(true);
   });
 
   it('throws when no installed skill has that name', async () => {
@@ -272,12 +375,25 @@ describe('getMarketplaceSkillDescription', () => {
 
 describe('getSkillDetail', () => {
   it('returns installed detail (with content) when the identifier matches an installed skill name', async () => {
-    writeInstalledSkill('installed-one', 'installed description');
+    writeVaultSkill('installed-one', 'installed description');
 
     const result = await getSkillDetail('installed-one');
     expect(result.installed).toBe(true);
     expect(result.description).toBe('installed description');
     expect(result.content).toContain('installed-one');
+    expect(result.origin).toBe('vault');
+    expect(result.isEditable).toBe(true);
+    expect(result.isRemovable).toBe(true);
+  });
+
+  it('reports a home skill as installed but read-only', async () => {
+    writeHomeSkill('home-one', 'home description');
+
+    const result = await getSkillDetail('home-one');
+    expect(result.installed).toBe(true);
+    expect(result.origin).toBe('home');
+    expect(result.isEditable).toBe(false);
+    expect(result.isRemovable).toBe(false);
   });
 
   it('falls back to a marketplace lookup when not installed and identifier looks like a slug', async () => {
@@ -451,17 +567,51 @@ describe('listGithubSourceSkills', () => {
 // ── installSkillFromMarketplace (fast-fail paths only — full install requires network) ─
 
 describe('installSkillFromMarketplace', () => {
+  const params = { slug: 'owner/repo/already-there', skillId: 'already-there', name: 'Already There', source: 'owner/repo' };
+
   it('throws immediately when the skill has no GitHub source', async () => {
     await expect(
       installSkillFromMarketplace({ slug: 'x/y/z', skillId: 'z', name: 'Z', source: '' }),
     ).rejects.toThrow(/No GitHub source available/);
   });
 
-  it('throws before attempting to clone when a skill with that id is already installed', async () => {
-    writeInstalledSkill('already-there', 'existing', 'already-there');
+  it('throws before attempting to clone when a skill with that id is already in the vault root', async () => {
+    writeVaultSkill('already-there', 'existing', 'already-there');
+    await expect(installSkillFromMarketplace(params)).rejects.toThrow(/already installed/);
+  });
 
+  it("throws before cloning when installRoot is '' rather than falling back to the home directory", async () => {
     await expect(
-      installSkillFromMarketplace({ slug: 'owner/repo/already-there', skillId: 'already-there', name: 'Already There', source: 'owner/repo' }),
-    ).rejects.toThrow(/already installed/);
+      installSkillFromMarketplace(params, { installRoot: '' }),
+    ).rejects.toThrow(/never writes to ~\/\.claude/);
+    expect(fs.existsSync(path.join(tmpHome, '.claude', 'skills'))).toBe(false);
+  });
+
+  it('throws when the roots have no vault root at all (mobile / no FileSystemAdapter)', async () => {
+    resetSkillRoots();
+    setSkillRoots(computeSkillRoots('', '', tmpHome));
+    await expect(installSkillFromMarketplace(params)).rejects.toThrow(/never writes to ~\/\.claude/);
+    expect(fs.existsSync(path.join(tmpHome, '.claude', 'skills'))).toBe(false);
+  });
+
+  it('never creates ~/.claude/skills, even on the mkdir that precedes the clone', async () => {
+    // A home skill with the same id must warn, not block, and must not be touched.
+    const homeDir = writeHomeSkill('already-there', 'home copy');
+    const homeSnapshot = fs.readdirSync(roots.homeRoot);
+
+    // Fails at the git clone (no network / bogus repo), but only after the
+    // install root has already been created — which is the point of the check.
+    await expect(installSkillFromMarketplace({
+      ...params,
+      source: 'ct-does-not-exist/ct-does-not-exist',
+      skillId: 'brand-new',
+    })).rejects.toThrow();
+
+    expect(fs.existsSync(roots.pluginRoot)).toBe(true);
+    expect(fs.readdirSync(roots.homeRoot)).toEqual(homeSnapshot);
+    expect(fs.existsSync(path.join(homeDir, 'SKILL.md'))).toBe(true);
   });
 });
+
+// buildSkillPlugins lives in this module but is covered end-to-end (pure
+// enumeration plus the real ThreadManager wiring) in session-plugins.test.ts.

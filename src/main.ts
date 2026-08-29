@@ -295,6 +295,22 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { GitDiffService } = require('./GitDiffService') as typeof import('./GitDiffService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const skillPaths = require('./skillPaths') as typeof import('./skillPaths');
+
+    // Resolve the skill roots before anything reads them. Everything the plugin
+    // installs goes under <vault>/<plugin-dir>/skills/; ~/.claude/ is scanned
+    // but never written. Hoisted above migrateGithubSourcesIntoVault() below,
+    // which reuses the same containment predicate.
+    {
+      const adapter = this.app.vault.adapter;
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const osNode = require('os') as typeof import('os');
+      const vaultRoot = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : '';
+      skillPaths.setSkillRoots(
+        skillPaths.computeSkillRoots(vaultRoot, this.manifest?.dir ?? '', osNode.homedir()),
+      );
+    }
 
     this.detectClaudeBinary();
     this.detectCodexBinary();
@@ -505,7 +521,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
             if (changed) await this.saveSettings();
             return results;
           },
-          onSkillsInstall: (params) => skillManager.installSkillFromMarketplace(params),
+          // Agent-driven installs land in the vault like UI installs do. The
+          // uninstall guard lives in skillManager (not here) because
+          // ObsidianTools already converts a rejection into { error, isError }.
+          onSkillsInstall: (params) => skillManager.installSkillFromMarketplace(params, {
+            installRoot: this.getPluginSkillsRoot(),
+          }),
           onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? []),
           onSkillsUpdate: async (sourceId) => {
             const source = (this.settings.skillSources ?? []).find((s) => s.id === sourceId);
@@ -1446,11 +1467,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const vaultLocal = require('path').join(vaultRoot, this.manifest.dir!, 'skill-sources');
     const fs = require('fs') as typeof import('fs');
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isInsideRoot } = require('./skillPaths') as typeof import('./skillPaths');
+
     let changed = false;
     for (const source of githubSources) {
       const oldPath = source.clonePath!;
-      // Already vault-local — nothing to do
-      if (oldPath.startsWith(vaultLocal)) continue;
+      // Already vault-local — nothing to do. Uses isInsideRoot rather than a
+      // bare startsWith, which would also skip a clone in a sibling directory
+      // that merely shares the prefix (e.g. "<vaultLocal>-backup/<id>").
+      if (isInsideRoot(oldPath, vaultLocal)) continue;
       // Old clone must exist on disk to be moveable
       if (!fs.existsSync(oldPath)) continue;
 
@@ -1477,6 +1503,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
     if (adapter instanceof FileSystemAdapter) return adapter.getBasePath();
     return '';
+  }
+
+  /**
+   * Absolute path to the vault-local skills folder
+   * (`<vault>/<plugin-dir>/skills`) — the ONLY directory this plugin installs
+   * skills into. `~/.claude/skills` is read-only and never a fallback.
+   *
+   * Returns `''` when it cannot be resolved (mobile, or any adapter that is not
+   * a `FileSystemAdapter`). Callers must treat `''` as "installs unavailable"
+   * and surface that to the user rather than writing somewhere else.
+   *
+   * `this.manifest?.dir` is optional-chained because the screenshot harness
+   * mounts views against a mock plugin object with no `manifest`.
+   */
+  getPluginSkillsRoot(): string {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return '';
+    const dir = this.manifest?.dir;
+    if (!dir) return '';
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathNode = require('path') as typeof import('path');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { pluginSkillsRootFrom } = require('./skillPaths') as typeof import('./skillPaths');
+    return pluginSkillsRootFrom(pathNode.join(adapter.getBasePath(), dir));
   }
 
   /**
