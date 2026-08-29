@@ -198,7 +198,7 @@ test.describe('Claude Threads UI', () => {
       .poll(async () => page.locator('.ct-visualize-body').evaluate((el) => el.clientHeight))
       .toBeGreaterThanOrEqual(180);
     await page.waitForTimeout(400);
-    await expect(page).toHaveScreenshot('inline-visualization.png', { fullPage: true });
+    await shot(page, 'inline-visualization.png', { fullPage: true });
   });
 
   test('inline visualization follows the host theme, not the OS colour scheme', async ({ page }) => {

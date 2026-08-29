@@ -62,7 +62,7 @@ test.describe('Bridge-aware edits', () => {
     await page.waitForSelector('.ct-edited-files:not(.ct-hidden)');
 
     await installBridgeMocks(page);
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const manager = (window as any).__manager;
       const view = (window as any).__view;
       const thread = manager.getThread('thread-fix-auth');
@@ -72,10 +72,10 @@ test.describe('Bridge-aware edits', () => {
         ...(thread.editedFiles ?? []),
         '/Users/mock/projects/hip-trip/docs/setup.md',
       ];
-      // Round-trip the thread switch to rebuild the edited-files card with
-      // the bridge mocks in place.
-      view.focusThread('thread-brainstorm');
-      view.focusThread('thread-fix-auth');
+      // Switch away, then back, waiting for each shared-view transition to
+      // finish before starting the next one.
+      await view.setActiveThread('thread-brainstorm');
+      await view.setActiveThread('thread-fix-auth');
     });
     await page.waitForTimeout(300);
 
