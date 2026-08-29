@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
-import { shot } from './helpers';
+import { settleView, shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -93,12 +93,20 @@ test.describe('Bridge-aware edits', () => {
       '/Users/mock/projects/hip-trip/src/middleware/__tests__/auth.test.ts'
     );
 
-    // Remove the collapsible class so all context-zone items are always visible
-    // regardless of hover/focus state — this test checks chip ordering, not
-    // collapse behaviour, and CSS pseudo-class rendering varies under parallel load.
-    await page.evaluate(() => {
+    // Let late message/image layout finish before forcing this chip-ordering
+    // scene open. Expanding first lets later content reflow retain a stale
+    // message viewport and can clip the in-flow composer during comparison.
+    await settleView(page);
+    await page.evaluate(async () => {
       document.querySelector('.ct-floating-panel')?.classList.remove('ct-panel-collapsible');
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const messages = document.querySelector<HTMLElement>('.ct-messages');
+      if (messages) messages.scrollTop = messages.scrollHeight;
     });
+    await expect(chips.first()).toBeVisible();
+    // The bridge card and composer are part of the state this regression
+    // captures; expanding the panel must not leave it below the viewport.
+    await expect(page.locator('.ct-floating-panel')).toBeInViewport({ ratio: 1 });
     await shot(page, 'edited-files-bridge.png', { fullPage: true });
   });
 
