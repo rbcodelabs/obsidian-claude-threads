@@ -281,7 +281,7 @@ it('rolling back a failed persistence restores the applied revision and does not
   await settle();
 
   const revision = manager.setThreadGoal(thread.id, 'Unsaved goal');
-  manager.rollbackThreadGoal(thread.id, revision, undefined);
+  manager.rollbackThreadGoal(thread.id, revision);
   await manager.sendMessage(thread.id, 'still works');
 
   expect(thread.goal).toBeUndefined();
@@ -302,11 +302,40 @@ it('a send during failed persistence stays on the old adapter after rollback', a
   expect(manager.getQueuedCount(thread.id)).toBe(1);
   expect(mock.sessions).toHaveLength(1);
 
-  manager.rollbackThreadGoal(thread.id, revision, undefined);
+  manager.rollbackThreadGoal(thread.id, revision);
   await settle();
   expect(mock.sessions).toHaveLength(1);
   expect(first.closeCount).toBe(0);
   expect(first.sent).toEqual(['hello', 'sent while save is pending']);
+});
+
+it('coalesced failed goal saves roll back every rapid update to the durable baseline', async () => {
+  const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+  const thread = manager.createThread('T', process.cwd());
+  thread.goal = 'Durable goal';
+  await manager.sendMessage(thread.id, 'hello');
+  const first = mock.sessions[0] as FakeSession;
+  first.finish('same-session');
+  await settle();
+
+  const firstRevision = manager.setThreadGoal(thread.id, 'Unpersisted one');
+  const latestRevision = manager.setThreadGoal(thread.id, 'Unpersisted two');
+  await manager.sendMessage(thread.id, 'sent while shared save is pending');
+
+  // A shared persistence rejection reaches both callers. Neither caller's
+  // immediate prior value is necessarily durable.
+  manager.rollbackThreadGoal(thread.id, firstRevision);
+  manager.rollbackThreadGoal(thread.id, latestRevision);
+  await settle();
+
+  const state = (manager as any).goalContextStates.get(thread.id);
+  expect(thread.goal).toBe('Durable goal');
+  expect(state.desiredRevision).toBe(state.appliedRevision);
+  expect(state.durableRevision).toBe(state.appliedRevision);
+  expect(state.durableGoal).toBe('Durable goal');
+  expect(mock.sessions).toHaveLength(1);
+  expect(first.closeCount).toBe(0);
+  expect(first.sent).toEqual(['hello', 'sent while shared save is pending']);
 });
 
 it.each(['delete', 'shutdown', 'destroy'] as const)('%s ignores a rejected adapter start after cancellation', async (action) => {

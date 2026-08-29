@@ -24,6 +24,8 @@ type ThreadStateListener = (threadId: string, event: ThreadEvent) => void;
 interface GoalContextState {
   desiredRevision: number;
   appliedRevision: number;
+  durableRevision: number;
+  durableGoal: string | undefined;
   refreshRequested: boolean;
   processing: boolean;
   persistencePendingRevision?: number;
@@ -775,21 +777,22 @@ export class ThreadManager {
     return state.desiredRevision;
   }
 
-  /** Restore the prior value when persistence of a just-requested goal fails. */
-  rollbackThreadGoal(id: string, failedRevision: number, priorGoal: string | undefined): void {
+  /** Restore the last durable value when persistence of a requested goal fails. */
+  rollbackThreadGoal(id: string, failedRevision: number): void {
     const thread = this.threads.get(id);
     const state = this.goalContextStates.get(id);
     if (!thread || !state || state.desiredRevision !== failedRevision) return;
-    if (priorGoal) thread.goal = priorGoal;
+    if (state.durableGoal) thread.goal = state.durableGoal;
     else delete thread.goal;
     thread.updatedAt = Date.now();
     state.pendingKickoff?.resolve(false);
     state.inFlightKickoff?.resolve(false);
     delete state.pendingKickoff;
     delete state.inFlightKickoff;
-    state.desiredRevision = state.appliedRevision;
+    state.desiredRevision = state.durableRevision;
     delete state.persistencePendingRevision;
-    state.refreshRequested = false;
+    state.refreshRequested = state.durableRevision !== state.appliedRevision;
+    if (state.refreshRequested) this.scheduleGoalContextProcessing(id);
     this.scheduleQueuedMessageFlush(id);
   }
 
@@ -799,6 +802,8 @@ export class ThreadManager {
     if (!state || state.desiredRevision !== revision) return false;
     if (state.persistencePendingRevision !== undefined && state.persistencePendingRevision !== revision) return false;
     delete state.persistencePendingRevision;
+    state.durableRevision = revision;
+    state.durableGoal = this.threads.get(id)?.goal;
     return true;
   }
 
@@ -1129,6 +1134,8 @@ export class ThreadManager {
       state = {
         desiredRevision: 0,
         appliedRevision: 0,
+        durableRevision: 0,
+        durableGoal: this.threads.get(threadId)?.goal,
         refreshRequested: false,
         processing: false,
       };

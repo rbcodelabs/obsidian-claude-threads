@@ -5008,12 +5008,11 @@ export class ThreadsView extends ItemView {
 
   /** Shared thread-specific action for /goal and the message context menu. */
   private async applyThreadGoal(threadId: string, goal: string | undefined): Promise<void> {
-    const priorGoal = this.manager.getThread(threadId)?.goal;
     const revision = this.manager.setThreadGoal(threadId, goal);
     try {
       await this.plugin.saveSettings();
     } catch (error) {
-      this.manager.rollbackThreadGoal(threadId, revision, priorGoal);
+      this.manager.rollbackThreadGoal(threadId, revision);
       throw error;
     }
 
