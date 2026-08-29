@@ -15,6 +15,10 @@ manager.loadThreads(fixtureThreads);
 // exercise the loop UI can call __setLoop below.
 const loopItems = new Map<string, any>();
 let nextDeleteError: Error | null = null;
+let nextSaveGate: Promise<void> | null = null;
+let releaseNextSave: (() => void) | null = null;
+let nextSaveError: Error | null = null;
+const goalKickoffs: Array<{ threadId: string; revision: number; message: string }> = [];
 const mockScheduler = {
   listItems: () => [...loopItems.values()],
   createItem: (params: any) => {
@@ -57,7 +61,18 @@ const mockPlugin = {
     summarizeMessage: async () => 'Fixed JWT_SECRET missing in staging by updating auth.ts to fail fast on startup.',
     generateForkPrompt: async () => 'I need to fix the authentication bug in src/auth/jwt.ts. The JWT validation is rejecting valid tokens when the expiry is within 30 seconds. We decided to add a 60-second clock skew buffer to the validation logic.',
   },
-  saveSettings: async () => {},
+  saveSettings: async () => {
+    if (nextSaveGate) {
+      const gate = nextSaveGate;
+      nextSaveGate = null;
+      await gate;
+    }
+    if (nextSaveError) {
+      const error = nextSaveError;
+      nextSaveError = null;
+      throw error;
+    }
+  },
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
   // Empty on purpose: this harness has no vault skills fixture, and the
   // Skills Manager harness (skills-index.ts) is where the populated case is
@@ -78,6 +93,23 @@ const mockPlugin = {
     manager.notifyWakeupChanged(threadId);
   },
 };
+
+// Goal-action probes let Playwright exercise delayed persistence and thread
+// switching without launching a real harness process from the static UI
+// fixture. Session rollover itself is covered by the ThreadManager unit suite.
+manager.requestGoalKickoff = async (threadId: string, revision: number, message: string) => {
+  goalKickoffs.push({ threadId, revision, message });
+  return true;
+};
+(window as any).__goalKickoffs = goalKickoffs;
+(window as any).__blockNextSave = () => {
+  nextSaveGate = new Promise<void>((resolve) => { releaseNextSave = resolve; });
+};
+(window as any).__releaseNextSave = () => {
+  releaseNextSave?.();
+  releaseNextSave = null;
+};
+(window as any).__failNextSave = (message: string) => { nextSaveError = new Error(message); };
 
 // Expose for Playwright — lets screenshot tests seed a loop for a thread.
 (window as any).__setLoop = (threadId: string, prompt: string, intervalSeconds: number) => {
@@ -146,6 +178,13 @@ const mgrInternals = manager as unknown as {
 // bespoke helpers above but isn't limited to one event type.
 (window as any).__emitEvent = (threadId: string, event: { type: string; [key: string]: unknown }) => {
   mgrInternals.emit(threadId, event);
+};
+(window as any).__addLiveUserMessage = (threadId: string, id: string, content: string) => {
+  const thread = manager.getThread(threadId);
+  if (!thread) throw new Error(`Thread not found: ${threadId}`);
+  const message = { id, role: 'user' as const, content, timestamp: Date.now() };
+  thread.messages.push(message);
+  mgrInternals.emit(threadId, { type: 'user_message_added', message } as any);
 };
 
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);

@@ -235,12 +235,22 @@ The active model is shown as a badge in the thread info bar. You can also use `/
 
 ### Goals and loops
 
-**Goals** — `/goal <text>` pins a persistent goal on a thread. Setting a goal does two things:
+**Goals** — `/goal <text>` pins a persistent goal on a thread. You can also
+right-click your latest text message in the main conversation and choose
+**Set as goal**, which is useful when you forgot the `/goal` prefix. Older,
+blank, and image-only messages do not offer the action.
+
+Setting a goal does two things:
 
 1. Claude immediately starts working toward it — no separate prompt needed.
-2. The goal is injected into the system prompt on **every subsequent turn**, so it survives context compaction, topic drift, and multi-day threads. Claude is instructed to keep working toward it until it's met or blocked on your input.
+2. The goal is injected into the authoritative system/developer context on
+   **every subsequent turn**, so it survives context compaction, topic drift,
+   and multi-day threads. If the thread is already active, its current work,
+   permission request, or background task is allowed to settle before the
+   session safely refreshes and starts the latest goal.
 
-`/goal` alone shows the current goal; `/goal clear` (or `off`/`done`) removes it.
+`/goal` alone shows the current goal; `/goal clear` (or `off`/`done`) removes it
+and refreshes the session context without sending another kickoff.
 
 **Loops** — `/loop <interval> <prompt>` re-sends a prompt to the thread on a schedule:
 
