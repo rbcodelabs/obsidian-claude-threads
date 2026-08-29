@@ -314,9 +314,8 @@ test.describe('Mobile View', () => {
   ]) {
     test(`Codex-native command records render with terminal semantics (${viewport.label})`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto(mobileHarnessUrl('mobile-connected', viewport));
+      await page.goto(mobileHarnessUrl('mobile-codex-tools', viewport));
       await page.waitForSelector('.ct-mobile-conv-panel');
-      await page.evaluate(() => (window as any).__store.setActiveThreadId('thread-codex-native-tool-calls'));
 
       const group = page.locator('.ct-mobile-messages .ct-tool-group').first();
       await expect(group.locator('.ct-compressed-summary')).toHaveText('Exploring (3)');
