@@ -282,7 +282,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { WakeLockService } = require('./WakeLockService') as typeof import('./WakeLockService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Scheduler, computeNextRun } = require('./Scheduler') as typeof import('./Scheduler');
+    const { Scheduler } = require('./Scheduler') as typeof import('./Scheduler');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createClaudeThreadsMcpServers, computeUiStatus } = require('./ObsidianTools') as typeof import('./ObsidianTools');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -774,46 +774,6 @@ export default class ClaudeThreadsPlugin extends Plugin {
       getDefaultCwd: () => this.getEffectiveCwd(),
       threadExists: (threadId) => !!this.manager.getThread(threadId),
       isThreadBusy: (threadId) => this.manager.isRunning(threadId),
-      // Defense-in-depth fencing guard (see src/Scheduler.ts SchedulerOptions.claimFire
-      // for the full contract). This closes a narrow window that can otherwise
-      // duplicate-fire a cron item: Obsidian's Component.unload() does not await
-      // onunload(), so a plugin reload can construct a fresh Scheduler instance
-      // (with its own freshly-armed timers) while a prior instance's onunload()
-      // is still mid-flight. Reading via this.loadData() here — instead of the
-      // in-memory this.settings cache — is what makes this work even when two
-      // Scheduler instances coexist: each reads the genuinely current on-disk
-      // state rather than its own process's stale snapshot.
-      claimFire: async (item) => {
-        const disk = ((await this.loadData()) ?? {}) as { scheduledItems?: ScheduledItem[] };
-        const diskItems = disk.scheduledItems ?? [];
-        const idx = diskItems.findIndex((i) => i.id === item.id);
-        const diskItem = idx >= 0 ? diskItems[idx] : undefined;
-
-        if (!diskItem || !diskItem.enabled || diskItem.nextRun !== item.nextRun) {
-          // Already claimed by another instance this cycle, or the item was
-          // disabled/removed since this timer was armed.
-          return { claimed: false, fresh: diskItem };
-        }
-
-        const claimed: ScheduledItem = {
-          ...diskItem,
-          lastRun: Date.now(),
-          nextRun: computeNextRun(diskItem, true),
-        };
-        diskItems[idx] = claimed;
-
-        // Write back immediately so a concurrently-firing sibling instance's
-        // claimFire call sees this claim. Write the freshly-loaded disk object
-        // (not this.settings) so we don't clobber fields a sibling instance may
-        // have written since this process's own in-memory settings were cached.
-        await this.saveData({ ...disk, scheduledItems: diskItems });
-        // Keep this instance's own cache in sync so a subsequent saveSettings()
-        // call from elsewhere in this process doesn't overwrite the claim with
-        // stale in-memory state.
-        this.settings.scheduledItems = diskItems;
-
-        return { claimed: true, fresh: claimed };
-      },
       onOrchestratorHeartbeatStale: () => console.warn('[ClaudeThreads] Orchestrator heartbeat target missing — run "Open Thread Orchestrator" to recreate it.'),
       // Base env for gate commands: reuse execEnv() so gates get the same
       // PATH-augmented environment as the status-line/AWS commands (so tools

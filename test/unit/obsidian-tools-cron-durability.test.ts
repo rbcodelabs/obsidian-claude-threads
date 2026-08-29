@@ -177,3 +177,24 @@ describe('CronDelete durability', () => {
     expect(JSON.parse(result.content[0].text).error).toMatch(/disk full/);
   });
 });
+
+describe('CronList public shape', () => {
+  it('omits internal scheduler revision and claim metadata', async () => {
+    const server = createObsidianMcpServer(makeApp(), {
+      onCronList: () => [{
+        ...sampleItem,
+        _scheduleRevision: 4,
+        _scheduleClaimToken: 'private-token',
+        _scheduleClaimDueAt: 123,
+        _scheduleClaimRevision: 4,
+      }],
+    }) as unknown as CapturedServer;
+
+    const result = await getTool(server, 'CronList')._handler({});
+    const [listed] = JSON.parse(result.content[0].text) as Array<Record<string, unknown>>;
+    expect(listed._scheduleRevision).toBeUndefined();
+    expect(listed._scheduleClaimToken).toBeUndefined();
+    expect(listed._scheduleClaimDueAt).toBeUndefined();
+    expect(listed._scheduleClaimRevision).toBeUndefined();
+  });
+});

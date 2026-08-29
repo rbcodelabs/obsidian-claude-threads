@@ -518,6 +518,14 @@ export interface ScheduledItem {
    * events are dropped. Absent until the item has fired at least once.
    */
   runHistory?: RunEvent[];
+  /** Internal durable mutation revision. Never exposed by CronList. */
+  _scheduleRevision?: number;
+  /** Internal owner token for the currently claimed occurrence. */
+  _scheduleClaimToken?: string;
+  /** Internal canonical due time associated with the current claim. */
+  _scheduleClaimDueAt?: number;
+  /** Internal revision that must still be current before external dispatch. */
+  _scheduleClaimRevision?: number;
 }
 
 /**
