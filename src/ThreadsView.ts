@@ -7,6 +7,7 @@ import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel, prUrlMatchesRepo }
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { SummarizeResult } from './InProcessSummarizer';
+import { shouldAutoSummarize, isUsableTitle } from './summarization';
 import path from 'path';
 import os from 'os';
 import * as fsp from 'fs/promises';
@@ -256,6 +257,12 @@ export class ThreadsView extends ItemView {
   // and discard their results if the view has been toggled/navigated away since they were enqueued.
   private summaryQueue: Promise<void> = Promise.resolve();
   private summaryGeneration = 0;
+  /**
+   * Thread IDs with an auto-summarize call in flight. Prevents a fast
+   * follow-up turn from stacking a second concurrent `claude` subprocess on
+   * the same thread. Cleared in a `.finally()`.
+   */
+  private summarizeInFlight: Set<string> = new Set();
 
   // Per-thread streaming buffers. Accumulates tokens and tool calls for every
   // running thread (active or background) so the streaming UI can be fully
@@ -489,39 +496,61 @@ export class ThreadsView extends ItemView {
         this.clearEscalatedTurn(threadId);
       }
       // Auto-summarize runs for ALL completing threads, not just the active one.
-      // Moving this outside the activeThreadId guard fixes the case where the user
-      // switches away from a thread (or dispatches from Kanban) while it's running —
-      // the response lands on a non-active thread and was previously never summarized.
-      if (event.type === 'message' && this.plugin.settings.summarizationEnabled) {
+      // Keeping this outside the activeThreadId guard covers the case where the
+      // user switches away from a thread (or dispatches from Kanban) while it's
+      // running — the response lands on a non-active thread and would otherwise
+      // never be summarized.
+      //
+      // Triggered on `done` (one per completed user turn), NOT on `message`.
+      // `message` is emitted for every assistant SDK message inside the agentic
+      // loop — including tool-only messages with no text and every sub-agent
+      // step — which fired the summarizer ~58x per turn and spawned a `claude`
+      // subprocess each time. Tradeoff: a turn ending in `error` or
+      // `interrupted` no longer titles the thread; the next completed turn does.
+      if (event.type === 'done') {
         const summarizeThread = this.manager.getThread(threadId);
-        if (summarizeThread) {
-          const shouldAutoTitle = !summarizeThread.titleUserSet;
-          const shouldFullSummarize = this.plugin.settings.autoSummarize;
-          if (shouldAutoTitle || shouldFullSummarize) {
-            this.runSummarize(summarizeThread.messages, summarizeThread).then((result) => {
-              if (result.summary && shouldFullSummarize) {
-                summarizeThread.summary = result.summary;
-                summarizeThread.lastSummarizedAt = Date.now();
-              }
-              if (result.title) this.applyAutoTitle(summarizeThread.id, result.title);
-              this.plugin.saveSettings();
-              // Re-save the vault note so the title update lands immediately and any
-              // stale note from the old title (e.g. "2025-06-03-thread-1.md") is
-              // cleaned up right away rather than waiting for the next session.
-              if (this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
-                this.plugin.persistence.saveThread(summarizeThread).catch(console.error);
-              }
-              // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
-              this.manager.notifySummaryUpdated(summarizeThread.id);
-              if (this.activeThreadId === summarizeThread.id) {
-                this.renderTitleBar();
-                this.renderThreadInfo();
-                this.refreshLeafHeader();
-              }
-            }).catch((err: unknown) => {
-              console.warn('[claude-threads] auto-summarize failed:', err);
-            });
-          }
+        if (summarizeThread && shouldAutoSummarize({
+          summarizationEnabled: this.plugin.settings.summarizationEnabled,
+          autoSummarize: this.plugin.settings.autoSummarize,
+          titleUserSet: summarizeThread.titleUserSet,
+          inFlight: this.summarizeInFlight.has(threadId),
+          messages: summarizeThread.messages,
+          lastSummarizedAt: summarizeThread.lastSummarizedAt,
+        })) {
+          this.summarizeInFlight.add(threadId);
+          // Capture the cursor BEFORE the call, not after it resolves: every
+          // message in the transcript has a timestamp <= this, and anything
+          // that arrives while the summarizer is running stays newer than it
+          // and so still counts as new content on the next turn.
+          const summarizedThrough = Date.now();
+          this.runSummarize(summarizeThread.messages, summarizeThread).then((result) => {
+            // Empty strings mean "no update" — never overwrite good state with them.
+            const summaryChanged = Boolean(result.summary);
+            const titleChanged = Boolean(result.title) && isUsableTitle(result.title);
+            if (summaryChanged) summarizeThread.summary = result.summary;
+            // Advance the cursor on any successful pass so the next turn sends
+            // only its own delta, even when the model reported no change.
+            summarizeThread.lastSummarizedAt = summarizedThrough;
+            if (titleChanged) this.applyAutoTitle(summarizeThread.id, result.title);
+            this.plugin.saveSettings();
+            // Re-save the vault note so the title update lands immediately and any
+            // stale note from the old title (e.g. "2025-06-03-thread-1.md") is
+            // cleaned up right away rather than waiting for the next session.
+            if (this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
+              this.plugin.persistence.saveThread(summarizeThread).catch(console.error);
+            }
+            // Notify all views (Kanban, Dashboard) that the summary changed so they re-render.
+            this.manager.notifySummaryUpdated(summarizeThread.id);
+            if (this.activeThreadId === summarizeThread.id) {
+              this.renderTitleBar();
+              this.renderThreadInfo();
+              this.refreshLeafHeader();
+            }
+          }).catch((err: unknown) => {
+            console.warn('[claude-threads] auto-summarize failed:', err);
+          }).finally(() => {
+            this.summarizeInFlight.delete(threadId);
+          });
         }
       }
       if (threadId === this.activeThreadId) {
@@ -1896,6 +1925,7 @@ export class ThreadsView extends ItemView {
       onProgress,
       thread?.summary,
       thread?.lastSummarizedAt,
+      thread?.title,
     );
   }
 
@@ -1917,6 +1947,7 @@ export class ThreadsView extends ItemView {
           effectiveExtraEnv(this.plugin.settings),
         );
         if (gen !== this.summaryGeneration) return; // stale after the async call — discard
+        if (!summary) return; // empty content — nothing was summarized, leave the row alone
         msg.summary = summary;
         await this.plugin.saveSettings();
         // Update the DOM span if still visible
@@ -2131,6 +2162,7 @@ export class ThreadsView extends ItemView {
           effectiveExtraEnv(this.plugin.settings),
         );
         if (gen !== this.summaryGeneration) return;
+        if (!summary) return; // empty content — nothing was summarized, leave the row alone
         this.groupSummaryCache.set(groupKey, summary);
         el.textContent = summary;
       } catch (err) {
@@ -2155,12 +2187,23 @@ export class ThreadsView extends ItemView {
     };
 
     try {
+      // Cursor captured before the call — see the auto path for why.
+      const summarizedThrough = Date.now();
       const result = await this.runSummarize(thread.messages, thread, onProgress);
-      thread.summary = result.summary;
-      thread.lastSummarizedAt = Date.now();
+      // An empty string means "no update" (empty transcript, NO_SUMMARY
+      // sentinel, or an unparseable response) — assigning it unconditionally
+      // would blank a perfectly good existing summary.
+      const summaryChanged = Boolean(result.summary);
+      const titleChanged = Boolean(result.title) && isUsableTitle(result.title);
+      if (summaryChanged) thread.summary = result.summary;
+      thread.lastSummarizedAt = summarizedThrough;
       // Manual summarize always applies the new title; auto-summarize (after each
-      // message) uses applyAutoTitle which guards against overwriting a user-set name.
-      if (result.title) this.manager.renameThread(thread.id, result.title);
+      // completed turn) uses applyAutoTitle which guards against overwriting a
+      // user-set name.
+      if (titleChanged) this.manager.renameThread(thread.id, result.title);
+      if (!summaryChanged && !titleChanged) {
+        new Notice('Nothing new to summarize — summary left unchanged.', 5000);
+      }
       await this.plugin.saveSettings();
       this.clearStatusCard('active');
       this.moreBtn.removeClass('ct-summarize-spinning');

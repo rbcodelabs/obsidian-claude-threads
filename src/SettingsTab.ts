@@ -1713,7 +1713,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Enable summarization')
-      .setDesc('Show a Summarize button in each thread and enable the "Summarize active thread" command.')
+      .setDesc('Master switch. Auto-names threads once each turn completes, shows a Summarize button in each thread, and enables the "Summarize active thread" command. Turn off to stop all summarizer calls.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.summarizationEnabled).onChange(async (value) => {
           this.plugin.settings.summarizationEnabled = value;
@@ -1725,7 +1725,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     if (this.plugin.settings.summarizationEnabled) {
       new Setting(containerEl)
         .setName('Auto-summarize after response')
-        .setDesc('Regenerate the summary after each assistant turn.')
+        .setDesc('Keep refreshing the summary after every completed turn even once you have renamed a thread yourself. When off, threads are still summarized each turn, but only until you rename one — after that the thread is left alone.')
         .addToggle((toggle) =>
           toggle.setValue(this.plugin.settings.autoSummarize).onChange(async (value) => {
             this.plugin.settings.autoSummarize = value;

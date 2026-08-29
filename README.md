@@ -125,7 +125,7 @@ Agent profiles supplied by installed GitHub plugin sources remain native agent d
 | Switch to tab N | `Cmd+1` through `Cmd+9` |
 | Next / previous tab | `Cmd+]` / `Cmd+[` |
 
-Tabs are renamed automatically after the first exchange using the thread summarizer — no need to name them yourself.
+Tabs are renamed automatically once the first turn completes, using the thread summarizer — no need to name them yourself. Rename a tab yourself and the auto-naming backs off and leaves it alone. See [Thread summaries](#thread-summaries).
 
 ### Sending messages
 
@@ -287,7 +287,7 @@ The dispatch button shows the harness that will run the new thread: **Claude** o
 
 **Live activity (running threads):** While a thread is actively processing, the dashboard shows a live one-line summary of the current tool call or step — so you can see "Reading src/components/Header.tsx" or "Running npm test" without switching to that tab.
 
-**Auto-generated summaries (idle threads):** After each completed response, the summarizer runs in a lightweight background process (a separate Claude Code instance using a small model) and writes a multi-sentence recap of what that thread worked on. This summary is shown in the dashboard row so you can re-orient yourself to any thread at a glance — what it accomplished, what files it touched, what's left to do.
+**Auto-generated summaries (idle threads):** Once per completed turn, the summarizer runs in a lightweight background process (a separate Claude Code instance using a small model, with no tools or MCP servers loaded) and writes a multi-sentence recap of what that thread worked on. It runs for background and scheduled threads too, so the dashboard stays current for agents you aren't watching. This summary is shown in the dashboard row so you can re-orient yourself to any thread at a glance — what it accomplished, what files it touched, what's left to do.
 
 This combination means you can dispatch several threads in parallel, switch to other work, then return to the dashboard to understand the state of every agent without reading through each conversation.
 
@@ -469,7 +469,22 @@ Summaries are cached in memory for the session. They regenerate on the next relo
 
 ### Thread summaries
 
-A summary bar above the messages shows what the thread is about. It updates automatically after each response if **Auto-summarize** is enabled, or you can trigger it manually with the brain icon. The summarizer updates the tab name — auto-summarize only does this when the name is still the default "Thread N"; manual summarize always applies the new title regardless of what the tab is currently named.
+A summary bar above the messages shows what the thread is about, and the summarizer also names the tab for you.
+
+With **Enable summarization** on (the default), a thread is summarized once per **completed turn** — not once per assistant message, and not once per tool call. It runs for background and scheduled threads too, not just the one you're looking at.
+
+How often it runs depends on **Auto-summarize after response**:
+
+| Auto-summarize | Before you rename the thread | After you rename it |
+|---|---|---|
+| Off (default) | Summarized every completed turn | Stops entirely — no further summarizer calls |
+| On | Summarized every completed turn | Still summarized every completed turn; your title is kept |
+
+Manual summarize (the brain icon, or the "Summarize active thread" command) always applies the new title regardless of what the tab is currently named. If there's nothing new worth summarizing, it leaves the existing summary untouched and says so.
+
+A few things it deliberately won't do: it skips the model entirely when a turn produced no text (a run of pure tool calls), it won't overwrite a good summary with an empty or unparseable response, and it rejects placeholder titles like "Transcript empty". Turns that end in an error or are interrupted don't retitle the thread — the next completed turn does.
+
+Each summarizer call runs in an isolated one-shot subprocess with no tools, no MCP servers, and no settings files loaded, so auto-naming stays cheap no matter how large your `~/.claude/settings.json` is.
 
 When you switch back to a thread you haven't viewed in over a minute, a **context recap banner** floats at the top of the conversation showing the thread summary and how long ago you were last active. It auto-dismisses after 10 seconds or when you send a message.
 
@@ -710,9 +725,9 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Enable 1M context (beta) | Opt-in to the 1-million-token context window beta (uses the `interleaved-thinking-2025-05-14` beta flag) |
 | Ephemeral session | When on, sessions are not persisted to disk — they cannot be resumed after the thread closes |
 | Layout density | `Comfortable`, `Compact`, or `Spacious` — controls message spacing and padding |
-| Enable summarization | Show the summarize button and auto-summarize |
-| Auto-summarize after response | Regenerate summary + tab name after each assistant turn |
-| Claude summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
+| Enable summarization | Master switch — auto-names threads each completed turn, shows the summarize button, enables the summarize command |
+| Auto-summarize after response | Keep refreshing the summary every completed turn even after you rename a thread yourself |
+| Summarization model | Model alias for summarization (e.g. `haiku`, `sonnet`) |
 | Escalation keyword | Keyword that routes a single turn to the escalation model (default: `/escalate`) |
 | Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the computer from sleeping while Claude is processing; shows ☕ in the status bar |
