@@ -106,10 +106,9 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
     await expect(page.locator('.ct-agent-pill')).toHaveClass(/ct-hidden/);
     // With the pill hidden the :has() pin stops matching, so the footer collapses.
-    const footerHeight = await page.locator('.ct-input-footer').evaluate(
+    await expect.poll(() => page.locator('.ct-input-footer').evaluate(
       (el) => getComputedStyle(el).maxHeight,
-    );
-    expect(footerHeight).toBe('0px');
+    )).toBe('0px');
   });
 
   for (const viewport of [
@@ -348,7 +347,10 @@ test.describe('Claude Threads UI', () => {
       }];
       view.syncEditedFiles();
     });
-    await page.hover('.ct-floating-panel');
+    // Expand through the panel's :focus-within path instead of hovering the
+    // panel by coordinates. The latter can land on the focus-files chip after
+    // small browser/font layout shifts and capture an incidental hover ring.
+    await page.locator('.ct-input').focus();
     await page.waitForSelector('.ct-artifact-card:not(.ct-hidden)');
     await shot(page, 'design-artifact-card.png', { fullPage: true });
   });
