@@ -25,7 +25,7 @@ git -C ~/projects/obsidian-claude-threads pull origin main
 
 ```bash
 git -C ~/projects/obsidian-claude-threads pull origin main
-git -C ~/projects/obsidian-claude-threads worktree add .claude/worktrees/chore/vX.Y.Z-release -b chore/vX.Y.Z-release
+git -C ~/projects/obsidian-claude-threads worktree add ~/.geode/worktrees/obsidian-claude-threads/chore/vX.Y.Z-release -b chore/vX.Y.Z-release
 ```
 
 ---

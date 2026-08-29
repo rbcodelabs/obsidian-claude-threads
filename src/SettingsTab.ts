@@ -1171,6 +1171,24 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Worktree location')
+      .setDesc(
+        'Where enter_worktree creates worktrees. Leave empty to use ~/.geode/worktrees. '
+        + 'Must be durable storage — a temp directory is cleared on reboot, which deletes '
+        + 'the worktree and any uncommitted work in it.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('~/.geode/worktrees')
+          .setValue(this.plugin.settings.worktreeRoot ?? '')
+          .onChange(async (value) => {
+            this.plugin.settings.worktreeRoot = value.trim();
+            this.plugin.manager.updateSettings(this.plugin.settings);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Claude binary path')
       .setDesc('Path to the claude executable. Leave empty to find it on $PATH.')
       .addText((text) =>

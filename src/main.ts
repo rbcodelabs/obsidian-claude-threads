@@ -321,6 +321,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.manager.setThreadCwd(threadId, newCwd, originRepoPath);
             this.saveSettings().catch(console.error);
           },
+          // Read lazily so changing the setting takes effect on the next
+          // enter_worktree call rather than requiring a session restart.
+          getWorktreeRoot: () => this.settings.worktreeRoot,
           onScheduleWakeup: async (delayMs: number, prompt: string, reason: string) => {
             // Durable one-shot Scheduler item instead of a bare window.setTimeout:
             // the old implementation tracked wake-ups only in an in-memory Map
@@ -928,9 +931,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.register(() => this.orchestratorWakeup?.stop());
     }
 
-    // Repair any threads whose cwd points to a deleted worktree. Worktrees created
-    // by enter_worktree live in os.tmpdir()/claude-worktrees/ and are removed by
-    // exit_worktree, the worktree-cleanup skill, or the Agent tool's auto-cleanup.
+    // Repair any threads whose cwd points to a deleted worktree — removed by
+    // exit_worktree, the worktree-cleanup skill, the Agent tool's auto-cleanup, or
+    // (for legacy os.tmpdir()/claude-worktrees/ paths) wiped by an OS reboot.
     // When that happens outside the plugin, the persisted cwd becomes a dangling path
     // that causes a misleading "binary not found" ENOENT on the next message send.
     {

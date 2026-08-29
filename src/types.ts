@@ -596,6 +596,14 @@ export interface PluginSettings {
   agentHarness: 'claude' | 'codex';
   /** Path to the Codex CLI executable (the app-server is launched from it). */
   codexBinaryPath: string;
+  /**
+   * Root directory for worktrees created by `enter_worktree`.
+   *
+   * Blank uses the default `~/.geode/worktrees`. Must be durable storage: an
+   * earlier version created worktrees under `os.tmpdir()`, which macOS clears
+   * on reboot — silently destroying any uncommitted work inside them.
+   */
+  worktreeRoot: string;
   defaultCwd: string;
   saveThreadsToVault: boolean;
   /**
@@ -758,6 +766,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   claudeBinaryPath: '/opt/homebrew/bin/claude',
   agentHarness: 'claude',
   codexBinaryPath: 'codex',
+  worktreeRoot: '',
   defaultCwd: '',
   saveThreadsToVault: true,
   saveRawLogs: true,

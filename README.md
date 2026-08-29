@@ -713,6 +713,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Claude binary path | Path to the `claude` executable (auto-detected) |
 | Agent harness | Initial Claude or Codex default for new kickoff selectors. A selection made in the Agent Dashboard or Kanban view is local to that mounted view and does not rewrite this setting. |
 | Default working directory | `cwd` for new threads; defaults to vault root |
+| Worktree location | Root directory for worktrees created by `enter_worktree` (default: `~/.geode/worktrees`, laid out as `<repo>/<branch>`). Must be durable storage — a temp directory is cleared on reboot, which deletes the worktree and any uncommitted work in it. |
 | Save threads to vault | Auto-save readable Markdown notes plus versioned machine recovery snapshots |
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
@@ -758,8 +759,8 @@ The project uses a worktree-based workflow — edits directly to the main checko
 
 1. **Create a worktree** for the version bump:
    ```bash
-   git worktree add .claude/worktrees/chore/bump-version-X.Y.Z -b chore/bump-version-X.Y.Z
-   cd .claude/worktrees/chore/bump-version-X.Y.Z
+   git worktree add ~/.geode/worktrees/obsidian-claude-threads/chore/bump-version-X.Y.Z -b chore/bump-version-X.Y.Z
+   cd ~/.geode/worktrees/obsidian-claude-threads/chore/bump-version-X.Y.Z
    ```
 
 2. **Bump the version** in `manifest.json` and `package.json` (both must match), then commit and push:

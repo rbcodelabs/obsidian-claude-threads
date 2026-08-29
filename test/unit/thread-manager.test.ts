@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
+import { defaultWorktreeRoot } from '../../src/worktreePaths';
 
 function makeManager(overrides = {}) {
   return new ThreadManager({ ...DEFAULT_SETTINGS, ...overrides });
@@ -354,6 +355,50 @@ describe('ThreadManager — repairStaleCwds', () => {
     const repaired = manager.repairStaleCwds();
     expect(repaired).toBe(0);
     expect(manager.getThread(t.id)!.cwd).toBe('/nonexistent/regular/path');
+  });
+
+  // The cases above all use the legacy <os.tmpdir()>/claude-worktrees layout,
+  // which must keep working for threads persisted before worktrees moved to
+  // durable storage. The cases below cover the current root.
+
+  it('repairs a stale cwd under the current default root', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-repair-newroot-'));
+    scratchDirs.push(repoRoot);
+
+    const staleWorktree = path.join(defaultWorktreeRoot(), 'some-repo', 'feat', 'gone');
+    const t = manager.createThread('New-root worktree thread', staleWorktree);
+    t.originRepoPath = repoRoot;
+
+    expect(manager.repairStaleCwds()).toBe(1);
+    expect(manager.getThread(t.id)!.cwd).toBe(repoRoot);
+  });
+
+  it('repairs a stale cwd under a configured override root', () => {
+    const configuredRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-repair-cfgroot-'));
+    scratchDirs.push(configuredRoot);
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-repair-cfgrepo-'));
+    scratchDirs.push(repoRoot);
+
+    const scoped = makeManager({ worktreeRoot: configuredRoot });
+    const staleWorktree = path.join(configuredRoot, 'some-repo', 'feat', 'gone');
+    const t = scoped.createThread('Configured-root thread', staleWorktree);
+    t.originRepoPath = repoRoot;
+
+    expect(scoped.repairStaleCwds()).toBe(1);
+    expect(scoped.getThread(t.id)!.cwd).toBe(repoRoot);
+  });
+
+  it('leaves an existing worktree directory alone', () => {
+    // Durability is the whole point: a worktree that is still on disk must not
+    // be "repaired" out from under a live thread.
+    const liveWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-repair-live-'));
+    scratchDirs.push(liveWorktree);
+
+    const scoped = makeManager({ worktreeRoot: path.dirname(liveWorktree) });
+    const t = scoped.createThread('Live worktree thread', liveWorktree);
+
+    expect(scoped.repairStaleCwds()).toBe(0);
+    expect(scoped.getThread(t.id)!.cwd).toBe(liveWorktree);
   });
 });
 

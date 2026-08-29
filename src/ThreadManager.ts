@@ -7,6 +7,7 @@ import { collectPendingImageExternalizations } from './imageExternalization';
 import { effectiveExtraEnv } from './types';
 import { derivePrUrl } from './statusLine';
 import { resolveGitProjectName } from './pathUtils';
+import { legacyWorktreeRoot, resolveWorktreeRoot } from './worktreePaths';
 import { debugLog } from './logger';
 import { codexSkillRoots } from './skillManager';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
@@ -512,16 +513,22 @@ export class ThreadManager {
   /**
    * Scans all threads and repairs any whose `cwd` is a stale worktree path.
    *
-   * Worktrees created by `enter_worktree` live under `<tmpdir>/claude-worktrees/`
-   * and are volatile — the Agent tool auto-removes them, and the worktree-cleanup
-   * skill prunes them on demand. When that happens outside the plugin's awareness,
-   * the persisted `thread.cwd` becomes a dangling path. Node.js throws ENOENT when
-   * spawning Claude with a non-existent cwd, which the SDK surfaces as the
-   * misleading "binary not found" error.
+   * Worktrees created by `enter_worktree` can disappear behind the plugin's back:
+   * `exit_worktree` removes them, the Agent tool auto-removes its own, and the
+   * worktree-cleanup skill prunes them on demand. Threads created before the
+   * durability fix additionally lived under `<os.tmpdir()>/claude-worktrees/`,
+   * which macOS clears **on reboot** — historically the single biggest cause of
+   * vanished worktrees, and the reason the default root is now durable.
    *
-   * **Scope**: only paths under `<os.tmpdir()>/claude-worktrees/` are repaired.
-   * Other missing cwds (e.g. a deleted project directory) are left alone — those
-   * should surface as an explicit error so the user knows to update the path.
+   * Whatever the cause, the persisted `thread.cwd` becomes a dangling path.
+   * Node.js throws ENOENT when spawning with a non-existent cwd, which the SDK
+   * surfaces as the misleading "binary not found" error.
+   *
+   * **Scope**: only paths under a recognised worktree container are repaired —
+   * the current root (default `~/.geode/worktrees`, or the configured override)
+   * and the legacy `<os.tmpdir()>/claude-worktrees/` layout. Other missing cwds
+   * (e.g. a deleted project directory) are left alone — those should surface as
+   * an explicit error so the user knows to update the path.
    *
    * For each stale worktree path this method:
    *   1. Prefers rerouting straight to `thread.originRepoPath` (the origin repo's
@@ -543,20 +550,25 @@ export class ThreadManager {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const os = require('os') as typeof import('os');
 
-    // Worktree container: <os.tmpdir()>/claude-worktrees  (and its real-path twin on
-    // macOS where /tmp → /private/tmp).
-    const worktreeContainer = nodePath.join(os.tmpdir(), 'claude-worktrees');
-    const realWorktreeContainer = (() => {
-      try { return fs.realpathSync(nodePath.dirname(worktreeContainer)) + nodePath.sep + nodePath.basename(worktreeContainer); }
-      catch { return worktreeContainer; }
-    })();
+    // Two containers must be recognised:
+    //  - the current root (default ~/.geode/worktrees, or the configured override)
+    //  - the legacy <os.tmpdir()>/claude-worktrees layout, because threads
+    //    persisted before the durability fix still carry cwds pointing there.
+    // Each is paired with its real-path twin, since both can sit behind a
+    // symlink (on macOS /var/folders/... → /private/var/folders/...).
+    const realTwin = (p: string) => {
+      try { return fs.realpathSync(nodePath.dirname(p)) + nodePath.sep + nodePath.basename(p); }
+      catch { return p; }
+    };
+
+    const containers = Array.from(new Set(
+      [resolveWorktreeRoot(this.settings?.worktreeRoot), legacyWorktreeRoot()].flatMap((c) => [c, realTwin(c)]),
+    ));
 
     const isWorktreePath = (p: string) =>
-      p.startsWith(worktreeContainer + nodePath.sep) ||
-      p.startsWith(realWorktreeContainer + nodePath.sep);
+      containers.some((c) => p.startsWith(c + nodePath.sep));
 
-    const isWorktreeContainer = (p: string) =>
-      p === worktreeContainer || p === realWorktreeContainer;
+    const isWorktreeContainer = (p: string) => containers.includes(p);
 
     let repaired = 0;
 
