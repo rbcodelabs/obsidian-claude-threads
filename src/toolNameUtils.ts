@@ -12,41 +12,47 @@
  * TypeError when the bundle tried to destructure it.
  */
 
-/** Strip `mcp__<server>__` prefix and any leading server-name repetition.
+interface NormalizedToolName {
+  key: string;
+  display: string;
+}
+
+const CODEX_TOOL_ALIASES: Record<string, NormalizedToolName> = {
+  commandExecution: { key: 'Bash', display: 'Bash' },
+  fileChange: { key: 'Edit', display: 'Edit' },
+  webSearch: { key: 'WebSearch', display: 'WebSearch' },
+  // Viewing an image is an input/read operation; generation creates an artifact.
+  imageView: { key: 'ImageView', display: 'View Image' },
+  imageGeneration: { key: 'ImageGeneration', display: 'Generate Image' },
+};
+
+/** Normalize Claude and Codex tool-record names through one display path. */
+function normalizeToolName(raw: string): NormalizedToolName {
+  const claudeMcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
+  const codexMcpMatch = claudeMcpMatch ? null : raw.match(/^([^:]+):(.+)$/);
+  const server = claudeMcpMatch?.[1] ?? codexMcpMatch?.[1] ?? null;
+  const bare = claudeMcpMatch?.[2] ?? codexMcpMatch?.[2] ?? raw;
+  const key = (server && bare.startsWith(server + '_'))
+    ? bare.slice(server.length + 1)
+    : bare;
+  const alias = CODEX_TOOL_ALIASES[key];
+  if (alias) return alias;
+  return { key, display: key.replace(/_/g, ' ') };
+}
+
+/** Strip `mcp__<server>__` or `<server>:` prefix and any leading server-name repetition.
  *  e.g. mcp__obsidian__obsidian_search_vault → "search vault"
+ *       obsidian:obsidian_search_vault       → "search vault"
  *       mcp__github__create_issue           → "create issue"
  *       Read                                → "Read"
  */
 export function formatToolName(raw: string): string {
-  // Strip mcp__<server>__ prefix
-  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[2] : raw;
-  // If bare still starts with a repeated server name segment, drop it.
-  // e.g. obsidian_search_vault → strip leading "obsidian_"
-  const deduplicated = bare.replace(/^([a-z]+)_\1_/, '$1_').replace(/^[a-z]+_([a-z].+)$/, (_, rest) => {
-    // Only strip if the prefix is the server name from the original mcp call
-    if (mcpMatch) {
-      const server = mcpMatch[1];
-      const serverSnake = server + '_';
-      if (bare.startsWith(serverSnake)) return bare.slice(serverSnake.length);
-    }
-    return bare;
-  });
-  // Convert underscores to spaces for display
-  return deduplicated.replace(/_/g, ' ');
+  return normalizeToolName(raw).display;
 }
 
 /** Return a Lucide icon name for a tool. Falls back to 'wrench'. */
 export function getToolIcon(raw: string): string {
-  // Normalize first so we can match on bare names
-  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[2] : raw;
-  const server = mcpMatch ? mcpMatch[1] : null;
-
-  // Strip leading server prefix for MCP tools
-  const key = (server && bare.startsWith(server + '_'))
-    ? bare.slice(server.length + 1)
-    : bare;
+  const { key } = normalizeToolName(raw);
 
   switch (key) {
     // Filesystem / code tools
@@ -60,6 +66,8 @@ export function getToolIcon(raw: string): string {
     // Web tools
     case 'WebFetch':       return 'globe';
     case 'WebSearch':      return 'search';
+    case 'ImageView':      return 'image';
+    case 'ImageGeneration': return 'image-plus';
     // Claude-native
     case 'Agent':          return 'bot';
     case 'OpenNewTab':     return 'plus-square';
@@ -152,24 +160,19 @@ export const ACTIVITY_LABELS: Record<ActivityKind, string> = {
 };
 
 export function getActivityKind(raw: string): ActivityKind {
-  // Normalize the same way getToolIcon does so MCP-prefixed tool names
-  // (e.g. mcp__obsidian__Bash) classify identically to bare names.
-  const mcpMatch = raw.match(/^mcp__(.+?)__(.+)$/);
-  const bare = mcpMatch ? mcpMatch[2] : raw;
-  const server = mcpMatch ? mcpMatch[1] : null;
-  const key = (server && bare.startsWith(server + '_'))
-    ? bare.slice(server.length + 1)
-    : bare;
+  const { key } = normalizeToolName(raw);
 
   switch (key) {
     case 'Bash':
     case 'Read':
     case 'Grep':
     case 'Glob':
+    case 'ImageView':
       return 'exploring';
     case 'Edit':
     case 'Write':
     case 'NotebookEdit':
+    case 'ImageGeneration':
       return 'editing';
     case 'TaskCreate':
     case 'TaskUpdate':

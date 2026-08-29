@@ -400,6 +400,29 @@ const thread7Messages: ChatMessage[] = [
   },
 ];
 
+// Codex persists its native lower-camel item types in ToolCallRecord.name.
+// Keep this fixture native rather than pre-normalizing it so the screenshot
+// harness covers both live and already-persisted Codex records.
+const codexNativeToolMessages: ChatMessage[] = [
+  {
+    id: 'msg-codex-tools-1',
+    role: 'user',
+    content: 'Run the verification commands for this change.',
+    timestamp: T3 + 0,
+  },
+  {
+    id: 'msg-codex-tools-2',
+    role: 'assistant',
+    content: '',
+    timestamp: T3 + 3000,
+    toolCalls: [
+      { name: 'commandExecution', summary: "npm run typecheck", toolUseId: 'codex-tool-1', timestamp: T3 + 1000, status: 'success' },
+      { name: 'commandExecution', summary: "npm run test:unit", toolUseId: 'codex-tool-2', timestamp: T3 + 2000, status: 'success' },
+      { name: 'commandExecution', summary: "npm run build", toolUseId: 'codex-tool-3', timestamp: T3 + 3000, status: 'success' },
+    ],
+  },
+];
+
 // ─── Thread 8: Outer-wrap tool calls (post-smoothing entry count > 7) ────────
 // Used by test/screenshots/tool-call-grouping.spec.ts's outer-wrap scenes.
 // Split across TWO assistant messages rather than one, for a structural
@@ -635,6 +658,14 @@ export const fixtureThreads: Thread[] = [
     messages: thread6Messages,
     createdAt: T3 - 60000,
     updatedAt: T3 + 30000,
+  },
+  {
+    id: 'thread-codex-native-tool-calls',
+    title: 'Codex verification commands',
+    cwd: '/Users/mock/projects/claude-threads',
+    messages: codexNativeToolMessages,
+    createdAt: T3 - 60000,
+    updatedAt: T3 + 3000,
   },
   {
     // Deliberately empty — used by tool-call-grouping.spec.ts's LIVE-rendering
