@@ -289,6 +289,19 @@ it('rolling back a failed persistence restores the applied revision and does not
   expect(first.sent).toEqual(['hello', 'still works']);
 });
 
+it('a first goal that fails persistence rolls back to an empty durable baseline', () => {
+  const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+  const thread = manager.createThread('T', process.cwd());
+
+  const revision = manager.setThreadGoal(thread.id, 'Never durable');
+  manager.rollbackThreadGoal(thread.id, revision);
+
+  const state = (manager as any).goalContextStates.get(thread.id);
+  expect(thread.goal).toBeUndefined();
+  expect(state.durableGoal).toBeUndefined();
+  expect(state.desiredRevision).toBe(state.appliedRevision);
+});
+
 it('a send during failed persistence stays on the old adapter after rollback', async () => {
   const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
   const thread = manager.createThread('T', process.cwd());

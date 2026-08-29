@@ -758,11 +758,11 @@ export class ThreadManager {
   setThreadGoal(id: string, goal: string | undefined): number {
     const thread = this.threads.get(id);
     if (!thread) return -1;
+    const state = this.getGoalContextState(id);
     if (goal) thread.goal = goal;
     else delete thread.goal;
     thread.updatedAt = Date.now();
 
-    const state = this.getGoalContextState(id);
     state.desiredRevision += 1;
     state.refreshRequested = false;
     state.persistencePendingRevision = state.desiredRevision;
