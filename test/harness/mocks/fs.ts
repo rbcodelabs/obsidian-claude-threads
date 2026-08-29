@@ -87,34 +87,10 @@ function makeEntries(dirPath: string) {
   }));
 }
 
-// Fixture for ~/.claude/settings.json — read by claudeSettingsMcp(Editor).ts
-// via require('fs').readFileSync(). Populated with one server of each shape
-// (stdio, http, sdk) so the Settings → MCP tab screenshot shows real rows,
-// including the read-only sdk entry, instead of just an empty state.
-const MCP_SETTINGS_JSON = JSON.stringify(
-  {
-    model: 'sonnet',
-    mcpServers: {
-      obsidian_notes: {
-        type: 'stdio',
-        command: 'npx',
-        args: ['-y', '@example/obsidian-notes-mcp'],
-        env: { NOTES_API_TOKEN: '${NOTES_API_TOKEN}' },
-      },
-      compass: {
-        type: 'http',
-        url: 'https://compass.rbcodelabs.com/api/mcp',
-        headers: { Authorization: 'Bearer ${COMPASS_API_KEY}' },
-      },
-      internal_tools: {
-        type: 'sdk',
-        name: 'internal-tools',
-      },
-    },
-  },
-  null,
-  2,
-);
+// NOTE: there is deliberately no ~/.claude/settings.json fixture here any more.
+// MCP servers moved into the plugin's own settings (PluginSettings.mcpServers);
+// see the fixture in test/harness/settings-index.ts. Nothing in src/ reads that
+// file, so mocking it would only mask a regression.
 
 // Fixture for the inline `visualize` card screenshot. A Codex fragment: no
 // doctype, no <html>/<body>, and no external resources — the whole point of the
@@ -163,7 +139,6 @@ const VISUALIZE_PATH_RE = /\/viz\/[^/]+\.html?$/i;
 
 function resolveContent(filePath: string): string {
   if (VISUALIZE_PATH_RE.test(filePath)) return VISUALIZE_FRAGMENT;
-  if (filePath.endsWith('settings.json')) return MCP_SETTINGS_JSON;
   for (const s of [...SKILLS, ...VAULT_SKILLS, ...AGENTS]) {
     if (filePath.includes(s.name)) return s.content;
   }
