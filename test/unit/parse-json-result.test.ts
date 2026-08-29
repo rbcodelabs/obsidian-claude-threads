@@ -19,9 +19,12 @@ describe('parseJsonResult', () => {
     expect(result).toEqual({ title: 'Fix auth', summary: 'Fixes JWT validation' });
   });
 
-  it('falls back to { title: "", summary: rawText } for completely invalid JSON', () => {
+  it('returns no update for completely invalid JSON', () => {
+    // This used to fall back to { title: '', summary: rawText }, which stored
+    // the model's raw prose — including refusals and error text — as the
+    // thread's persisted summary. Empty now means "leave the summary alone".
     const result = parseJsonResult('not json at all');
-    expect(result).toEqual({ title: '', summary: 'not json at all' });
+    expect(result).toEqual({ title: '', summary: '' });
   });
 
   it('defaults title to "" when the key is missing from the JSON', () => {
