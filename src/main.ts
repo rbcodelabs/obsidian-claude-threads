@@ -335,9 +335,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager = new ThreadManager(this.settings);
     this.contextPanel = new ContextPanelController(this.app, () =>
       this.app.workspace.getLeavesOfType(VIEW_TYPE)[0] ?? null,
-      () => this.settings.conversationCompanion,
-      async (identity) => {
-        this.settings.conversationCompanion = identity;
+      () => this.settings.conversationCompanionMarker,
+      async (marker) => {
+        this.settings.conversationCompanionMarker = marker;
         await this.saveSettings();
       },
     );
@@ -1861,20 +1861,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
       if (leaf) {
         for (const duplicate of plan.detach) duplicate.detach();
       } else if (chatLeaves.length > 0) {
-        // Create and initialize the destination before detaching the only live
-        // source, so a host refusal cannot strand the user without chat.
-        const destination = workspace.getRightLeaf(true);
-        if (!destination) throw new Error('Unable to create a right-sidebar leaf for Claude Threads.');
-        await destination.setViewState({
-          type: VIEW_TYPE,
-          active: true,
-          state: {
-            ...(plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {}),
-            conversationPlacement: 'classic',
-          },
-        });
-        for (const source of plan.detach) source.detach();
-        leaf = destination;
+        const { activateChatPlacement } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+        leaf = await activateChatPlacement(plan, () => workspace.getRightLeaf(true), VIEW_TYPE, 'classic');
       } else {
         leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
         await leaf.setViewState({ type: VIEW_TYPE, active: true, state: { conversationPlacement: 'classic' } });
@@ -2130,6 +2118,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    const { sanitizeConversationCompanionSettings } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    sanitizeConversationCompanionSettings(this.settings as unknown as Record<string, unknown>);
     // Migrate old WebLLM model IDs to claude alias
     if (this.settings.inprocessModel.includes('-MLC') || this.settings.inprocessModel.includes('/')) {
       this.settings.inprocessModel = 'haiku';

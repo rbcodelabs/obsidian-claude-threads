@@ -14,6 +14,19 @@ interface PersistedChatState {
   conversationPlacement?: unknown;
 }
 
+export class ConversationViewPlacementState {
+  private placement: ConversationPlacement = 'classic';
+
+  apply(state: unknown): void {
+    const placement = (state as PersistedChatState | null)?.conversationPlacement;
+    if (placement === 'classic' || placement === 'conversation-first') this.placement = placement;
+  }
+
+  serialize(activeThreadId: string | null): PersistedChatState {
+    return { activeThreadId, conversationPlacement: this.placement };
+  }
+}
+
 export function isConversationFirstPlacement(placement: ConversationPlacement, isMobile: boolean): boolean {
   return !isMobile && placement === 'conversation-first';
 }
@@ -52,27 +65,39 @@ export function planClassicChat(chatLeaves: WorkspaceLeaf[]): ConversationFirstC
   return marked;
 }
 
-export async function activateConversationFirstChat(
+export async function activateChatPlacement(
   plan: ConversationFirstChatPlan,
   createDestination: () => WorkspaceLeaf | null,
   viewType: string,
+  placement: ConversationPlacement,
 ): Promise<WorkspaceLeaf> {
   if (plan.keep) {
     for (const duplicate of plan.detach) duplicate.detach();
     return plan.keep;
   }
   const destination = createDestination();
-  if (!destination) throw new Error('Unable to create a main-area leaf for Claude Threads.');
+  if (!destination) {
+    const location = placement === 'classic' ? 'sidebar' : 'main-area';
+    throw new Error(`Unable to create a ${location} leaf for Claude Threads.`);
+  }
   await destination.setViewState({
     type: viewType,
     active: true,
     state: {
       ...(plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {}),
-      conversationPlacement: 'conversation-first',
+      conversationPlacement: placement,
     },
   });
   for (const source of plan.detach) source.detach();
   return destination;
+}
+
+export function activateConversationFirstChat(
+  plan: ConversationFirstChatPlan,
+  createDestination: () => WorkspaceLeaf | null,
+  viewType: string,
+): Promise<WorkspaceLeaf> {
+  return activateChatPlacement(plan, createDestination, viewType, 'conversation-first');
 }
 
 export async function persistActiveThreadSelection(
@@ -92,8 +117,8 @@ export function resolvePersistedActiveThread(
   exists: (id: string) => boolean,
   fallbackId: string,
 ): string {
-  if (viewStateId && exists(viewStateId)) return viewStateId;
   if (settingsId && exists(settingsId)) return settingsId;
+  if (viewStateId && exists(viewStateId)) return viewStateId;
   return fallbackId;
 }
 
@@ -123,5 +148,29 @@ export async function transitionConversationPlacement(
 }
 
 export function formatCompanionEditedFilesNotice(lastPath: string, fileCount: number): string {
+  if (fileCount === 0) return 'No edited vault files are available.';
   return `Showing ${lastPath} in the companion (${fileCount} edited file${fileCount === 1 ? '' : 's'} found).`;
+}
+
+export function resolveFinalCompanionFile<T>(
+  paths: string[],
+  resolve: (path: string) => T | null,
+): { path: string; file: T; validCount: number } | null {
+  let final: { path: string; file: T } | null = null;
+  let validCount = 0;
+  for (const path of paths) {
+    const file = resolve(path);
+    if (!file) continue;
+    final = { path, file };
+    validCount++;
+  }
+  return final ? { ...final, validCount } : null;
+}
+
+export function sanitizeConversationCompanionSettings(settings: Record<string, unknown>): void {
+  delete settings.conversationCompanion;
+  const marker = settings.conversationCompanionMarker;
+  if (typeof marker !== 'string' || !/^ct-companion-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(marker)) {
+    delete settings.conversationCompanionMarker;
+  }
 }

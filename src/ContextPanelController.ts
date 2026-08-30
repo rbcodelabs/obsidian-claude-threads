@@ -1,80 +1,99 @@
 import type { App, TFile, ViewState, WorkspaceLeaf } from 'obsidian';
 
-export interface CompanionIdentity {
-  type: string;
-  state?: unknown;
-  filePath?: string;
+interface OwnedCompanion {
+  workspace: object;
+  chatLeaf: WorkspaceLeaf;
+  companionLeaf: WorkspaceLeaf;
 }
 
-/**
- * Owns the single native companion used by conversation-first mode.
- *
- * The controller deliberately tracks a leaf rather than a view type: the same
- * adjacent workspace position can host Markdown, Web Viewer, and registered
- * artifact views without creating competing context panes.
- */
+// Survives controller recreation within the live plugin module, while never
+// guessing from native file paths or view state after a renderer restart.
+const ownedCompanions = new Map<string, OwnedCompanion>();
+
+function createMarker(): string {
+  return `ct-companion-${crypto.randomUUID()}`;
+}
+
+/** Owns the single native companion used by conversation-first mode. */
 export class ContextPanelController {
   private companionLeaf: WorkspaceLeaf | null = null;
+  private markerSave: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly app: App,
     private readonly getChatLeaf: () => WorkspaceLeaf | null,
-    private readonly getPersistedIdentity: () => CompanionIdentity | undefined = () => undefined,
-    private readonly persistIdentity: (identity: CompanionIdentity) => Promise<void> = async () => {},
+    private readonly getPersistedMarker: () => string | undefined = () => undefined,
+    private readonly persistMarker: (marker: string) => Promise<void> = async () => {},
   ) {}
 
-  /** Return the existing attached companion, or create one beside chat. */
+  /** Return the exact live companion this controller created, or create one beside chat. */
   getLeaf(): WorkspaceLeaf {
-    if (this.companionLeaf && this.isAttached(this.companionLeaf)) {
-      return this.companionLeaf;
-    }
+    if (this.companionLeaf && this.isAttached(this.companionLeaf)) return this.companionLeaf;
 
-    const restored = this.findRestoredCompanion();
+    const chatLeaf = this.getChatLeaf();
+    if (!chatLeaf) throw new Error('Claude Threads chat must be open before contextual content can be shown.');
+
+    const restored = this.findOwnedCompanion(chatLeaf);
     if (restored) {
       this.companionLeaf = restored;
       return restored;
     }
 
-    const chatLeaf = this.getChatLeaf();
-    if (!chatLeaf) {
-      throw new Error('Claude Threads chat must be open before contextual content can be shown.');
-    }
-
     const workspace = this.app.workspace;
     workspace.revealLeaf(chatLeaf);
-    this.companionLeaf = workspace.splitActiveLeaf('vertical');
-    return this.companionLeaf;
+    const companionLeaf = workspace.splitActiveLeaf('vertical');
+    const marker = createMarker();
+    ownedCompanions.set(marker, { workspace, chatLeaf, companionLeaf });
+    this.companionLeaf = companionLeaf;
+    this.markerSave = this.persistMarker(marker);
+    return companionLeaf;
   }
 
   async openFile(file: TFile): Promise<void> {
     const leaf = this.getLeaf();
+    await this.markerSave;
     await leaf.openFile(file);
-    await this.persistCurrentIdentity(leaf);
     this.app.workspace.revealLeaf(leaf);
   }
 
   async openLinkText(linktext: string, sourcePath = ''): Promise<void> {
     const leaf = this.getLeaf();
-    // openLinkText(false) targets the active navigable leaf.
+    await this.markerSave;
     this.app.workspace.revealLeaf(leaf);
     await this.app.workspace.openLinkText(linktext, sourcePath, false);
-    await this.persistCurrentIdentity(leaf);
   }
 
   async setViewState(viewState: ViewState): Promise<boolean> {
     const reused = this.hasReusableLeaf();
     const leaf = this.getLeaf();
+    await this.markerSave;
     await leaf.setViewState(viewState);
-    await this.persistCurrentIdentity(leaf);
     this.app.workspace.revealLeaf(leaf);
     return reused;
   }
 
   private hasReusableLeaf(): boolean {
+    const chatLeaf = this.getChatLeaf();
     return Boolean(
       (this.companionLeaf && this.isAttached(this.companionLeaf))
-      || this.findRestoredCompanion(),
+      || (chatLeaf && this.findOwnedCompanion(chatLeaf)),
     );
+  }
+
+  private findOwnedCompanion(chatLeaf: WorkspaceLeaf): WorkspaceLeaf | null {
+    const marker = this.getPersistedMarker();
+    if (typeof marker !== 'string') return null;
+    const owned = ownedCompanions.get(marker);
+    if (!owned) return null;
+    const valid = owned.workspace === this.app.workspace
+      && owned.chatLeaf === chatLeaf
+      && this.isAttached(chatLeaf)
+      && this.isAttached(owned.companionLeaf);
+    if (!valid) {
+      ownedCompanions.delete(marker);
+      return null;
+    }
+    return owned.companionLeaf;
   }
 
   private isAttached(target: WorkspaceLeaf): boolean {
@@ -83,35 +102,5 @@ export class ContextPanelController {
       if (leaf === target) attached = true;
     });
     return attached;
-  }
-
-  private findRestoredCompanion(): WorkspaceLeaf | null {
-    const expected = this.getPersistedIdentity();
-    if (!expected) return null;
-    let match: WorkspaceLeaf | null = null;
-    this.app.workspace.iterateAllLeaves((leaf) => {
-      if (!match && leaf !== this.getChatLeaf() && this.identitiesMatch(this.identityOf(leaf), expected)) match = leaf;
-    });
-    return match;
-  }
-
-  private async persistCurrentIdentity(leaf: WorkspaceLeaf): Promise<void> {
-    await this.persistIdentity(this.identityOf(leaf));
-  }
-
-  private identityOf(leaf: WorkspaceLeaf): CompanionIdentity {
-    const viewState = leaf.getViewState();
-    const filePath = (leaf.view as unknown as { file?: { path?: unknown } } | undefined)?.file?.path;
-    return {
-      type: viewState.type,
-      ...(viewState.state !== undefined ? { state: viewState.state } : {}),
-      ...(typeof filePath === 'string' ? { filePath } : {}),
-    };
-  }
-
-  private identitiesMatch(actual: CompanionIdentity, expected: CompanionIdentity): boolean {
-    if (actual.type !== expected.type) return false;
-    if (expected.filePath !== undefined) return actual.filePath === expected.filePath;
-    return JSON.stringify(actual.state) === JSON.stringify(expected.state);
   }
 }

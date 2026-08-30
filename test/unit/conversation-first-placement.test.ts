@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceLeaf } from 'obsidian';
-import { activateConversationFirstChat, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, resolvePersistedActiveThread, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
+import { activateChatPlacement, activateConversationFirstChat, ConversationViewPlacementState, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, resolveFinalCompanionFile, resolvePersistedActiveThread, sanitizeConversationCompanionSettings, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
 function leaf(state: Record<string, unknown> = {}): WorkspaceLeaf {
@@ -25,6 +25,56 @@ describe('conversation-first placement', () => {
   it('is idempotent for one marked main chat', () => {
     const main = leaf({ conversationPlacement: 'conversation-first' });
     expect(planConversationFirstChat([main])).toEqual({ keep: main, detach: [], activeThreadId: undefined });
+  });
+  it('keeps instance placement stable when the global setting changes before planning', () => {
+    const viewState = new ConversationViewPlacementState();
+    viewState.apply({ conversationPlacement: 'classic' });
+    const viewLike = { view: { getState: () => viewState.serialize('thread-1') } } as unknown as WorkspaceLeaf;
+    const globalSettings = { threadViewPlacement: 'classic' as 'classic' | 'conversation-first' };
+
+    globalSettings.threadViewPlacement = 'conversation-first';
+    expect(planConversationFirstChat([viewLike]).keep).toBeNull();
+
+    viewState.apply({ conversationPlacement: 'conversation-first' });
+    globalSettings.threadViewPlacement = 'classic';
+    expect(planClassicChat([viewLike]).keep).toBeNull();
+  });
+  it('moves the same live view Classic → conversation-first → Classic after global policy changes', async () => {
+    const events: string[] = [];
+    const placementState = new ConversationViewPlacementState();
+    placementState.apply({ conversationPlacement: 'classic' });
+    const classicLeaf = {
+      view: { getState: () => placementState.serialize('thread-1') },
+      detach: () => events.push('detach-classic'),
+    } as unknown as WorkspaceLeaf;
+    const mainLeaf = {
+      view: { getState: () => placementState.serialize('thread-1') },
+      setViewState: async (state: { state?: unknown }) => {
+        placementState.apply(state.state);
+        events.push('open-main');
+      },
+      detach: () => events.push('detach-main'),
+    } as unknown as WorkspaceLeaf;
+    const sidebarLeaf = {
+      view: { getState: () => placementState.serialize('thread-1') },
+      setViewState: async (state: { state?: unknown }) => {
+        placementState.apply(state.state);
+        events.push('open-sidebar');
+      },
+    } as unknown as WorkspaceLeaf;
+
+    const movedMain = await activateChatPlacement(
+      planConversationFirstChat([classicLeaf]), () => mainLeaf, 'chat', 'conversation-first',
+    );
+    expect(movedMain).toBe(mainLeaf);
+    expect(planConversationFirstChat([mainLeaf]).keep).toBe(mainLeaf);
+
+    const movedSidebar = await activateChatPlacement(
+      planClassicChat([mainLeaf]), () => sidebarLeaf, 'chat', 'classic',
+    );
+    expect(movedSidebar).toBe(sidebarLeaf);
+    expect(planClassicChat([sidebarLeaf]).keep).toBe(sidebarLeaf);
+    expect(events).toEqual(['open-main', 'detach-classic', 'open-sidebar', 'detach-main']);
   });
   it('initializes destination with its marker before detaching source', async () => {
     const events: string[] = [];
@@ -94,6 +144,11 @@ describe('conversation placement persistence', () => {
     const existing = new Set(['thread-1', 'thread-2']);
     expect(resolvePersistedActiveThread(null, 'thread-2', (id) => existing.has(id), 'thread-1')).toBe('thread-2');
   });
+  it('prefers the newer settings selection over stale but valid host view state', () => {
+    const existing = new Set(['thread-a', 'thread-b']);
+    expect(resolvePersistedActiveThread('thread-a', 'thread-b', (id) => existing.has(id), 'thread-a'))
+      .toBe('thread-b');
+  });
 
   it('re-persists the prior policy if persistence fails after a successful migration', async () => {
     const settings: { threadViewPlacement: 'classic' | 'conversation-first' } = { threadViewPlacement: 'classic' };
@@ -109,5 +164,26 @@ describe('companion edited-file feedback', () => {
   it('states that the final edited file is shown instead of claiming every file remains open', () => {
     expect(formatCompanionEditedFilesNotice('Notes/b.md', 2))
       .toBe('Showing Notes/b.md in the companion (2 edited files found).');
+  });
+  it('resolves first and opens only the final valid edited file', () => {
+    const files = new Map([['Notes/a.md', { path: 'Notes/a.md' }], ['Notes/c.md', { path: 'Notes/c.md' }]]);
+    expect(resolveFinalCompanionFile(['Notes/a.md', 'Notes/missing.md', 'Notes/c.md'], (path) => files.get(path) ?? null))
+      .toEqual({ path: 'Notes/c.md', file: { path: 'Notes/c.md' }, validCount: 2 });
+  });
+  it('emits correct feedback when no edited vault files still exist', () => {
+    expect(formatCompanionEditedFilesNotice('', 0)).toBe('No edited vault files are available.');
+  });
+});
+
+describe('companion persistence sanitization', () => {
+  it('removes legacy arbitrary view state and rejects a non-plugin marker', () => {
+    const settings: Record<string, unknown> = {
+      conversationCompanion: { type: 'webviewer', state: { url: 'https://example.com?token=secret' } },
+      conversationCompanionMarker: 'https://example.com?token=secret',
+    };
+    sanitizeConversationCompanionSettings(settings);
+    expect(settings).not.toHaveProperty('conversationCompanion');
+    expect(settings).not.toHaveProperty('conversationCompanionMarker');
+    expect(JSON.stringify(settings)).not.toContain('secret');
   });
 });

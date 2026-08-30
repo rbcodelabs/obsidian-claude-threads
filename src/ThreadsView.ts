@@ -49,6 +49,7 @@ export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
   private activeThreadId: string | null = null;
+  private readonly conversationPlacement = new (require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement')).ConversationViewPlacementState();
   private streamingEl: HTMLElement | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
@@ -350,13 +351,13 @@ export class ThreadsView extends ItemView {
   getState(): Record<string, unknown> {
     return {
       ...super.getState(),
-      activeThreadId: this.activeThreadId,
-      conversationPlacement: this.plugin.isConversationFirst() ? 'conversation-first' : 'classic',
+      ...this.conversationPlacement.serialize(this.activeThreadId),
     };
   }
 
   async setState(state: unknown, result: ViewStateResult): Promise<void> {
     await super.setState(state, result);
+    this.conversationPlacement.apply(state);
     const activeThreadId = (state as { activeThreadId?: unknown } | null)?.activeThreadId;
     if (typeof activeThreadId !== 'string' || !this.manager.getThread(activeThreadId)) return;
     this.activeThreadId = activeThreadId;
@@ -1576,17 +1577,12 @@ export class ThreadsView extends ItemView {
     }
 
     if (this.plugin.isConversationFirst()) {
-      let opened = 0;
-      let lastPath = '';
-      for (const relPath of relPaths) {
-        const file = this.app.vault.getAbstractFileByPath(relPath);
-        if (!file) continue;
-        await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
-        opened++;
-        lastPath = relPath;
-      }
-      const { formatCompanionEditedFilesNotice } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
-      new Notice(formatCompanionEditedFilesNotice(lastPath, opened));
+      const { formatCompanionEditedFilesNotice, resolveFinalCompanionFile } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const resolved = resolveFinalCompanionFile(relPaths, (relPath) =>
+        this.app.vault.getAbstractFileByPath(relPath) as import('obsidian').TFile | null,
+      );
+      if (resolved) await this.plugin.contextPanel.openFile(resolved.file);
+      new Notice(formatCompanionEditedFilesNotice(resolved?.path ?? '', resolved?.validCount ?? 0));
       return;
     }
 

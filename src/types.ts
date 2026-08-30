@@ -706,8 +706,8 @@ export interface PluginSettings {
   threadViewPlacement: 'classic' | 'conversation-first';
   /** Last selected desktop thread, used when a host does not persist ItemView state changes. */
   activeThreadId?: string;
-  /** Public view descriptor used to re-identify the conversation companion after reload. */
-  conversationCompanion?: { type: string; state?: unknown; filePath?: string };
+  /** Opaque plugin-owned marker for the live conversation companion. Never contains native view state. */
+  conversationCompanionMarker?: string;
   /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
   hasSeenWelcome: boolean;
   /**

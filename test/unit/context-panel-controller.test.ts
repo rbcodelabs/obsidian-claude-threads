@@ -16,12 +16,11 @@ function makeLeaf(name: string) {
   };
 }
 
-function makeHarness(restoredIdentity?: { type: string; state: Record<string, unknown> }) {
+function makeHarness(restoredMarker?: string, unrelatedLeaves: WorkspaceLeaf[] = []) {
   const chat = makeLeaf('chat');
   const firstCompanion = makeLeaf('companion-1');
   const secondCompanion = makeLeaf('companion-2');
-  const attached = new Set<WorkspaceLeaf>([chat]);
-  if (restoredIdentity) attached.add(firstCompanion);
+  const attached = new Set<WorkspaceLeaf>([chat, ...unrelatedLeaves]);
   const splitActiveLeaf = vi
     .fn()
     .mockImplementationOnce(() => {
@@ -41,16 +40,15 @@ function makeHarness(restoredIdentity?: { type: string; state: Record<string, un
     openLinkText: vi.fn().mockResolvedValue(undefined),
   };
   const app = { workspace } as unknown as App;
-  firstCompanion.getViewState = vi.fn().mockReturnValue(restoredIdentity ?? { type: 'empty', state: {} });
-  let identity = restoredIdentity;
+  let marker = restoredMarker;
   const createController = () => new ContextPanelController(
     app,
     () => chat,
-    () => identity,
-    async (next) => { identity = next; },
+    () => marker,
+    async (next) => { marker = next; },
   );
   const controller = createController();
-  return { controller, createController, workspace, chat, firstCompanion, secondCompanion, attached };
+  return { controller, createController, workspace, chat, firstCompanion, secondCompanion, attached, getMarker: () => marker };
 }
 
 describe('ContextPanelController', () => {
@@ -103,19 +101,49 @@ describe('ContextPanelController', () => {
     expect(reused).toBe(false);
   });
 
-  it('rehydrates the restored companion after controller recreation without creating a duplicate', async () => {
-    const identity = { type: 'markdown', state: { file: 'Notes/context.md' } };
-    const { createController, workspace, firstCompanion } = makeHarness(identity);
+  it('rehydrates only the controller-owned adjacent companion after controller recreation', async () => {
+    const { controller, createController, workspace, firstCompanion } = makeHarness();
+    await controller.openFile({ path: 'Notes/context.md' } as TFile);
     const reloadedController = createController();
     await reloadedController.openFile({ path: 'Notes/next.md' } as TFile);
-    expect(workspace.splitActiveLeaf).not.toHaveBeenCalled();
-    expect(firstCompanion.openFile).toHaveBeenCalledOnce();
+    expect(workspace.splitActiveLeaf).toHaveBeenCalledOnce();
+    expect(firstCompanion.openFile).toHaveBeenCalledTimes(2);
   });
 
   it('reports reuse when a restored companion handles a contextual view', async () => {
-    const identity = { type: 'webviewer', state: { url: 'https://old.example' } };
-    const { createController } = makeHarness(identity);
+    const { controller, createController } = makeHarness();
+    await controller.setViewState({ type: 'webviewer', state: { url: 'https://old.example?token=secret' } });
     const reused = await createController().setViewState({ type: 'webviewer', state: { url: 'https://new.example' } });
     expect(reused).toBe(true);
+  });
+
+  it('does not adopt either unrelated leaf when two native views have identical state', async () => {
+    const unrelatedA = makeLeaf('unrelated-a');
+    const unrelatedB = makeLeaf('unrelated-b');
+    unrelatedA.getViewState = vi.fn().mockReturnValue({ type: 'webviewer', state: { url: 'https://same.example?token=secret' } });
+    unrelatedB.getViewState = vi.fn().mockReturnValue({ type: 'webviewer', state: { url: 'https://same.example?token=secret' } });
+    const { controller, workspace, firstCompanion } = makeHarness('stale-marker', [unrelatedA, unrelatedB]);
+    await controller.setViewState({ type: 'webviewer', state: { url: 'https://same.example?token=secret' } });
+    expect(workspace.splitActiveLeaf).toHaveBeenCalledOnce();
+    expect(firstCompanion.setViewState).toHaveBeenCalledOnce();
+    expect(unrelatedA.setViewState).not.toHaveBeenCalled();
+    expect(unrelatedB.setViewState).not.toHaveBeenCalled();
+  });
+
+  it('replaces a stale marker after the owned companion is closed', async () => {
+    const { controller, createController, firstCompanion, secondCompanion, attached, getMarker } = makeHarness();
+    await controller.openFile({ path: 'Notes/first.md' } as TFile);
+    const firstMarker = getMarker();
+    attached.delete(firstCompanion);
+    await createController().openFile({ path: 'Notes/second.md' } as TFile);
+    expect(secondCompanion.openFile).toHaveBeenCalledOnce();
+    expect(getMarker()).not.toBe(firstMarker);
+  });
+
+  it('persists only a sanitized opaque marker, never native view state', async () => {
+    const { controller, getMarker } = makeHarness();
+    await controller.setViewState({ type: 'webviewer', state: { url: 'https://example.com?token=secret' } });
+    expect(getMarker()).toMatch(/^ct-companion-/);
+    expect(JSON.stringify(getMarker())).not.toContain('secret');
   });
 });
