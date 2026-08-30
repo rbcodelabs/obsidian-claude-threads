@@ -351,14 +351,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
       try {
         const mcpServers = createClaudeThreadsMcpServers(this.app, {
           enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
-          openContextualFile: this.isConversationFirst()
-            ? async (file) => this.contextPanel.openFile(file)
-            : undefined,
-          openContextualUrl: this.isConversationFirst()
-            ? async (url) => this.contextPanel.setViewState({
+          openContextualFile: async (file) => {
+            if (!this.isConversationFirst()) return false;
+            await this.contextPanel.openFile(file);
+            return true;
+          },
+          openContextualUrl: async (url) => {
+            if (!this.isConversationFirst()) return false;
+            await this.contextPanel.setViewState({
               type: 'webviewer', active: true, state: { url },
-            })
-            : undefined,
+            });
+            return true;
+          },
           initialCwd,
           onSetCwd: (newCwd: string, originRepoPath?: string | null) => {
             this.manager.setThreadCwd(threadId, newCwd, originRepoPath);
@@ -1295,9 +1299,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
       console.error('[ClaudeThreads] Failed to create welcome guide:', err);
     }
 
-    // 2. Open chat view in the LEFT sidebar
+    // 2. Open chat according to the desktop-aware placement policy.
     try {
-      if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
+      if (this.isConversationFirst()) {
+        await this.activateView();
+      } else if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
         const chatLeaf = workspace.getLeftLeaf(false) as WorkspaceLeaf;
         await chatLeaf.setViewState({ type: VIEW_TYPE, active: false });
       }
@@ -1309,9 +1315,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     try {
       const guideFile = vault.getAbstractFileByPath(guidePath);
       if (guideFile instanceof TFile) {
-        const centerLeaf = workspace.getLeaf('tab');
-        await centerLeaf.openFile(guideFile);
-        workspace.revealLeaf(centerLeaf);
+        if (this.isConversationFirst()) {
+          await this.contextPanel.openFile(guideFile);
+        } else {
+          const centerLeaf = workspace.getLeaf('tab');
+          await centerLeaf.openFile(guideFile);
+          workspace.revealLeaf(centerLeaf);
+        }
       }
     } catch (err) {
       console.error('[ClaudeThreads] Failed to open welcome guide:', err);
@@ -1824,7 +1834,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async activateView(): Promise<void> {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | undefined;
-    if (this.settings.threadViewPlacement === 'conversation-first') {
+    if (this.isConversationFirst()) {
       // Loaded lazily with the desktop view modules; mobile never reaches here.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { planConversationFirstChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
@@ -1840,8 +1850,26 @@ export default class ClaudeThreadsPlugin extends Plugin {
         });
       }
     } else {
-      leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
-      if (!leaf) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { planClassicChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const chatLeaves = workspace.getLeavesOfType(VIEW_TYPE);
+      const plan = planClassicChat(chatLeaves, workspace.leftSplit, workspace.rightSplit);
+      leaf = plan.keep ?? undefined;
+      if (leaf) {
+        for (const duplicate of plan.detach) duplicate.detach();
+      } else if (chatLeaves.length > 0) {
+        // Create and initialize the destination before detaching the only live
+        // source, so a host refusal cannot strand the user without chat.
+        const destination = workspace.getRightLeaf(true);
+        if (!destination) throw new Error('Unable to create a right-sidebar leaf for Claude Threads.');
+        await destination.setViewState({
+          type: VIEW_TYPE,
+          active: true,
+          state: plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {},
+        });
+        for (const source of plan.detach) source.detach();
+        leaf = destination;
+      } else {
         leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
         await leaf.setViewState({ type: VIEW_TYPE, active: true });
       }
@@ -1850,7 +1878,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   isConversationFirst(): boolean {
-    return !Platform.isMobile && this.settings.threadViewPlacement === 'conversation-first';
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isConversationFirstPlacement } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    return isConversationFirstPlacement(this.settings.threadViewPlacement, Platform.isMobile);
   }
 
   async activateAgentView(): Promise<void> {

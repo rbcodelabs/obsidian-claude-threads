@@ -192,9 +192,9 @@ const addVaultBridgeSchema = {
 
 export interface ObsidianMcpServerOptions {
   /** Route agent-triggered file navigation through the host's contextual panel policy. */
-  openContextualFile?: (file: TFile, newLeaf: boolean) => Promise<void>;
+  openContextualFile?: (file: TFile, newLeaf: boolean) => Promise<boolean>;
   /** Route agent-triggered Web Viewer navigation through the contextual panel policy. */
-  openContextualUrl?: (url: string, newTab: boolean) => Promise<void>;
+  openContextualUrl?: (url: string, newTab: boolean) => Promise<boolean>;
   /**
    * Called when the agent requests a working-directory change. Receives the
    * resolved absolute path.
@@ -417,9 +417,8 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
             isError: true,
           };
         }
-        if (options.openContextualFile) {
-          await options.openContextualFile(abstract, args.newLeaf ?? false);
-        } else {
+        const handledContextually = await options.openContextualFile?.(abstract, args.newLeaf ?? false) ?? false;
+        if (!handledContextually) {
           const leaf = app.workspace.getLeaf(args.newLeaf ? 'tab' : false);
           await leaf.openFile(abstract);
         }
@@ -1044,8 +1043,8 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       try {
         const { url, newTab = false } = args;
 
-        if (options.openContextualUrl) {
-          await options.openContextualUrl(url, newTab);
+        const handledContextually = await options.openContextualUrl?.(url, newTab) ?? false;
+        if (handledContextually) {
           return {
             content: [{
               type: 'text' as const,
