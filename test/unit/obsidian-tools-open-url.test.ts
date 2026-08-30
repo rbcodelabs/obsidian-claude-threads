@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type { App } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 
 vi.mock('@anthropic-ai/claude-agent-sdk/browser', () => ({
   tool: (
@@ -173,5 +173,89 @@ describe('obsidian_open_url', () => {
     const payload = parseResult(result) as { success: boolean; error: string };
     expect(payload.success).toBe(false);
     expect(payload.error).toMatch(/webviewer not available/);
+  });
+
+  it('delegates to the contextual URL opener when one is supplied', async () => {
+    const app = makeApp({ existingLeaves: [makeLeaf()] });
+    const openContextualUrl = vi.fn().mockResolvedValue({ reusedTab: false });
+    const server = createObsidianMcpServer(app, { openContextualUrl }) as unknown as CapturedServer;
+
+    const result = await getTool(server, 'obsidian_open_url')._handler({
+      url: 'https://example.com/context',
+      newTab: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(openContextualUrl).toHaveBeenCalledWith('https://example.com/context', true);
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf).not.toHaveBeenCalled();
+    expect((parseResult(result) as { reusedTab: boolean }).reusedTab).toBe(false);
+  });
+
+  it('uses the live placement decision for URL routing without recreating the server', async () => {
+    const contextualLeaf = makeLeaf();
+    const classicLeaf = makeLeaf();
+    const app = makeApp({ existingLeaves: [], newLeaf: classicLeaf });
+    let conversationFirst = false;
+    const openContextualUrl = vi.fn(async (url: string) => {
+      if (!conversationFirst) return false;
+      await contextualLeaf.setViewState({ type: 'webviewer', active: true, state: { url } });
+      return { reusedTab: true };
+    });
+    const server = createObsidianMcpServer(app, { openContextualUrl }) as unknown as CapturedServer;
+    const tool = getTool(server, 'obsidian_open_url');
+
+    await tool._handler({ url: 'https://example.com/classic', newTab: true });
+    conversationFirst = true;
+    await tool._handler({ url: 'https://example.com/context' });
+
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf)
+      .toHaveBeenCalledTimes(1);
+    expect(classicLeaf.setViewState).toHaveBeenCalledWith({
+      type: 'webviewer', active: true, state: { url: 'https://example.com/classic' },
+    });
+    expect(contextualLeaf.setViewState).toHaveBeenCalledWith({
+      type: 'webviewer', active: true, state: { url: 'https://example.com/context' },
+    });
+  });
+});
+
+describe('obsidian_navigate_to_file', () => {
+  it('delegates file navigation to the contextual opener when one is supplied', async () => {
+    const file = new TFile('Notes/context.md');
+    const app = makeApp();
+    (app.vault.getAbstractFileByPath as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockReturnValue(file);
+    const openContextualFile = vi.fn().mockResolvedValue(true);
+    const server = createObsidianMcpServer(app, { openContextualFile }) as unknown as CapturedServer;
+
+    const result = await getTool(server, 'obsidian_navigate_to_file')._handler({
+      path: 'Notes/context.md',
+      newLeaf: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(openContextualFile).toHaveBeenCalledWith(file, true);
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf).not.toHaveBeenCalled();
+  });
+
+  it('uses the live placement decision for file routing without recreating the server', async () => {
+    const file = new TFile('Notes/context.md');
+    const classicLeaf = { openFile: vi.fn().mockResolvedValue(undefined) };
+    const app = makeApp({ newLeaf: classicLeaf });
+    (app.vault.getAbstractFileByPath as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockReturnValue(file);
+    let conversationFirst = false;
+    const openContextualFile = vi.fn(async () => conversationFirst);
+    const server = createObsidianMcpServer(app, { openContextualFile }) as unknown as CapturedServer;
+    const tool = getTool(server, 'obsidian_navigate_to_file');
+
+    await tool._handler({ path: file.path, newLeaf: true });
+    conversationFirst = true;
+    await tool._handler({ path: file.path, newLeaf: false });
+
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf)
+      .toHaveBeenCalledOnce();
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf)
+      .toHaveBeenCalledWith('tab');
+    expect(classicLeaf.openFile).toHaveBeenCalledOnce();
+    expect(openContextualFile).toHaveBeenCalledTimes(2);
   });
 });

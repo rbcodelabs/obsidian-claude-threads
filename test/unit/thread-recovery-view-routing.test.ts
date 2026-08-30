@@ -41,4 +41,24 @@ describe('recovered-thread view routing', () => {
 
     expect(renderProjectBar).toHaveBeenCalledOnce();
   });
+
+  it('keeps settings-selected B when Geode calls setState with stale valid A after onOpen', async () => {
+    const itemViewPrototype = Object.getPrototypeOf(ThreadsView.prototype) as { setState?: () => Promise<void> };
+    const priorSetState = itemViewPrototype.setState;
+    itemViewPrototype.setState = async () => {};
+    try {
+      const manager = { getThread: (id: string) => id === 'thread-a' || id === 'thread-b' ? { id } : undefined };
+      const plugin = { manager, settings: { activeThreadId: 'thread-b' } };
+      const view = new ThreadsView({} as never, plugin as never) as unknown as {
+        activeThreadId: string | null;
+        setState: (state: unknown, result: unknown) => Promise<void>;
+      };
+      // Exact Geode order: onOpen has already selected B, then stale workspace state A arrives.
+      view.activeThreadId = 'thread-b';
+      await view.setState({ activeThreadId: 'thread-a', conversationPlacement: 'conversation-first' }, {});
+      expect(view.activeThreadId).toBe('thread-b');
+    } finally {
+      itemViewPrototype.setState = priorSetState;
+    }
+  });
 });

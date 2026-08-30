@@ -74,6 +74,7 @@ const mockPlugin = {
     }
   },
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
+  isConversationFirst: () => settings.threadViewPlacement === 'conversation-first',
   // Empty on purpose: this harness has no vault skills fixture, and the
   // Skills Manager harness (skills-index.ts) is where the populated case is
   // screenshotted. Must still be present — ThreadsView calls it while

@@ -11,6 +11,7 @@ import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
 import type { WakeLockService } from './WakeLockService';
 import type { createClaudeThreadsMcpServers } from './ObsidianTools';
+import type { ContextPanelController } from './ContextPanelController';
 import { detectHostName } from './hostEnvironment';
 import { mergeMcpServers } from './mcpServerMerge';
 import type { SkillsManagerView } from './SkillsManagerView';
@@ -174,6 +175,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   statusLine: import('./StatusLineService').StatusLineService | null = null;
   gitDiff: import('./GitDiffService').GitDiffService | null = null;
   orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
+  contextPanel!: ContextPanelController;
 
   /**
    * MCP-server warnings already shown as a Notice this plugin load, so a
@@ -300,6 +302,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { SkillsManagerView } = require('./SkillsManagerView') as typeof import('./SkillsManagerView');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { ContextPanelController } = require('./ContextPanelController') as typeof import('./ContextPanelController');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const skillManager = require('./skillManager') as typeof import('./skillManager');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { StatusLineService } = require('./StatusLineService') as typeof import('./StatusLineService');
@@ -329,6 +333,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.migrateGithubSourcesIntoVault();
 
     this.manager = new ThreadManager(this.settings);
+    this.contextPanel = new ContextPanelController(this.app, () =>
+      this.app.workspace.getLeavesOfType(VIEW_TYPE)[0] ?? null,
+      () => this.settings.conversationCompanionMarker,
+      async (marker) => {
+        if (marker) this.settings.conversationCompanionMarker = marker;
+        else delete this.settings.conversationCompanionMarker;
+        await this.saveSettings();
+      },
+    );
+    this.register(() => { void this.contextPanel.dispose(); });
     const deferredThreadArchiver = createDeferredThreadArchiver(
       this.manager,
       async (id) => {
@@ -344,6 +358,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
       try {
         const mcpServers = createClaudeThreadsMcpServers(this.app, {
           enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
+          openContextualFile: async (file) => {
+            if (!this.isConversationFirst()) return false;
+            await this.contextPanel.openFile(file);
+            return true;
+          },
+          openContextualUrl: async (url) => {
+            if (!this.isConversationFirst()) return false;
+            const reusedTab = await this.contextPanel.setViewState({
+              type: 'webviewer', active: true, state: { url },
+            });
+            return { reusedTab };
+          },
           initialCwd,
           onSetCwd: (newCwd: string, originRepoPath?: string | null) => {
             this.manager.setThreadCwd(threadId, newCwd, originRepoPath);
@@ -1280,9 +1306,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
       console.error('[ClaudeThreads] Failed to create welcome guide:', err);
     }
 
-    // 2. Open chat view in the LEFT sidebar
+    // 2. Open chat according to the desktop-aware placement policy.
     try {
-      if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
+      if (this.isConversationFirst()) {
+        await this.activateView();
+      } else if (!workspace.getLeavesOfType(VIEW_TYPE)[0]) {
         const chatLeaf = workspace.getLeftLeaf(false) as WorkspaceLeaf;
         await chatLeaf.setViewState({ type: VIEW_TYPE, active: false });
       }
@@ -1294,9 +1322,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     try {
       const guideFile = vault.getAbstractFileByPath(guidePath);
       if (guideFile instanceof TFile) {
-        const centerLeaf = workspace.getLeaf('tab');
-        await centerLeaf.openFile(guideFile);
-        workspace.revealLeaf(centerLeaf);
+        if (this.isConversationFirst()) {
+          await this.contextPanel.openFile(guideFile);
+        } else {
+          const centerLeaf = workspace.getLeaf('tab');
+          await centerLeaf.openFile(guideFile);
+          workspace.revealLeaf(centerLeaf);
+        }
       }
     } catch (err) {
       console.error('[ClaudeThreads] Failed to open welcome guide:', err);
@@ -1808,12 +1840,43 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   async activateView(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
-    if (!leaf) {
-      leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
-      await leaf.setViewState({ type: VIEW_TYPE, active: true });
+    let leaf: WorkspaceLeaf | undefined;
+    if (this.isConversationFirst()) {
+      // Loaded lazily with the desktop view modules; mobile never reaches here.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const {
+        activateConversationFirstChat,
+        planConversationFirstChat,
+      } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const plan = planConversationFirstChat(workspace.getLeavesOfType(VIEW_TYPE));
+      leaf = await activateConversationFirstChat(
+        plan,
+        () => workspace.getLeaf('tab'),
+        VIEW_TYPE,
+      );
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { planClassicChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const chatLeaves = workspace.getLeavesOfType(VIEW_TYPE);
+      const plan = planClassicChat(chatLeaves);
+      leaf = plan.keep ?? undefined;
+      if (leaf) {
+        for (const duplicate of plan.detach) duplicate.detach();
+      } else if (chatLeaves.length > 0) {
+        const { activateChatPlacement } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+        leaf = await activateChatPlacement(plan, () => workspace.getRightLeaf(true), VIEW_TYPE, 'classic');
+      } else {
+        leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
+        await leaf.setViewState({ type: VIEW_TYPE, active: true, state: { conversationPlacement: 'classic' } });
+      }
     }
     workspace.revealLeaf(leaf);
+  }
+
+  isConversationFirst(): boolean {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { isConversationFirstPlacement } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    return isConversationFirstPlacement(this.settings.threadViewPlacement, Platform.isMobile);
   }
 
   async activateAgentView(): Promise<void> {
@@ -2057,6 +2120,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    const { sanitizeConversationCompanionSettings } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    sanitizeConversationCompanionSettings(this.settings as unknown as Record<string, unknown>);
     // Migrate old WebLLM model IDs to claude alias
     if (this.settings.inprocessModel.includes('-MLC') || this.settings.inprocessModel.includes('/')) {
       this.settings.inprocessModel = 'haiku';

@@ -6,7 +6,7 @@ Background Claude and Codex agents are first-class, durable participants, and th
 
 Direct child-agent messaging and single-agent interruption are capability-gated. They remain unavailable when the harness has no verified host-side control path; Claude Threads never silently routes those actions to the parent. See [the capability matrix and recovery behavior](docs/agent-workspace.md).
 
-A native Obsidian and Geode sidebar plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
+A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
 ![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.28.3-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
@@ -28,7 +28,7 @@ A native Obsidian and Geode sidebar plugin for running multiple Claude Code sess
 
 ## What it does
 
-Claude Threads embeds Claude Code directly in your host sidebar. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
+Claude Threads embeds Claude Code directly in your host workspace. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
 
 **Key features:**
 
@@ -39,7 +39,8 @@ Claude Threads embeds Claude Code directly in your host sidebar. Each tab is an 
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
 - **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done), or regroup the board into **folder swimlanes** or **project columns** — one lane/column per app/project — to see every conversation for a codebase together; the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
-- **Focus edited files** — one click closes all other tabs and opens only the files the active Claude or Codex agent touched in this thread, snapping your workspace to the work
+- **Focus edited files** — one click opens the files the active Claude or Codex agent touched. Classic placement keeps its original focus behavior (closing other Markdown tabs); conversation-first opens them through the companion without detaching unrelated leaves
+- **Conversation-first workspace (prototype)** — opt in under Settings → General → Conversation placement to keep one chat in the main area and open wikilinks, edited or bridged files, Web Viewer pages, artifacts, and agent-triggered navigation in one reusable native companion beside it. Closing the companion restores the conversation's available width. Classic sidebar placement remains the default, and mobile is unchanged
 - **Workspace tab syncing** — the host workspace tab title automatically reflects the active thread so you always know which session is which
 - **Slash commands** — built-in context commands plus every skill the session can see (`~/.claude/skills/`, vault-installed, and plugin sources), browseable with `/`
 - **Model switching** — set a persistent model per thread with `/model fable|opus|sonnet|haiku`, or a global default in settings
@@ -741,6 +742,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Agent progress summaries | Whether sub-agent progress is summarised and shown inline (default: on) |
 | Enable 1M context (beta) | Opt-in to the 1-million-token context window beta (uses the `interleaved-thinking-2025-05-14` beta flag) |
 | Ephemeral session | When on, sessions are not persisted to disk — they cannot be resumed after the thread closes |
+| Conversation placement | `Classic sidebar` (default) or the opt-in `Conversation first` prototype, which keeps one chat in the main workspace and reuses an adjacent native companion for contextual content. Desktop only; mobile is unchanged. |
 | Layout density | `Comfortable`, `Compact`, or `Spacious` — controls message spacing and padding |
 | Enable summarization | Master switch — auto-names threads each completed turn, shows the summarize button, enables the summarize command |
 | Auto-summarize after response | Keep refreshing the summary every completed turn even after you rename a thread yourself |

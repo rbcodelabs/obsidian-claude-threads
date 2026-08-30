@@ -12,7 +12,7 @@ function fakeApp(opts: { existingWebviewer?: boolean } = {}) {
     getLeaf: vi.fn(() => newLeaf),
     revealLeaf: reveal,
   };
-  return { app: { workspace: ws } as unknown as App, setViewState, reveal, ws };
+  return { app: { workspace: ws } as unknown as App, setViewState, reveal, ws, existingLeaf, newLeaf };
 }
 
 describe('openUrlPreferringWebViewer', () => {
@@ -53,6 +53,26 @@ describe('openUrlPreferringWebViewer', () => {
     openUrlPreferringWebViewer(app, 'https://x', { webViewerEnabled: true, openExternal });
     expect(ws.getLeavesOfType).toHaveBeenCalledWith('webviewer');
     expect(ws.getLeaf).not.toHaveBeenCalled(); // reused, no new tab
+  });
+
+  it('uses a caller-selected contextual leaf instead of an unrelated webviewer tab', () => {
+    const { app, ws, existingLeaf } = fakeApp({ existingWebviewer: true });
+    const contextualLeaf = { setViewState: vi.fn().mockResolvedValue(undefined) };
+    const openExternal = vi.fn();
+
+    openUrlPreferringWebViewer(app, 'https://x/context', {
+      webViewerEnabled: true,
+      openExternal,
+      destinationLeaf: contextualLeaf as never,
+    });
+
+    expect(ws.getLeavesOfType).not.toHaveBeenCalled();
+    expect(existingLeaf.setViewState).not.toHaveBeenCalled();
+    expect(contextualLeaf.setViewState).toHaveBeenCalledWith({
+      type: 'webviewer',
+      active: true,
+      state: { url: 'https://x/context' },
+    });
   });
 
   it('falls back to external when the workspace throws', () => {

@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter, TFile } from 'obsidian';
+import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
@@ -35,6 +36,7 @@ import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
 import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
 import { deleteScheduledActivity, scheduledActivityForThread, scheduledActivitySummary, type ScheduledActivity } from './scheduledActivity';
+import { ConversationViewPlacementState, resolveHostRestoredActiveThread } from './conversationFirstPlacement';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -48,6 +50,7 @@ export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
   private activeThreadId: string | null = null;
+  private readonly conversationPlacement = new ConversationViewPlacementState();
   private streamingEl: HTMLElement | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
@@ -346,6 +349,28 @@ export class ThreadsView extends ItemView {
     return 'message-square';
   }
 
+  getState(): Record<string, unknown> {
+    return {
+      ...super.getState(),
+      ...this.conversationPlacement.serialize(this.activeThreadId),
+    };
+  }
+
+  async setState(state: unknown, result: ViewStateResult): Promise<void> {
+    await super.setState(state, result);
+    this.conversationPlacement.apply(state);
+    const incoming = (state as { activeThreadId?: unknown } | null)?.activeThreadId;
+    const activeThreadId = resolveHostRestoredActiveThread(
+      this.activeThreadId,
+      typeof incoming === 'string' ? incoming : null,
+      this.plugin.settings.activeThreadId,
+      (id) => Boolean(this.manager.getThread(id)),
+    );
+    if (!activeThreadId) return;
+    this.activeThreadId = activeThreadId;
+    if (this.rootEl) await this.setActiveThread(activeThreadId);
+  }
+
   async onOpen(): Promise<void> {
     this.buildUI();
 
@@ -563,9 +588,13 @@ export class ThreadsView extends ItemView {
     if (threads.length > 0) {
       // Respect a pre-set activeThreadId (e.g. focusThread called before buildUI in a race),
       // otherwise default to the most recently created thread rather than the oldest.
-      const targetId = (this.activeThreadId && this.manager.getThread(this.activeThreadId))
-        ? this.activeThreadId
-        : threads[threads.length - 1].id;
+      const { resolvePersistedActiveThread } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const targetId = resolvePersistedActiveThread(
+        this.activeThreadId,
+        this.plugin.settings.activeThreadId,
+        (id) => Boolean(this.manager.getThread(id)),
+        threads[threads.length - 1].id,
+      );
       void this.setActiveThread(targetId);
     } else {
       const thread = this.manager.createThread('Thread 1', this.plugin.getEffectiveCwd());
@@ -977,6 +1006,13 @@ export class ThreadsView extends ItemView {
     // Persist the draft for the thread we're leaving before switching
     this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
+    const { persistActiveThreadSelection } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    void persistActiveThreadSelection(
+      this.app.workspace,
+      this.plugin.settings,
+      () => this.plugin.saveSettings(),
+      id,
+    ).catch(console.error);
     this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();
@@ -1322,8 +1358,12 @@ export class ThreadsView extends ItemView {
    * system browser. See {@link openUrlPreferringWebViewer}.
    */
   private openLink(url: string, forceExternal = false): void {
+    const webViewerEnabled = !forceExternal && isWebViewerEnabled(this.app);
     openUrlPreferringWebViewer(this.app, url, {
-      webViewerEnabled: !forceExternal && isWebViewerEnabled(this.app),
+      webViewerEnabled,
+      destinationLeaf: webViewerEnabled && this.plugin.isConversationFirst()
+        ? this.plugin.contextPanel.getLeaf()
+        : undefined,
       openExternal: (u) => {
         const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
         shell.openExternal(u);
@@ -1404,6 +1444,12 @@ export class ThreadsView extends ItemView {
 
   private async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
     try {
+      if (this.plugin.isConversationFirst()) {
+        await this.plugin.contextPanel.setViewState({
+          type: 'geode-artifact', active: true, state: { root: artifact.root },
+        });
+        return;
+      }
       const existing = this.app.workspace.getLeavesOfType('geode-artifact');
       const leaf = existing.find((candidate) =>
         (candidate.getViewState().state as { root?: string } | undefined)?.root === artifact.root,
@@ -1514,8 +1560,9 @@ export class ThreadsView extends ItemView {
     }
 
     // Focus button as a small icon chip at the end of the list
-    const focusChip = list.createDiv({ cls: 'ct-edited-file-chip ct-focus-files-chip', attr: { title: 'Open only these files (close other tabs)' } });
-    setTooltip(focusChip, 'Open only these files');
+    const focusLabel = this.plugin.isConversationFirst() ? 'Open edited files in companion' : 'Open only these files';
+    const focusChip = list.createDiv({ cls: 'ct-edited-file-chip ct-focus-files-chip', attr: { title: focusLabel } });
+    setTooltip(focusChip, focusLabel);
     const focusIcon = focusChip.createSpan('ct-edited-file-chip-icon');
     setIcon(focusIcon, 'focus');
     focusChip.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
@@ -1533,6 +1580,17 @@ export class ThreadsView extends ItemView {
 
     if (relPaths.length === 0) {
       new Notice('No vault files to focus.');
+      return;
+    }
+
+    if (this.plugin.isConversationFirst()) {
+      const { formatCompanionEditedFilesNotice, resolveFinalCompanionFile } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const resolved = resolveFinalCompanionFile(relPaths, (relPath) =>
+        this.app.vault.getAbstractFileByPath(relPath),
+        (candidate) => candidate instanceof TFile,
+      );
+      if (resolved) await this.plugin.contextPanel.openFile(resolved.file as TFile);
+      new Notice(formatCompanionEditedFilesNotice(resolved?.path ?? '', resolved?.validCount ?? 0));
       return;
     }
 
@@ -1570,8 +1628,12 @@ export class ThreadsView extends ItemView {
             this.openLink('file://' + filePath.split(path.sep).join('/'));
             return;
           }
-          const leaf = this.app.workspace.getLeaf(false);
-          await (leaf as any).openFile(file);
+          if (this.plugin.isConversationFirst()) {
+            await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
+          } else {
+            const leaf = this.app.workspace.getLeaf(false);
+            await (leaf as any).openFile(file);
+          }
           return;
         }
       }
@@ -1580,8 +1642,12 @@ export class ThreadsView extends ItemView {
       if (match) {
         const file = this.app.vault.getAbstractFileByPath(match.vaultRelPath);
         if (file) {
-          const leaf = this.app.workspace.getLeaf(false);
-          await (leaf as any).openFile(file);
+          if (this.plugin.isConversationFirst()) {
+            await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
+          } else {
+            const leaf = this.app.workspace.getLeaf(false);
+            await (leaf as any).openFile(file);
+          }
           return;
         }
       }
@@ -2017,7 +2083,11 @@ export class ThreadsView extends ItemView {
         e.preventDefault();
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
-        void this.app.workspace.openLinkText(href, '', false);
+        if (this.plugin.isConversationFirst()) {
+          void this.plugin.contextPanel.openLinkText(href);
+        } else {
+          void this.app.workspace.openLinkText(href, '', false);
+        }
       });
     });
     this.linkifyBridgePaths(el);
@@ -2081,7 +2151,11 @@ export class ThreadsView extends ItemView {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          void this.app.workspace.openLinkText(mapped.vaultRelPath, '', false);
+          if (this.plugin.isConversationFirst()) {
+            void this.plugin.contextPanel.openLinkText(mapped.vaultRelPath);
+          } else {
+            void this.app.workspace.openLinkText(mapped.vaultRelPath, '', false);
+          }
         });
         frag.appendChild(a);
         last = m.index + matchText.length;
