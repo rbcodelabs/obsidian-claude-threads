@@ -2,16 +2,21 @@
 import '../setup/obsidian-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const capturedInputs = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-
-vi.mock('../../src/DispatchInput', () => ({
-  DispatchInput: class {
-    private value = '';
-    constructor(options: Record<string, unknown>) { capturedInputs.push(options); }
-    mount() {}
-    destroy() {}
-    setValue(value: string) { this.value = value; }
-    getValue() { return this.value; }
+vi.mock('fs', () => ({
+  default: {
+    readdirSync: () => [], statSync: () => ({ isDirectory: () => false }),
+    existsSync: () => false, readFileSync: () => '',
+  },
+  readdirSync: () => [], statSync: () => ({ isDirectory: () => false }),
+  existsSync: () => false, readFileSync: () => '',
+}));
+vi.mock('../../src/stt', () => ({
+  SttController: function SttController() {
+    return {
+      attachPttToTextarea: vi.fn(() => () => {}),
+      createMicButton: vi.fn(() => document.createElement('button')),
+      destroy: vi.fn(),
+    };
   },
 }));
 vi.mock('../../src/ClaudeSession', () => ({
@@ -21,18 +26,10 @@ vi.mock('../../src/ClaudeSession', () => ({
 vi.mock('../../src/SettingsTab', () => ({ isWebViewerEnabled: () => false }));
 
 import { AgentDashboard } from '../../src/AgentDashboard';
+import { DispatchInput } from '../../src/DispatchInput';
 import { KanbanView } from '../../src/KanbanView';
 import { ThreadManager } from '../../src/ThreadManager';
-import { DEFAULT_SETTINGS } from '../../src/types';
-
-interface DispatchOptions {
-  onSend(args: {
-    text: string;
-    images: unknown[];
-    attachment: string | null;
-    agentHarness: 'claude' | 'codex';
-  }): Promise<void>;
-}
+import { DEFAULT_SETTINGS, type ImageAttachment } from '../../src/types';
 
 function makeFixture() {
   const settings = { ...DEFAULT_SETTINGS, kanbanCollapseSide: 'none' as const };
@@ -64,46 +61,70 @@ describe.each([
   ['Agent Dashboard', AgentDashboard],
   ['Kanban', KanbanView],
 ] as const)('%s new-thread design routing', (_label, View) => {
-  beforeEach(() => { capturedInputs.length = 0; });
+  beforeEach(() => { document.body.empty(); });
   afterEach(() => { vi.restoreAllMocks(); });
+
+  function getDispatchInput(view: InstanceType<typeof View>): DispatchInput {
+    const internals = view as unknown as {
+      dispatchComponent?: DispatchInput;
+      dispatchInput?: DispatchInput;
+    };
+    return internals.dispatchComponent ?? internals.dispatchInput!;
+  }
 
   it('uses the native design dispatcher and never the ordinary prompt dispatcher', async () => {
     const { app, plugin } = makeFixture();
     const view = new View({} as never, plugin as never);
     (view as unknown as { app: unknown }).app = app;
     await view.onOpen();
-    const options = capturedInputs.at(-1) as unknown as DispatchOptions;
+    const input = getDispatchInput(view);
 
-    await options.onSend({
-      text: '/design create a simple responsive settings card',
-      images: [],
-      attachment: null,
-      agentHarness: 'codex',
-    });
+    input.setValue('/design create a simple responsive settings card');
+    input.triggerSend();
 
-    expect(plugin.dispatchNewDesignThread).toHaveBeenCalledWith(
-      'create a simple responsive settings card',
-      'codex',
-    );
+    await vi.waitFor(() => expect(plugin.dispatchNewDesignThread).toHaveBeenCalledWith(
+      'create a simple responsive settings card', 'claude',
+    ));
     expect(plugin.dispatchNewThread).not.toHaveBeenCalled();
     await view.onClose();
   });
 
-  it('rejects design attachments instead of silently dropping them', async () => {
+  it('preserves image and text attachments when design dispatch rejects them', async () => {
     const { app, plugin } = makeFixture();
     const view = new View({} as never, plugin as never);
     (view as unknown as { app: unknown }).app = app;
     await view.onOpen();
-    const options = capturedInputs.at(-1) as unknown as DispatchOptions;
+    const input = getDispatchInput(view);
+    const image: ImageAttachment = {
+      base64: 'aGVsbG8=', mediaType: 'image/png', name: 'settings.png',
+    };
 
-    await options.onSend({
-      text: '/design settings card',
-      images: [{}],
-      attachment: null,
-      agentHarness: 'claude',
-    });
+    input.setValue('/design settings card');
+    input.setPendingImages([image]);
+    input.setPendingAttachment('Reference copy');
+    input.triggerSend();
 
+    await vi.waitFor(() => expect(input.getValue()).toBe('/design settings card'));
+    expect(input.getPendingImages()).toEqual([image]);
+    expect(input.getPendingAttachment()).toBe('Reference copy');
     expect(plugin.dispatchNewDesignThread).not.toHaveBeenCalled();
+    expect(plugin.dispatchNewThread).not.toHaveBeenCalled();
+    await view.onClose();
+  });
+
+  it('restores a retryable design draft when design setup or navigation fails', async () => {
+    const { app, plugin } = makeFixture();
+    plugin.dispatchNewDesignThread.mockRejectedValueOnce(new Error('preview unavailable'));
+    const view = new View({} as never, plugin as never);
+    (view as unknown as { app: unknown }).app = app;
+    await view.onOpen();
+    const input = getDispatchInput(view);
+
+    input.setValue('/design settings card');
+    input.triggerSend();
+
+    await vi.waitFor(() => expect(input.getValue()).toBe('/design settings card'));
+    expect(plugin.dispatchNewDesignThread).toHaveBeenCalledOnce();
     expect(plugin.dispatchNewThread).not.toHaveBeenCalled();
     await view.onClose();
   });

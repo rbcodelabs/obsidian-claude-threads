@@ -127,6 +127,46 @@ describe('new-thread design dispatch', () => {
     expect(sentMessage).toContain('You are working in Claude Threads Design mode.');
     expect(sentMessage).toContain('Responsive settings card');
     expect(sentMessage).not.toContain('/design Responsive settings card');
-    expect(events).toEqual(['create', 'scaffold', 'save', 'send', 'open-thread', 'open-preview']);
+    expect(events).toEqual(['create', 'scaffold', 'save', 'open-thread', 'open-preview', 'send']);
+  });
+
+  it.each([
+    ['thread focus', 'openThread'],
+    ['artifact preview', 'openPreview'],
+  ] as const)('does not start the turn when %s fails', async (_label, failingStep) => {
+    const thread = {
+      id: 'thread-failed-navigation', title: 'placeholder', cwd: '/vault', messages: [],
+      createdAt: 1, updatedAt: 1, status: 'waiting' as const, agentHarness: 'claude' as const,
+    };
+    const sendMessage = vi.fn(async () => undefined);
+    const deleteThread = vi.fn();
+    const rm = vi.fn(async () => undefined);
+    const navigationError = new Error(`${failingStep} failed`);
+    const deps = {
+      createThread: () => thread as Thread,
+      deleteThread,
+      saveSettings: vi.fn(async () => undefined),
+      sendMessage,
+      openThread: vi.fn(async () => {
+        if (failingStep === 'openThread') throw navigationError;
+      }),
+      openPreview: vi.fn(async () => {
+        if (failingStep === 'openPreview') throw navigationError;
+      }),
+      onSendError: vi.fn(),
+    };
+    const fileFs: DesignArtifactFs = {
+      mkdir: vi.fn(async () => undefined),
+      writeFile: vi.fn(async () => undefined),
+      rm,
+    };
+
+    await expect(dispatchDesignThread('Retry-safe design', 'claude', '/vault', deps, fileFs))
+      .rejects.toBe(navigationError);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(deleteThread).toHaveBeenCalledWith(thread.id);
+    expect(deps.saveSettings).toHaveBeenCalledTimes(2);
+    expect(rm).toHaveBeenCalledWith(designArtifactRoot('/vault', thread.id), { recursive: true, force: true });
   });
 });

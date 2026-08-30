@@ -931,8 +931,8 @@ export class ThreadsView extends ItemView {
   }
 
 
-  focusThread(id: string): void {
-    void this.setActiveThread(id);
+  focusThread(id: string): Promise<void> {
+    return this.setActiveThread(id);
   }
 
   /** Update the density data-attribute live when the user changes the setting. */

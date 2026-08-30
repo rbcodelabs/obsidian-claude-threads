@@ -11,6 +11,7 @@ import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads } from './threadRowState';
 import { agentLabel, flattenAgentTree } from './agentRuns/agentTreeModel';
+import { handleDesignDispatch } from './designDispatchRouting';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -172,6 +173,11 @@ export class AgentDashboard extends ItemView {
           this.plugin.settings.escalationEnabled ? this.plugin.settings.escalationKeyword : undefined,
         );
         if (directive) {
+          if (await handleDesignDispatch({
+            directive, text, images, attachment, agentHarness,
+            input: this.dispatchComponent,
+            dispatch: (brief, harness) => this.plugin.dispatchNewDesignThread(brief, harness),
+          })) return;
           if (directive.error) {
             new Notice(directive.error);
             this.dispatchComponent.setValue(text);
@@ -192,20 +198,6 @@ export class AgentDashboard extends ItemView {
           } else if (directive.kind === 'loop') {
             dispatchOpts = { ...dispatchOpts, loop: { intervalSeconds: directive.intervalSeconds } };
             text = titleText = directive.prompt;
-          } else if (directive.kind === 'design') {
-            if (images.length > 0 || attachment) {
-              new Notice('Design dispatch does not support attachments yet. Remove them and try again.');
-              this.dispatchComponent.setValue(text);
-              return;
-            }
-            try {
-              await this.plugin.dispatchNewDesignThread(directive.brief, agentHarness);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              new Notice(`Could not create design artifact: ${message}`);
-              this.dispatchComponent.setValue(text);
-            }
-            return;
           }
           // 'escalate' directives always carry `error` (handled above) — no
           // success case, so nothing to do here; fall through to dispatch

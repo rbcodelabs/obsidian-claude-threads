@@ -1913,7 +1913,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async openThreadInChatView(threadId: string): Promise<void> {
     await this.activateView();
     const view = this.getView();
-    view?.focusThread(threadId);
+    await view?.focusThread(threadId);
   }
 
   /**

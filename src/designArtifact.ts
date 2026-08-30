@@ -18,6 +18,7 @@ export interface DesignArtifactManifest {
 export interface DesignArtifactFs {
   mkdir(target: string, options: { recursive: true }): Promise<unknown>;
   writeFile(target: string, data: string, options?: { flag: 'wx' }): Promise<unknown>;
+  rm?(target: string, options: { recursive: true; force: true }): Promise<unknown>;
 }
 
 export interface DesignThreadDispatchDeps {
@@ -33,6 +34,7 @@ export interface DesignThreadDispatchDeps {
 const defaultFs: DesignArtifactFs = {
   mkdir: (target, options) => fs.mkdir(target, options),
   writeFile: (target, data, options) => fs.writeFile(target, data, options),
+  rm: (target, options) => fs.rm(target, options),
 };
 
 export function artifactIdForThread(threadId: string): string {
@@ -179,17 +181,25 @@ export async function dispatchDesignThread(
   fileFs: DesignArtifactFs = defaultFs,
 ): Promise<string> {
   const thread = deps.createThread(designTitle(brief), agentHarness);
-  let artifact: DesignArtifact;
   try {
-    artifact = await ensureDesignArtifact(thread, vaultRoot, brief, Date.now(), fileFs);
+    const artifact = await ensureDesignArtifact(thread, vaultRoot, brief, Date.now(), fileFs);
     await deps.saveSettings();
+    await deps.openThread(thread.id);
+    await deps.openPreview(artifact);
+    void deps.sendMessage(thread.id, designKickoffMessage(artifact, brief)).catch(deps.onSendError);
+    return thread.id;
   } catch (error) {
+    try {
+      await fileFs.rm?.(designArtifactRoot(vaultRoot, thread.id), { recursive: true, force: true });
+    } catch {
+      // Rollback remains retry-safe even when filesystem cleanup is unavailable.
+    }
     deps.deleteThread(thread.id);
+    try {
+      await deps.saveSettings();
+    } catch {
+      // Preserve the original creation/navigation error for the dispatch UI.
+    }
     throw error;
   }
-
-  void deps.sendMessage(thread.id, designKickoffMessage(artifact, brief)).catch(deps.onSendError);
-  await deps.openThread(thread.id);
-  await deps.openPreview(artifact);
-  return thread.id;
 }
