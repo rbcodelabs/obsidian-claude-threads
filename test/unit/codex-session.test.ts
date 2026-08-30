@@ -498,6 +498,128 @@ describe('CodexSession protocol notifications', () => {
     expect(internal.options.permissionMode).toBe('plan');
   });
 
+  describe('plan updates', () => {
+    const createPlanSession = () => {
+      const onTaskEvent = vi.fn();
+      const session = new CodexSession('codex');
+      const internal = session as any;
+      internal.codexThreadId = 'codex-thread';
+      internal.options = { callbacks: { onTaskEvent } };
+      return { internal, onTaskEvent };
+    };
+
+    it('maps a root-thread plan snapshot to the shared task statuses', () => {
+      const { internal, onTaskEvent } = createPlanSession();
+
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'codex-thread',
+          turnId: 'turn-1',
+          explanation: 'Working through the checklist',
+          plan: [
+            { step: 'Queued work', status: 'pending' },
+            { step: 'Current work', status: 'inProgress' },
+            { step: 'Finished work', status: 'completed' },
+          ],
+        },
+      });
+
+      expect(onTaskEvent).toHaveBeenCalledWith({
+        kind: 'replace',
+        tasks: [
+          { content: 'Queued work', status: 'pending' },
+          { content: 'Current work', status: 'in_progress' },
+          { content: 'Finished work', status: 'completed' },
+        ],
+      });
+    });
+
+    it('treats later notifications as replacement snapshots and supports clearing', () => {
+      const { internal, onTaskEvent } = createPlanSession();
+
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'codex-thread',
+          plan: [
+            { step: 'First', status: 'completed' },
+            { step: 'Second', status: 'inProgress' },
+          ],
+        },
+      });
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'codex-thread',
+          plan: [{ step: 'Replacement', status: 'pending' }],
+        },
+      });
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: { threadId: 'codex-thread', plan: [] },
+      });
+
+      expect(onTaskEvent).toHaveBeenNthCalledWith(2, {
+        kind: 'replace',
+        tasks: [{ content: 'Replacement', status: 'pending' }],
+      });
+      expect(onTaskEvent).toHaveBeenNthCalledWith(3, { kind: 'replace', tasks: [] });
+    });
+
+    it('ignores child-thread plan notifications', () => {
+      const { internal, onTaskEvent } = createPlanSession();
+
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'child-thread',
+          plan: [{ step: 'Child work', status: 'inProgress' }],
+        },
+      });
+
+      expect(onTaskEvent).not.toHaveBeenCalled();
+    });
+
+    it('omits malformed entries and unknown statuses from root snapshots', () => {
+      const { internal, onTaskEvent } = createPlanSession();
+
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'codex-thread',
+          plan: [
+            { step: 'Valid', status: 'pending' },
+            { step: '', status: 'completed' },
+            { step: 42, status: 'pending' },
+            { step: 'Unknown', status: 'blocked' },
+            null,
+          ],
+        },
+      });
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: { threadId: 'codex-thread', plan: 'not-an-array' },
+      });
+      internal.handle({
+        method: 'turn/plan/updated',
+        params: {
+          threadId: 'codex-thread',
+          plan: [
+            { step: 'Unknown', status: 'blocked' },
+            { step: 42, status: 'pending' },
+          ],
+        },
+      });
+
+      expect(onTaskEvent).toHaveBeenCalledOnce();
+      expect(onTaskEvent).toHaveBeenCalledWith({
+        kind: 'replace',
+        tasks: [{ content: 'Valid', status: 'pending' }],
+      });
+    });
+  });
+
   it('reports every path from a multi-file fileChange through the shared edited-files callback', () => {
     const managerEditedFiles: string[] = [];
     const onFilesEdited = (paths: string[]) => {
