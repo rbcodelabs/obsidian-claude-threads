@@ -56,7 +56,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
 - **Keep computer awake** — prevents the computer from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses Geode's native Electron power-save blocker when available, with `caffeinate -i` for Obsidian on macOS and the Web Wake Lock API as fallback)
-- **Plan Mode** — set permission mode to `plan` and Claude will propose a written plan before touching any files. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before Claude proceeds
+- **Plan Mode** — Claude and Codex can propose a written plan before making any mutations, and Codex can autonomously invoke `EnterPlanMode` when a task needs investigation first. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before execution begins
 - **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
 - **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
 - **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Claude Threads
@@ -735,7 +735,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Vault folder | Folder for saved thread notes (default: `Claude/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Secret environment variables | Keychain-backed env vars (values stored in the OS keychain, never in `data.json`) — for API keys and tokens |
-| Permission mode | How Claude handles tool-use confirmation. Options: `default` (CLI default), `acceptEdits` (auto-approve file edits), `bypassPermissions` (skip all prompts), `plan` (propose a plan first — see [Plan Mode](#plan-mode)), `dontAsk` (no dialogs; for unattended/scheduled sessions), `auto` (Claude decides). See [Permissions](#permissions). |
+| Permission mode | How the selected Claude or Codex harness handles tool-use confirmation. Options: `default` (CLI default), `acceptEdits` (auto-approve file edits), `bypassPermissions` (skip all prompts), `plan` (propose a plan first — see [Plan Mode](#plan-mode)), `dontAsk` (no dialogs; for unattended/scheduled sessions), `auto` (the selected harness decides). See [Permissions](#permissions). |
 | Thinking mode | `disabled` (default), `enabled`, or `auto` — controls whether Claude uses extended thinking for harder problems |
 | Thinking budget tokens | Maximum tokens Claude can spend on reasoning when thinking mode is `enabled` (default: 8 000). Only shown when thinking mode is `enabled` |
 | Effort level | `default`, `low`, `medium`, or `high` — how much work Claude invests per turn. `default` uses the CLI setting |
