@@ -251,7 +251,10 @@ export class ThreadSession {
                     : 'Plan approved — proceed with implementation.';
                   resolve({ behavior: 'deny' as const, message: approvalNote, interrupt: false });
                 },
-                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false }),
+                () => {
+                  resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false });
+                  return false;
+                },
               );
             });
             return result;

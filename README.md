@@ -357,14 +357,14 @@ Hold the configured push-to-talk key (default: none — set it in Settings → P
 
 ### Permissions
 
-When Claude needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the shield (🛡) button in the thread footer — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
+When Claude or Codex needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the shield (🛡) button in the thread footer — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
 
 | Mode | Behavior |
 |---|---|
 | `default` | Use the Claude CLI default (prompts for most tool calls) |
 | `acceptEdits` | Automatically accept file edits; prompt for commands and other tools |
 | `bypassPermissions` | Skip all permission prompts — Claude executes everything without asking |
-| `plan` | Claude proposes a written plan before taking any action; you approve, edit, or reject it before it proceeds (see [Plan Mode](#plan-mode) below) |
+| `plan` | The selected harness proposes a written plan before taking any action; you approve, edit, or reject it before it proceeds (see [Plan Mode](#plan-mode) below) |
 | `dontAsk` | Suppress all interactive permission dialogs; Claude proceeds without confirmation. Intended for scheduled/background sessions that run unattended |
 | `auto` | Claude autonomously decides when to prompt vs. proceed based on action risk |
 
@@ -378,17 +378,17 @@ When Claude needs to write a file or run a command, a permission card appears in
 
 ### Plan Mode
 
-Set **Permission Mode → `plan`** globally in settings, or use the **shield button** in the thread footer to set it for a single thread, to enable Plan Mode. In this mode Claude reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it.
+Set **Permission Mode → `plan`** globally in settings, or use the **shield button** in the thread footer to set it for a single thread, to enable Plan Mode. In this mode Claude or Codex reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it. Codex can also invoke its built-in `EnterPlanMode` control when it recognizes that a task needs investigation first; Claude Threads finishes the current handoff, switches Codex to a read-only Plan turn at the safe turn boundary, and shows the same approval card.
 
 **The flow:**
 
 1. You send a message as normal.
-2. A **"Planning…"** visual state appears in the thread while Claude gathers context.
-3. When Claude finishes its plan, an inline card replaces the spinner, showing the full proposed plan text.
+2. A **"Planning…"** visual state appears in the thread while the agent gathers context.
+3. When the agent finishes its plan, an inline card replaces the spinner, showing the full proposed plan text.
 4. You pick one of three actions on the card:
-   - **Approve** — Claude proceeds to execute the plan immediately.
-   - **Edit** — The plan text becomes editable in-place; submitting the edited version sends it back to Claude as the confirmed plan before execution.
-   - **Reject** — Claude stops; no edits are made. You can send a follow-up message to redirect.
+   - **Approve** — the agent returns to its normal permission mode and executes the plan immediately.
+   - **Edit** — the plan text becomes editable in-place; submitting the edited version sends it back as the confirmed plan before execution.
+   - **Reject** — the agent remains in Plan mode; no edits are made. You can send a follow-up message to redirect or request a revision.
 
 Plan Mode is useful for risky or large-scale tasks where you want to review the approach before any files are touched.
 

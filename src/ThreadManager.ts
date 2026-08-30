@@ -102,8 +102,10 @@ export type ThreadEvent =
   | { type: 'files_edited'; paths: string[] }
   | { type: 'tool_result_status'; toolUseId: string; status: 'success' | 'error'; durationMs?: number }
   | { type: 'enter_plan_mode' }
-  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => void }
+  | { type: 'plan_ready'; planText: string; approve: (editedPlan?: string) => void; reject: () => boolean }
   | { type: 'pending_plan_changed'; planText: string | undefined }
+  | { type: 'permission_mode_changed'; mode: PluginSettings['permissionMode'] | undefined }
+  | { type: 'plan_transition_error'; error: Error }
   | { type: 'question_ready'; questions: AskQuestion[] }
   | { type: 'pending_question_changed'; questions: AskQuestion[] | undefined }
   | { type: 'capabilities_discovered'; models: import('@anthropic-ai/claude-agent-sdk').ModelInfo[]; agents: import('@anthropic-ai/claude-agent-sdk').AgentInfo[] }
@@ -182,6 +184,8 @@ export class ThreadManager {
    */
   private pendingUserMessageIds: Map<string, string[]> = new Map();
   private queuedMessages: Map<string, { text: string; images?: ImageAttachment[] }[]> = new Map();
+  /** Threads draining rejected-plan feedback in FIFO order. */
+  private releasingPlanFeedback = new Set<string>();
   private threadActivity: Map<string, string> = new Map();
   private pendingPermissions: Map<string, { toolName: string; detail: string }> = new Map();
   private permissionResolvers: Map<string, (allow: boolean) => void> = new Map();
@@ -240,7 +244,7 @@ export class ThreadManager {
    * Keyed by thread ID. NOT serialized to JSON — only set while the session is
    * actively waiting for the user to act on the plan card.
    */
-  private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => void }> = new Map();
+  private pendingPlanResolvers: Map<string, { approve: (edited?: string) => void; reject: () => boolean }> = new Map();
   /**
    * Central per-thread activity heartbeat: `Date.now()` of the last
    * progress-bearing event (token, tool_use, streaming_start, message, task
@@ -481,6 +485,7 @@ export class ThreadManager {
     this.activeBgTasks.delete(id);
     this.pendingUserMessageIds.delete(id);
     this.queuedMessages.delete(id);
+    this.releasingPlanFeedback.delete(id);
     this.threadActivity.delete(id);
     this.lastActivityAt.delete(id);
     this.selectedAgentRuns.delete(id);
@@ -718,7 +723,7 @@ export class ThreadManager {
   }
 
   /** Returns the live approve/reject callbacks if a plan is actively awaiting user action. */
-  getPendingPlanResolvers(id: string): { approve: (edited?: string) => void; reject: () => void } | undefined {
+  getPendingPlanResolvers(id: string): { approve: (edited?: string) => void; reject: () => boolean } | undefined {
     return this.pendingPlanResolvers.get(id);
   }
 
@@ -737,6 +742,7 @@ export class ThreadManager {
       if (mode !== undefined) thread.permissionMode = mode;
       else delete thread.permissionMode;
       thread.updatedAt = Date.now();
+      this.emit(id, { type: 'permission_mode_changed', mode });
       // ADR-0002 §2: same rationale as setThreadModel() above — a direct
       // control-request on the live Query, no restart needed.
       const session = this.sessions.get(id);
@@ -1177,6 +1183,55 @@ export class ThreadManager {
     });
   }
 
+  private releaseRejectedPlanFeedback(threadId: string): void {
+    if (this.releasingPlanFeedback.has(threadId)) return;
+    this.releasingPlanFeedback.add(threadId);
+    void (async () => {
+      try {
+        while (true) {
+          if (!this.threads.has(threadId)) return;
+          const goalState = this.goalContextStates.get(threadId);
+          if (goalState && (
+            goalState.persistencePendingRevision !== undefined
+            || goalState.desiredRevision !== goalState.appliedRevision
+          )) {
+            if (goalState.persistencePendingRevision === undefined) {
+              goalState.refreshRequested = true;
+              this.scheduleGoalContextProcessing(threadId);
+            }
+            return;
+          }
+          const queue = this.queuedMessages.get(threadId);
+          const item = queue?.shift();
+          if (!item) {
+            this.queuedMessages.delete(threadId);
+            return;
+          }
+          if (queue?.length === 0) this.queuedMessages.delete(threadId);
+          this.emit(threadId, { type: 'dequeued', text: item.text, images: item.images });
+          // Open the gate only for this already-dequeued item. sendMessage()
+          // executes synchronously through its gate before its first await, so
+          // a racing external send still sees the gate restored below.
+          this.releasingPlanFeedback.delete(threadId);
+          const dispatched = this.sendMessage(threadId, item.text, item.images);
+          this.releasingPlanFeedback.add(threadId);
+          await dispatched;
+        }
+      } catch (error) {
+        const thread = this.threads.get(threadId);
+        if (thread) {
+          const dispatchError = error instanceof Error ? error : new Error(String(error));
+          thread.status = 'error';
+          thread.lastError = dispatchError.message;
+          thread.updatedAt = Date.now();
+          this.emit(threadId, { type: 'error', error: dispatchError });
+        }
+      } finally {
+        this.releasingPlanFeedback.delete(threadId);
+      }
+    })();
+  }
+
   /**
    * Retire stale initialization context only when the adapter is fully idle.
    * Closing is synchronous; the next send lazily creates a replacement and
@@ -1323,6 +1378,17 @@ export class ThreadManager {
   async sendMessage(threadId: string, userText: string, images?: ImageAttachment[]): Promise<void> {
     const thread = this.threads.get(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+
+    // A completed plan is a real lifecycle gate, not merely a card rendered
+    // over an otherwise-sendable session. Keep fresh user input out of the
+    // provider until the user approves or rejects the plan explicitly.
+    if (this.hasPendingPlan(threadId) || this.releasingPlanFeedback.has(threadId)) {
+      const queue = this.queuedMessages.get(threadId) ?? [];
+      queue.push({ text: userText, images });
+      this.queuedMessages.set(threadId, queue);
+      this.emit(threadId, { type: 'queued', text: userText, images });
+      return;
+    }
 
     const goalState = this.getGoalContextState(threadId);
     const currentSession = this.sessions.get(threadId);
@@ -1837,6 +1903,7 @@ export class ThreadManager {
 
         this.emit(threadId, { type: 'done' });
         this.emitRunStateSettledWhenIdle(threadId);
+        this.scheduleQueuedMessageFlush(threadId);
       },
       onInterrupted: (_sessionId) => {
         // Roll back every orphaned, unresolved user message — not just the
@@ -2052,6 +2119,27 @@ export class ThreadManager {
       onGitOperation: (summary) => this.emit(threadId, { type: 'git_operation', summary }),
       onToolResult: (toolUseId, status, durationMs) => this.emit(threadId, { type: 'tool_result_status', toolUseId, status, durationMs }),
       onEnterPlanMode: () => this.emit(threadId, { type: 'enter_plan_mode' }),
+      onPlanModeRequested: () => {
+        // Codex crosses a safe turn boundary before entering Plan mode. Persist
+        // the reduced-capability state here; the adapter owns the matching
+        // app-server settings update so there is one live control request.
+        thread.permissionMode = 'plan';
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'permission_mode_changed', mode: 'plan' });
+      },
+      onPlanApprovalCommitted: () => {
+        thread.permissionMode = 'default';
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'permission_mode_changed', mode: 'default' });
+        delete thread.pendingPlan;
+        this.pendingPlanResolvers.delete(threadId);
+        this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
+      },
+      onPlanTransitionError: (error) => {
+        thread.lastError = error.message;
+        thread.updatedAt = Date.now();
+        this.emit(threadId, { type: 'plan_transition_error', error });
+      },
       onPlanReady: (planText, approve, reject) => {
         // Persist the plan text so the card can be restored after a reload/crash
         // OR after the user switches threads mid-session.
@@ -2061,22 +2149,33 @@ export class ThreadManager {
         // Wrap callbacks to clear both the persisted plan and the in-memory
         // resolvers when the user acts on the card.
         const wrappedApprove = (editedPlan?: string) => {
+          // Both harnesses leave plan mode on approval. Persist that transition
+          // before emitting any save-triggering event so data.json can never
+          // capture a cleared card with stale Plan mode.
+          if (thread.agentHarness === 'codex') {
+            approve(editedPlan);
+            return;
+          } else {
+            this.setThreadPermissionMode(threadId, 'default');
+          }
           delete thread.pendingPlan;
           thread.updatedAt = Date.now();
           this.pendingPlanResolvers.delete(threadId);
           this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
-          // Both harnesses leave plan mode on approval. Persist that transition
-          // as well as applying it to the live session so the toolbar and any
-          // later session restart agree with the active harness state.
-          this.setThreadPermissionMode(threadId, 'default');
           approve(editedPlan);
         };
-        const wrappedReject = () => {
+        const wrappedReject = (): boolean => {
           delete thread.pendingPlan;
           thread.updatedAt = Date.now();
           this.pendingPlanResolvers.delete(threadId);
           this.emit(threadId, { type: 'pending_plan_changed', planText: undefined });
-          reject();
+          const adapterHadFeedback = reject();
+          const queued = this.queuedMessages.get(threadId) ?? [];
+          const managerHadFeedback = queued.length > 0;
+          if (managerHadFeedback) {
+            this.releaseRejectedPlanFeedback(threadId);
+          }
+          return adapterHadFeedback || managerHadFeedback;
         };
         // Store resolvers in-memory so restorePendingPlanCard() can re-wire the
         // card after the user switches threads and switches back mid-session.
@@ -2425,6 +2524,7 @@ export class ThreadManager {
       session.close();
     }
     this.sessions.clear();
+    this.releasingPlanFeedback.clear();
   }
 }
 
