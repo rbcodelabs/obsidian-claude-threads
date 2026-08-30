@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import type { App } from 'obsidian';
+import { TFile, type App } from 'obsidian';
 
 vi.mock('@anthropic-ai/claude-agent-sdk/browser', () => ({
   tool: (
@@ -173,5 +173,39 @@ describe('obsidian_open_url', () => {
     const payload = parseResult(result) as { success: boolean; error: string };
     expect(payload.success).toBe(false);
     expect(payload.error).toMatch(/webviewer not available/);
+  });
+
+  it('delegates to the contextual URL opener when one is supplied', async () => {
+    const app = makeApp({ existingLeaves: [makeLeaf()] });
+    const openContextualUrl = vi.fn().mockResolvedValue(undefined);
+    const server = createObsidianMcpServer(app, { openContextualUrl }) as unknown as CapturedServer;
+
+    const result = await getTool(server, 'obsidian_open_url')._handler({
+      url: 'https://example.com/context',
+      newTab: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(openContextualUrl).toHaveBeenCalledWith('https://example.com/context', true);
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf).not.toHaveBeenCalled();
+  });
+});
+
+describe('obsidian_navigate_to_file', () => {
+  it('delegates file navigation to the contextual opener when one is supplied', async () => {
+    const file = new TFile('Notes/context.md');
+    const app = makeApp();
+    (app.vault.getAbstractFileByPath as unknown as ReturnType<typeof vi.fn>) = vi.fn().mockReturnValue(file);
+    const openContextualFile = vi.fn().mockResolvedValue(undefined);
+    const server = createObsidianMcpServer(app, { openContextualFile }) as unknown as CapturedServer;
+
+    const result = await getTool(server, 'obsidian_navigate_to_file')._handler({
+      path: 'Notes/context.md',
+      newLeaf: true,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(openContextualFile).toHaveBeenCalledWith(file, true);
+    expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf).not.toHaveBeenCalled();
   });
 });

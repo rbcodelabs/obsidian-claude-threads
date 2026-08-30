@@ -191,6 +191,10 @@ const addVaultBridgeSchema = {
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
+  /** Route agent-triggered file navigation through the host's contextual panel policy. */
+  openContextualFile?: (file: TFile, newLeaf: boolean) => Promise<void>;
+  /** Route agent-triggered Web Viewer navigation through the contextual panel policy. */
+  openContextualUrl?: (url: string, newTab: boolean) => Promise<void>;
   /**
    * Called when the agent requests a working-directory change. Receives the
    * resolved absolute path.
@@ -413,8 +417,12 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
             isError: true,
           };
         }
-        const leaf = app.workspace.getLeaf(args.newLeaf ? 'tab' : false);
-        await leaf.openFile(abstract);
+        if (options.openContextualFile) {
+          await options.openContextualFile(abstract, args.newLeaf ?? false);
+        } else {
+          const leaf = app.workspace.getLeaf(args.newLeaf ? 'tab' : false);
+          await leaf.openFile(abstract);
+        }
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: true }, null, 2) }],
         };
@@ -1035,6 +1043,16 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     async (args, _extra) => {
       try {
         const { url, newTab = false } = args;
+
+        if (options.openContextualUrl) {
+          await options.openContextualUrl(url, newTab);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({ success: true, url, reusedTab: true }, null, 2),
+            }],
+          };
+        }
 
         // Try to find an existing webviewer leaf to reuse
         const existing = app.workspace.getLeavesOfType('webviewer');

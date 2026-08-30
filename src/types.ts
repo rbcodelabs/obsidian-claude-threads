@@ -702,6 +702,8 @@ export interface PluginSettings {
    * sampler and stops counter bumps. Desktop-only; a no-op on mobile.
    */
   telemetryEnabled: boolean;
+  /** Where the desktop conversation view lives. Classic preserves the sidebar layout. */
+  threadViewPlacement: 'classic' | 'conversation-first';
   /** Set to true after the first-run onboarding flow has completed. Prevents the welcome guide and panel auto-layout from triggering on subsequent loads. */
   hasSeenWelcome: boolean;
   /**
@@ -841,6 +843,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   statusLineIntervalMs: 30_000,
   debugLogging: false,
   telemetryEnabled: true,
+  threadViewPlacement: 'classic',
   hasSeenWelcome: false,
   imageExternalizationComplete: false,
   autoArchiveIdleDays: 14,

@@ -1,4 +1,5 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter } from 'obsidian';
+import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
@@ -344,6 +345,18 @@ export class ThreadsView extends ItemView {
 
   getIcon(): string {
     return 'message-square';
+  }
+
+  getState(): Record<string, unknown> {
+    return { ...super.getState(), activeThreadId: this.activeThreadId };
+  }
+
+  async setState(state: unknown, result: ViewStateResult): Promise<void> {
+    await super.setState(state, result);
+    const activeThreadId = (state as { activeThreadId?: unknown } | null)?.activeThreadId;
+    if (typeof activeThreadId !== 'string' || !this.manager.getThread(activeThreadId)) return;
+    this.activeThreadId = activeThreadId;
+    if (this.rootEl) await this.setActiveThread(activeThreadId);
   }
 
   async onOpen(): Promise<void> {
@@ -1322,8 +1335,12 @@ export class ThreadsView extends ItemView {
    * system browser. See {@link openUrlPreferringWebViewer}.
    */
   private openLink(url: string, forceExternal = false): void {
+    const webViewerEnabled = !forceExternal && isWebViewerEnabled(this.app);
     openUrlPreferringWebViewer(this.app, url, {
-      webViewerEnabled: !forceExternal && isWebViewerEnabled(this.app),
+      webViewerEnabled,
+      destinationLeaf: webViewerEnabled && this.plugin.isConversationFirst()
+        ? this.plugin.contextPanel.getLeaf()
+        : undefined,
       openExternal: (u) => {
         const { shell } = require('electron') as { shell: { openExternal: (url: string) => void } };
         shell.openExternal(u);
@@ -1404,6 +1421,12 @@ export class ThreadsView extends ItemView {
 
   private async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
     try {
+      if (this.plugin.isConversationFirst()) {
+        await this.plugin.contextPanel.setViewState({
+          type: 'geode-artifact', active: true, state: { root: artifact.root },
+        });
+        return;
+      }
       const existing = this.app.workspace.getLeavesOfType('geode-artifact');
       const leaf = existing.find((candidate) =>
         (candidate.getViewState().state as { root?: string } | undefined)?.root === artifact.root,
@@ -1514,8 +1537,9 @@ export class ThreadsView extends ItemView {
     }
 
     // Focus button as a small icon chip at the end of the list
-    const focusChip = list.createDiv({ cls: 'ct-edited-file-chip ct-focus-files-chip', attr: { title: 'Open only these files (close other tabs)' } });
-    setTooltip(focusChip, 'Open only these files');
+    const focusLabel = this.plugin.isConversationFirst() ? 'Open edited files in companion' : 'Open only these files';
+    const focusChip = list.createDiv({ cls: 'ct-edited-file-chip ct-focus-files-chip', attr: { title: focusLabel } });
+    setTooltip(focusChip, focusLabel);
     const focusIcon = focusChip.createSpan('ct-edited-file-chip-icon');
     setIcon(focusIcon, 'focus');
     focusChip.addEventListener('click', (e) => { e.stopPropagation(); this.focusEditedFiles(); });
@@ -1533,6 +1557,18 @@ export class ThreadsView extends ItemView {
 
     if (relPaths.length === 0) {
       new Notice('No vault files to focus.');
+      return;
+    }
+
+    if (this.plugin.isConversationFirst()) {
+      let opened = 0;
+      for (const relPath of relPaths) {
+        const file = this.app.vault.getAbstractFileByPath(relPath);
+        if (!file) continue;
+        await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
+        opened++;
+      }
+      new Notice(`Opened ${opened} edited file${opened === 1 ? '' : 's'} in the companion.`);
       return;
     }
 
@@ -1570,8 +1606,12 @@ export class ThreadsView extends ItemView {
             this.openLink('file://' + filePath.split(path.sep).join('/'));
             return;
           }
-          const leaf = this.app.workspace.getLeaf(false);
-          await (leaf as any).openFile(file);
+          if (this.plugin.isConversationFirst()) {
+            await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
+          } else {
+            const leaf = this.app.workspace.getLeaf(false);
+            await (leaf as any).openFile(file);
+          }
           return;
         }
       }
@@ -1580,8 +1620,12 @@ export class ThreadsView extends ItemView {
       if (match) {
         const file = this.app.vault.getAbstractFileByPath(match.vaultRelPath);
         if (file) {
-          const leaf = this.app.workspace.getLeaf(false);
-          await (leaf as any).openFile(file);
+          if (this.plugin.isConversationFirst()) {
+            await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
+          } else {
+            const leaf = this.app.workspace.getLeaf(false);
+            await (leaf as any).openFile(file);
+          }
           return;
         }
       }
@@ -2017,7 +2061,11 @@ export class ThreadsView extends ItemView {
         e.preventDefault();
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
-        void this.app.workspace.openLinkText(href, '', false);
+        if (this.plugin.isConversationFirst()) {
+          void this.plugin.contextPanel.openLinkText(href);
+        } else {
+          void this.app.workspace.openLinkText(href, '', false);
+        }
       });
     });
     this.linkifyBridgePaths(el);
@@ -2081,7 +2129,11 @@ export class ThreadsView extends ItemView {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          void this.app.workspace.openLinkText(mapped.vaultRelPath, '', false);
+          if (this.plugin.isConversationFirst()) {
+            void this.plugin.contextPanel.openLinkText(mapped.vaultRelPath);
+          } else {
+            void this.app.workspace.openLinkText(mapped.vaultRelPath, '', false);
+          }
         });
         frag.appendChild(a);
         last = m.index + matchText.length;

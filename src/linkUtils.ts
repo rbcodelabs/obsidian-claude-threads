@@ -4,13 +4,15 @@
  * here (with injected deps) so the branch logic is unit-testable without a real
  * Obsidian workspace or electron.
  */
-import type { App } from 'obsidian';
+import type { App, WorkspaceLeaf } from 'obsidian';
 
 export interface OpenUrlDeps {
   /** Whether the Web Viewer core plugin is enabled. */
   webViewerEnabled: boolean;
   /** Open the URL in the system browser (electron shell.openExternal). */
   openExternal: (url: string) => void;
+  /** Explicit native leaf selected by conversation-first contextual routing. */
+  destinationLeaf?: WorkspaceLeaf;
 }
 
 /**
@@ -25,8 +27,8 @@ export function openUrlPreferringWebViewer(app: App, url: string, deps: OpenUrlD
   }
   try {
     const ws = app.workspace;
-    const existing = ws.getLeavesOfType('webviewer');
-    const leaf = existing.length > 0 ? existing[0] : ws.getLeaf('tab');
+    const existing = deps.destinationLeaf ? [] : ws.getLeavesOfType('webviewer');
+    const leaf = deps.destinationLeaf ?? (existing.length > 0 ? existing[0] : ws.getLeaf('tab'));
     ws.revealLeaf(leaf);
     void Promise.resolve(leaf.setViewState({ type: 'webviewer', active: true, state: { url } }))
       .catch(() => deps.openExternal(url));
