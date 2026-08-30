@@ -32,6 +32,8 @@ export interface SchedulerOptions {
   createThread: (title: string, cwd: string, projectId?: string, scheduledItemId?: string) => { id: string };
   sendMessage: (threadId: string, prompt: string) => Promise<void>;
   getDefaultCwd: () => string;
+  /** Resolve a Project cwd at use time. Undefined means the Project is stale. */
+  getProjectCwd?: (projectId: string) => string | undefined;
   /**
    * Returns true when a thread with the given ID still exists. Used by items
    * with a targetThreadId (loops) to decide whether to reuse the thread or
@@ -334,6 +336,24 @@ export class Scheduler {
 
   constructor(private options: SchedulerOptions) {}
 
+  /** Resolve the cwd exactly as a fire will: explicit item cwd, Project, global. */
+  getEffectiveCwd(item: Pick<ScheduledItem, 'cwd' | 'projectId'>): string {
+    if (item.cwd) return item.cwd;
+    if (item.projectId) {
+      if (!this.options.getProjectCwd) return this.options.getDefaultCwd();
+      const projectCwd = this.options.getProjectCwd(item.projectId);
+      if (!projectCwd) throw new Error(`Project not found: ${item.projectId}`);
+      return projectCwd;
+    }
+    return this.options.getDefaultCwd();
+  }
+
+  private validateProject(projectId: string | undefined): void {
+    if (projectId && this.options.getProjectCwd && !this.options.getProjectCwd(projectId)) {
+      throw new Error(`Project not found: ${projectId}`);
+    }
+  }
+
   /** Load items from settings and arm timers. Call once on plugin load. */
   start(items: ScheduledItem[]): void {
     // Take an internal copy — do not mutate the passed-in array reference
@@ -578,6 +598,7 @@ export class Scheduler {
         // also gives the next gate run a natural "since last check" cursor via
         // CRON_LAST_RUN_MS.
         let promptToSend = current.prompt;
+        let effectiveCwd: string | undefined;
         if (current.gate?.command) {
           const gate = current.gate;
           if (!this.options.runGate) {
@@ -586,6 +607,10 @@ export class Scheduler {
             // real cron. Clear any stale error from a prior desktop run.
             current.lastGateError = undefined;
           } else {
+            // A target-thread fire only needs cwd for a gate. An explicit cwd
+            // remains usable after Project deletion; without one, Project cwd
+            // resolution deliberately fails clearly.
+            effectiveCwd = this.getEffectiveCwd(current);
             const timeoutMs =
               Math.min(
                 Math.max(gate.timeoutSeconds ?? GATE_DEFAULT_TIMEOUT_SECONDS, 1),
@@ -597,8 +622,7 @@ export class Scheduler {
               CRON_ITEM_ID: current.id,
               CRON_ITEM_NAME: current.name,
             };
-            const gateCwd = current.cwd || this.options.getDefaultCwd();
-            const result = await this.options.runGate(gate.command, { cwd: gateCwd, timeoutMs, env });
+            const result = await this.options.runGate(gate.command, { cwd: effectiveCwd, timeoutMs, env });
 
             if (result.timedOut || result.spawnError) {
               // Could not evaluate the gate. Fail open by default so a broken
@@ -655,8 +679,11 @@ export class Scheduler {
             // nextRun still advance below so this doesn't spin retrying every cycle.
             this.options.onOrchestratorHeartbeatStale?.(current);
           } else {
-            const cwd = current.cwd || this.options.getDefaultCwd();
-            const thread = this.options.createThread(current.name, cwd, current.projectId, current.id);
+            // New-thread jobs must never create a thread associated with a
+            // deleted Project, even when an explicit cwd is present.
+            this.validateProject(current.projectId);
+            effectiveCwd ??= this.getEffectiveCwd(current);
+            const thread = this.options.createThread(current.name, effectiveCwd, current.projectId, current.id);
             await this.options.sendMessage(thread.id, promptToSend);
             current.lastThreadId = thread.id;
           }
@@ -715,6 +742,7 @@ export class Scheduler {
   // CRUD used by the Cron tools
 
   async createItem(params: Omit<ScheduledItem, 'id' | 'lastRun' | 'nextRun'>): Promise<ScheduledItem> {
+    this.validateProject(params.projectId);
     const item: ScheduledItem = {
       ...params,
       id: crypto.randomUUID(),
@@ -751,6 +779,7 @@ export class Scheduler {
     }
 
     const existing = this.items[idx];
+    if (patch.projectId !== undefined) this.validateProject(patch.projectId);
 
     // Merge schedule sub-fields so callers can change just timeOfDay without
     // supplying the full ScheduledItemSchedule object.

@@ -2958,6 +2958,31 @@
   transition: background 0.1s ease, border-top-color 0.1s ease;
 }
 
+.ct-dispatch-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-dispatch-project select {
+  max-width: 150px;
+  min-height: 28px;
+  padding: 2px 24px 2px 7px;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-normal);
+  background: var(--background-primary-alt, var(--background-primary));
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+@media (max-width: 480px) {
+  .ct-dispatch-project-label { display: none; }
+  .ct-dispatch-project select { max-width: 140px; min-height: 44px; }
+}
+
 /* Image chip strip inside the dispatch area */
 .ct-agents-dispatch-chips {
   padding-bottom: 2px;
@@ -7377,6 +7402,37 @@ body.ct-skills-resizing {
   opacity: 1;
   pointer-events: auto;
   transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, border-width 0.2s ease 0.05s, opacity 0.2s ease 0.07s;
+}
+
+/* Touch-width panels cannot rely on hover to reveal the Project selector. */
+@media (max-width: 480px) {
+  .ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta,
+  .ct-agents-floating-panel.ct-panel-collapsible .ct-agents-panel-meta {
+    max-height: 112px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-bottom-width: 1px;
+    opacity: 1;
+    pointer-events: auto;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  .ct-agents-panel-meta > .ct-agents-count {
+    display: block;
+  }
+
+  .ct-agents-panel-meta > .ct-agents-panel-actions {
+    display: flex;
+  }
+
+  .ct-agents-panel-meta .ct-agents-panel-actions > button,
+  .ct-agents-panel-meta > .ct-kanban-groupby,
+  .ct-agents-panel-meta > .ct-agents-search-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 /* — Soften border + shadow when collapsed ───────────────────────────────── */

@@ -105,6 +105,8 @@ export class KanbanView extends ItemView {
   // within ~15s — see AgentDashboard.refreshStale for rationale.
   private staleInterval: ReturnType<typeof setInterval> | null = null;
   private dispatchInput!: DispatchInput;
+  private selectedProjectId = '';
+  private projectSelectEl!: HTMLSelectElement;
 
   /**
    * Keys of currently-expanded scheduled-job stacks, formatted
@@ -205,6 +207,7 @@ export class KanbanView extends ItemView {
     // Meta strip: thread count (left) + search button (right)
     const metaRow = dispatchWrapper.createDiv('ct-agents-panel-meta');
     this.headerCountEl = metaRow.createDiv('ct-agents-count');
+    this.addProjectSelector(metaRow);
     const metaActions = metaRow.createDiv('ct-agents-panel-actions');
 
     this.groupByBtn = metaActions.createEl('button', {
@@ -261,7 +264,10 @@ export class KanbanView extends ItemView {
       onSend: async ({ text, images, attachment, agentHarness }) => {
         // Intercept leading built-in commands (/model, /goal, /loop, /design) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
-        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
+        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex'; projectId?: string } = {
+          agentHarness,
+          projectId: this.selectedProjectId || undefined,
+        };
         let titleText = text;
         const directive = parseDispatchDirective(
           text,
@@ -332,6 +338,26 @@ export class KanbanView extends ItemView {
       getPttKey: () => this.plugin.settings.pttKey ?? '',
     });
     this.dispatchInput.mount(dispatchWrapper);
+  }
+
+  private addProjectSelector(container: HTMLElement): void {
+    const label = container.createEl('label', { cls: 'ct-dispatch-project' });
+    label.createSpan({ text: 'Project', cls: 'ct-dispatch-project-label' });
+    this.projectSelectEl = label.createEl('select', { attr: { 'aria-label': 'Dispatch Project' } });
+    this.projectSelectEl.addEventListener('change', () => { this.selectedProjectId = this.projectSelectEl.value; });
+    this.refreshProjectSelector();
+  }
+
+  private refreshProjectSelector(): void {
+    const select = this.projectSelectEl;
+    select.empty();
+    select.createEl('option', { text: 'Unassigned', attr: { value: '' } });
+    for (const project of this.manager.getProjects()) {
+      select.createEl('option', { text: project.name, attr: { value: project.id } });
+    }
+    const selectionStillExists = !this.selectedProjectId || this.manager.getProject(this.selectedProjectId);
+    if (!selectionStillExists) this.selectedProjectId = '';
+    select.value = this.selectedProjectId;
   }
 
   private toggleSearch(): void {
@@ -1147,6 +1173,11 @@ export class KanbanView extends ItemView {
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
+    if (event.type === 'projects_changed') {
+      if (this.projectSelectEl) this.refreshProjectSelector();
+      this.scheduleRender();
+      return;
+    }
     if (event.type === 'threads_loaded') {
       this.scheduleRender();
       return;
@@ -1191,6 +1222,11 @@ export class KanbanView extends ItemView {
     // `task_updated` tracks a separate background-subtask (Task tool call),
     // not `thread.tasks` — it doesn't currently back any rendered card field,
     // so it intentionally does not trigger a render.
+
+    if (event.type === 'project_changed' || event.type === 'cwd_changed') {
+      this.scheduleRender();
+      return;
+    }
 
     const isStateChange =
       event.type === 'streaming_start' ||

@@ -38,6 +38,7 @@ import { setDebugLogging, debugLog, getLogRing } from './logger';
 import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import { scheduleVaultThreadRecovery } from './vaultThreadRecovery';
+import { resolveProjectVaultRoot } from './projectPaths';
 import {
   sharedPersistenceWriterFence,
   type PersistenceWriterToken,
@@ -484,21 +485,21 @@ export default class ClaudeThreadsPlugin extends Plugin {
               proposedReply: t.proposedReply,
             };
           }),
-          getAllProjects: () => this.manager.getProjects().map((p: { id: string; name: string; description?: string; vaultFolder?: string }) => ({
+          getAllProjects: () => this.manager.getProjects().map((p: Project) => ({
             id: p.id,
             name: p.name,
             description: p.description,
             vaultFolder: p.vaultFolder,
+            cwdOverride: p.cwdOverride,
+            effectiveCwd: this.manager.getProjectCwd(p),
           })),
           createProject: (name, vaultFolder, description, cwdOverride) => {
             const p = this.manager.createProject(name, vaultFolder, description, cwdOverride);
             this.saveSettings().catch(console.error);
-            return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder };
+            return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder, cwdOverride: p.cwdOverride, effectiveCwd: this.manager.getProjectCwd(p) };
           },
-          setThreadProject: (threadId, projectId) => {
-            const thread = this.manager.getThread(threadId);
-            if (!thread) throw new Error(`Thread not found: ${threadId}`);
-            thread.projectId = projectId ?? undefined;
+          setThreadProject: (threadId, projectId, alignCwd) => {
+            this.manager.setThreadProject(threadId, projectId, alignCwd);
             this.saveSettings().catch(console.error);
           },
           readThreadLog: (id: string, opts: { limit?: number; type?: string }) => this.manager.readRawLog(id, opts),
@@ -624,7 +625,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
         return {} as Record<string, McpServerConfig>;
       }
     };
-    this.manager.vaultRoot = this.getEffectiveCwd();
+    // Project vaultFolder paths are anchored to the vault itself. defaultCwd may
+    // intentionally point at a repository outside the vault and must not affect
+    // that derivation.
+    this.manager.vaultRoot = resolveProjectVaultRoot(this.app.vault.adapter);
     // App handle for AttachmentWriter (writes image files through the vault API).
     this.manager.app = this.app;
     // Absolute path to this plugin's installed dist/ dir, used to resolve the
@@ -819,6 +823,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
       sendMessage: (threadId, prompt) => this.manager.sendMessage(threadId, prompt),
       getDefaultCwd: () => this.getEffectiveCwd(),
+      getProjectCwd: (projectId) => {
+        const project = this.manager.getProject(projectId);
+        return project ? this.manager.getProjectCwd(project) : undefined;
+      },
       threadExists: (threadId) => !!this.manager.getThread(threadId),
       isThreadBusy: (threadId) => this.manager.isRunning(threadId),
       onOrchestratorHeartbeatStale: () => console.warn('[ClaudeThreads] Orchestrator heartbeat target missing — run "Open Thread Orchestrator" to recreate it.'),
@@ -1974,13 +1982,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
       loop?: { intervalSeconds: number };
       /** Harness override selected at kickoff; does not change Settings. */
       agentHarness?: 'claude' | 'codex';
+      /** Project selected by a dispatch surface. Omit for deliberate Unassigned. */
+      projectId?: string;
     },
   ): Promise<string> {
     const rawTitle = titleHint ?? text;
     const title = rawTitle.trim()
       ? rawTitle.slice(0, 50).split('\n')[0].trim()
       : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
-    const thread = this.manager.createThread(title, this.getEffectiveCwd(), undefined, opts?.agentHarness);
+    const project = opts?.projectId ? this.manager.getProject(opts.projectId) : undefined;
+    if (opts?.projectId && !project) throw new Error(`Project not found: ${opts.projectId}`);
+    const cwd = project ? this.manager.getProjectCwd(project) : this.getEffectiveCwd();
+    const thread = this.manager.createThread(title, cwd, project?.id, opts?.agentHarness);
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
     const goalRevision = opts?.goal ? this.manager.setThreadGoal(thread.id, opts.goal) : undefined;
     if (opts?.loop) {

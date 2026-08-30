@@ -808,6 +808,32 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'context-recap-banner.png', { fullPage: true });
   });
 
+  test('active thread Project and cwd chrome converges after reassignment and deletion', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+
+    const projectId = await page.evaluate(() => {
+      const manager = (window as any).__manager;
+      const project = manager.createProject('Live Project', 'Projects/Live', undefined, '/Users/mock/projects/live');
+      manager.setThreadProject('thread-fix-auth', project.id);
+      return project.id;
+    });
+    await expect(page.locator('.ct-project-indicator')).toBeVisible();
+    await expect(page.locator('.ct-project-indicator-name')).toHaveText('Live Project');
+    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/hip-trip');
+
+    await page.evaluate((id) => (window as any).__manager.updateProject(id, { name: 'Renamed Live Project' }), projectId);
+    await expect(page.locator('.ct-project-indicator-name')).toHaveText('Renamed Live Project');
+
+    await page.evaluate((id) => (window as any).__manager.setThreadProject('thread-fix-auth', id, true), projectId);
+    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/live');
+
+    await page.evaluate((id) => (window as any).__manager.deleteProject(id), projectId);
+    await expect(page.locator('.ct-project-indicator')).toBeHidden();
+    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/live');
+  });
+
   // Agent Dashboard is not instantiated or exposed in the test harness (index.ts only
   // mounts ThreadsView). To un-skip: add AgentDashboard to the harness, expose it as
   // window.__dashboard, and wire up a permissionHandler call against a dashboard thread.
@@ -1071,6 +1097,22 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-settings-tab-btn:has-text("Tools")');
     await page.waitForTimeout(200);
     await shot(page, 'settings-tools.png', { fullPage: true });
+  });
+
+  test('settings — Projects show editable cwd overrides and effective cwd', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("Vault")');
+    await expect(page.getByText('Effective cwd: /Users/mock/projects/acme-webapp').first()).toBeVisible();
+    await expect(page.getByPlaceholder('Filesystem cwd (optional)')).toBeVisible();
+    const override = page.locator('.ct-project-cwd-setting input').first();
+    await expect(override).toHaveValue('/Users/mock/projects/acme-webapp');
+    await shot(page, 'settings-projects.png', { fullPage: true });
+    await override.fill('');
+    await override.blur();
+    await expect(page.getByText('Effective cwd: /Users/mock/vault/Work/Acme').first()).toBeVisible();
   });
 
   test('settings — scheduled work dashboard', async ({ page }) => {
@@ -1547,6 +1589,61 @@ test.describe('Claude Threads UI', () => {
     const reopenedMenu = page.locator('.ct-harness-menu');
     await expect(reopenedMenu).toBeVisible();
     await shot(reopenedMenu, 'kanban-harness-picker.png');
+  });
+
+  test('kanban kickoff Project selector preserves the selected Project in dispatch options', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 820 });
+    await page.goto(kanbanUrl);
+    const project = page.getByLabel('Dispatch Project');
+    await expect(project).toHaveValue('');
+    await project.selectOption('proj-hiptrip');
+    await page.locator('.ct-kanban-dispatch .ct-agents-dispatch-input').fill('Plan the next HipTrip release');
+    await page.locator('.ct-kanban-dispatch .ct-send-btn').click();
+
+    const opts = await page.evaluate(() => (window as any).__dispatchCalls.at(-1)?.[3]);
+    expect(opts).toMatchObject({ projectId: 'proj-hiptrip', agentHarness: 'claude' });
+    await shot(page.locator('.ct-kanban-dispatch'), 'kanban-project-selector.png');
+  });
+
+  test('kanban kickoff Project selector fits a narrow mobile viewport', async ({ page }) => {
+    for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(kanbanUrl);
+      const project = page.getByLabel('Dispatch Project');
+      await project.selectOption('proj-threads');
+      const controls = [
+        project,
+        page.locator('.ct-kanban-groupby'),
+        page.locator('.ct-agents-search-btn'),
+      ];
+      for (const control of controls) {
+        await expect(control).toBeVisible();
+        const box = await control.boundingBox();
+        expect(box?.height).toBeGreaterThanOrEqual(44);
+        expect(box?.width).toBeGreaterThanOrEqual(44);
+      }
+      await expect(page.locator('.ct-agents-count')).toBeVisible();
+      if (viewport.width === 390) {
+        await expect(page.locator('.ct-kanban-dispatch')).toHaveCSS('width', '358px');
+        await shot(page.locator('.ct-kanban-dispatch'), 'kanban-project-selector-mobile.png');
+      }
+    }
+  });
+
+  test('kanban Project selector converges on create, rename, and delete', async ({ page }) => {
+    await page.goto(kanbanUrl);
+    const project = page.getByLabel('Dispatch Project');
+    await project.selectOption('proj-hiptrip');
+
+    await page.evaluate(() => (window as any).__manager.updateProject('proj-hiptrip', { name: 'HipTrip Studio' }));
+    await expect(project.locator('option:checked')).toHaveText('HipTrip Studio');
+    await expect(project).toHaveValue('proj-hiptrip');
+
+    const createdId = await page.evaluate(() => (window as any).__manager.createProject('New Product', 'Projects/New').id);
+    await expect(project.locator(`option[value="${createdId}"]`)).toHaveText('New Product');
+
+    await page.evaluate(() => (window as any).__manager.deleteProject('proj-hiptrip'));
+    await expect(project).toHaveValue('');
   });
 
   test('kanban board — group by folder swimlanes', async ({ page }) => {

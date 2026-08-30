@@ -464,6 +464,21 @@ export class DispatchInput {
         attachment,
         ...(this.selectedHarness ? { agentHarness: this.selectedHarness } : {}),
       });
+    } catch (err) {
+      // Dispatch can fail after selection state changes (for example, a
+      // Project is deleted in another view). Merge the failed payload back
+      // into anything the user typed or attached while the async dispatch was
+      // pending so neither version of the draft is lost.
+      const newerText = this.getValue().trim();
+      this.setValue([text, newerText].filter(Boolean).join('\n\n'));
+      const attachmentParts = [attachment, this.pendingAttachment]
+        .filter((value): value is string => Boolean(value));
+      this.pendingAttachment = attachmentParts.length > 0 ? attachmentParts.join('\n\n') : null;
+      this.pendingImages = [...images, ...this.pendingImages];
+      this.autoGrow();
+      this.renderChips();
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Could not dispatch: ${message}`);
     } finally {
       this.dispatching = false;
     }

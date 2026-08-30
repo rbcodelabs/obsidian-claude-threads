@@ -51,7 +51,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching
 - **Push-to-talk voice input** — hold a configurable hotkey to dictate a message via speech-to-text (uses the Claude Code STT pipeline); transcript populates the input box ready to send or edit
-- **Projects** — group threads by vault sub-folder with a shared context prompt injected into every message
+- **Projects** — group threads, choose their initial working directory, and inject shared context into every message (a context aid, not a tool or filesystem security boundary)
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
 - **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
@@ -511,13 +511,15 @@ When you switch back to a thread you haven't viewed in over a minute, a **contex
 
 ### Projects
 
-Projects group threads by vault sub-folder and inject shared context into every message, so Claude always knows what it's working on.
+Projects group related threads, choose their initial working directory, and inject shared context into every message, so an agent starts with the right product context. A Project is a workspace preset, not an isolation boundary: the configured vault tools, MCP servers, skills, secrets, and coordination tools may still expose broader scope.
 
-**Creating a project:** Go to Settings → Projects → enter a project name and vault folder path → click **Create project**. You can also add a project context prompt — a few sentences describing the project's goals, conventions, and key files that Claude should always keep in mind.
+**Creating a project:** Go to Settings → Vault → Projects, enter a project name and vault folder path, and click **Add**. Optionally set a filesystem cwd override for a repo outside the vault. Settings shows the resolved effective cwd; clear the override to derive it from the vault folder again. You can also add a project context prompt — a few sentences describing the project's goals, conventions, and key files that Claude should always keep in mind.
 
-**Opening a thread in a project:** When you create a new thread, select a project from the dropdown near the input box. The thread's working directory is set to the project's vault folder, and the project context is prepended to every message you send.
+**Opening a thread in a project:** The Agent Dashboard and Kanban kickoff panels have an accessible **Project** selector. Choose a Project before dispatching, or deliberately leave **Unassigned** to use the global default cwd. Model, goal, loop, attachment, image, and harness kickoff options preserve that selection. The chat view's New Thread flow and agent-created child threads keep their existing Project inheritance behavior.
 
-**Managing projects:** Edit the name, folder, or context prompt at any time in Settings → Projects. Deleting a project keeps all its threads — they just lose the project association.
+**Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Existing-thread `/loop` schedules remain pinned to that thread and its cwd. `threads_set_project` changes association only by default, or accepts `alignCwd: true` to switch through the safe next-turn cwd reset path. Detaching a Project always leaves the current cwd unchanged. Deleting a project keeps all its threads — they just lose the project association.
+
+**Scheduled work:** Cron items resolve their effective cwd at fire time in this order: explicit scheduled-item cwd, current Project cwd, then the global default. The same resolved path is used for a gate command and its spawned thread. Cron create/update rejects unknown Projects, and a deleted Project reference fails the run rather than dispatching in an unrelated fallback directory.
 
 ### Status line (context footer)
 
@@ -649,9 +651,9 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 |---|---|---|
 | `threads_get_current` | — | Returns this thread's metadata, live status, project, cwd, PR, schedule origin, raw-log path, and message count. |
 | `threads_list` | — | Returns the same metadata for every thread, including live `isRunning` state. |
-| `threads_list_projects` | — | Returns configured projects and their vault folders. |
+| `threads_list_projects` | — | Returns configured projects with `cwdOverride` and resolved `effectiveCwd`. |
 | `threads_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates and persists a project. |
-| `threads_set_project` | `threadId`, `projectId` | Assigns a thread to a project, or detaches it with `null`. |
+| `threads_set_project` | `threadId`, `projectId`, `alignCwd?` | Assigns a thread to a project, or detaches it with `null`. Association-only by default; `alignCwd: true` also switches to a non-null Project's cwd on the next safe turn. Detaching never relocates the thread. |
 | `threads_get_messages` | `threadId`, `limit?` | Returns recent user and assistant messages. |
 | `threads_get_log` | `threadId?`, `limit?`, `type?` | Returns parsed raw JSONL event-log entries. |
 | `threads_wait` | `threadId`, `timeoutSeconds?` | Waits until a target thread becomes idle. |
@@ -751,7 +753,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the computer from sleeping while Claude is processing; shows ☕ in the status bar |
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
-| Projects | Group threads by vault sub-folder with a shared context prompt |
+| Projects | Group threads and focus their initial cwd/context. Projects do not restrict the broader vault or configured tool roster. |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
 | Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agent Dashboard's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agent dashboard](#agent-dashboard). |
 | Scheduled work | The dedicated **Scheduled** tab shows upcoming runs/checks, recurring jobs, thread loops and wakeups, recent outcomes, and pause/resume/delete/open controls. |

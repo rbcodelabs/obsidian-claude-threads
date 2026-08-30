@@ -83,13 +83,11 @@ function makeWiredServer() {
   const createProject = (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => {
     const p = manager.createProject(name, vaultFolder, description, cwdOverride);
     saveSettings().catch(console.error);
-    return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder };
+    return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder, cwdOverride: p.cwdOverride, effectiveCwd: manager.getProjectCwd(p) };
   };
 
-  const setThreadProject = (threadId: string, projectId: string | null) => {
-    const thread = manager.getThread(threadId);
-    if (!thread) throw new Error(`Thread not found: ${threadId}`);
-    thread.projectId = projectId ?? undefined;
+  const setThreadProject = (threadId: string, projectId: string | null, alignCwd?: boolean) => {
+    manager.setThreadProject(threadId, projectId, alignCwd);
     saveSettings().catch(console.error);
   };
 
@@ -196,6 +194,18 @@ describe('obsidian_set_thread_project — main.ts wiring', () => {
     await tool._handler({ threadId: thread.id, projectId: null });
 
     expect(manager.getThread(thread.id)!.projectId).toBeUndefined();
+  });
+
+  it('aligns the thread cwd when alignCwd is true', async () => {
+    const thread = manager.createThread('My thread', '/cwd');
+    const project = manager.createProject('HipTrip', 'Projects/HipTrip', undefined, '/repos/hiptrip');
+    thread.sessionId = 'old-session';
+    const tool = getTool(server, 'obsidian_set_thread_project');
+
+    await tool._handler({ threadId: thread.id, projectId: project.id, alignCwd: true });
+
+    expect(manager.getThread(thread.id)).toMatchObject({ projectId: project.id, cwd: '/repos/hiptrip' });
+    expect(manager.getThread(thread.id)?.sessionId).toBeUndefined();
   });
 
   it('returns success: true with the threadId and projectId', async () => {

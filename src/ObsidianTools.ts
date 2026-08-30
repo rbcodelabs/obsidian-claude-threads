@@ -163,6 +163,8 @@ export interface ProjectSnapshot {
   name: string;
   description?: string;
   vaultFolder?: string;
+  cwdOverride?: string;
+  effectiveCwd: string;
 }
 
 // ── Vault Bridge schema ───────────────────────────────────────────────────────
@@ -259,7 +261,7 @@ export interface ObsidianMcpServerOptions {
   /** Creates a new project and persists it. Returns the created project snapshot. */
   createProject?: (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => ProjectSnapshot;
   /** Assigns or clears the project on a thread. Pass null to detach. */
-  setThreadProject?: (threadId: string, projectId: string | null) => void;
+  setThreadProject?: (threadId: string, projectId: string | null, alignCwd?: boolean) => void;
   /** Returns true if the given thread is currently processing a request. */
   isThreadRunning?: (id: string) => boolean;
   /** Sends a message to a thread, triggering Claude to process it. */
@@ -1180,7 +1182,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundListProjects = tool(
     'obsidian_list_projects',
-    'Returns all projects with their id, name, description, and vaultFolder. Useful for understanding what workspaces exist and which cwd a new thread should use.',
+    'Returns all projects with their id, name, description, vaultFolder, cwdOverride, and resolved effectiveCwd. Projects focus working context but do not restrict the broader vault or configured tool roster.',
     {},
     async (_args, _extra) => {
       try {
@@ -1232,20 +1234,21 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundSetThreadProject = tool(
     'obsidian_set_thread_project',
-    'Assigns a thread to a project or clears its project assignment. Call threads_list_projects first to get a valid projectId. Pass projectId as null to detach the thread from any project.',
+    'Assigns a thread to a project or clears its project assignment. Call threads_list_projects first to get a valid projectId. By default only association changes; pass alignCwd: true with a non-null Project to switch cwd safely on the next turn. Detaching never relocates the thread.',
     {
       threadId: z.string().describe('ID of the thread to update'),
       projectId: z
         .string()
         .nullable()
         .describe('Project ID to assign to the thread, or null to clear the project assignment'),
+      alignCwd: z.boolean().optional().describe('Also switch the thread to the Project cwd and start a fresh session on the next turn. Defaults to false.'),
     },
     async (args, _extra) => {
       try {
         if (!options.setThreadProject) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadProject is not available in this context.' }) }], isError: true };
         }
-        options.setThreadProject(args.threadId, args.projectId);
+        options.setThreadProject(args.threadId, args.projectId, args.alignCwd ?? false);
         return {
           content: [
             {

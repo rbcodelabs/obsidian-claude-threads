@@ -30,6 +30,8 @@ export class AgentDashboard extends ItemView {
   private searchBtn!: HTMLButtonElement;
   private searchQuery = '';
   private dispatchComponent!: DispatchInput;
+  private selectedProjectId = '';
+  private projectSelectEl!: HTMLSelectElement;
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -106,6 +108,7 @@ export class AgentDashboard extends ItemView {
     // Meta strip: thread count (left) + action buttons (right)
     const metaRow = panel.createDiv('ct-agents-panel-meta');
     this.headerCountEl = metaRow.createDiv('ct-agents-count');
+    this.addProjectSelector(metaRow);
     const metaActions = metaRow.createDiv('ct-agents-panel-actions');
 
     this.searchBtn = metaActions.createEl('button', {
@@ -166,7 +169,10 @@ export class AgentDashboard extends ItemView {
       onSend: async ({ text, images, attachment, agentHarness }) => {
         // Intercept leading built-in commands (/model, /goal, /loop, /design) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
-        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
+        let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex'; projectId?: string } = {
+          agentHarness,
+          projectId: this.selectedProjectId || undefined,
+        };
         let titleText = text;
         const directive = parseDispatchDirective(
           text,
@@ -244,7 +250,32 @@ export class AgentDashboard extends ItemView {
     this.dispatchComponent.mount(dispatchEl);
   }
 
+  private addProjectSelector(container: HTMLElement): void {
+    const label = container.createEl('label', { cls: 'ct-dispatch-project' });
+    label.createSpan({ text: 'Project', cls: 'ct-dispatch-project-label' });
+    this.projectSelectEl = label.createEl('select', { attr: { 'aria-label': 'Dispatch Project' } });
+    this.projectSelectEl.addEventListener('change', () => { this.selectedProjectId = this.projectSelectEl.value; });
+    this.refreshProjectSelector();
+  }
+
+  private refreshProjectSelector(): void {
+    const select = this.projectSelectEl;
+    select.empty();
+    select.createEl('option', { text: 'Unassigned', attr: { value: '' } });
+    for (const project of this.manager.getProjects()) {
+      select.createEl('option', { text: project.name, attr: { value: project.id } });
+    }
+    const selectionStillExists = !this.selectedProjectId || this.manager.getProject(this.selectedProjectId);
+    if (!selectionStillExists) this.selectedProjectId = '';
+    select.value = this.selectedProjectId;
+  }
+
   private handleEvent(threadId: string, event: ThreadEvent): void {
+    if (event.type === 'projects_changed') {
+      if (this.projectSelectEl) this.refreshProjectSelector();
+      this.scheduleRender();
+      return;
+    }
     if (event.type === 'threads_loaded') {
       this.scheduleRender();
       return;
@@ -292,6 +323,7 @@ export class AgentDashboard extends ItemView {
       event.type === 'thread_deleted' ||
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
+      event.type === 'project_changed' ||
       event.type === 'agent_runs_changed' ||
       event.type === 'status_tags';
     if (isStateChange) {
