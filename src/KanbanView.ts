@@ -12,6 +12,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads, classifyThreadRow, type ThreadRowState } from './threadRowState';
 import { telemetry } from './telemetry';
+import { handleDesignDispatch } from './designDispatchRouting';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -258,7 +259,7 @@ export class KanbanView extends ItemView {
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       harnessPicker: { initialHarness: this.plugin.settings.agentHarness ?? 'claude' },
       onSend: async ({ text, images, attachment, agentHarness }) => {
-        // Intercept leading built-in commands (/model, /goal, /loop) — apply
+        // Intercept leading built-in commands (/model, /goal, /loop, /design) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
         let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
         let titleText = text;
@@ -267,6 +268,11 @@ export class KanbanView extends ItemView {
           this.plugin.settings.escalationEnabled ? this.plugin.settings.escalationKeyword : undefined,
         );
         if (directive) {
+          if (await handleDesignDispatch({
+            directive, text, images, attachment, agentHarness,
+            input: this.dispatchInput,
+            dispatch: (brief, harness) => this.plugin.dispatchNewDesignThread(brief, harness),
+          })) return;
           if (directive.error) {
             new Notice(directive.error);
             this.dispatchInput.setValue(text);

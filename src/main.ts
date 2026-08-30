@@ -1913,7 +1913,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   async openThreadInChatView(threadId: string): Promise<void> {
     await this.activateView();
     const view = this.getView();
-    view?.focusThread(threadId);
+    await view?.focusThread(threadId);
   }
 
   /**
@@ -1999,6 +1999,47 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Fire and forget — dashboard will show the running row via subscription
     this.manager.sendMessage(thread.id, text, images).catch(console.error);
     return thread.id;
+  }
+
+  /**
+   * Creates a new thread whose first turn uses Threads' native static-artifact
+   * workflow. Keep the fs-backed module behind this desktop-only method so it
+   * is never initialized by the mobile entry path.
+   */
+  async dispatchNewDesignThread(brief: string, agentHarness?: 'claude' | 'codex'): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      throw new Error('Design artifacts require a desktop vault with local filesystem access.');
+    }
+
+    const { dispatchDesignThread } = require('./designArtifact') as typeof import('./designArtifact');
+    return dispatchDesignThread(
+      brief,
+      agentHarness,
+      adapter.getBasePath(),
+      {
+        createThread: (title, harness) =>
+          this.manager.createThread(title, this.getEffectiveCwd(), undefined, harness),
+        deleteThread: (threadId) => this.manager.deleteThread(threadId),
+        getActiveThreadId: () => this.getActiveThreadId(),
+        restoreActiveThread: async (threadId) => {
+          const view = this.getView();
+          if (view) await view.restoreThreadSelection(threadId);
+        },
+        saveSettings: () => this.saveSettings(),
+        sendMessage: (threadId, message) => this.manager.sendMessage(threadId, message),
+        openThread: (threadId) => this.openThreadInChatView(threadId),
+        openPreview: async (artifact) => {
+          const view = this.getView();
+          if (!view) throw new Error('Claude Threads view is unavailable.');
+          await view.openArtifactPreview(artifact);
+        },
+        onSendError: (error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          new Notice(`Failed to start design turn: ${message}`);
+        },
+      },
+    );
   }
 
   getActiveThreadId(): string | null {

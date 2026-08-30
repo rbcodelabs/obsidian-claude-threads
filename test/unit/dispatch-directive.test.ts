@@ -98,6 +98,32 @@ describe('parseDispatchDirective', () => {
   it('does not treat /loops as a loop command', () => {
     expect(parseDispatchDirective('/loops everywhere')).toBeNull();
   });
+
+  // ── /design ────────────────────────────────────────────────
+
+  it('parses /design with a brief', () => {
+    expect(parseDispatchDirective('/design create a responsive settings card')).toEqual({
+      kind: 'design',
+      brief: 'create a responsive settings card',
+    });
+  });
+
+  it('preserves multi-line design briefs and matches case-insensitively', () => {
+    expect(parseDispatchDirective('/DESIGN settings card\nwith mobile navigation')).toEqual({
+      kind: 'design',
+      brief: 'settings card\nwith mobile navigation',
+    });
+  });
+
+  it('errors on bare /design because a new thread has no artifact to reopen', () => {
+    const directive = parseDispatchDirective('/design');
+    expect(directive?.kind).toBe('design');
+    expect(directive?.error).toContain('Include a brief');
+  });
+
+  it('does not treat /designer as a design command', () => {
+    expect(parseDispatchDirective('/designer create a settings card')).toBeNull();
+  });
 });
 
 describe('parseDispatchDirective — escalation keyword', () => {

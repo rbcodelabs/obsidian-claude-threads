@@ -8,7 +8,7 @@ import {
 
 describe('DISPATCH_BUILTIN_COMMANDS', () => {
   it('advertises exactly the commands the dispatch flow intercepts', () => {
-    expect(DISPATCH_BUILTIN_COMMANDS.map((c) => c.name)).toEqual(['model', 'goal', 'loop']);
+    expect(DISPATCH_BUILTIN_COMMANDS.map((c) => c.name)).toEqual(['model', 'goal', 'loop', 'design']);
   });
 
   it('never advertises session-scoped commands (/compact, /clear, /cost)', () => {

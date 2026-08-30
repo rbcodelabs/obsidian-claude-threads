@@ -18,11 +18,25 @@ export interface DesignArtifactManifest {
 export interface DesignArtifactFs {
   mkdir(target: string, options: { recursive: true }): Promise<unknown>;
   writeFile(target: string, data: string, options?: { flag: 'wx' }): Promise<unknown>;
+  rm?(target: string, options: { recursive: true; force: true }): Promise<unknown>;
+}
+
+export interface DesignThreadDispatchDeps {
+  createThread(title: string, agentHarness?: 'claude' | 'codex'): Thread;
+  deleteThread(threadId: string): void;
+  getActiveThreadId(): string | null;
+  restoreActiveThread(threadId: string | null): Promise<void>;
+  saveSettings(): Promise<void>;
+  sendMessage(threadId: string, message: string): Promise<void>;
+  openThread(threadId: string): Promise<void>;
+  openPreview(artifact: DesignArtifact): Promise<void>;
+  onSendError(error: unknown): void;
 }
 
 const defaultFs: DesignArtifactFs = {
   mkdir: (target, options) => fs.mkdir(target, options),
   writeFile: (target, data, options) => fs.writeFile(target, data, options),
+  rm: (target, options) => fs.rm(target, options),
 };
 
 export function artifactIdForThread(threadId: string): string {
@@ -154,4 +168,46 @@ Artifact rules:
 - Review desktop and mobile layouts before finishing.
 
 Start now. Edit the artifact files directly, verify the static result, and report what you changed.`;
+}
+
+/**
+ * Creates a new thread around the same durable artifact contract used by the
+ * in-thread /design command. The artifact is persisted before the agent turn
+ * starts so a fast first tool call cannot race the thread metadata save.
+ */
+export async function dispatchDesignThread(
+  brief: string,
+  agentHarness: 'claude' | 'codex' | undefined,
+  vaultRoot: string,
+  deps: DesignThreadDispatchDeps,
+  fileFs: DesignArtifactFs = defaultFs,
+): Promise<string> {
+  const previousActiveThreadId = deps.getActiveThreadId();
+  const thread = deps.createThread(designTitle(brief), agentHarness);
+  try {
+    const artifact = await ensureDesignArtifact(thread, vaultRoot, brief, Date.now(), fileFs);
+    await deps.saveSettings();
+    await deps.openThread(thread.id);
+    await deps.openPreview(artifact);
+    void deps.sendMessage(thread.id, designKickoffMessage(artifact, brief)).catch(deps.onSendError);
+    return thread.id;
+  } catch (error) {
+    try {
+      await fileFs.rm?.(designArtifactRoot(vaultRoot, thread.id), { recursive: true, force: true });
+    } catch {
+      // Rollback remains retry-safe even when filesystem cleanup is unavailable.
+    }
+    deps.deleteThread(thread.id);
+    try {
+      await deps.restoreActiveThread(previousActiveThreadId);
+    } catch {
+      // Keep rollback progressing so the provisional thread is not persisted.
+    }
+    try {
+      await deps.saveSettings();
+    } catch {
+      // Preserve the original creation/navigation error for the dispatch UI.
+    }
+    throw error;
+  }
 }

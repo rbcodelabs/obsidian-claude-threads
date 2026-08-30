@@ -11,6 +11,7 @@ import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads } from './threadRowState';
 import { agentLabel, flattenAgentTree } from './agentRuns/agentTreeModel';
+import { handleDesignDispatch } from './designDispatchRouting';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -163,7 +164,7 @@ export class AgentDashboard extends ItemView {
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       harnessPicker: { initialHarness: this.plugin.settings.agentHarness ?? 'claude' },
       onSend: async ({ text, images, attachment, agentHarness }) => {
-        // Intercept leading built-in commands (/model, /goal, /loop) — apply
+        // Intercept leading built-in commands (/model, /goal, /loop, /design) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
         let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
         let titleText = text;
@@ -172,6 +173,11 @@ export class AgentDashboard extends ItemView {
           this.plugin.settings.escalationEnabled ? this.plugin.settings.escalationKeyword : undefined,
         );
         if (directive) {
+          if (await handleDesignDispatch({
+            directive, text, images, attachment, agentHarness,
+            input: this.dispatchComponent,
+            dispatch: (brief, harness) => this.plugin.dispatchNewDesignThread(brief, harness),
+          })) return;
           if (directive.error) {
             new Notice(directive.error);
             this.dispatchComponent.setValue(text);
