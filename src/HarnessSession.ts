@@ -60,6 +60,8 @@ export interface ClaudeHarnessOptions {
 export interface CodexHarnessOptions {
   approvalPolicy: 'untrusted' | 'on-request' | 'never';
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Omitted to use the app-server/model default. Ultra enables proactive native agents where supported. */
+  effort?: Exclude<import('./types').PluginSettings['codexEffort'], 'default'>;
   /** Standalone skill roots registered for this app-server process. */
   skillRoots?: string[];
   dynamicTools?: HarnessDynamicTool[];

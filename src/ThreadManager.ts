@@ -1703,6 +1703,9 @@ export class ThreadManager {
       },
       codex: {
         ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
+        ...(this.settings.codexEffort && this.settings.codexEffort !== 'default'
+          ? { effort: this.settings.codexEffort }
+          : {}),
         skillRoots: codexSkillRoots(
           this.settings.skillSources ?? [],
           this.pluginResourceDir
@@ -1997,6 +2000,9 @@ export class ThreadManager {
           this.pendingQuestionResolvers.delete(threadId);
           this.emit(threadId, { type: 'pending_question_changed', questions: undefined });
         }
+      },
+      onAskUserQuestionCanceled: () => {
+        this.pendingQuestionResolvers.get(threadId)?.({});
       },
       onOpenNewTab: (title, initialPrompt) => this.openNewTabHandler(title, initialPrompt),
       onStatus: (status) => {

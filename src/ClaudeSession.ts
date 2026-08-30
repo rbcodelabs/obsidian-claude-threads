@@ -57,6 +57,8 @@ export interface SessionCallbacks {
   onRateLimitRetry?: (attempt: number, maxRetries: number, delayMs: number) => void;
   onPermissionRequest: (toolName: string, detail: string) => Promise<boolean>;
   onAskUserQuestion: (questions: AskQuestion[]) => Promise<Record<string, string>>;
+  /** Provider resolved/canceled its pending question before the user answered. */
+  onAskUserQuestionCanceled?: () => void;
   onOpenNewTab: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }>;
   onStatus?: (status: 'compacting' | 'requesting' | null) => void;
   onCompact?: (trigger: 'auto' | 'manual', preTokens: number) => void;

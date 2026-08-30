@@ -845,6 +845,39 @@ describe('MobileView — question cards', () => {
     await view.onClose();
   });
 
+  it('uses a stable Codex question ID and masks secret free-form input', async () => {
+    const { view, store, relay } = await buildView();
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid' })],
+      activeThreadId: 'tid',
+    });
+    (view as never)['lastRenderedMessageCount'] = -1;
+    store.applyFrame({
+      type: 'question_request',
+      threadId: 'tid',
+      requestId: 'q-secret',
+      questions: [{
+        id: 'api_token', source: 'codex', question: 'Enter token', header: 'Token', options: [],
+        multiSelect: false, allowOther: true, isSecret: true,
+      }],
+    });
+
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    expect(messagesEl.textContent).toContain('Codex needs your input');
+    const input = messagesEl.querySelector<HTMLInputElement>('.ct-mobile-question-other-text')!;
+    expect(input.type).toBe('password');
+    input.value = 's3cret';
+    input.dispatchEvent(new Event('input'));
+    (messagesEl.querySelector('.ct-mobile-question-submit') as HTMLButtonElement).click();
+
+    expect(relay.sendCommand).toHaveBeenCalledWith({
+      type: 'resolve_question', threadId: 'tid', requestId: 'q-secret', answers: { api_token: 's3cret' },
+    });
+
+    await view.onClose();
+  });
+
   it('shows the pending-question badge in the thread list', async () => {
     const { view, store } = await buildView();
     store.applyFrame({

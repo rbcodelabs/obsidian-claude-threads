@@ -136,6 +136,39 @@ test.describe('AskUserQuestion — inline card (pendingQuestions)', () => {
     expect(pendingQuestions).toBeUndefined();
   });
 
+  test('Codex secret questions use stable IDs without exposing the ID in restored follow-up text', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const activeId = view['activeThreadId'];
+      const thread = manager.getThread(activeId);
+      thread.pendingQuestions = [{
+        id: 'api_token', source: 'codex', question: 'Enter the API token', header: 'Token',
+        options: [], multiSelect: false, allowOther: true, isSecret: true,
+      }];
+      (window as any).__sendMessageCalls = [];
+      manager.sendMessage = async (threadId: string, text: string) => {
+        (window as any).__sendMessageCalls.push({ threadId, text });
+      };
+      view.focusThread(activeId);
+    });
+
+    await page.waitForSelector('.ct-question-card');
+    await expect(page.locator('.ct-question-card-label')).toHaveText('Codex needs your input');
+    await expect(page.locator('.ct-question-other-text')).toHaveAttribute('type', 'password');
+    await page.locator('.ct-question-other-text').fill('s3cret');
+    await page.locator('.ct-question-card-submit').click();
+
+    const calls = await page.evaluate(() => (window as any).__sendMessageCalls);
+    expect(calls[0].text).not.toContain('s3cret');
+    expect(calls[0].text).toContain('request the secret again with request_user_input');
+  });
+
   test('no card rendered when thread has no pendingQuestions', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

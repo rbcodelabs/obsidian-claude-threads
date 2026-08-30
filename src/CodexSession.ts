@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import type { ImageAttachment } from './types';
+import type { AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
 import { resolveCodexPermissions, resolveDynamicToolApproval, type HarnessSessionOptions } from './HarnessSession';
@@ -154,6 +154,7 @@ export class CodexSession {
   private announcedSubagents = new Set<string>();
   private activeSubagentTurns = new Map<string, string>();
   private resumeFallbackPending = false;
+  private pendingQuestionRequestIds = new Set<string>();
 
   constructor(private codexPath: string) {}
 
@@ -170,6 +171,7 @@ export class CodexSession {
     this.latestUsage = null;
     this.announcedSubagents.clear();
     this.activeSubagentTurns.clear();
+    this.pendingQuestionRequestIds.clear();
     this.resumeFallbackPending = false;
     this.planTransitionRequested = false;
     this.awaitingPlanApproval = false;
@@ -197,9 +199,18 @@ export class CodexSession {
     // accept thread requests until the client confirms initialization.
     this.notify('initialized');
 
+    await this.enableDefaultModeRequestUserInput();
+
     await this.loadInitialRateLimits();
 
     await this.registerSkillRoots();
+
+    try {
+      await this.validateConfiguredEffort();
+    } catch (error) {
+      this.close();
+      throw error;
+    }
 
     const savedCodexThread = options.resume;
     const mcpServers = codexMcpServers(options.codex?.mcpServers);
@@ -212,6 +223,7 @@ export class CodexSession {
           cwd: options.cwd,
           runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
           model: options.model ?? null,
+          effort: options.codex?.effort ?? null,
           approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
           sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
           config: threadConfig,
@@ -227,6 +239,7 @@ export class CodexSession {
         cwd: options.cwd,
         runtimeWorkspaceRoots: options.additionalDirectories ?? [options.cwd],
         model: options.model ?? null,
+        effort: options.codex?.effort ?? null,
         approvalPolicy: options.codex?.approvalPolicy ?? resolveCodexPermissions(options.permissionMode).approvalPolicy,
         sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: codexDeveloperInstructions(options),
@@ -253,10 +266,69 @@ export class CodexSession {
     }
   }
 
+  /**
+   * Enable Default-mode request_user_input only when this app-server exposes
+   * the runtime feature catalog. Older servers fail the probe and continue
+   * without the feature; no unsupported startup flag is ever passed.
+   */
+  private async enableDefaultModeRequestUserInput(): Promise<boolean> {
+    try {
+      const result = await this.request('experimentalFeature/list', { limit: 100 });
+      const feature = (result?.data ?? []).find((entry: { name?: string }) => entry.name === 'default_mode_request_user_input');
+      if (!feature) return false;
+      if (feature.enabled === true) return true;
+      const updated = await this.request('experimentalFeature/enablement/set', {
+        enablement: { default_mode_request_user_input: true },
+      });
+      return updated?.enablement?.default_mode_request_user_input === true;
+    } catch (error) {
+      console.warn('[ClaudeThreads] Codex Default-mode questions are unavailable on this app-server:', error);
+      return false;
+    }
+  }
+
+  private async validateConfiguredEffort(modelOverride?: string, useOverride = false): Promise<void> {
+    const effort = this.options?.codex?.effort;
+    if (!effort) return;
+    let result: { data?: Array<{
+      id?: string;
+      model?: string;
+      displayName?: string;
+      isDefault?: boolean;
+      supportedReasoningEfforts?: Array<string | { reasoningEffort?: string; effort?: string }>;
+    }> };
+    try {
+      result = await this.request('model/list', { limit: 100 });
+    } catch (error) {
+      throw new Error(`Could not verify whether this Codex model supports effort "${effort}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const models = result.data ?? [];
+    const requestedModel = useOverride ? modelOverride : this.options?.model;
+    const model = requestedModel
+      ? models.find((entry) => entry.id === requestedModel || entry.model === requestedModel)
+      : models.find((entry) => entry.isDefault === true);
+    if (!model) {
+      const label = requestedModel ? `model "${requestedModel}"` : 'the default model';
+      throw new Error(`Could not verify whether ${label} supports Codex effort "${effort}".`);
+    }
+    const supported = (model.supportedReasoningEfforts ?? []).map((entry) => (
+      typeof entry === 'string' ? entry : entry.reasoningEffort ?? entry.effort ?? ''
+    ));
+    if (!supported.includes(effort)) {
+      throw new Error(`${model.displayName ?? model.id ?? model.model ?? 'Selected Codex model'} does not support Codex effort "${effort}". Supported efforts: ${supported.join(', ') || 'not reported'}.`);
+    }
+  }
+
   async setModel(model: string | undefined): Promise<void> {
     if (!this.codexThreadId) return;
-    await this.request('thread/settings/update', { threadId: this.codexThreadId, model: model ?? null });
+    await this.validateConfiguredEffort(model, true);
+    await this.request('thread/settings/update', {
+      threadId: this.codexThreadId,
+      model: model ?? null,
+      effort: this.options?.codex?.effort ?? null,
+    });
     this.activeModel = model ?? '';
+    if (this.options) this.options.model = model;
   }
 
   async setPermissionMode(mode: any): Promise<void> {
@@ -268,6 +340,7 @@ export class CodexSession {
     await this.request('thread/settings/update', {
       threadId: this.codexThreadId,
       collaborationMode: this.collaborationMode(mode === 'plan' ? 'plan' : 'default'),
+      effort: this.options?.codex?.effort ?? null,
       approvalPolicy: permissions.approvalPolicy,
       sandboxPolicy: this.sandboxPolicy(permissions.sandbox),
     });
@@ -298,6 +371,7 @@ export class CodexSession {
     this.turnStartPromise = this.request('turn/start', {
       threadId: this.codexThreadId,
       input,
+      ...(this.options?.codex?.effort ? { effort: this.options.codex.effort } : {}),
       ...(isPlanMode ? {
         collaborationMode: this.collaborationMode('plan'),
       } : {}),
@@ -327,7 +401,11 @@ export class CodexSession {
   private collaborationMode(mode: 'default' | 'plan'): Record<string, unknown> {
     return {
       mode,
-      settings: { model: this.activeModel, reasoning_effort: null, developer_instructions: null },
+      settings: {
+        model: this.activeModel,
+        reasoning_effort: this.options?.codex?.effort ?? null,
+        developer_instructions: null,
+      },
     };
   }
 
@@ -366,6 +444,7 @@ export class CodexSession {
     this.turnStartPromise = null;
     this.queuedTurns = [];
     this.activeSubagentTurns.clear();
+    this.cancelPendingQuestionRequests();
     this.process?.kill();
     this.process = null;
     this.failAll(new Error('Codex session closed'));
@@ -668,6 +747,12 @@ export class CodexSession {
       case 'skills/changed':
         this.discoverSkills();
         break;
+      case 'serverRequest/resolved': {
+        if (params.threadId && String(params.threadId) !== this.codexThreadId) break;
+        const requestId = String(params.requestId ?? '');
+        if (this.pendingQuestionRequestIds.delete(requestId)) callbacks.onAskUserQuestionCanceled?.();
+        break;
+      }
       case 'thread/compacted': callbacks.onCompact?.('auto', 0); break;
     }
   }
@@ -675,6 +760,10 @@ export class CodexSession {
   private handleServerRequest(message: any): void {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
+    if (message.method === 'item/tool/requestUserInput') {
+      this.handleRequestUserInput(message.id, params, callbacks);
+      return;
+    }
     if (message.method === 'item/tool/call' && params.tool === ENTER_PLAN_MODE_TOOL.name) {
       if ((params.threadId && String(params.threadId) !== this.codexThreadId)
         || (params.turnId && this.activeTurnId && String(params.turnId) !== this.activeTurnId)) {
@@ -795,6 +884,85 @@ export class CodexSession {
       const decision = allow ? 'accept' : 'decline';
       this.respond(message.id, message.method.includes('fileChange') ? { decision } : { decision });
     }).catch(() => this.respond(message.id, { decision: 'decline' }));
+  }
+
+  private handleRequestUserInput(id: string | number, params: any, callbacks: SessionCallbacks | undefined): void {
+    const reject = () => this.respond(id, { answers: {} });
+    if (!this._turnInFlight
+      || String(params.threadId ?? '') !== this.codexThreadId
+      || (this.activeTurnId !== undefined && String(params.turnId ?? '') !== this.activeTurnId)
+      || typeof params.isBlocking !== 'boolean'
+      || !Array.isArray(params.questions)
+      || params.questions.length === 0) {
+      reject();
+      return;
+    }
+
+    const questions: AskQuestion[] = [];
+    const ids = new Set<string>();
+    for (const question of params.questions) {
+      const questionId = typeof question?.id === 'string' ? question.id.trim() : '';
+      const prompt = typeof question?.question === 'string' ? question.question.trim() : '';
+      const rawOptions = question?.options ?? [];
+      if (!questionId || !prompt || ids.has(questionId) || !Array.isArray(rawOptions)) {
+        reject();
+        return;
+      }
+      const options = rawOptions.flatMap((option: any) => {
+        if (!option || typeof option.label !== 'string' || option.label.trim().length === 0) return [];
+        return [{ label: option.label, description: typeof option.description === 'string' ? option.description : '' }];
+      });
+      if (options.length !== rawOptions.length || (options.length === 0 && question.isOther !== true)) {
+        reject();
+        return;
+      }
+      ids.add(questionId);
+      questions.push({
+        id: questionId,
+        header: typeof question.header === 'string' ? question.header : '',
+        question: prompt,
+        options,
+        multiSelect: false,
+        allowOther: question.isOther === true,
+        isSecret: question.isSecret === true,
+        source: 'codex',
+        requestItemId: typeof params.itemId === 'string' ? params.itemId : undefined,
+        isBlocking: params.isBlocking,
+        autoResolutionMs: typeof params.autoResolutionMs === 'number' ? params.autoResolutionMs : undefined,
+      });
+    }
+
+    if (!callbacks?.onAskUserQuestion) {
+      reject();
+      return;
+    }
+    const requestId = String(id);
+    this.pendingQuestionRequestIds.add(requestId);
+    callbacks.onAskUserQuestion(questions)
+      .then((rawAnswers) => {
+        if (!this.pendingQuestionRequestIds.delete(requestId)) return;
+        const answers: Record<string, { answers: string[] }> = {};
+        for (const question of questions) {
+          const questionId = question.id!;
+          const value = String(rawAnswers[questionId] ?? rawAnswers[question.question] ?? '').trim();
+          if (!value) {
+            answers[questionId] = { answers: [] };
+            continue;
+          }
+          const isOption = question.options.some((option) => option.label === value);
+          answers[questionId] = { answers: [isOption || value.startsWith('user_note: ') ? value : `user_note: ${value}`] };
+        }
+        this.respond(id, { answers });
+      })
+      .catch(() => {
+        if (this.pendingQuestionRequestIds.delete(requestId)) reject();
+      });
+  }
+
+  private cancelPendingQuestionRequests(): void {
+    if (this.pendingQuestionRequestIds.size === 0) return;
+    this.pendingQuestionRequestIds.clear();
+    this.options?.callbacks.onAskUserQuestionCanceled?.();
   }
 
   private toolSummary(item: any): string {

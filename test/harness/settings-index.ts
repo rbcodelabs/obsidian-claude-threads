@@ -133,6 +133,10 @@ const scheduledCreateCalls: {
 const mockPlugin = {
   app: mockApp,
   settings,
+  discoveredModelsByHarness: {
+    claude: [],
+    codex: [{ value: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex' }],
+  },
   manager: {
     getProjects: () => settings.projects,
     updateProject: () => {},
