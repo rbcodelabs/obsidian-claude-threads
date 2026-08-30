@@ -36,6 +36,7 @@ import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
 import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
 import { deleteScheduledActivity, scheduledActivityForThread, scheduledActivitySummary, type ScheduledActivity } from './scheduledActivity';
+import { ConversationViewPlacementState } from './conversationFirstPlacement';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -49,7 +50,7 @@ export class ThreadsView extends ItemView {
   private plugin: ClaudeThreadsPlugin;
   private manager: ThreadManager;
   private activeThreadId: string | null = null;
-  private readonly conversationPlacement = new (require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement')).ConversationViewPlacementState();
+  private readonly conversationPlacement = new ConversationViewPlacementState();
   private streamingEl: HTMLElement | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private streamingContent = '';
