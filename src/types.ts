@@ -801,9 +801,10 @@ export interface PluginSettings {
    */
   enableWebViewerTool?: boolean;
   /**
-   * When true, a `visualize{"path":…}` content reference in an assistant
-   * message renders as a live sandboxed visualization inline instead of raw
-   * text. Desktop only. Defaults to true.
+   * When true, a canonical wrapped `visualize` content reference in an
+   * assistant message renders as a live sandboxed visualization inline instead
+   * of raw text. Legacy bare references remain supported. Desktop only.
+   * Defaults to true.
    */
   enableInlineVisualizations?: boolean;
   /** Registered local skill collections browsable from the Skills Manager. */

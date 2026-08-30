@@ -1537,7 +1537,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Inline visualizations')
       .setDesc(
-        'Render a visualize{…} content reference from Codex as a live sandboxed chart inside the message, with a pop-out to full size. Desktop only.',
+        'Render Codex\'s canonical wrapped visualize content references as live sandboxed charts inside messages, with a pop-out to full size. Desktop only.',
       )
       .addToggle((toggle) =>
         toggle

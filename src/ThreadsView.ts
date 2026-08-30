@@ -2069,8 +2069,8 @@ export class ThreadsView extends ItemView {
     el: HTMLElement,
     options: { streaming?: boolean } = {},
   ): Promise<void> {
-    // Codex's `visualize` plugin puts a bare `visualize{…}` marker on its own
-    // line where an inline visual belongs. Rewrite those lines into anchor
+    // Codex's `visualize` skill puts a wrapped content reference on its own line
+    // where an inline visual belongs. Rewrite those lines into anchor
     // placeholders here, before marked runs, so the markdown is parsed exactly
     // once — splitting into segments and parsing each would break ordered-list
     // numbering, reference links, and footnotes that span a marker.

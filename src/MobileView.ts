@@ -527,7 +527,7 @@ export class MobileView extends ItemView {
   }
 
   private async renderMarkdown(markdown: string, el: HTMLElement): Promise<void> {
-    // Codex `visualize{…}` content references become inert cards here. The
+    // Codex's wrapped `visualize` content references become inert cards here. The
     // mobile client is a relay: the fragment lives on the desktop machine's
     // disk, and renderConversation() rebuilds the whole list on every finalized
     // message with no throttle, so mounting sandboxed iframes is doubly wrong.
