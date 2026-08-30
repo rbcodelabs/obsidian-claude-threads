@@ -1079,9 +1079,21 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           .addOption('conversation-first', 'Conversation first')
           .setValue(this.plugin.settings.threadViewPlacement ?? 'classic')
           .onChange(async (value) => {
-            this.plugin.settings.threadViewPlacement = value as PluginSettings['threadViewPlacement'];
-            await this.plugin.saveSettings();
-            await this.plugin.activateView();
+            const previous = this.plugin.settings.threadViewPlacement;
+            const next = value as PluginSettings['threadViewPlacement'];
+            const { transitionConversationPlacement } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+            try {
+              await transitionConversationPlacement(
+                this.plugin.settings,
+                next,
+                () => this.plugin.activateView(),
+                () => this.plugin.saveSettings(),
+              );
+            } catch (error) {
+              drop.setValue(previous);
+              const message = error instanceof Error ? error.message : String(error);
+              new Notice(`Could not change conversation placement: ${message}`);
+            }
           }),
       );
 

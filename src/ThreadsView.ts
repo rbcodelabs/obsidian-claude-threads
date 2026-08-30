@@ -348,7 +348,11 @@ export class ThreadsView extends ItemView {
   }
 
   getState(): Record<string, unknown> {
-    return { ...super.getState(), activeThreadId: this.activeThreadId };
+    return {
+      ...super.getState(),
+      activeThreadId: this.activeThreadId,
+      conversationPlacement: this.plugin.isConversationFirst() ? 'conversation-first' : 'classic',
+    };
   }
 
   async setState(state: unknown, result: ViewStateResult): Promise<void> {
@@ -576,8 +580,9 @@ export class ThreadsView extends ItemView {
     if (threads.length > 0) {
       // Respect a pre-set activeThreadId (e.g. focusThread called before buildUI in a race),
       // otherwise default to the most recently created thread rather than the oldest.
-      const targetId = (this.activeThreadId && this.manager.getThread(this.activeThreadId))
-        ? this.activeThreadId
+      const persistedActiveThreadId = this.activeThreadId ?? this.plugin.settings.activeThreadId;
+      const targetId = (persistedActiveThreadId && this.manager.getThread(persistedActiveThreadId))
+        ? persistedActiveThreadId
         : threads[threads.length - 1].id;
       void this.setActiveThread(targetId);
     } else {
@@ -990,6 +995,13 @@ export class ThreadsView extends ItemView {
     // Persist the draft for the thread we're leaving before switching
     this.saveDraftToThread(this.activeThreadId);
     this.activeThreadId = id;
+    const { persistActiveThreadSelection } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+    void persistActiveThreadSelection(
+      this.app.workspace,
+      this.plugin.settings,
+      () => this.plugin.saveSettings(),
+      id,
+    ).catch(console.error);
     this.summaryGeneration++; // cancel any queued summary jobs from the previous thread
     this.groupSummaryCache.clear();
     this.expandedToolGroups.clear();

@@ -335,6 +335,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager = new ThreadManager(this.settings);
     this.contextPanel = new ContextPanelController(this.app, () =>
       this.app.workspace.getLeavesOfType(VIEW_TYPE)[0] ?? null,
+      () => this.settings.conversationCompanion,
+      async (identity) => {
+        this.settings.conversationCompanion = identity;
+        await this.saveSettings();
+      },
     );
     const deferredThreadArchiver = createDeferredThreadArchiver(
       this.manager,
@@ -1841,7 +1846,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         activateConversationFirstChat,
         planConversationFirstChat,
       } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
-      const plan = planConversationFirstChat(workspace.getLeavesOfType(VIEW_TYPE), workspace.rootSplit);
+      const plan = planConversationFirstChat(workspace.getLeavesOfType(VIEW_TYPE));
       leaf = await activateConversationFirstChat(
         plan,
         () => workspace.getLeaf('tab'),
@@ -1851,7 +1856,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { planClassicChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
       const chatLeaves = workspace.getLeavesOfType(VIEW_TYPE);
-      const plan = planClassicChat(chatLeaves, workspace.leftSplit, workspace.rightSplit);
+      const plan = planClassicChat(chatLeaves);
       leaf = plan.keep ?? undefined;
       if (leaf) {
         for (const duplicate of plan.detach) duplicate.detach();
@@ -1863,13 +1868,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
         await destination.setViewState({
           type: VIEW_TYPE,
           active: true,
-          state: plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {},
+          state: {
+            ...(plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {}),
+            conversationPlacement: 'classic',
+          },
         });
         for (const source of plan.detach) source.detach();
         leaf = destination;
       } else {
         leaf = workspace.getRightLeaf(false) as WorkspaceLeaf;
-        await leaf.setViewState({ type: VIEW_TYPE, active: true });
+        await leaf.setViewState({ type: VIEW_TYPE, active: true, state: { conversationPlacement: 'classic' } });
       }
     }
     workspace.revealLeaf(leaf);
