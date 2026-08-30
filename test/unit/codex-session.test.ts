@@ -151,6 +151,199 @@ describe('Codex resume fallback', () => {
 });
 
 describe('CodexSession protocol notifications', () => {
+  it('round-trips requestUserInput through the shared question callback using stable IDs', async () => {
+    const onAskUserQuestion = vi.fn().mockResolvedValue({ target: 'Core', token: 's3cret' });
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'root-thread';
+    internal.activeTurnId = 'root-turn';
+    internal._turnInFlight = true;
+    internal.options = { callbacks: { onAskUserQuestion } };
+    const respond = vi.spyOn(internal, 'respond');
+
+    internal.handle({
+      id: 'question-1',
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn', itemId: 'call-1', isBlocking: true,
+        questions: [
+          {
+            id: 'target', header: 'Target', question: 'Which target?', isOther: true, isSecret: false,
+            options: [{ label: 'Core', description: 'Inspect core.' }],
+          },
+          { id: 'token', header: 'Token', question: 'Enter token', isOther: true, isSecret: true },
+        ],
+      },
+    });
+
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+    expect(onAskUserQuestion).toHaveBeenCalledWith([
+      {
+        id: 'target', header: 'Target', question: 'Which target?', options: [{ label: 'Core', description: 'Inspect core.' }],
+        multiSelect: false, allowOther: true, isSecret: false, source: 'codex',
+        requestItemId: 'call-1', isBlocking: true, autoResolutionMs: undefined,
+      },
+      {
+        id: 'token', header: 'Token', question: 'Enter token', options: [], multiSelect: false,
+        allowOther: true, isSecret: true, source: 'codex',
+        requestItemId: 'call-1', isBlocking: true, autoResolutionMs: undefined,
+      },
+    ]);
+    expect(respond).toHaveBeenCalledWith('question-1', {
+      answers: {
+        target: { answers: ['Core'] },
+        token: { answers: ['user_note: s3cret'] },
+      },
+    });
+  });
+
+  it('cancels the shared card when app-server resolves a non-blocking request first', async () => {
+    const onAskUserQuestion = vi.fn(() => new Promise<Record<string, string>>(() => {}));
+    const onAskUserQuestionCanceled = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'root-thread';
+    internal.activeTurnId = 'root-turn';
+    internal._turnInFlight = true;
+    internal.options = { callbacks: { onAskUserQuestion, onAskUserQuestionCanceled } };
+    const respond = vi.spyOn(internal, 'respond');
+
+    internal.handle({
+      id: 42,
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn', itemId: 'call-auto', isBlocking: false,
+        autoResolutionMs: 5000,
+        questions: [{ id: 'continue', header: 'Continue', question: 'Continue?', isOther: false, isSecret: false,
+          options: [{ label: 'Yes', description: '' }] }],
+      },
+    });
+    internal.handle({ method: 'serverRequest/resolved', params: { threadId: 'root-thread', requestId: 42 } });
+
+    expect(onAskUserQuestionCanceled).toHaveBeenCalledOnce();
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['child thread', { threadId: 'child-thread', turnId: 'root-turn', questions: [] }],
+    ['stale turn', { threadId: 'root-thread', turnId: 'old-turn', questions: [] }],
+    ['malformed question', { threadId: 'root-thread', turnId: 'root-turn', questions: [{ id: '', question: '' }] }],
+  ])('resolves a %s request deterministically without opening the shared question UI', async (_label, params) => {
+    const onAskUserQuestion = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'root-thread';
+    internal.activeTurnId = 'root-turn';
+    internal._turnInFlight = true;
+    internal.options = { callbacks: { onAskUserQuestion } };
+    const respond = vi.spyOn(internal, 'respond');
+
+    internal.handle({ id: 'invalid-question', method: 'item/tool/requestUserInput', params });
+
+    expect(onAskUserQuestion).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith('invalid-question', { answers: {} });
+  });
+
+  it('enables Default-mode requestUserInput only when the app-server advertises the feature', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    const request = vi.spyOn(internal, 'request')
+      .mockResolvedValueOnce({ data: [{ name: 'default_mode_request_user_input', enabled: false }] })
+      .mockResolvedValueOnce({ enablement: { default_mode_request_user_input: true } });
+
+    await internal.enableDefaultModeRequestUserInput();
+
+    expect(request).toHaveBeenNthCalledWith(1, 'experimentalFeature/list', { limit: 100 });
+    expect(request).toHaveBeenNthCalledWith(2, 'experimentalFeature/enablement/set', {
+      enablement: { default_mode_request_user_input: true },
+    });
+  });
+
+  it('falls back safely when an older app-server cannot list Default-mode input support', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    const request = vi.spyOn(internal, 'request').mockRejectedValue(new Error('Method not found'));
+
+    await expect(internal.enableDefaultModeRequestUserInput()).resolves.toBe(false);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates Ultra effort without deprecated multiAgentMode fields', () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.activeModel = 'gpt-5.6-codex';
+    internal.options = { codex: { effort: 'ultra' } };
+
+    expect(internal.collaborationMode('default')).toEqual({
+      mode: 'default',
+      settings: { model: 'gpt-5.6-codex', reasoning_effort: 'ultra', developer_instructions: null },
+    });
+    expect(internal.collaborationMode('default')).not.toHaveProperty('multiAgentMode');
+  });
+
+  it('accepts a configured Codex effort only when the selected model advertises it', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.options = { model: 'gpt-5.6-codex', codex: { effort: 'ultra' }, callbacks: {} };
+    vi.spyOn(internal, 'request').mockResolvedValue({
+      data: [{
+        id: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex',
+        supportedReasoningEfforts: [{ reasoningEffort: 'xhigh' }, { reasoningEffort: 'ultra' }],
+      }],
+    });
+
+    await expect(internal.validateConfiguredEffort()).resolves.toBeUndefined();
+  });
+
+  it('fails clearly before a turn when the selected model does not support Ultra', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.options = { model: 'gpt-5.4-mini', codex: { effort: 'ultra' }, callbacks: {} };
+    vi.spyOn(internal, 'request').mockResolvedValue({
+      data: [{
+        id: 'gpt-5.4-mini', displayName: 'GPT-5.4 Mini',
+        supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'xhigh' }],
+      }],
+    });
+
+    await expect(internal.validateConfiguredEffort()).rejects.toThrow(
+      'GPT-5.4 Mini does not support Codex effort "ultra"',
+    );
+  });
+
+  it('rejects a live model switch that would make the configured effort unsupported', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { model: 'gpt-5.6-codex', codex: { effort: 'ultra' }, callbacks: {} };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({
+      data: [{
+        id: 'gpt-5.4-mini', displayName: 'GPT-5.4 Mini',
+        supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'xhigh' }],
+      }],
+    });
+
+    await expect(session.setModel('gpt-5.4-mini')).rejects.toThrow('does not support Codex effort "ultra"');
+    expect(request).not.toHaveBeenCalledWith('thread/settings/update', expect.anything());
+  });
+
+  it('passes configured effort on ordinary turns and live settings updates', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.activeModel = 'gpt-5.6-codex';
+    internal.options = { permissionMode: 'default', codex: { effort: 'ultra' }, callbacks: { onError: vi.fn() } };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'turn-1' } });
+
+    internal.startTurn('Work proactively');
+    await session.setPermissionMode('default');
+
+    expect(request).toHaveBeenCalledWith('turn/start', expect.objectContaining({ effort: 'ultra' }));
+    expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({ effort: 'ultra' }));
+    expect(request.mock.calls.flatMap(([, params]) => Object.keys(params))).not.toContain('multiAgentMode');
+  });
+
   it('handles EnterPlanMode as an idempotent built-in control tool without permission', () => {
     const onPermissionRequest = vi.fn();
     const session = new CodexSession('codex');

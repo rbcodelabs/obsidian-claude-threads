@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import os from 'os';
 import type { SessionCallbacks } from '../../src/ClaudeSession';
 import type { ThreadSessionOptions } from '../../src/ThreadSession';
 import { DEFAULT_SETTINGS } from '../../src/types';
@@ -166,6 +167,19 @@ describe('effort → claude.sessionOptions.effort', () => {
     await manager.sendMessage(thread.id, 'hi');
     await finishSession();
     expect(mock.sessionOptions?.effort).toBe('xhigh');
+  });
+});
+
+describe('codexEffort → codex.effort', () => {
+  it('keeps Codex effort separate from Claude effort and supports Ultra', () => {
+    const manager = makeManager({ effort: 'high', codexEffort: 'ultra' }) as any;
+    const thread = manager.createThread('Codex', os.tmpdir());
+    thread.agentHarness = 'codex';
+
+    const options = manager.buildThreadSessionOptions(thread.id, thread);
+
+    expect(options.codex.effort).toBe('ultra');
+    expect(options.claude.sessionOptions.effort).toBe('high');
   });
 });
 

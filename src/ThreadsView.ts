@@ -3320,7 +3320,8 @@ export class ThreadsView extends ItemView {
     const header = card.createDiv('ct-question-card-header');
     const iconEl = header.createSpan('ct-question-card-icon');
     setIcon(iconEl, 'help-circle');
-    header.createSpan({ cls: 'ct-question-card-label', text: 'Claude needs your input' });
+    const source = questions.some((question) => question.source === 'codex') ? 'Codex' : 'Claude';
+    header.createSpan({ cls: 'ct-question-card-label', text: `${source} needs your input` });
 
     const body = card.createDiv('ct-question-card-body');
 
@@ -3331,8 +3332,8 @@ export class ThreadsView extends ItemView {
     const questionInputs: Array<{
       question: AskQuestion;
       optionInputs: HTMLInputElement[];
-      otherInput: HTMLInputElement;
-      otherText: HTMLInputElement;
+      otherInput?: HTMLInputElement;
+      otherText?: HTMLInputElement;
     }> = [];
 
     for (const q of questions) {
@@ -3355,26 +3356,28 @@ export class ThreadsView extends ItemView {
         optionInputs.push(inputEl);
       }
 
-      // "Other" — every AskUserQuestion prompt always lets the user type a custom
-      // answer in addition to the fixed choices, matching the real tool's behavior.
-      const otherRow = optionsEl.createDiv({ cls: 'ct-question-option ct-question-option-other' });
-      const otherInput = otherRow.createEl('input', {
-        attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
-      }) as HTMLInputElement;
-      const otherLabelEl = otherRow.createEl('label', { cls: 'ct-question-option-label' });
-      otherLabelEl.createSpan({ cls: 'ct-question-opt-name', text: 'Other' });
-      const otherText = otherLabelEl.createEl('input', {
-        cls: 'ct-question-other-text',
-        attr: { type: 'text', placeholder: 'Type your own answer…' },
-      }) as HTMLInputElement;
-      // Typing implicitly selects "Other" — the user shouldn't have to click the
-      // radio/checkbox separately once they start writing a custom answer.
-      otherText.addEventListener('input', () => {
-        if (!otherInput.checked) otherInput.checked = true;
-      });
-      // Prevent a click landing in the text field from also bubbling up and
-      // toggling a sibling control.
-      otherText.addEventListener('click', (e) => e.stopPropagation());
+      let otherInput: HTMLInputElement | undefined;
+      let otherText: HTMLInputElement | undefined;
+      if (q.allowOther !== false) {
+        const otherRow = optionsEl.createDiv({ cls: 'ct-question-option ct-question-option-other' });
+        otherInput = otherRow.createEl('input', {
+          attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
+        }) as HTMLInputElement;
+        const otherLabelEl = otherRow.createEl('label', { cls: 'ct-question-option-label' });
+        otherLabelEl.createSpan({ cls: 'ct-question-opt-name', text: q.options.length > 0 ? 'Other' : 'Answer' });
+        otherText = otherLabelEl.createEl('input', {
+          cls: 'ct-question-other-text',
+          attr: {
+            type: q.isSecret ? 'password' : 'text',
+            placeholder: q.isSecret ? 'Enter secret…' : 'Type your own answer…',
+            autocomplete: q.isSecret ? 'off' : 'on',
+          },
+        }) as HTMLInputElement;
+        otherText.addEventListener('input', () => {
+          if (otherInput && !otherInput.checked) otherInput.checked = true;
+        });
+        otherText.addEventListener('click', (e) => e.stopPropagation());
+      }
 
       questionInputs.push({ question: q, optionInputs, otherInput, otherText });
     }
@@ -3388,11 +3391,11 @@ export class ThreadsView extends ItemView {
         for (const input of optionInputs) {
           if (input.checked) values.push(input.value);
         }
-        if (otherInput.checked) {
-          const text = otherText.value.trim();
+        if (otherInput?.checked) {
+          const text = otherText?.value.trim();
           if (text) values.push(text);
         }
-        result[question.question] = values.join(',');
+        result[question.id ?? question.question] = values.join(',');
       }
       card.remove();
       done(result);
@@ -3589,7 +3592,19 @@ export class ThreadsView extends ItemView {
     this.renderQuestionCard(questions, (result) => {
       this.manager.setThreadPendingQuestions(threadId, undefined);
       void this.plugin.saveSettings();
-      const formatted = Object.entries(result).map(([q, a]) => `${q}: ${a}`).join('\n');
+      if (questions.some((question) => question.isSecret)) {
+        // A restored card has no live provider request to answer. Never turn a
+        // secret into an ordinary persisted chat message; ask Codex to issue a
+        // fresh request so the value can travel only in the protocol response.
+        void this.manager.sendMessage(
+          threadId,
+          'A secret input request expired when the session reloaded. Please request the secret again with request_user_input; do not ask me to send it in chat.',
+        );
+        return;
+      }
+      const formatted = questions
+        .map((question) => `${question.question}: ${result[question.id ?? question.question] ?? ''}`)
+        .join('\n');
       void this.manager.sendMessage(threadId, formatted);
     });
   }

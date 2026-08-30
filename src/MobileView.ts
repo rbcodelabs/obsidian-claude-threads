@@ -895,15 +895,16 @@ export class MobileView extends ItemView {
     const header = card.createDiv('ct-mobile-question-header');
     const iconEl = header.createSpan({ cls: 'ct-mobile-question-icon' });
     setIcon(iconEl, getToolIcon('AskUserQuestion'));
-    header.createSpan({ cls: 'ct-mobile-question-label', text: 'Claude needs your input' });
+    const source = pending.questions.some((question) => question.source === 'codex') ? 'Codex' : 'Claude';
+    header.createSpan({ cls: 'ct-mobile-question-label', text: `${source} needs your input` });
 
     const body = card.createDiv('ct-mobile-question-body');
 
     const questionInputs: Array<{
-      question: string;
+      answerKey: string;
       optionInputs: HTMLInputElement[];
-      otherInput: HTMLInputElement;
-      otherText: HTMLInputElement;
+      otherInput?: HTMLInputElement;
+      otherText?: HTMLInputElement;
     }> = [];
 
     for (const q of pending.questions) {
@@ -926,28 +927,30 @@ export class MobileView extends ItemView {
         optionInputs.push(inputEl);
       }
 
-      // "Other" — always available in addition to the fixed choices, matching
-      // the real AskUserQuestion tool's behavior (and desktop's renderQuestionCard).
-      const otherRow = optionsEl.createDiv({ cls: 'ct-mobile-question-option ct-mobile-question-option-other' });
-      const otherInput = otherRow.createEl('input', {
-        attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
-      }) as HTMLInputElement;
-      const otherLabelEl = otherRow.createEl('label', { cls: 'ct-mobile-question-option-label' });
-      otherLabelEl.createSpan({ cls: 'ct-mobile-question-opt-name', text: 'Other' });
-      const otherText = otherLabelEl.createEl('input', {
-        cls: 'ct-mobile-question-other-text',
-        attr: { type: 'text', placeholder: 'Type your own answer…' },
-      }) as HTMLInputElement;
-      // Typing implicitly selects "Other" so the user doesn't have to tap the
-      // radio/checkbox separately before writing a custom answer.
-      otherText.addEventListener('input', () => {
-        if (!otherInput.checked) otherInput.checked = true;
-      });
-      // Prevent a tap landing in the text field from bubbling up and toggling
-      // a sibling control.
-      otherText.addEventListener('click', (e) => e.stopPropagation());
+      let otherInput: HTMLInputElement | undefined;
+      let otherText: HTMLInputElement | undefined;
+      if (q.allowOther !== false) {
+        const otherRow = optionsEl.createDiv({ cls: 'ct-mobile-question-option ct-mobile-question-option-other' });
+        otherInput = otherRow.createEl('input', {
+          attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
+        }) as HTMLInputElement;
+        const otherLabelEl = otherRow.createEl('label', { cls: 'ct-mobile-question-option-label' });
+        otherLabelEl.createSpan({ cls: 'ct-mobile-question-opt-name', text: q.options.length > 0 ? 'Other' : 'Answer' });
+        otherText = otherLabelEl.createEl('input', {
+          cls: 'ct-mobile-question-other-text',
+          attr: {
+            type: q.isSecret ? 'password' : 'text',
+            placeholder: q.isSecret ? 'Enter secret…' : 'Type your own answer…',
+            autocomplete: q.isSecret ? 'off' : 'on',
+          },
+        }) as HTMLInputElement;
+        otherText.addEventListener('input', () => {
+          if (otherInput && !otherInput.checked) otherInput.checked = true;
+        });
+        otherText.addEventListener('click', (e) => e.stopPropagation());
+      }
 
-      questionInputs.push({ question: q.question, optionInputs, otherInput, otherText });
+      questionInputs.push({ answerKey: q.id ?? q.question, optionInputs, otherInput, otherText });
     }
 
     const actions = card.createDiv('ct-mobile-question-actions');
@@ -957,16 +960,16 @@ export class MobileView extends ItemView {
     });
     submitBtn.addEventListener('click', () => {
       const answers: Record<string, string> = {};
-      for (const { question, optionInputs, otherInput, otherText } of questionInputs) {
+      for (const { answerKey, optionInputs, otherInput, otherText } of questionInputs) {
         const values: string[] = [];
         for (const input of optionInputs) {
           if (input.checked) values.push(input.value);
         }
-        if (otherInput.checked) {
-          const text = otherText.value.trim();
+        if (otherInput?.checked) {
+          const text = otherText?.value.trim();
           if (text) values.push(text);
         }
-        answers[question] = values.join(',');
+        answers[answerKey] = values.join(',');
       }
       this.relayClient!.sendCommand({
         type: 'resolve_question',

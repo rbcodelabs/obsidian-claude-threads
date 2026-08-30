@@ -58,7 +58,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **Keep computer awake** — prevents the computer from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses Geode's native Electron power-save blocker when available, with `caffeinate -i` for Obsidian on macOS and the Web Wake Lock API as fallback)
 - **Plan Mode** — Claude and Codex can propose a written plan before making any mutations, and Codex can autonomously invoke `EnterPlanMode` when a task needs investigation first. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before execution begins
 - **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
-- **Effort level** — set `low`, `medium`, `high`, or the CLI default; controls how much work Claude invests per turn, useful for simple questions vs. deep research
+- **Provider-aware effort** — Claude keeps its `low` through `max` effort controls; Codex has a separate setting through `ultra`, where Ultra enables proactive native agents on models that advertise support
 - **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Claude Threads
 - **Tool call visibility** — see exactly which files the active Claude or Codex agent is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files the agent edited that you subsequently modified show a "Modified by user" badge; a tool call that's auto-denied without a prompt (in `auto` or `dontAsk` mode, or by a deny rule) shows a distinct "Auto-denied" annotation so the denial is visible instead of silently swallowed
 - **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills, live as the turn runs (not just after it settles) — so a long agentic run never grows an unbounded wall of pills while Claude is still working; the in-progress group shows a "still running" pulse, the group you expand mid-turn stays expanded as more calls arrive, and a group containing a failed call auto-expands and stays flagged so errors are never hidden. Short off-kind interruptions (e.g. a single `TaskUpdate` between two runs of file reads) are folded back into their surrounding group instead of breaking it into extra short entries, and if the list is still long after that smoothing, it collapses one level further into a second "N tool calls, M steps" wrapper — which itself shows a live-updating "currently running" tool name and icon while the turn is in progress, and auto-expands through both levels if a call anywhere inside it fails. Works on both desktop and mobile (mobile gets the smoothing pass only — the second collapsible tier and live header are desktop-only).
@@ -108,11 +108,16 @@ New threads use the harness selected in **Settings → Agent → Agent harness**
 | Models, permission modes, approvals, and plan review | ✓ | ✓ |
 | Built-in vault/workspace tools and external stdio/HTTP/SSE MCP servers | ✓ | ✓ |
 | MCP form/URL elicitation | ✓ | ✓ |
+| Persisted user-question cards on desktop and mobile | ✓ `AskUserQuestion` | ✓ `request_user_input` |
 | Context usage, compaction, and raw event logs | ✓ | ✓ |
 | Skills and sub-agent/task activity | ✓ Claude-native | ✓ Codex-native |
 | Monetary API cost attribution | ✓ | — protocol does not report cost |
 
 Harness-native skills and sub-agents use their respective CLI's definitions and event protocol; they are presented through the same slash-command and task UI where the protocols expose equivalent data.
+
+Codex `request_user_input` prompts use the same persisted question card as Claude: option labels and descriptions are preserved, free-form answers use stable Codex question IDs, and secret fields are masked on desktop and mobile. Default-mode questions are enabled only when the installed app-server advertises the required runtime feature; older Codex installations continue normally without that Default-mode capability.
+
+Codex reasoning effort is configured separately from Claude effort. Selecting **Ultra** enables Codex's proactive native-agent behavior on models that advertise Ultra support. Unsupported model/effort combinations fail before a turn starts with a clear error, and Claude Threads never sends Codex's deprecated `multiAgentMode` field.
 
 Agent profiles supplied by installed GitHub plugin sources remain native agent definitions in Claude and are available to Codex as role instructions for delegation.
 
@@ -740,7 +745,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Permission mode | How the selected Claude or Codex harness handles tool-use confirmation. Options: `default` (CLI default), `acceptEdits` (auto-approve file edits), `bypassPermissions` (skip all prompts), `plan` (propose a plan first — see [Plan Mode](#plan-mode)), `dontAsk` (no dialogs; for unattended/scheduled sessions), `auto` (the selected harness decides). See [Permissions](#permissions). |
 | Thinking mode | `disabled` (default), `enabled`, or `auto` — controls whether Claude uses extended thinking for harder problems |
 | Thinking budget tokens | Maximum tokens Claude can spend on reasoning when thinking mode is `enabled` (default: 8 000). Only shown when thinking mode is `enabled` |
-| Effort level | `default`, `low`, `medium`, or `high` — how much work Claude invests per turn. `default` uses the CLI setting |
+| Effort level | Provider-aware. Claude supports its CLI effort range through `max`; Codex stores a separate choice through `ultra`. Codex Ultra enables proactive native agents on supported models. `default` uses the selected harness/model default. |
 | Agent progress summaries | Whether sub-agent progress is summarised and shown inline (default: on) |
 | Enable 1M context (beta) | Opt-in to the 1-million-token context window beta (uses the `interleaved-thinking-2025-05-14` beta flag) |
 | Ephemeral session | When on, sessions are not persisted to disk — they cannot be resumed after the thread closes |

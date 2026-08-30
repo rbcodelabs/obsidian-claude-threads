@@ -1194,6 +1194,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
             this.plugin.settings.agentHarness = value as 'claude' | 'codex';
             this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
+            this.display();
           }),
       );
 
@@ -1311,23 +1312,30 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }),
       );
 
+    const isCodex = (this.plugin.settings.agentHarness ?? 'claude') === 'codex';
     new Setting(containerEl)
-      .setName('Effort level')
-      .setDesc('How much reasoning effort Claude applies. "Default" uses the CLI default.')
-      .addDropdown((drop) =>
+      .setName(isCodex ? 'Codex effort level' : 'Effort level')
+      .setDesc(isCodex
+        ? 'How much reasoning effort Codex applies. Ultra enables proactive native agents on supported models; Default uses the model default.'
+        : 'How much reasoning effort Claude applies. "Default" uses the CLI default.')
+      .addDropdown((drop) => {
         drop
           .addOption('default', 'Default')
           .addOption('low', 'Low (fastest)')
           .addOption('medium', 'Medium')
           .addOption('high', 'High')
-          .addOption('xhigh', 'Extra high (Opus 4.7+)')
-          .addOption('max', 'Max (Opus 4.6+, Sonnet 4.6)')
-          .setValue(this.plugin.settings.effort ?? 'default')
+          .addOption('xhigh', isCodex ? 'Extra high' : 'Extra high (Opus 4.7+)')
+          .addOption('max', isCodex ? 'Max' : 'Max (Opus 4.6+, Sonnet 4.6)');
+        if (isCodex) drop.addOption('ultra', 'Ultra (proactive agents)');
+        return drop
+          .setValue(isCodex ? (this.plugin.settings.codexEffort ?? 'default') : (this.plugin.settings.effort ?? 'default'))
           .onChange(async (value) => {
-            this.plugin.settings.effort = value as PluginSettings['effort'];
+            if (isCodex) this.plugin.settings.codexEffort = value as PluginSettings['codexEffort'];
+            else this.plugin.settings.effort = value as PluginSettings['effort'];
+            this.plugin.manager.updateSettings(this.plugin.settings);
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName('Agent progress summaries')

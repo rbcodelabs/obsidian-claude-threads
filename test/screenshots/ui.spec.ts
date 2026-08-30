@@ -1093,6 +1093,21 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'settings-claude.png', { fullPage: true });
   });
 
+  test('settings — switching harness reveals Codex Ultra effort without overwriting Claude effort', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("Agent")');
+
+    const harnessSetting = page.locator('.setting-item').filter({ hasText: 'Agent harness' });
+    await harnessSetting.locator('select').selectOption('codex');
+
+    await expect(page.locator('.setting-item').filter({ hasText: 'Codex effort level' })).toBeVisible();
+    const effortSelect = page.locator('.setting-item').filter({ hasText: 'Codex effort level' }).locator('select');
+    await expect(effortSelect.locator('option[value="ultra"]')).toHaveText('Ultra (proactive agents)');
+  });
+
   test('settings — tools tab', async ({ page }) => {
     const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
     await page.setViewportSize({ width: 860, height: 820 });

@@ -32,10 +32,24 @@ export interface AskQuestionOption {
 }
 
 export interface AskQuestion {
+  /** Stable provider question ID. Claude questions predate this and use `question` as the answer key. */
+  id?: string;
   question: string;
   header: string;
   options: AskQuestionOption[];
   multiSelect: boolean;
+  /** Whether a free-form answer is available. Undefined preserves Claude's always-Other behavior. */
+  allowOther?: boolean;
+  /** Masks the free-form input without persisting its value. */
+  isSecret?: boolean;
+  /** Provider label used by the shared desktop/mobile card. */
+  source?: 'claude' | 'codex';
+  /** Codex tool-call item that owns this question set. */
+  requestItemId?: string;
+  /** Whether Codex waits indefinitely for this answer. */
+  isBlocking?: boolean;
+  /** Deprecated Codex auto-resolution hint, retained for persisted/relay fidelity. */
+  autoResolutionMs?: number;
 }
 
 export interface ToolCallRecord {
@@ -653,6 +667,8 @@ export interface PluginSettings {
   thinkingBudgetTokens: number;
   /** Effort level passed to query(). 'default' omits the param. */
   effort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  /** Codex reasoning effort. Ultra enables proactive native multi-agent behavior on supported models. */
+  codexEffort: 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
   /** When true, subagents emit AI-generated progress summaries every ~30s. */
   agentProgressSummaries: boolean;
   /** When true, passes the context-1m-2025-08-07 beta header for 1M context window. */
@@ -826,6 +842,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   thinkingMode: 'disabled',
   thinkingBudgetTokens: 8000,
   effort: 'default',
+  codexEffort: 'default',
   agentProgressSummaries: true,
   enable1MContext: false,
   extraEnv: '',

@@ -16,6 +16,12 @@ The Agent Dashboard and Kanban dispatch controls show the harness that will own 
 
 The Agent Dashboard also shows compact child-agent entries. Agent role, task, and current activity are included in dashboard search.
 
+## Codex proactive agents and questions
+
+Codex native agents remain available when the model explicitly delegates work. To let Codex decide proactively when parallel agents help, select **Codex effort level → Ultra** in Agent settings. Claude Threads passes `effort: "ultra"` only when the selected model advertises it; unsupported combinations stop before the turn with a clear error. The deprecated Codex `multiAgentMode` setting is never sent.
+
+Codex can also pause for structured input through its native `request_user_input` protocol. These prompts use the same persisted desktop/mobile card and relay/reload path as Claude questions, while preserving Codex question IDs, option descriptions, free-form behavior, and secret-field masking. Default-mode input is enabled through app-server feature discovery, so older Codex binaries continue to work without receiving unsupported flags.
+
 ## Current capability matrix
 
 | Harness | Stable child ID | Lifecycle/activity | Parent linkage | Direct message from UI | Interrupt one agent from UI |
