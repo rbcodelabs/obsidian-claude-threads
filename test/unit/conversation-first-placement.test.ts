@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceLeaf } from 'obsidian';
-import { activateConversationFirstChat, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
+import { activateConversationFirstChat, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
 function leaf(state: Record<string, unknown> = {}): WorkspaceLeaf {
@@ -88,5 +88,12 @@ describe('conversation placement persistence', () => {
     await transitionConversationPlacement(settings, 'conversation-first', async () => { events.push('migrate'); }, async () => { events.push('persist'); });
     expect(events).toEqual(['migrate', 'persist']);
     expect(settings.threadViewPlacement).toBe('conversation-first');
+  });
+});
+
+describe('companion edited-file feedback', () => {
+  it('states that the final edited file is shown instead of claiming every file remains open', () => {
+    expect(formatCompanionEditedFilesNotice('Notes/b.md', 2))
+      .toBe('Showing Notes/b.md in the companion (2 edited files found).');
   });
 });

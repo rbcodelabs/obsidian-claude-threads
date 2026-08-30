@@ -363,10 +363,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
           },
           openContextualUrl: async (url) => {
             if (!this.isConversationFirst()) return false;
-            await this.contextPanel.setViewState({
+            const reusedTab = await this.contextPanel.setViewState({
               type: 'webviewer', active: true, state: { url },
             });
-            return true;
+            return { reusedTab };
           },
           initialCwd,
           onSetCwd: (newCwd: string, originRepoPath?: string | null) => {

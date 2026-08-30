@@ -194,7 +194,7 @@ export interface ObsidianMcpServerOptions {
   /** Route agent-triggered file navigation through the host's contextual panel policy. */
   openContextualFile?: (file: TFile, newLeaf: boolean) => Promise<boolean>;
   /** Route agent-triggered Web Viewer navigation through the contextual panel policy. */
-  openContextualUrl?: (url: string, newTab: boolean) => Promise<boolean>;
+  openContextualUrl?: (url: string, newTab: boolean) => Promise<false | { reusedTab: boolean }>;
   /**
    * Called when the agent requests a working-directory change. Receives the
    * resolved absolute path.
@@ -1043,12 +1043,12 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       try {
         const { url, newTab = false } = args;
 
-        const handledContextually = await options.openContextualUrl?.(url, newTab) ?? false;
-        if (handledContextually) {
+        const contextualResult = await options.openContextualUrl?.(url, newTab) ?? false;
+        if (contextualResult) {
           return {
             content: [{
               type: 'text' as const,
-              text: JSON.stringify({ success: true, url, reusedTab: true }, null, 2),
+              text: JSON.stringify({ success: true, url, reusedTab: contextualResult.reusedTab }, null, 2),
             }],
           };
         }

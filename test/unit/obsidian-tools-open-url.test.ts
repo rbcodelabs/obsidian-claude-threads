@@ -177,7 +177,7 @@ describe('obsidian_open_url', () => {
 
   it('delegates to the contextual URL opener when one is supplied', async () => {
     const app = makeApp({ existingLeaves: [makeLeaf()] });
-    const openContextualUrl = vi.fn().mockResolvedValue(true);
+    const openContextualUrl = vi.fn().mockResolvedValue({ reusedTab: false });
     const server = createObsidianMcpServer(app, { openContextualUrl }) as unknown as CapturedServer;
 
     const result = await getTool(server, 'obsidian_open_url')._handler({
@@ -188,6 +188,7 @@ describe('obsidian_open_url', () => {
     expect(result.isError).toBeUndefined();
     expect(openContextualUrl).toHaveBeenCalledWith('https://example.com/context', true);
     expect((app.workspace as unknown as { getLeaf: ReturnType<typeof vi.fn> }).getLeaf).not.toHaveBeenCalled();
+    expect((parseResult(result) as { reusedTab: boolean }).reusedTab).toBe(false);
   });
 
   it('uses the live placement decision for URL routing without recreating the server', async () => {
@@ -198,7 +199,7 @@ describe('obsidian_open_url', () => {
     const openContextualUrl = vi.fn(async (url: string) => {
       if (!conversationFirst) return false;
       await contextualLeaf.setViewState({ type: 'webviewer', active: true, state: { url } });
-      return true;
+      return { reusedTab: true };
     });
     const server = createObsidianMcpServer(app, { openContextualUrl }) as unknown as CapturedServer;
     const tool = getTool(server, 'obsidian_open_url');

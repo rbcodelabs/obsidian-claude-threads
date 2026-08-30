@@ -107,3 +107,7 @@ export async function transitionConversationPlacement(
     throw error;
   }
 }
+
+export function formatCompanionEditedFilesNotice(lastPath: string, fileCount: number): string {
+  return `Showing ${lastPath} in the companion (${fileCount} edited file${fileCount === 1 ? '' : 's'} found).`;
+}

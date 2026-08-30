@@ -1574,13 +1574,16 @@ export class ThreadsView extends ItemView {
 
     if (this.plugin.isConversationFirst()) {
       let opened = 0;
+      let lastPath = '';
       for (const relPath of relPaths) {
         const file = this.app.vault.getAbstractFileByPath(relPath);
         if (!file) continue;
         await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
         opened++;
+        lastPath = relPath;
       }
-      new Notice(`Opened ${opened} edited file${opened === 1 ? '' : 's'} in the companion.`);
+      const { formatCompanionEditedFilesNotice } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      new Notice(formatCompanionEditedFilesNotice(lastPath, opened));
       return;
     }
 

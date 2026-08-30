@@ -93,13 +93,14 @@ describe('ContextPanelController', () => {
   it('can place a native registered view in the same reusable companion', async () => {
     const { controller, firstCompanion } = makeHarness();
 
-    await controller.setViewState({ type: 'webviewer', active: true, state: { url: 'https://example.com' } });
+    const reused = await controller.setViewState({ type: 'webviewer', active: true, state: { url: 'https://example.com' } });
 
     expect(firstCompanion.setViewState).toHaveBeenCalledWith({
       type: 'webviewer',
       active: true,
       state: { url: 'https://example.com' },
     });
+    expect(reused).toBe(false);
   });
 
   it('rehydrates the restored companion after controller recreation without creating a duplicate', async () => {
@@ -109,5 +110,12 @@ describe('ContextPanelController', () => {
     await reloadedController.openFile({ path: 'Notes/next.md' } as TFile);
     expect(workspace.splitActiveLeaf).not.toHaveBeenCalled();
     expect(firstCompanion.openFile).toHaveBeenCalledOnce();
+  });
+
+  it('reports reuse when a restored companion handles a contextual view', async () => {
+    const identity = { type: 'webviewer', state: { url: 'https://old.example' } };
+    const { createController } = makeHarness(identity);
+    const reused = await createController().setViewState({ type: 'webviewer', state: { url: 'https://new.example' } });
+    expect(reused).toBe(true);
   });
 });

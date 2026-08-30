@@ -61,11 +61,20 @@ export class ContextPanelController {
     await this.persistCurrentIdentity(leaf);
   }
 
-  async setViewState(viewState: ViewState): Promise<void> {
+  async setViewState(viewState: ViewState): Promise<boolean> {
+    const reused = this.hasReusableLeaf();
     const leaf = this.getLeaf();
     await leaf.setViewState(viewState);
     await this.persistCurrentIdentity(leaf);
     this.app.workspace.revealLeaf(leaf);
+    return reused;
+  }
+
+  private hasReusableLeaf(): boolean {
+    return Boolean(
+      (this.companionLeaf && this.isAttached(this.companionLeaf))
+      || this.findRestoredCompanion(),
+    );
   }
 
   private isAttached(target: WorkspaceLeaf): boolean {
