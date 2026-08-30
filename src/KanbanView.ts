@@ -258,7 +258,7 @@ export class KanbanView extends ItemView {
       argCompletions: DISPATCH_ARG_COMPLETIONS,
       harnessPicker: { initialHarness: this.plugin.settings.agentHarness ?? 'claude' },
       onSend: async ({ text, images, attachment, agentHarness }) => {
-        // Intercept leading built-in commands (/model, /goal, /loop) — apply
+        // Intercept leading built-in commands (/model, /goal, /loop, /design) — apply
         // them to the new thread instead of sending the text to Claude verbatim.
         let dispatchOpts: { model?: string; goal?: string; loop?: { intervalSeconds: number }; agentHarness?: 'claude' | 'codex' } = { agentHarness };
         let titleText = text;
@@ -287,6 +287,20 @@ export class KanbanView extends ItemView {
           } else if (directive.kind === 'loop') {
             dispatchOpts = { ...dispatchOpts, loop: { intervalSeconds: directive.intervalSeconds } };
             text = titleText = directive.prompt;
+          } else if (directive.kind === 'design') {
+            if (images.length > 0 || attachment) {
+              new Notice('Design dispatch does not support attachments yet. Remove them and try again.');
+              this.dispatchInput.setValue(text);
+              return;
+            }
+            try {
+              await this.plugin.dispatchNewDesignThread(directive.brief, agentHarness);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              new Notice(`Could not create design artifact: ${message}`);
+              this.dispatchInput.setValue(text);
+            }
+            return;
           }
           // 'escalate' directives always carry `error` (handled above) — no
           // success case, so nothing to do here; fall through to dispatch

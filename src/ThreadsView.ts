@@ -1442,7 +1442,7 @@ export class ThreadsView extends ItemView {
     action('Reveal source', 'folder-open', () => this.revealArtifactSource(artifact));
   }
 
-  private async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
+  async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
     try {
       if (this.plugin.isConversationFirst()) {
         await this.plugin.contextPanel.setViewState({

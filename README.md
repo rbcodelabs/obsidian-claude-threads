@@ -177,12 +177,12 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/context` | Show a per-category token usage breakdown for the active session (tools, system prompt, skills, MCP tools, conversation, etc.) |
 | `/create-pr` | Ask Claude to push the branch and open a PR (`gh pr create`) — same action as the [git diff bar](#git-diff-bar-create-pr)'s Create PR button |
 | `/create-pr --draft` | Same, but opens a draft PR — same as the git diff bar's Create draft PR button |
-| `/design <brief>` | Create or revise a secure, responsive static UI artifact for this thread and open it in Geode's ArtifactView |
+| `/design <brief>` | Start a new design thread from Dashboard/Kanban, or create or revise a secure static UI artifact in the current thread, and open it in Geode's ArtifactView |
 | `/escalate <prompt>` | Route just this turn to the [escalation model](#model-switching) (default `/escalate`, keyword and target model configurable in Settings; only shown when escalation is enabled) |
 
 ### Design artifacts in Geode
 
-Use `/design <brief>` in an existing thread to create a zero-install static UI artifact under `.geode/artifacts/` in your vault. Claude edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files; the artifact card then keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief to reopen the existing preview, or include a new brief to revise it in the same thread.
+Use `/design <brief>` from the Agent Dashboard or Kanban dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
 
 Geode's ArtifactView previews the result with live reload, desktop/tablet/mobile viewport controls, runtime diagnostics, and PNG capture. Artifacts run in an isolated, ephemeral, Node-less guest with network, clipboard, downloads, popups, and external navigation denied. Outside Geode, Threads reveals the source instead of launching the artifact without that sandbox.
 

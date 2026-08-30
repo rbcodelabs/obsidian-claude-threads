@@ -20,6 +20,16 @@ export interface DesignArtifactFs {
   writeFile(target: string, data: string, options?: { flag: 'wx' }): Promise<unknown>;
 }
 
+export interface DesignThreadDispatchDeps {
+  createThread(title: string, agentHarness?: 'claude' | 'codex'): Thread;
+  deleteThread(threadId: string): void;
+  saveSettings(): Promise<void>;
+  sendMessage(threadId: string, message: string): Promise<void>;
+  openThread(threadId: string): Promise<void>;
+  openPreview(artifact: DesignArtifact): Promise<void>;
+  onSendError(error: unknown): void;
+}
+
 const defaultFs: DesignArtifactFs = {
   mkdir: (target, options) => fs.mkdir(target, options),
   writeFile: (target, data, options) => fs.writeFile(target, data, options),
@@ -154,4 +164,32 @@ Artifact rules:
 - Review desktop and mobile layouts before finishing.
 
 Start now. Edit the artifact files directly, verify the static result, and report what you changed.`;
+}
+
+/**
+ * Creates a new thread around the same durable artifact contract used by the
+ * in-thread /design command. The artifact is persisted before the agent turn
+ * starts so a fast first tool call cannot race the thread metadata save.
+ */
+export async function dispatchDesignThread(
+  brief: string,
+  agentHarness: 'claude' | 'codex' | undefined,
+  vaultRoot: string,
+  deps: DesignThreadDispatchDeps,
+  fileFs: DesignArtifactFs = defaultFs,
+): Promise<string> {
+  const thread = deps.createThread(designTitle(brief), agentHarness);
+  let artifact: DesignArtifact;
+  try {
+    artifact = await ensureDesignArtifact(thread, vaultRoot, brief, Date.now(), fileFs);
+    await deps.saveSettings();
+  } catch (error) {
+    deps.deleteThread(thread.id);
+    throw error;
+  }
+
+  void deps.sendMessage(thread.id, designKickoffMessage(artifact, brief)).catch(deps.onSendError);
+  await deps.openThread(thread.id);
+  await deps.openPreview(artifact);
+  return thread.id;
 }

@@ -6,9 +6,11 @@ import {
   designArtifactRoot,
   designKickoffMessage,
   designTitle,
+  dispatchDesignThread,
   ensureDesignArtifact,
   type DesignArtifactFs,
 } from '../../src/designArtifact';
+import type { Thread } from '../../src/types';
 
 describe('design artifact contract', () => {
   it('derives a portable stable artifact id and root from the thread', () => {
@@ -72,5 +74,59 @@ describe('design artifact contract', () => {
     expect(message).toContain('Do not install packages');
     expect(message).toContain('Inline JavaScript is blocked');
     expect(message).not.toContain('Claude Code');
+  });
+});
+
+describe('new-thread design dispatch', () => {
+  it('persists the native artifact before sending, then focuses the thread and opens its preview', async () => {
+    const events: string[] = [];
+    const writes = new Map<string, string>();
+    let sentMessage = '';
+    const thread = {
+      id: 'thread-1',
+      title: 'placeholder',
+      cwd: '/vault',
+      messages: [],
+      createdAt: 1,
+      updatedAt: 1,
+      status: 'waiting' as const,
+      agentHarness: 'codex' as const,
+    };
+    const fileFs: DesignArtifactFs = {
+      mkdir: vi.fn(async () => { events.push('scaffold'); }),
+      writeFile: vi.fn(async (target, data) => { writes.set(target, data); }),
+    };
+
+    const threadId = await dispatchDesignThread(
+      'Responsive settings card',
+      'codex',
+      '/vault',
+      {
+        createThread: (title, harness) => {
+          events.push('create');
+          thread.title = title;
+          thread.agentHarness = harness;
+          return thread as Thread;
+        },
+        deleteThread: vi.fn(),
+        saveSettings: async () => { events.push('save'); },
+        sendMessage: async (_threadId, message) => { events.push('send'); sentMessage = message; },
+        openThread: async () => { events.push('open-thread'); },
+        openPreview: async () => { events.push('open-preview'); },
+        onSendError: vi.fn(),
+      },
+      fileFs,
+    );
+
+    expect(threadId).toBe('thread-1');
+    expect(thread.title).toBe('Responsive settings card');
+    expect(thread.artifacts).toHaveLength(1);
+    expect([...writes.keys()].map((target) => path.basename(target)).sort()).toEqual([
+      'app.js', 'artifact.json', 'index.html', 'styles.css',
+    ]);
+    expect(sentMessage).toContain('You are working in Claude Threads Design mode.');
+    expect(sentMessage).toContain('Responsive settings card');
+    expect(sentMessage).not.toContain('/design Responsive settings card');
+    expect(events).toEqual(['create', 'scaffold', 'save', 'send', 'open-thread', 'open-preview']);
   });
 });
