@@ -410,8 +410,6 @@ A server whose `${VAR_NAME}` placeholders cannot be resolved is **skipped rather
   <img src="docs/screenshot-mcp-edit-server.png" width="800" alt="Add/edit MCP server form: a type toggle between Command (stdio) and HTTP or SSE, with Name, Command, Arguments, and Environment variables fields, the env field showing a ${NOTES_API_TOKEN} placeholder" />
 </p>
 
-`sdk`-type entries (servers registered by an in-process integration rather than a spawned process or remote URL) render read-only in this tab — they need a live server instance that can't be represented as JSON, so edit `~/.claude/settings.json` by hand if you need to change one. If the settings file has invalid JSON, the tab shows the parse error and hides the add/edit controls entirely rather than risking a write that clobbers whatever's actually on disk.
-
 ### Remote access (mobile)
 
 Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, answer AskUserQuestion prompts, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
