@@ -23,6 +23,29 @@ type CodexThreadTokenUsage = {
 
 type ContextUsage = import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse;
 
+const ENTER_PLAN_MODE_TOOL = {
+  type: 'function',
+  name: 'EnterPlanMode',
+  description: 'Switch to a read-only planning turn before proposing implementation. Use this when the task needs investigation and an approved plan before changes.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+} as const;
+
+export function codexDynamicToolDefinitions(
+  tools: NonNullable<NonNullable<HarnessSessionOptions['codex']>['dynamicTools']> = [],
+): Array<{ type: 'function'; name: string; description: string; inputSchema: Record<string, unknown> }> {
+  return [
+    ENTER_PLAN_MODE_TOOL,
+    ...tools
+      .filter((tool) => tool.name !== ENTER_PLAN_MODE_TOOL.name)
+      .map((tool) => ({
+        type: 'function' as const,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })),
+  ];
+}
+
 export function applyCodexResumeFallback(text: string, history: string | undefined, resumeFailed: boolean): string {
   return resumeFailed && history ? history + text : text;
 }
@@ -116,6 +139,7 @@ export class CodexSession {
   private codexThreadId: string | undefined;
   private _turnInFlight = false;
   private activeTurnId: string | undefined;
+  private activeTurnMode: HarnessSessionOptions['permissionMode'] | undefined;
   private turnStartPromise: Promise<string | undefined> | null = null;
   private closed = true;
   /** App-server has one active turn per thread; retain follow-ups locally. */
@@ -124,6 +148,9 @@ export class CodexSession {
   private latestUsage: UsageSnapshot | null = null;
   private activeModel = '';
   private pendingPlanText: string | null = null;
+  private planTransitionRequested = false;
+  private awaitingPlanApproval = false;
+  private approvalTransitionInFlight = false;
   private announcedSubagents = new Set<string>();
   private activeSubagentTurns = new Map<string, string>();
   private resumeFallbackPending = false;
@@ -133,7 +160,7 @@ export class CodexSession {
   get turnInFlight(): boolean { return this._turnInFlight; }
   get cwd(): string | undefined { return this.options?.cwd; }
   get hasPendingPermission(): boolean { return false; }
-  canIdleReap(): boolean { return !this._turnInFlight; }
+  canIdleReap(): boolean { return !this._turnInFlight && !this.awaitingPlanApproval; }
 
   async start(options: HarnessSessionOptions): Promise<void> {
     this.close();
@@ -144,6 +171,8 @@ export class CodexSession {
     this.announcedSubagents.clear();
     this.activeSubagentTurns.clear();
     this.resumeFallbackPending = false;
+    this.planTransitionRequested = false;
+    this.awaitingPlanApproval = false;
     this.closed = false;
     this.process = spawn(this.codexPath, ['app-server', '--stdio'], {
       cwd: options.cwd,
@@ -202,12 +231,7 @@ export class CodexSession {
         sandbox: options.codex?.sandbox ?? resolveCodexPermissions(options.permissionMode).sandbox,
         developerInstructions: codexDeveloperInstructions(options),
         config: threadConfig,
-        dynamicTools: options.codex?.dynamicTools?.map((tool) => ({
-          type: 'function',
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        })),
+        dynamicTools: codexDynamicToolDefinitions(options.codex?.dynamicTools),
       });
     }
     this.codexThreadId = result.thread.id;
@@ -236,18 +260,23 @@ export class CodexSession {
   }
 
   async setPermissionMode(mode: any): Promise<void> {
-    if (!this.codexThreadId) return;
+    if (!this.codexThreadId) {
+      if (this.options) this.options.permissionMode = mode;
+      return;
+    }
     const permissions = resolveCodexPermissions(mode);
     await this.request('thread/settings/update', {
       threadId: this.codexThreadId,
+      collaborationMode: this.collaborationMode(mode === 'plan' ? 'plan' : 'default'),
       approvalPolicy: permissions.approvalPolicy,
       sandboxPolicy: this.sandboxPolicy(permissions.sandbox),
     });
+    if (this.options) this.options.permissionMode = mode;
   }
 
   send(text: string, images?: ImageAttachment[]): void {
     if (this.closed || !this.codexThreadId) throw new Error('Codex session is not running');
-    if (this._turnInFlight) {
+    if (this._turnInFlight || this.awaitingPlanApproval) {
       this.queuedTurns.push({ text, images });
       return;
     }
@@ -259,6 +288,8 @@ export class CodexSession {
   private startTurn(text: string, images?: ImageAttachment[]): void {
     this._turnInFlight = true;
     this.activeTurnId = undefined;
+    this.activeTurnMode = this.options?.permissionMode;
+    this.planTransitionRequested = false;
     this.pendingPlanText = null;
     const isPlanMode = this.options?.permissionMode === 'plan';
     if (isPlanMode) this.options?.callbacks.onEnterPlanMode?.();
@@ -268,27 +299,62 @@ export class CodexSession {
       threadId: this.codexThreadId,
       input,
       ...(isPlanMode ? {
-        collaborationMode: {
-          mode: 'plan',
-          settings: { model: this.activeModel, reasoning_effort: null, developer_instructions: null },
-        },
+        collaborationMode: this.collaborationMode('plan'),
       } : {}),
     }).then((result) => {
       this.activeTurnId = result.turn?.id;
       return this.activeTurnId;
     })
       .catch((error) => {
-        this._turnInFlight = false;
+        this.clearTerminalState();
         this.options?.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
         return undefined;
       });
   }
 
+  private clearTerminalState(retainApproval = false): void {
+    this._turnInFlight = false;
+    this.activeTurnId = undefined;
+    this.activeTurnMode = undefined;
+    this.turnStartPromise = null;
+    this.pendingPlanText = null;
+    this.planTransitionRequested = false;
+    this.queuedTurns = [];
+    this.approvalTransitionInFlight = false;
+    if (!retainApproval) this.awaitingPlanApproval = false;
+  }
+
+  private collaborationMode(mode: 'default' | 'plan'): Record<string, unknown> {
+    return {
+      mode,
+      settings: { model: this.activeModel, reasoning_effort: null, developer_instructions: null },
+    };
+  }
+
+  private async startRequestedPlanContinuation(callbacks: SessionCallbacks): Promise<void> {
+    try {
+      await this.setPermissionMode('plan');
+      await callbacks.onPlanModeRequested?.();
+      if (this.closed || !this._turnInFlight) return;
+      this.startTurn(
+        'Continue in read-only Plan mode. Investigate the request thoroughly, identify affected files and risks, and produce a complete implementation and verification plan for approval. Do not implement yet.',
+      );
+    } catch (error) {
+      this.clearTerminalState();
+      callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   async interrupt(): Promise<void> {
     if (!this.codexThreadId || !this._turnInFlight) return;
     this.queuedTurns = [];
+    this.planTransitionRequested = false;
+    this.awaitingPlanApproval = false;
     const turnId = this.activeTurnId ?? await this.turnStartPromise;
-    if (!turnId || !this._turnInFlight) return;
+    if (!turnId || !this._turnInFlight) {
+      this._turnInFlight = false;
+      return;
+    }
     await this.request('turn/interrupt', { threadId: this.codexThreadId, turnId });
   }
 
@@ -296,6 +362,7 @@ export class CodexSession {
     this.closed = true;
     this._turnInFlight = false;
     this.activeTurnId = undefined;
+    this.activeTurnMode = undefined;
     this.turnStartPromise = null;
     this.queuedTurns = [];
     this.activeSubagentTurns.clear();
@@ -474,36 +541,89 @@ export class CodexSession {
           }
           break;
         }
+        const turn = params.turn ?? {};
+        if (turn.id && this.activeTurnId && String(turn.id) !== this.activeTurnId) break;
         this._turnInFlight = false;
         this.activeTurnId = undefined;
         this.turnStartPromise = null;
-        const turn = params.turn ?? {};
-        if (turn.status === 'interrupted') callbacks.onInterrupted(this.codexThreadId ?? '');
-        else if (turn.status === 'failed') callbacks.onError(new Error(turn.error?.message ?? 'Codex turn failed'));
+        const completedTurnMode = this.activeTurnMode ?? this.options?.permissionMode;
+        const enterPlanRequested = this.planTransitionRequested;
+        this.activeTurnMode = undefined;
+        this.planTransitionRequested = false;
+        if (turn.status === 'interrupted') {
+          this.awaitingPlanApproval = false;
+          this.queuedTurns = [];
+          callbacks.onInterrupted(this.codexThreadId ?? '');
+          this.pendingPlanText = null;
+          return;
+        }
+        else if (turn.status === 'failed') {
+          this.awaitingPlanApproval = false;
+          this.queuedTurns = [];
+          callbacks.onError(new Error(turn.error?.message ?? 'Codex turn failed'));
+          this.pendingPlanText = null;
+          return;
+        }
         else {
-          callbacks.onDone(this.codexThreadId ?? '', 0, 1);
           const planText = this.pendingPlanText;
-          if (planText && this.options?.permissionMode === 'plan' && callbacks.onPlanReady) {
-            // Codex plan turns settle before user approval. Emit the card after
-            // onDone so ThreadManager's terminal safety-net cannot discard it.
+          if (enterPlanRequested && completedTurnMode !== 'plan') {
+            this.pendingPlanText = null;
+            // Keep sends queued across the settings update so the internal Plan
+            // continuation always wins the turn boundary.
+            this._turnInFlight = true;
+            void this.startRequestedPlanContinuation(callbacks);
+            break;
+          }
+          if (planText && completedTurnMode === 'plan' && callbacks.onPlanReady) {
+            this.awaitingPlanApproval = true;
             callbacks.onPlanReady(
               planText,
               (editedPlan) => {
-                if (this.options) this.options.permissionMode = 'default';
+                if (!this.awaitingPlanApproval || this.approvalTransitionInFlight) return;
+                this.approvalTransitionInFlight = true;
+                // Reserve the single active-turn slot before the async settings
+                // update so a send racing the approval click queues behind the
+                // internal implementation continuation.
+                this._turnInFlight = true;
                 const implementationPrompt = editedPlan !== undefined && editedPlan !== planText
                   ? `The plan was approved with these edits. Implement it now:\n\n${editedPlan}`
                   : 'The plan is approved. Implement it now.';
                 void this.setPermissionMode('default')
-                  .then(() => this.send(implementationPrompt))
-                  .catch((error) => callbacks.onError(error instanceof Error ? error : new Error(String(error))));
+                  .then(async () => {
+                    await callbacks.onPlanApprovalCommitted?.();
+                    this.approvalTransitionInFlight = false;
+                    this.awaitingPlanApproval = false;
+                    if (!this.closed) this.startTurn(implementationPrompt);
+                  })
+                  .catch((error) => {
+                    const transitionError = error instanceof Error ? error : new Error(String(error));
+                    this.clearTerminalState(true);
+                    callbacks.onPlanTransitionError?.(transitionError);
+                  });
               },
-              () => { /* The shared plan card sends a rejection follow-up. */ },
+              () => {
+                // The shared plan card sends a rejection follow-up. Keeping the
+                // cached mode in Plan makes that follow-up a revision turn.
+                this.awaitingPlanApproval = false;
+                const next = this.queuedTurns.shift();
+                if (next && !this.closed) this.startTurn(next.text, next.images);
+                return next !== undefined;
+              },
             );
+          } else if (completedTurnMode === 'plan') {
+            this.queuedTurns = [];
+            callbacks.onError(new Error('Codex Plan turn completed without a structured plan.'));
+            this.pendingPlanText = null;
+            return;
+          } else {
+            callbacks.onDone(this.codexThreadId ?? '', 0, 1);
           }
         }
         this.pendingPlanText = null;
-        const next = this.queuedTurns.shift();
-        if (next && !this.closed) this.startTurn(next.text, next.images);
+        if (!this.awaitingPlanApproval) {
+          const next = this.queuedTurns.shift();
+          if (next && !this.closed) this.startTurn(next.text, next.images);
+        }
         break;
       }
       case 'thread/tokenUsage/updated':
@@ -541,6 +661,34 @@ export class CodexSession {
   private handleServerRequest(message: any): void {
     const callbacks = this.options?.callbacks;
     const params = message.params ?? {};
+    if (message.method === 'item/tool/call' && params.tool === ENTER_PLAN_MODE_TOOL.name) {
+      if ((params.threadId && String(params.threadId) !== this.codexThreadId)
+        || (params.turnId && this.activeTurnId && String(params.turnId) !== this.activeTurnId)) {
+        this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: 'EnterPlanMode was rejected for a stale or non-root Codex turn.' }],
+        });
+        return;
+      }
+      if (!this._turnInFlight) {
+        this.respond(message.id, {
+          success: false,
+          contentItems: [{ type: 'inputText', text: 'EnterPlanMode is only available during an active Codex turn.' }],
+        });
+        return;
+      }
+      if (this.activeTurnMode !== 'plan') this.planTransitionRequested = true;
+      this.respond(message.id, {
+        success: true,
+        contentItems: [{
+          type: 'inputText',
+          text: this.options?.permissionMode === 'plan'
+            ? 'Codex is already in Plan mode.'
+            : 'Plan mode requested. Finish this handoff without making changes; a read-only planning turn will start next.',
+        }],
+      });
+      return;
+    }
     if (message.method === 'mcpServer/elicitation/request') {
       const requestedSchema = (params.requestedSchema ?? {}) as Record<string, unknown>;
       const properties = requestedSchema.properties;

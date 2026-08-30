@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexDeveloperInstructions, codexMcpServers, codexResumeInstructions } from '../../src/CodexSession';
+import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexDeveloperInstructions, codexDynamicToolDefinitions, codexMcpServers, codexResumeInstructions } from '../../src/CodexSession';
+
+describe('Codex built-in tools', () => {
+  it('registers one reserved EnterPlanMode definition ahead of canonical tools', () => {
+    const tools = codexDynamicToolDefinitions([
+      { name: 'EnterPlanMode', description: 'collision', inputSchema: {}, requiresApproval: true, invoke: vi.fn() },
+      { name: 'vault_search', description: 'Search notes', inputSchema: { type: 'object' }, requiresApproval: false, invoke: vi.fn() },
+    ]);
+
+    expect(tools.map((tool) => tool.name)).toEqual(['EnterPlanMode', 'vault_search']);
+    expect(tools[0]).toMatchObject({
+      description: expect.stringContaining('read-only planning turn'),
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    });
+  });
+});
 
 describe('codexMcpServers', () => {
   it('translates stdio and remote MCP transports to Codex config keys', () => {
@@ -136,6 +151,353 @@ describe('Codex resume fallback', () => {
 });
 
 describe('CodexSession protocol notifications', () => {
+  it('handles EnterPlanMode as an idempotent built-in control tool without permission', () => {
+    const onPermissionRequest = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal._turnInFlight = true;
+    internal.options = { permissionMode: 'default', callbacks: { onPermissionRequest } };
+    const respond = vi.spyOn(internal, 'respond');
+
+    internal.handle({ id: 'enter-1', method: 'item/tool/call', params: { tool: 'EnterPlanMode', arguments: {} } });
+    internal.handle({ id: 'enter-2', method: 'item/tool/call', params: { tool: 'EnterPlanMode', arguments: {} } });
+
+    expect(onPermissionRequest).not.toHaveBeenCalled();
+    expect(internal.planTransitionRequested).toBe(true);
+    expect(respond).toHaveBeenCalledTimes(2);
+    expect(respond).toHaveBeenNthCalledWith(1, 'enter-1', expect.objectContaining({ success: true }));
+    expect(respond).toHaveBeenNthCalledWith(2, 'enter-2', expect.objectContaining({ success: true }));
+  });
+
+  it('settles an EnterPlanMode request into exactly one read-only Plan continuation before queued turns', async () => {
+    const onDone = vi.fn();
+    const onPlanModeRequested = vi.fn().mockResolvedValue(undefined);
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.activeModel = 'gpt-5.6-codex';
+    internal._turnInFlight = true;
+    internal.options = {
+      permissionMode: 'default',
+      callbacks: { onDone, onPlanModeRequested, onError: vi.fn(), onEnterPlanMode: vi.fn() },
+    };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'plan-turn' } });
+    internal.queuedTurns.push({ text: 'Queued user follow-up' });
+    internal.handle({ id: 'enter-1', method: 'item/tool/call', params: { tool: 'EnterPlanMode', arguments: {} } });
+
+    internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('turn/start', expect.anything()));
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onPlanModeRequested).toHaveBeenCalledOnce();
+    expect(internal.options.permissionMode).toBe('plan');
+    expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({
+      threadId: 'codex-thread',
+      collaborationMode: {
+        mode: 'plan',
+        settings: { model: 'gpt-5.6-codex', reasoning_effort: null, developer_instructions: null },
+      },
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
+    }));
+    expect(request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      collaborationMode: expect.objectContaining({ mode: 'plan' }),
+    }));
+    expect(internal.queuedTurns).toEqual([{ text: 'Queued user follow-up' }]);
+  });
+
+  it('updates cached permission mode and explicitly changes Codex collaboration mode', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'plan', callbacks: {} };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({});
+
+    await session.setPermissionMode('default');
+
+    expect(internal.options.permissionMode).toBe('default');
+    expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({
+      threadId: 'codex-thread',
+      collaborationMode: {
+        mode: 'default',
+        settings: { model: '', reasoning_effort: null, developer_instructions: null },
+      },
+    }));
+  });
+
+  it('preserves cached permission mode when the live settings update fails', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: {} };
+    vi.spyOn(internal, 'request').mockRejectedValue(new Error('settings rejected'));
+
+    await expect(session.setPermissionMode('plan')).rejects.toThrow('settings rejected');
+    expect(internal.options.permissionMode).toBe('default');
+  });
+
+  it('does not persist autonomous Plan mode when the live settings update fails', async () => {
+    const onPlanModeRequested = vi.fn();
+    const onError = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.options = { permissionMode: 'default', callbacks: { onPlanModeRequested, onError } };
+    internal.queuedTurns.push({ text: 'stale queued work' });
+    vi.spyOn(internal, 'request').mockRejectedValue(new Error('plan settings failed'));
+
+    await internal.startRequestedPlanContinuation(internal.options.callbacks);
+
+    expect(onPlanModeRequested).not.toHaveBeenCalled();
+    expect(internal.options.permissionMode).toBe('default');
+    expect(internal.queuedTurns).toEqual([]);
+    expect(internal._turnInFlight).toBe(false);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'plan settings failed' }));
+  });
+
+  it('cleans all terminal state when turn/start rejects', async () => {
+    const onError = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: { onError } };
+    internal.queuedTurns.push({ text: 'stale' });
+    vi.spyOn(internal, 'request').mockRejectedValue(new Error('turn rejected'));
+
+    internal.startTurn('Start');
+    await internal.turnStartPromise;
+
+    expect(internal.queuedTurns).toEqual([]);
+    expect(internal.activeTurnId).toBeUndefined();
+    expect(internal.activeTurnMode).toBeUndefined();
+    expect(internal._turnInFlight).toBe(false);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'turn rejected' }));
+  });
+
+  it('retains approval state and card callback when Default settings fail', async () => {
+    const onPlanReady = vi.fn();
+    const onPlanTransitionError = vi.fn();
+    const onError = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.activeTurnMode = 'plan';
+    internal.options = { permissionMode: 'plan', callbacks: { onPlanReady, onPlanTransitionError, onError } };
+    vi.spyOn(internal, 'request').mockRejectedValue(new Error('default settings failed'));
+    internal.queuedTurns.push({ text: 'stale queued work' });
+
+    internal.handle({ method: 'item/completed', params: { item: { type: 'plan', text: 'Retryable plan' } } });
+    internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+    onPlanReady.mock.calls[0][1]();
+    await vi.waitFor(() => expect(onPlanTransitionError).toHaveBeenCalled());
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(internal.awaitingPlanApproval).toBe(true);
+    expect(internal.options.permissionMode).toBe('plan');
+    expect(internal.queuedTurns).toEqual([]);
+    expect(internal._turnInFlight).toBe(false);
+  });
+
+  it('ignores a stale root completion after an internal continuation starts', () => {
+    const onDone = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.activeTurnId = 'new-turn';
+    internal.activeTurnMode = 'plan';
+    internal._turnInFlight = true;
+    internal.options = { permissionMode: 'plan', callbacks: { onDone, onError: vi.fn() } };
+
+    internal.handle({ method: 'turn/completed', params: { turn: { id: 'old-turn', status: 'completed' } } });
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(internal.activeTurnId).toBe('new-turn');
+    expect(internal._turnInFlight).toBe(true);
+  });
+
+  it('interprets a Default turn as Default after the toolbar switches subsequent turns to Plan', async () => {
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: { onDone, onError } };
+    vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'turn-default' } });
+
+    internal.startTurn('Work');
+    await session.setPermissionMode('plan');
+    internal.handle({ method: 'turn/completed', params: { turn: { id: 'turn-default', status: 'completed' } } });
+
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('interprets a Plan turn as Plan after the toolbar switches subsequent turns to Default', async () => {
+    const onPlanReady = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'plan', callbacks: { onPlanReady, onError: vi.fn(), onEnterPlanMode: vi.fn() } };
+    vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'turn-plan' } });
+
+    internal.startTurn('Plan');
+    await session.setPermissionMode('default');
+    internal.handle({ method: 'item/completed', params: { item: { type: 'plan', text: 'Immutable turn plan' } } });
+    internal.handle({ method: 'turn/completed', params: { turn: { id: 'turn-plan', status: 'completed' } } });
+
+    expect(onPlanReady).toHaveBeenCalledWith('Immutable turn plan', expect.any(Function), expect.any(Function));
+  });
+
+  it('honors EnterPlanMode when a toolbar Plan update races the initiating Default turn', async () => {
+    const onPlanModeRequested = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: { onPlanModeRequested, onError: vi.fn(), onEnterPlanMode: vi.fn() } };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'turn-1' } });
+
+    internal.startTurn('Investigate');
+    internal.activeTurnId = 'turn-1';
+    internal.handle({ id: 'enter', method: 'item/tool/call', params: { tool: 'EnterPlanMode', threadId: 'codex-thread', turnId: 'turn-1', arguments: {} } });
+    await session.setPermissionMode('plan');
+    internal.handle({ method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } });
+    await vi.waitFor(() => expect(request.mock.calls.filter(([method]) => method === 'turn/start')).toHaveLength(2));
+    expect(onPlanModeRequested).toHaveBeenCalledOnce();
+  });
+
+  it('rejects EnterPlanMode calls for a child or stale turn', () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'root-thread';
+    internal.activeTurnId = 'root-turn';
+    internal._turnInFlight = true;
+    internal.options = { permissionMode: 'default', callbacks: {} };
+    const respond = vi.spyOn(internal, 'respond');
+
+    internal.handle({ id: 'child', method: 'item/tool/call', params: { tool: 'EnterPlanMode', threadId: 'child-thread', turnId: 'child-turn', arguments: {} } });
+    internal.handle({ id: 'stale', method: 'item/tool/call', params: { tool: 'EnterPlanMode', threadId: 'root-thread', turnId: 'old-turn', arguments: {} } });
+
+    expect(internal.planTransitionRequested).toBe(false);
+    expect(respond).toHaveBeenNthCalledWith(1, 'child', expect.objectContaining({ success: false }));
+    expect(respond).toHaveBeenNthCalledWith(2, 'stale', expect.objectContaining({ success: false }));
+  });
+
+  it.each(['interrupted', 'failed'])('does not drain queued turns after a %s terminal status', (status) => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.queuedTurns.push({ text: 'must not run' });
+    internal.options = { permissionMode: 'default', callbacks: { onInterrupted: vi.fn(), onError: vi.fn() } };
+    const startTurn = vi.spyOn(internal, 'startTurn');
+
+    internal.handle({ method: 'turn/completed', params: { turn: { status, error: { message: 'failed' } } } });
+
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(internal.queuedTurns).toEqual([]);
+  });
+
+  it('does not drain queued turns when Plan completes without a structured plan', () => {
+    const onError = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.queuedTurns.push({ text: 'must not run' });
+    internal.options = { permissionMode: 'plan', callbacks: { onError } };
+    const startTurn = vi.spyOn(internal, 'startTurn');
+
+    internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('without a structured plan') }));
+    expect(startTurn).not.toHaveBeenCalled();
+    expect(internal.queuedTurns).toEqual([]);
+  });
+
+  it('does not wedge when interrupted during the turn-boundary Plan transition', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.planTransitionRequested = true;
+    internal.activeTurnId = undefined;
+    internal.turnStartPromise = null;
+
+    await session.interrupt();
+
+    expect(internal.planTransitionRequested).toBe(false);
+    expect(internal.awaitingPlanApproval).toBe(false);
+    expect(internal._turnInFlight).toBe(false);
+  });
+
+  it('holds queued and fresh turns while a native plan awaits approval, then starts one edited implementation', async () => {
+    const onPlanReady = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'plan', callbacks: { onPlanReady, onError: vi.fn() } };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({ turn: { id: 'implementation-turn' } });
+    internal._turnInFlight = true;
+    internal.queuedTurns.push({ text: 'Already queued' });
+    internal.handle({ method: 'item/completed', params: { item: { type: 'plan', id: 'plan-1', text: 'Original plan' } } });
+    internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+
+    session.send('Fresh while awaiting approval');
+    expect(internal.awaitingPlanApproval).toBe(true);
+    expect(session.canIdleReap()).toBe(false);
+    expect(internal.queuedTurns).toEqual([{ text: 'Already queued' }, { text: 'Fresh while awaiting approval', images: undefined }]);
+    expect(request).not.toHaveBeenCalledWith('turn/start', expect.anything());
+
+    onPlanReady.mock.calls[0][1]('Edited plan');
+    session.send('Racing send after approval');
+    expect(internal.queuedTurns).toEqual([
+      { text: 'Already queued' },
+      { text: 'Fresh while awaiting approval', images: undefined },
+      { text: 'Racing send after approval', images: undefined },
+    ]);
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith('turn/start', expect.anything()));
+
+    expect(internal.awaitingPlanApproval).toBe(false);
+    expect(internal.options.permissionMode).toBe('default');
+    expect(request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      input: [expect.objectContaining({ text: 'The plan was approved with these edits. Implement it now:\n\nEdited plan' })],
+    }));
+    expect(internal.queuedTurns).toHaveLength(3);
+  });
+
+  it('rejects into queued Plan feedback in FIFO order and reports that generic feedback is unnecessary', () => {
+    const onPlanReady = vi.fn();
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.closed = false;
+    internal.codexThreadId = 'codex-thread';
+    internal._turnInFlight = true;
+    internal.activeTurnMode = 'plan';
+    internal.options = { permissionMode: 'plan', callbacks: { onPlanReady, onError: vi.fn() } };
+    internal.queuedTurns.push({ text: 'Feedback queued before card' });
+    const startTurn = vi.spyOn(internal, 'startTurn');
+
+    internal.handle({ method: 'item/completed', params: { item: { type: 'plan', text: 'Plan' } } });
+    internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+    session.send('Feedback queued during card');
+    const hadFeedback = onPlanReady.mock.calls[0][2]();
+
+    expect(hadFeedback).toBe(true);
+    expect(startTurn).toHaveBeenCalledWith('Feedback queued before card', undefined);
+    expect(internal.queuedTurns).toEqual([{ text: 'Feedback queued during card', images: undefined }]);
+    expect(internal.options.permissionMode).toBe('plan');
+  });
+
   it('reports every path from a multi-file fileChange through the shared edited-files callback', () => {
     const managerEditedFiles: string[] = [];
     const onFilesEdited = (paths: string[]) => {
@@ -340,8 +702,6 @@ describe('CodexSession protocol notifications', () => {
       callbacks: { onDone, onPlanReady, onEnterPlanMode, onError: vi.fn() },
     };
     vi.spyOn(internal, 'request').mockResolvedValue({});
-    const send = vi.spyOn(session, 'send').mockImplementation(() => {});
-
     internal.startTurn('Make a plan');
     expect(onEnterPlanMode).toHaveBeenCalledOnce();
     expect(internal.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
@@ -350,13 +710,14 @@ describe('CodexSession protocol notifications', () => {
     internal.handle({ method: 'item/completed', params: { item: { type: 'plan', id: 'plan-1', text: '1. Ship it' } } });
     internal.handle({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
 
-    expect(onDone).toHaveBeenCalledBefore(onPlanReady);
+    expect(onDone).not.toHaveBeenCalled();
     expect(onPlanReady).toHaveBeenCalledWith('1. Ship it', expect.any(Function), expect.any(Function));
     const approve = onPlanReady.mock.calls[0][1];
     approve('1. Ship it\n2. Verify it');
-    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    await vi.waitFor(() => expect(internal.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      input: [expect.objectContaining({ text: 'The plan was approved with these edits. Implement it now:\n\n1. Ship it\n2. Verify it' })],
+    })));
     expect(internal.options.permissionMode).toBe('default');
-    expect(send).toHaveBeenCalledWith('The plan was approved with these edits. Implement it now:\n\n1. Ship it\n2. Verify it');
   });
 
   it('maps Codex collaboration items to shared sub-agent task events', () => {

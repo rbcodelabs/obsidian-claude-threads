@@ -3386,7 +3386,7 @@ export class ThreadsView extends ItemView {
   private renderPlanCard(
     planText: string,
     approve: (editedPlan?: string) => void,
-    reject: () => void,
+    reject: () => boolean,
   ): HTMLElement {
     const container = this.cardContainer();
     const card = container.createDiv('ct-plan-card');
@@ -3415,11 +3415,11 @@ export class ThreadsView extends ItemView {
     const rejectBtn = actions.createEl('button', { text: 'Reject', cls: 'ct-plan-btn ct-plan-reject' });
     rejectBtn.addEventListener('click', () => {
       card.remove();
-      reject();
+      const hadFeedback = reject();
       // Inject a follow-up turn so Claude acknowledges the rejection and offers
       // to revise. sendMessage() queues automatically while the session is still
       // active and fires as a new turn once the denial response lands.
-      if (rejectThreadId) {
+      if (rejectThreadId && !hadFeedback) {
         void this.manager.sendMessage(
           rejectThreadId,
           'I rejected the plan. Please ask what changes I\'d like, or suggest alternative approaches.',
@@ -3512,6 +3512,7 @@ export class ThreadsView extends ItemView {
         // Reject: just clear the persisted plan. The follow-up sendMessage is
         // injected by renderPlanCard's reject button handler (same as live path).
         clearPlan();
+        return false;
       },
     );
   }
@@ -4173,6 +4174,18 @@ export class ThreadsView extends ItemView {
 
       case 'cwd_changed': {
         this.renderThreadInfo();
+        break;
+      }
+
+      case 'permission_mode_changed': {
+        this.updatePermissionModeIndicator();
+        this.renderThreadInfo();
+        break;
+      }
+
+      case 'plan_transition_error': {
+        new Notice(event.error.message, 5_000);
+        this.restorePendingPlanCard();
         break;
       }
 

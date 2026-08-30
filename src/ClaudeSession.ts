@@ -118,18 +118,27 @@ export interface SessionCallbacks {
    */
   onToolResult?: (toolUseId: string, status: 'success' | 'error', durationMs?: number) => void;
   /**
-   * Fired when Claude calls EnterPlanMode. The session is now in read-only
-   * planning mode. Non-blocking: fire and continue.
+   * Fired when the active harness enters read-only planning mode.
+   * Non-blocking: fire and continue.
    */
   onEnterPlanMode?: () => void;
   /**
-   * Fired when Claude calls ExitPlanMode with a completed plan. Blocking:
-   * the session waits until either approve() or reject() is called.
+   * Fired when a harness needs to persist Plan mode before starting an
+   * internal read-only continuation at a safe turn boundary.
+   */
+  onPlanModeRequested?: () => void | Promise<void>;
+  /** Fired after Codex has successfully restored Default mode for an approved plan. */
+  onPlanApprovalCommitted?: () => void | Promise<void>;
+  /** Retryable Plan/Default transition failure; the approval card remains live. */
+  onPlanTransitionError?: (error: Error) => void;
+  /**
+   * Fired when the active harness produces a completed plan. The harness must
+   * not begin implementation until either approve() or reject() is called.
    * - approve(editedPlan?) - allow implementation to proceed; pass the edited
    *   plan text if the user modified it, otherwise undefined.
-   * - reject() - deny without interrupt; Claude reads the rejection message and stops cleanly.
+   * - reject() - deny implementation while leaving the harness ready for plan revision.
    */
-  onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => void) => void;
+  onPlanReady?: (planText: string, approve: (editedPlan?: string) => void, reject: () => boolean) => void;
   /**
    * Fired once per session after the Query is initialized with the list of
    * available models and subagent types for this session.
@@ -273,7 +282,10 @@ export class ClaudeSession {
                     : 'Plan approved — proceed with implementation.';
                   resolve({ behavior: 'deny' as const, message: approvalNote, interrupt: false });
                 },
-                () => resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false }),
+                () => {
+                  resolve({ behavior: 'deny' as const, message: 'Plan rejected by user — stop immediately and do not proceed with any implementation.', interrupt: false });
+                  return false;
+                },
               );
             });
             return result;

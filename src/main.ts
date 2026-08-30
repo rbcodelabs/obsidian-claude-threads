@@ -699,7 +699,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // Persist pending plan text so the plan card survives a reload/crash.
     const unsubPendingPlan = this.manager.subscribe((_threadId, event) => {
-      if (event.type === 'pending_plan_changed') {
+      if (event.type === 'pending_plan_changed' || event.type === 'permission_mode_changed') {
         this.saveSettings().catch(console.error);
       }
     });

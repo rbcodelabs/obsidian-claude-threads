@@ -106,6 +106,162 @@ beforeEach(() => {
 // ─── pendingPlan lifecycle ────────────────────────────────────────────────────
 
 describe('pendingPlan — set and persist', () => {
+  it('persists a Codex-requested transition to per-thread Plan mode', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    const events: ThreadEvent[] = [];
+    manager.subscribe((id, event) => { if (id === thread.id) events.push(event); });
+
+    await manager.sendMessage(thread.id, 'Investigate first');
+    await mock.callbacks!.onPlanModeRequested!();
+
+    expect(thread.permissionMode).toBe('plan');
+    expect(events).toContainEqual({ type: 'permission_mode_changed', mode: 'plan' });
+    driveResponse('Done');
+  });
+
+  it('emits Default mode only after approval has mutated the persisted thread', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    thread.agentHarness = 'codex';
+    thread.permissionMode = 'plan';
+    let modeAtEvent: unknown;
+    let modeAtFirstSaveEvent: unknown;
+    manager.subscribe((id, event) => {
+      if (id !== thread.id) return;
+      if (modeAtFirstSaveEvent === undefined
+        && (event.type === 'permission_mode_changed' || event.type === 'pending_plan_changed')) {
+        modeAtFirstSaveEvent = thread.permissionMode;
+      }
+      if (event.type === 'permission_mode_changed') modeAtEvent = thread.permissionMode;
+    });
+
+    // Build callbacks without selecting the real Codex adapter in this fixture.
+    thread.agentHarness = 'claude';
+    await manager.sendMessage(thread.id, 'Plan');
+    thread.agentHarness = 'codex';
+    mock.callbacks!.onPlanReady!('Plan', () => {}, () => false);
+    modeAtFirstSaveEvent = undefined;
+    manager.getPendingPlanResolvers(thread.id)!.approve();
+    expect(thread.pendingPlan).toBe('Plan');
+    expect(thread.permissionMode).toBe('plan');
+    mock.callbacks!.onPlanApprovalCommitted!();
+
+    expect(modeAtEvent).toBe('default');
+    expect(modeAtFirstSaveEvent).toBe('default');
+    expect(thread.permissionMode).toBe('default');
+    driveResponse('Done');
+  });
+
+  it('keeps the Codex plan card and resolver retryable until approval settings commit', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    thread.permissionMode = 'plan';
+    await manager.sendMessage(thread.id, 'Plan');
+    thread.agentHarness = 'codex';
+    const approve = vi.fn();
+    mock.callbacks!.onPlanReady!('Retry me', approve, () => false);
+
+    manager.getPendingPlanResolvers(thread.id)!.approve();
+    mock.callbacks!.onPlanTransitionError!(new Error('settings failed'));
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(thread.permissionMode).toBe('plan');
+    expect(thread.pendingPlan).toBe('Retry me');
+    expect(manager.getPendingPlanResolvers(thread.id)).toBeDefined();
+  });
+
+  it('releases queued rejection feedback in FIFO order and reports it to the card', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    const dequeued: string[] = [];
+    manager.subscribe((id, event) => {
+      if (id === thread.id && event.type === 'dequeued') dequeued.push(event.text);
+    });
+
+    await manager.sendMessage(thread.id, 'Plan');
+    mock.callbacks!.onPlanReady!('Plan', () => {}, () => false);
+    await manager.sendMessage(thread.id, 'First revision feedback');
+    await manager.sendMessage(thread.id, 'Second revision feedback');
+
+    const hadFeedback = manager.getPendingPlanResolvers(thread.id)!.reject();
+    await manager.sendMessage(thread.id, 'Feedback racing the reject click');
+    await vi.waitFor(() => expect(dequeued).toHaveLength(3));
+
+    expect(hadFeedback).toBe(true);
+    expect(manager.getQueuedCount(thread.id)).toBe(0);
+    expect(dequeued).toEqual([
+      'First revision feedback',
+      'Second revision feedback',
+      'Feedback racing the reject click',
+    ]);
+  });
+
+  it('leaves rejection feedback queued when goal persistence blocks dispatch', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    await manager.sendMessage(thread.id, 'Plan');
+    mock.callbacks!.onPlanReady!('Plan', () => {}, () => false);
+    await manager.sendMessage(thread.id, 'Feedback');
+    const state = (manager as any).getGoalContextState(thread.id);
+    state.persistencePendingRevision = 1;
+
+    manager.getPendingPlanResolvers(thread.id)!.reject();
+    await Promise.resolve();
+
+    expect(manager.getQueuedMessages(thread.id).map((item) => item.text)).toEqual(['Feedback']);
+    expect((manager as any).releasingPlanFeedback.has(thread.id)).toBe(false);
+  });
+
+  it('surfaces a rejected feedback dispatch and clears its release gate', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    const errors: Error[] = [];
+    manager.subscribe((id, event) => { if (id === thread.id && event.type === 'error') errors.push(event.error); });
+    (manager as any).queuedMessages.set(thread.id, [{ text: 'Feedback' }]);
+    vi.spyOn(manager, 'sendMessage').mockRejectedValueOnce(new Error('dispatch rejected'));
+
+    (manager as any).releaseRejectedPlanFeedback(thread.id);
+    await vi.waitFor(() => expect(errors).toHaveLength(1));
+
+    expect(errors[0].message).toBe('dispatch rejected');
+    expect((manager as any).releasingPlanFeedback.has(thread.id)).toBe(false);
+  });
+
+  it('stops feedback draining when the thread is deleted', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+    (manager as any).queuedMessages.set(thread.id, [{ text: 'Feedback' }]);
+    const send = vi.spyOn(manager, 'sendMessage').mockImplementation(async () => {
+      manager.deleteThread(thread.id);
+    });
+
+    (manager as any).releaseRejectedPlanFeedback(thread.id);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+
+    expect(manager.getThread(thread.id)).toBeUndefined();
+    expect((manager as any).releasingPlanFeedback.has(thread.id)).toBe(false);
+  });
+
+  it('queues fresh user sends while plan approval is pending and releases them after a later done', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Make a plan');
+    mock.callbacks!.onPlanReady!('Plan', () => {}, () => {});
+    const promptBeforePendingSend = mock.prompt;
+
+    await manager.sendMessage(thread.id, 'Do not bypass the approval');
+
+    expect(manager.getQueuedCount(thread.id)).toBe(1);
+    expect(mock.prompt).toBe(promptBeforePendingSend);
+
+    manager.getPendingPlanResolvers(thread.id)!.approve();
+    driveResponse('Implementation done');
+    await vi.waitFor(() => expect(manager.getQueuedCount(thread.id)).toBe(0));
+    expect(mock.prompt).toBe('Do not bypass the approval');
+  });
+
   it('sets thread.pendingPlan when onPlanReady fires', async () => {
     const manager = makeManager();
     const thread = manager.createThread('T', os.tmpdir());
