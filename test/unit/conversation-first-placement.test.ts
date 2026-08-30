@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceLeaf } from 'obsidian';
-import { activateConversationFirstChat, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
+import { activateConversationFirstChat, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, resolvePersistedActiveThread, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
 function leaf(state: Record<string, unknown> = {}): WorkspaceLeaf {
@@ -88,6 +88,20 @@ describe('conversation placement persistence', () => {
     await transitionConversationPlacement(settings, 'conversation-first', async () => { events.push('migrate'); }, async () => { events.push('persist'); });
     expect(events).toEqual(['migrate', 'persist']);
     expect(settings.threadViewPlacement).toBe('conversation-first');
+  });
+
+  it('restores persisted selection after a view is recreated', () => {
+    const existing = new Set(['thread-1', 'thread-2']);
+    expect(resolvePersistedActiveThread(null, 'thread-2', (id) => existing.has(id), 'thread-1')).toBe('thread-2');
+  });
+
+  it('re-persists the prior policy if persistence fails after a successful migration', async () => {
+    const settings: { threadViewPlacement: 'classic' | 'conversation-first' } = { threadViewPlacement: 'classic' };
+    const saveSettings = vi.fn().mockRejectedValueOnce(new Error('disk failed')).mockResolvedValueOnce(undefined);
+    await expect(transitionConversationPlacement(settings, 'conversation-first', vi.fn().mockResolvedValue(undefined), saveSettings))
+      .rejects.toThrow('disk failed');
+    expect(settings.threadViewPlacement).toBe('classic');
+    expect(saveSettings).toHaveBeenCalledTimes(2);
   });
 });
 

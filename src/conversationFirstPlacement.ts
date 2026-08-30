@@ -86,6 +86,17 @@ export async function persistActiveThreadSelection(
   await saveSettings();
 }
 
+export function resolvePersistedActiveThread(
+  viewStateId: string | null,
+  settingsId: string | undefined,
+  exists: (id: string) => boolean,
+  fallbackId: string,
+): string {
+  if (viewStateId && exists(viewStateId)) return viewStateId;
+  if (settingsId && exists(settingsId)) return settingsId;
+  return fallbackId;
+}
+
 export async function transitionConversationPlacement(
   settings: { threadViewPlacement: ConversationPlacement },
   next: ConversationPlacement,
@@ -93,14 +104,17 @@ export async function transitionConversationPlacement(
   saveSettings: () => Promise<void>,
 ): Promise<void> {
   const previous = settings.threadViewPlacement;
+  let migrationSucceeded = false;
   settings.threadViewPlacement = next;
   try {
     await activateView();
+    migrationSucceeded = true;
     await saveSettings();
   } catch (error) {
     settings.threadViewPlacement = previous;
     try {
       await activateView();
+      if (migrationSucceeded) await saveSettings();
     } catch (rollbackError) {
       console.error('[ClaudeThreads] Failed to restore conversation placement after transition error:', rollbackError);
     }

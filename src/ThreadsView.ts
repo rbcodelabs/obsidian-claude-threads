@@ -580,10 +580,13 @@ export class ThreadsView extends ItemView {
     if (threads.length > 0) {
       // Respect a pre-set activeThreadId (e.g. focusThread called before buildUI in a race),
       // otherwise default to the most recently created thread rather than the oldest.
-      const persistedActiveThreadId = this.activeThreadId ?? this.plugin.settings.activeThreadId;
-      const targetId = (persistedActiveThreadId && this.manager.getThread(persistedActiveThreadId))
-        ? persistedActiveThreadId
-        : threads[threads.length - 1].id;
+      const { resolvePersistedActiveThread } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const targetId = resolvePersistedActiveThread(
+        this.activeThreadId,
+        this.plugin.settings.activeThreadId,
+        (id) => Boolean(this.manager.getThread(id)),
+        threads[threads.length - 1].id,
+      );
       void this.setActiveThread(targetId);
     } else {
       const thread = this.manager.createThread('Thread 1', this.plugin.getEffectiveCwd());
