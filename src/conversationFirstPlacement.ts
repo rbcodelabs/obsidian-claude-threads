@@ -33,6 +33,28 @@ export function planConversationFirstChat(
   };
 }
 
+/** Apply a conversation-first plan without removing the last working chat prematurely. */
+export async function activateConversationFirstChat(
+  plan: ConversationFirstChatPlan,
+  createDestination: () => WorkspaceLeaf | null,
+  viewType: string,
+): Promise<WorkspaceLeaf> {
+  if (plan.keep) {
+    for (const duplicate of plan.detach) duplicate.detach();
+    return plan.keep;
+  }
+
+  const destination = createDestination();
+  if (!destination) throw new Error('Unable to create a main-area leaf for Claude Threads.');
+  await destination.setViewState({
+    type: viewType,
+    active: true,
+    state: plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {},
+  });
+  for (const source of plan.detach) source.detach();
+  return destination;
+}
+
 /** Restore classic placement while preserving either historical sidebar. */
 export function planClassicChat(
   chatLeaves: WorkspaceLeaf[],

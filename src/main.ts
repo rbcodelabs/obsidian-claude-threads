@@ -1837,18 +1837,16 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (this.isConversationFirst()) {
       // Loaded lazily with the desktop view modules; mobile never reaches here.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { planConversationFirstChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
+      const {
+        activateConversationFirstChat,
+        planConversationFirstChat,
+      } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
       const plan = planConversationFirstChat(workspace.getLeavesOfType(VIEW_TYPE), workspace.rootSplit);
-      leaf = plan.keep ?? undefined;
-      for (const duplicate of plan.detach) duplicate.detach();
-      if (!leaf) {
-        leaf = workspace.getLeaf('tab');
-        await leaf.setViewState({
-          type: VIEW_TYPE,
-          active: true,
-          state: plan.activeThreadId ? { activeThreadId: plan.activeThreadId } : {},
-        });
-      }
+      leaf = await activateConversationFirstChat(
+        plan,
+        () => workspace.getLeaf('tab'),
+        VIEW_TYPE,
+      );
     } else {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { planClassicChat } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
