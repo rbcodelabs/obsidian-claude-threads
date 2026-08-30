@@ -225,14 +225,27 @@ export class AttachmentWriter {
   /**
    * Rung 3: write the bytes straight to disk under the vault root.
    *
-   * Known caveat, accepted deliberately: a file written this way is invisible
-   * to the host's metadata cache until it rescans, so an `![[attachments/...]]`
-   * embed may not resolve immediately (it resolves after the next vault scan or
-   * restart). That is still strictly better than the alternative, which is the
-   * silent no-op this ladder replaces, one that left multi-megabyte base64
-   * inline in data.json forever, the exact bloat ADR-0003 was written to
-   * eliminate. Rung 1 avoids the caveat entirely once Geode ships
-   * `window.geode.writeBinary`.
+   * Caveat, measured rather than assumed: a file written this way bypasses the
+   * host's own write path, so whether it becomes visible depends on the host's
+   * file watcher.
+   *
+   * Under Geode it does, and quickly. Measured in a live Electron process
+   * (headless Playwright, Geode's own e2e harness): `adapter.exists` is true
+   * at 1ms (a live IPC stat, never index-dependent),
+   * `vault.getAbstractFileByPath` resolves at ~306ms once the FSEvents watcher
+   * fires, `getResourcePath` serves the bytes (fetch 200, correct length), and
+   * a real `![[attachments/...]]` embed renders in a markdown view with zero
+   * unresolved embeds. No rescan or restart is needed. The 306ms figure is
+   * macOS/FSEvents-specific and was not measured on Windows or Linux.
+   *
+   * Obsidian proper was NOT tested this way. There the ladder stops at rung 2,
+   * which registers with the metadata cache directly, so rung 3's visibility
+   * is not on Obsidian's normal path anyway.
+   *
+   * Either way this beats the alternative it replaces: a silent no-op that
+   * left multi-megabyte base64 inline in data.json forever, the exact bloat
+   * ADR-0003 was written to eliminate. Rung 1 removes the question entirely
+   * once Geode ships `window.geode.writeBinary`.
    *
    * `fs`/`path` are required lazily, never at module scope: ThreadManager
    * imports this module eagerly and Obsidian Mobile's require() interceptor
