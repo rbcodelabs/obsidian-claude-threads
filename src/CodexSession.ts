@@ -515,6 +515,20 @@ export class CodexSession {
         }
         break;
       }
+      case 'turn/plan/updated': {
+        if (params.threadId !== this.codexThreadId || !Array.isArray(params.plan)) break;
+        const tasks = params.plan.flatMap((item: unknown) => {
+          if (!item || typeof item !== 'object') return [];
+          const { step, status } = item as { step?: unknown; status?: unknown };
+          if (typeof step !== 'string' || step.trim().length === 0) return [];
+          if (status === 'pending' || status === 'completed') return [{ content: step, status }];
+          if (status === 'inProgress') return [{ content: step, status: 'in_progress' as const }];
+          return [];
+        });
+        if (params.plan.length > 0 && tasks.length === 0) break;
+        callbacks.onTaskEvent?.({ kind: 'replace', tasks });
+        break;
+      }
       case 'turn/started': {
         const eventThreadId = params.threadId ? String(params.threadId) : undefined;
         if (eventThreadId && eventThreadId !== this.codexThreadId && this.announcedSubagents.has(eventThreadId)) {

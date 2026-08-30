@@ -10,9 +10,10 @@ import { formatToolName, getToolIcon } from './toolNameUtils';
 export { formatToolName, getToolIcon };
 
 /**
- * Incremental change to Claude Code's task list, derived from the agent's
- * task-tracking tool calls:
+ * Incremental change to the shared task list, derived from harness-native
+ * task-tracking events:
  * - 'replace' — TodoWrite (older CLIs) sends the whole list each time
+ *               and Codex update_plan notifications send full snapshots
  * - 'create'  — TaskCreate confirmed by its tool result ("Task #N created…")
  * - 'update'  — TaskUpdate sets status (and possibly a new subject)
  */
