@@ -148,6 +148,21 @@ test.describe('Bridge-aware edits', () => {
     // A repo path outside the bridged source folder is NOT linkified.
     await expect(page.locator('a.internal-link', { hasText: 'notes.txt' })).toHaveCount(0);
 
+    // The canonical visualization fixture mounts an iframe during initial
+    // harness load before this test switches threads. Its late layout work can
+    // race ThreadsView's scheduled scrollToBottom() and leave this conversation
+    // at one of several otherwise-stable offsets. Settle that work, then pin the
+    // message scroller to the intended bottom position before comparing pixels.
+    await settleView(page);
+    await page.evaluate(async () => {
+      const messages = document.querySelector<HTMLElement>('.ct-messages');
+      if (messages) messages.scrollTop = messages.scrollHeight;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    });
+    await expect(link).toBeVisible();
+    await expect(
+      page.locator('a.internal-link[data-href="Projects/HipTrip Docs/drafts/outline.md"]')
+    ).toBeVisible();
     await shot(page, 'message-bridge-link.png', { fullPage: true });
   });
 });
