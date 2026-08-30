@@ -26,6 +26,73 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'main-view.png', { fullPage: true });
   });
 
+  test('set latest message as goal context menu', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+
+    const userMessages = page.locator('.ct-message-user');
+    await expect(userMessages).toHaveCount(3);
+
+    // Restored older rows preserve the host/browser menu; only the latest
+    // canonical text-bearing user row opens the plugin action.
+    await userMessages.first().click({ button: 'right' });
+    await expect(page.locator('.menu')).toHaveCount(0);
+    await userMessages.last().click({ button: 'right' });
+    await expect(page.locator('.menu .menu-item')).toHaveText('Set as goal');
+    await shot(page, 'set-as-goal-context-menu.png', { fullPage: true });
+  });
+
+  test('set as goal revalidates an open menu and retains the originating thread across save', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+
+    const latest = page.locator('.ct-message-user').last();
+    await latest.click({ button: 'right' });
+    await page.evaluate(() => (window as any).__addLiveUserMessage('thread-fix-auth', 'live-newer', 'Canonical live goal'));
+    await page.locator('.menu .menu-item').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__goalKickoffs.length)).toBe(0);
+
+    // The live row gets the same menu binding. Delay persistence, switch
+    // threads, then release: the action must still target thread-fix-auth.
+    await page.locator('.ct-message-user').last().click({ button: 'right' });
+    await page.evaluate(() => (window as any).__blockNextSave());
+    await page.locator('.menu .menu-item').click();
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await page.evaluate(() => (window as any).__releaseNextSave());
+
+    await expect.poll(() => page.evaluate(() => (window as any).__goalKickoffs.length)).toBe(1);
+    const result = await page.evaluate(() => ({
+      kickoff: (window as any).__goalKickoffs[0],
+      goal: (window as any).__manager.getThread('thread-fix-auth').goal,
+    }));
+    expect(result.goal).toBe('Canonical live goal');
+    expect(result.kickoff.threadId).toBe('thread-fix-auth');
+    expect(result.kickoff.message).toContain('Canonical live goal');
+  });
+
+  test('set as goal rolls back when persistence fails and surfaces the error', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+    await page.evaluate(() => (window as any).__failNextSave('disk full'));
+
+    await page.locator('.ct-message-user').last().click({ button: 'right' });
+    await page.locator('.menu .menu-item').click();
+
+    await expect(page.locator('.ct-error')).toContainText('Failed to set goal: disk full');
+    const result = await page.evaluate(() => ({
+      goal: (window as any).__manager.getThread('thread-fix-auth').goal,
+      kickoffs: (window as any).__goalKickoffs.length,
+    }));
+    expect(result.goal).toBeUndefined();
+    expect(result.kickoffs).toBe(0);
+  });
+
   // Seeds a two-agent team on the auth thread and opens it. Everything after this
   // is driven through real DOM (clicking the pill, clicking a row) rather than
   // calling private render methods, so these tests exercise the same path a user

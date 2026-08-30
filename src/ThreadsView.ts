@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
 import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage, escalationCommand } from './slashCommands';
+import { isSetAsGoalEligible } from './goalContext';
 import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel, prUrlMatchesRepo } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
@@ -2718,6 +2719,7 @@ export class ThreadsView extends ItemView {
     }
 
     const el = this.messagesEl.createDiv(`ct-message ct-message-${msg.role}`);
+    if (msg.role === 'user') this.attachSetAsGoalMenu(el, msg);
 
     if (msg.toolCalls && msg.toolCalls.length > 0) {
       this.renderToolCalls(el, msg.toolCalls);
@@ -3858,12 +3860,13 @@ export class ThreadsView extends ItemView {
         // handleSendMessage() already inserted the bubble synchronously before
         // calling sendMessage(), so pendingUserEl is already set — skip it here
         // to avoid a duplicate.
-        if (!this.pendingUserEl) {
+        let liveUserEl = this.pendingUserEl;
+        if (!liveUserEl || (liveUserEl.dataset.messageId && liveUserEl.dataset.messageId !== event.message.id)) {
           // Same empty-state cleanup as handleSendFromDispatch for external callers
           this.messagesEl.querySelector('.ct-empty')?.remove();
-          const userEl = this.messagesEl.createDiv('ct-message ct-message-user');
-          this.pendingUserEl = userEl;
-          const content = userEl.createDiv('ct-message-content');
+          liveUserEl = this.messagesEl.createDiv('ct-message ct-message-user');
+          this.pendingUserEl = liveUserEl;
+          const content = liveUserEl.createDiv('ct-message-content');
           content.createEl('p', { text: event.message.content });
           if (event.message.images && event.message.images.length > 0) {
             const imgRow = content.createDiv('ct-message-images');
@@ -3875,6 +3878,11 @@ export class ThreadsView extends ItemView {
           }
           this.scrollToBottom();
         }
+        // The composer creates its optimistic bubble before ThreadManager has
+        // assigned the canonical ChatMessage. Bind the menu only now, once we
+        // have that stable id/content. External live messages take the same
+        // path through the element created just above.
+        if (liveUserEl) this.attachSetAsGoalMenu(liveUserEl, event.message);
         break;
       }
 
@@ -4975,7 +4983,8 @@ export class ThreadsView extends ItemView {
 
   private async handleGoalCommand(arg: string): Promise<void> {
     if (!this.activeThreadId) return;
-    const thread = this.manager.getThread(this.activeThreadId);
+    const threadId = this.activeThreadId;
+    const thread = this.manager.getThread(threadId);
 
     if (!arg) {
       this.showCommandDivider(
@@ -4986,28 +4995,70 @@ export class ThreadsView extends ItemView {
 
     if (/^(clear|off|done)$/i.test(arg)) {
       const hadGoal = !!thread?.goal;
-      this.manager.setThreadGoal(this.activeThreadId, undefined);
-      await this.plugin.saveSettings();
-      this.showCommandDivider(hadGoal ? 'Goal cleared' : 'No goal was set.');
-      this.renderThreadInfo();
+      await this.applyThreadGoal(threadId, undefined);
+      if (this.activeThreadId === threadId) {
+        this.showCommandDivider(hadGoal ? 'Goal cleared' : 'No goal was set.');
+      }
       return;
     }
 
-    this.manager.setThreadGoal(this.activeThreadId, arg);
-    await this.plugin.saveSettings();
-    this.showCommandDivider(`Goal set: ${arg}`);
-    this.renderThreadInfo();
+    await this.applyThreadGoal(threadId, arg);
+    if (this.activeThreadId === threadId) this.showCommandDivider(`Goal set: ${arg}`);
+  }
 
-    // Kick off work toward the goal immediately. The goal itself is injected
-    // into the appended system prompt on this and every subsequent turn.
-    const sendThreadId = this.activeThreadId;
-    this.manager
-      .sendMessage(sendThreadId, goalKickoffMessage(arg))
-      .catch((err) => {
-        this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
-        this.clearEscalatedTurn(sendThreadId);
-        if (this.activeThreadId === sendThreadId) this.setRunningState(false);
+  /** Shared thread-specific action for /goal and the message context menu. */
+  private async applyThreadGoal(threadId: string, goal: string | undefined): Promise<void> {
+    const revision = this.manager.setThreadGoal(threadId, goal);
+    try {
+      await this.plugin.saveSettings();
+    } catch (error) {
+      this.manager.rollbackThreadGoal(threadId, revision);
+      throw error;
+    }
+
+    if (goal) {
+      void this.manager.requestGoalKickoff(threadId, revision, goalKickoffMessage(goal)).catch((error) => {
+        this.surfaceGoalActionError(threadId, error);
       });
+    } else {
+      this.manager.requestGoalContextRefresh(threadId, revision);
+    }
+
+    if (this.activeThreadId === threadId) this.renderThreadInfo();
+  }
+
+  private surfaceGoalActionError(threadId: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    if (this.activeThreadId === threadId) {
+      this.showCommandDivider(`Failed to set goal: ${message}`, true);
+      this.setRunningState(this.manager.isRunning(threadId));
+    } else {
+      new Notice(`Failed to set goal: ${message}`);
+    }
+  }
+
+  private attachSetAsGoalMenu(el: HTMLElement, message: ChatMessage): void {
+    el.dataset.messageId = message.id;
+    el.addEventListener('contextmenu', (event) => {
+      const threadId = this.activeThreadId;
+      if (!threadId) return;
+      const thread = this.manager.getThread(threadId);
+      if (!thread || !isSetAsGoalEligible(thread.messages, message)) return;
+
+      event.preventDefault();
+      const menu = new Menu();
+      menu.addItem((item) => item
+        .setTitle('Set as goal')
+        .setIcon('target')
+        .onClick(() => {
+          const current = this.manager.getThread(threadId);
+          if (!current || !isSetAsGoalEligible(current.messages, message)) return;
+          void this.applyThreadGoal(threadId, message.content).catch((error) => {
+            this.surfaceGoalActionError(threadId, error);
+          });
+        }));
+      menu.showAtMouseEvent(event);
+    });
   }
 
   /**

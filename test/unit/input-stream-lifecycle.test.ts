@@ -119,6 +119,7 @@ function makeThrowableChannel() {
 
 interface Generation {
   promptArg: AsyncIterable<Record<string, unknown>>;
+  options: Record<string, unknown>;
   canUseTool: ((name: string, input: unknown, opts: Record<string, unknown>) => Promise<unknown>) | null;
   closeCalls: number;
   setPermissionMode: ReturnType<typeof vi.fn>;
@@ -135,6 +136,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
     query: (opts: { prompt: AsyncIterable<Record<string, unknown>>; options: Record<string, unknown> }) => {
       const gen: Generation = {
         promptArg: opts.prompt,
+        options: opts.options,
         canUseTool: (opts.options.canUseTool as Generation['canUseTool']) ?? null,
         closeCalls: 0,
         setPermissionMode: vi.fn(async () => {}),
@@ -192,6 +194,23 @@ const successResult = (sessionId = 's', numTurns = 1) =>
   ({ type: 'result', subtype: 'success', session_id: sessionId, total_cost_usd: 0, num_turns: numTurns });
 
 describe('ThreadSession — push-channel content shape', () => {
+  it('passes refreshed goal context and the durable session id to the Claude query', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+    await session.start({
+      ...baseOptions(minimalCallbacks()),
+      resume: 'durable-claude-session',
+      appendSystemPrompt: '## Active Goal\nShip the release',
+    });
+
+    expect(sdk.generations[0].options).toMatchObject({
+      resume: 'durable-claude-session',
+      extraArgs: { 'append-system-prompt': '## Active Goal\nShip the release' },
+    });
+    session.close();
+  });
+
   it('pushes a plain-text user message for a text-only send()', async () => {
     sdk.generations = [];
     sdk.nextIterable = makeChannel();

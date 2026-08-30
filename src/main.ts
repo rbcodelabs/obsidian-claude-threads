@@ -1919,7 +1919,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       : (images && images.length > 0 ? `Image task (${images.length} image${images.length > 1 ? 's' : ''})` : 'New Thread');
     const thread = this.manager.createThread(title, this.getEffectiveCwd(), undefined, opts?.agentHarness);
     if (opts?.model) this.manager.setThreadModel(thread.id, opts.model);
-    if (opts?.goal) this.manager.setThreadGoal(thread.id, opts.goal);
+    const goalRevision = opts?.goal ? this.manager.setThreadGoal(thread.id, opts.goal) : undefined;
     if (opts?.loop) {
       await this.scheduler.createItem({
         name: `Loop: ${text.slice(0, 40)}`,
@@ -1932,6 +1932,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       });
     }
     await this.saveSettings();
+    if (goalRevision !== undefined) this.manager.commitThreadGoal(thread.id, goalRevision);
     // Fire and forget — dashboard will show the running row via subscription
     this.manager.sendMessage(thread.id, text, images).catch(console.error);
     return thread.id;
