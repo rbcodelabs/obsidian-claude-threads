@@ -1066,11 +1066,13 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("MCP")');
     await page.waitForTimeout(200);
-    // Open the edit modal on the first (stdio) server so the form shows real
-    // values, including an ${ENV_VAR} placeholder in the environment field.
+    // Open the edit modal on the stdio server so the form shows real values,
+    // including an ${ENV_VAR} placeholder in the environment field. Targeted by
+    // name rather than by position: rows are sorted alphabetically, so `.first()`
+    // silently depends on the fixture's naming.
     await page
       .locator('.ct-mcp-servers-list .setting-item')
-      .first()
+      .filter({ hasText: 'obsidian_notes' })
       .getByRole('button', { name: 'Edit' })
       .click();
     await page.waitForSelector('.modal-overlay');

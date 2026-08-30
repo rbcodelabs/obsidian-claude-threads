@@ -598,6 +598,31 @@ export interface RemoteAccessSettings {
  */
 export type ProviderMode = 'claude' | 'bedrock';
 
+/**
+ * One external MCP server as stored in `PluginSettings.mcpServers`.
+ *
+ * Stored UNRESOLVED: string fields may contain `${VAR_NAME}` placeholders that
+ * are expanded at session start against the secrets named in `secretEnvKeys`
+ * (plus `process.env`). Secret values themselves are never stored here — see
+ * `mcpServerStore.resolveMcpServers`.
+ *
+ * There is no `sdk` variant on purpose: an SDK-type server needs a live
+ * in-process `McpServer` instance, which cannot be serialized into data.json
+ * or handed to the Codex app-server.
+ */
+export type StoredMcpServer =
+  | {
+      type: 'stdio';
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }
+  | {
+      type: 'http' | 'sse';
+      url: string;
+      headers?: Record<string, string>;
+    };
+
 export interface PluginSettings {
   claudeBinaryPath: string;
   /** Which local coding-agent harness new threads use. */
@@ -692,6 +717,18 @@ export interface PluginSettings {
    * names are persisted here — values never appear in data.json.
    */
   secretEnvKeys: string[];
+  /**
+   * External MCP servers injected into every new thread, on both the Claude and
+   * Codex harnesses. Keyed by server name.
+   *
+   * This plugin owns this data. It deliberately does NOT live in
+   * `~/.claude/settings.json`: that file belongs to Claude Code, its schema has
+   * no top-level `mcpServers` property (see the SDK's `Settings` interface), and
+   * nothing — not the CLI, not the SDK — ever read what we wrote there. Storing
+   * it here also keeps the server definitions and the `secretEnvKeys` registry
+   * that resolves their `${VAR}` placeholders in one file instead of two.
+   */
+  mcpServers: Record<string, StoredMcpServer>;
   /**
    * Set to true after the orphaned-note archive scan has run at least once with
    * nothing left to clean up. Prevents a full vault file-read scan on every startup
@@ -810,6 +847,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   pttKey: 'Alt+Space',
   openAIKey: '',
   secretEnvKeys: [],
+  mcpServers: {},
   remoteAccess: {
     enabled: false,
     roomId: '',

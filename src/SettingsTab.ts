@@ -7,7 +7,7 @@ import { telemetry } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
 import type { AgentDashboard } from './AgentDashboard';
-import type { RawMcpServer } from './claudeSettingsMcpEditor';
+import type { McpServerEntry } from './mcpServerStore';
 import { classifyScheduledItems, formatNextOccurrence } from './scheduledWorkView';
 
 // View-type string constants, mirrored as local literals (see main.ts) so referencing
@@ -738,9 +738,9 @@ class AddSkillSourceModal extends Modal {
 }
 
 /**
- * Add/edit modal for one entry in ~/.claude/settings.json's mcpServers block.
- * Operates on the raw, unresolved config — ${VAR} placeholders are passed
- * through verbatim, never decrypted or expanded here.
+ * Add/edit modal for one entry in `PluginSettings.mcpServers` (this plugin's
+ * own data.json). Operates on the raw, unresolved config — ${VAR} placeholders
+ * are passed through verbatim, never decrypted or expanded here.
  *
  * Pass `existing` (and it carries `previousName` implicitly via its `name`)
  * to pre-fill the form for an edit; pass `null` to add a new entry.
@@ -751,7 +751,8 @@ class McpServerModal extends Modal {
 
   constructor(
     app: App,
-    private existing: RawMcpServer | null,
+    private plugin: ClaudeThreadsPlugin,
+    private existing: McpServerEntry | null,
     private onSaved: () => void,
   ) {
     super(app);
@@ -834,7 +835,7 @@ class McpServerModal extends Modal {
 
     const handleSave = () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { saveMcpServer } = require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+      const { saveMcpServer } = require('./mcpServerStore') as typeof import('./mcpServerStore');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseExtraEnv } = require('./types') as typeof import('./types');
 
@@ -844,7 +845,7 @@ class McpServerModal extends Modal {
       const args = argsInput.value.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
       const env = parseExtraEnv(envInput.value);
 
-      const server: RawMcpServer = {
+      const server: McpServerEntry = {
         name,
         type: 'stdio',
         command: commandInput.value.trim(),
@@ -852,8 +853,9 @@ class McpServerModal extends Modal {
         ...(Object.keys(env).length > 0 ? { env } : {}),
       };
 
-      const result = saveMcpServer(server, this.existing?.name);
+      const result = saveMcpServer(this.plugin.settings, server, this.existing?.name);
       if (!result.ok) { showError(result.error); return; }
+      void this.plugin.saveSettings();
 
       new Notice(`Saved MCP server "${name}".`);
       this.close();
@@ -909,7 +911,7 @@ class McpServerModal extends Modal {
 
     const handleSave = () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { saveMcpServer } = require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+      const { saveMcpServer } = require('./mcpServerStore') as typeof import('./mcpServerStore');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseExtraEnv } = require('./types') as typeof import('./types');
 
@@ -922,15 +924,16 @@ class McpServerModal extends Modal {
       const headers = parseExtraEnv(headersInput.value);
       const transport = transportSelect.value === 'sse' ? 'sse' : 'http';
 
-      const server: RawMcpServer = {
+      const server: McpServerEntry = {
         name,
         type: transport,
         url,
         ...(Object.keys(headers).length > 0 ? { headers } : {}),
       };
 
-      const result = saveMcpServer(server, this.existing?.name);
+      const result = saveMcpServer(this.plugin.settings, server, this.existing?.name);
       if (!result.ok) { showError(result.error); return; }
+      void this.plugin.saveSettings();
 
       new Notice(`Saved MCP server "${name}".`);
       this.close();
@@ -2279,43 +2282,37 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
   private renderMcpTab(containerEl: HTMLElement): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { listMcpServers, deleteMcpServer } =
-      require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
+    const { listMcpServers, deleteMcpServer, findUnresolvedPlaceholders } =
+      require('./mcpServerStore') as typeof import('./mcpServerStore');
 
     containerEl.createEl('h2', { text: 'MCP Servers' });
     containerEl.createEl('p', {
       cls: 'setting-item-description',
       text:
-        'Manage external MCP servers merged into every new Claude thread. This edits the GLOBAL ' +
-        '~/.claude/settings.json file (or the per-machine file it symlinks to) — the same config ' +
-        'shared by every vault and every `claude` CLI session on this machine, not just this vault. ' +
-        'Changes apply to new threads only; sessions already running are unaffected.',
+        'External MCP servers merged into every new thread this plugin starts, on both the Claude ' +
+        'and Codex harnesses. These are stored in this plugin\'s own data.json and are injected ' +
+        'into each session at runtime — they are not written to ~/.claude/, and the `claude` CLI ' +
+        'does not see them. Changes apply to new threads only; sessions already running are unaffected.',
+    });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Use ${VAR_NAME} anywhere in a header, URL, or env value to reference a secret, then ' +
+        'register that name under Settings → Secrets. A server whose placeholders cannot be ' +
+        'resolved is skipped rather than started with blank values.',
     });
 
-    const { path: settingsPath, parseError: initialParseError } = listMcpServers();
-    containerEl.createEl('p', { cls: 'ct-settings-desc', text: `File: ${settingsPath}` });
-
-    if (initialParseError) {
-      const notice = containerEl.createDiv({ cls: 'ct-settings-notice' });
-      notice.createEl('strong', { text: 'Could not read settings.json: ' });
-      notice.appendText(initialParseError);
-      notice.createEl('br');
-      notice.appendText(
-        'Fix the JSON by hand, then reopen this tab. No add/edit/remove controls are shown while the ' +
-        'file is unparseable, to avoid overwriting whatever is actually on disk.',
-      );
-      return;
-    }
+    // Presence check only — the settings UI never reads secret values out of the
+    // keychain. A name registered under Settings → Secrets counts as resolvable.
+    const knownEnv: Record<string, string> = { ...(process.env as Record<string, string>) };
+    for (const key of this.plugin.settings.secretEnvKeys ?? []) knownEnv[key] = 'set';
 
     const listEl = containerEl.createDiv({ cls: 'ct-mcp-servers-list' });
     const renderList = () => {
       listEl.empty();
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { listMcpServers: reread } =
-        require('./claudeSettingsMcpEditor') as typeof import('./claudeSettingsMcpEditor');
-      const { servers } = reread();
+      const { servers, invalid } = listMcpServers(this.plugin.settings);
 
-      if (servers.length === 0) {
+      if (servers.length === 0 && invalid.length === 0) {
         listEl.createEl('p', { text: 'No MCP servers configured yet.', cls: 'ct-settings-empty' });
         return;
       }
@@ -2324,11 +2321,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         const summary =
           server.type === 'stdio'
             ? [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
-            : server.type === 'http' || server.type === 'sse'
-              ? (server.url ?? '')
-              : server.type === 'sdk'
-                ? 'Registered by an in-process integration.'
-                : 'Unrecognized entry type.';
+            : (server.url ?? '');
 
         const row = new Setting(listEl)
           .setName(server.name)
@@ -2339,29 +2332,52 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           text: server.type,
         });
 
-        const isEditable = server.type === 'stdio' || server.type === 'http' || server.type === 'sse';
-        if (isEditable) {
-          row.addButton((btn) =>
-            btn.setButtonText('Edit').onClick(() => {
-              new McpServerModal(this.app, server, () => renderList()).open();
-            }),
-          );
-        } else {
+        const missing = findUnresolvedPlaceholders(server, knownEnv);
+        if (missing.length > 0) {
           row.descEl.createEl('br');
           row.descEl.createEl('span', {
-            cls: 'ct-skill-source-repo',
-            text: 'Read-only here — edit settings.json directly to change it.',
+            cls: 'ct-mcp-server-warning',
+            text:
+              `Will be skipped: ${missing.map((m) => '${' + m + '}').join(', ')} ` +
+              `${missing.length === 1 ? 'is' : 'are'} not registered under Settings → Secrets.`,
           });
         }
 
         row.addButton((btn) =>
+          btn.setButtonText('Edit').onClick(() => {
+            new McpServerModal(this.app, this.plugin, server, () => renderList()).open();
+          }),
+        );
+
+        row.addButton((btn) =>
           btn.setButtonText('Remove').setWarning().onClick(() => {
-            const result = deleteMcpServer(server.name);
+            const result = deleteMcpServer(this.plugin.settings, server.name);
             if (!result.ok) {
               new Notice(`Could not remove "${server.name}": ${result.error}`);
               return;
             }
+            void this.plugin.saveSettings();
             new Notice(`Removed MCP server "${server.name}".`);
+            renderList();
+          }),
+        );
+      }
+
+      // Entries that failed validation are shown rather than silently dropped,
+      // so hand-edited data.json damage is visible and removable.
+      for (const name of invalid) {
+        const row = new Setting(listEl)
+          .setName(name)
+          .setDesc('Not a valid MCP server entry — it will be skipped. Remove it, or fix it in data.json.');
+        row.nameEl.createEl('span', {
+          cls: 'ct-mcp-type-badge ct-mcp-type-badge--unknown',
+          text: 'invalid',
+        });
+        row.addButton((btn) =>
+          btn.setButtonText('Remove').setWarning().onClick(() => {
+            deleteMcpServer(this.plugin.settings, name);
+            void this.plugin.saveSettings();
+            new Notice(`Removed invalid MCP entry "${name}".`);
             renderList();
           }),
         );
@@ -2372,7 +2388,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .addButton((btn) =>
         btn.setButtonText('Add MCP server').setCta().onClick(() => {
-          new McpServerModal(this.app, null, () => renderList()).open();
+          new McpServerModal(this.app, this.plugin, null, () => renderList()).open();
         }),
       );
   }

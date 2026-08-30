@@ -7507,6 +7507,15 @@ body.ct-skills-resizing {
   border: 1px solid var(--background-modifier-border);
 }
 
+/* Shown when a server references a ${VAR} that is not a registered secret, so
+   it will be skipped at session start rather than started with blank values. */
+.ct-mcp-server-warning {
+  /* Concrete final fallback: if neither variable is defined the whole
+     declaration would be invalid and the warning would render as body text. */
+  color: var(--text-warning, var(--color-orange, #d19a3e));
+  font-size: 12px;
+}
+
 /* ── Staleness badge in settings ────────────────────────────────────────── */
 
 .ct-skill-source-updates-badge {

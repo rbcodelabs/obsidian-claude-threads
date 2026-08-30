@@ -175,6 +175,18 @@ export default class ClaudeThreadsPlugin extends Plugin {
   gitDiff: import('./GitDiffService').GitDiffService | null = null;
   orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
 
+  /**
+   * MCP-server warnings already shown as a Notice this plugin load, so a
+   * persistent misconfiguration doesn't re-notify on every single thread start.
+   *
+   * Deliberately not cleared on saveSettings(): that is the plugin's general
+   * persistence path (threads, projects, scheduler state), so clearing there
+   * would re-arm the notice several times a minute. Each distinct message is
+   * shown once per load; the durable surface is Settings → MCP, which
+   * recomputes the warning every time the tab is drawn.
+   */
+  private reportedMcpWarnings = new Set<string>();
+
   // Remote access (desktop and mobile)
   relayClient: RelayClient | null = null;
   mobileStore: MobileThreadStore | null = null;
@@ -294,7 +306,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { GitDiffService } = require('./GitDiffService') as typeof import('./GitDiffService');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { readClaudeSettingsMcp } = require('./claudeSettingsMcp') as typeof import('./claudeSettingsMcp');
+    const { resolveMcpServers } = require('./mcpServerStore') as typeof import('./mcpServerStore');
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const skillPaths = require('./skillPaths') as typeof import('./skillPaths');
 
@@ -560,16 +572,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
         }]));
         debugLog(`[ClaudeThreads] Built-in MCP servers created for thread ${threadId}:`, mcpDebug);
 
-        // Merge external MCP servers from ~/.claude/settings.json so that
-        // scheduled/looped sessions have the same tools as a normal CLI session.
-        // Secrets stored in the plugin keychain are resolved and used to expand
-        // ${VAR_NAME} placeholders in server configs (e.g. Authorization headers).
+        // Merge the user's own external MCP servers (Settings → MCP, stored in
+        // this plugin's data.json) so every thread — including scheduled and
+        // looped ones — gets the same roster. ThreadManager feeds this single
+        // result to BOTH harnesses: `claude.mcpServers` for the Agent SDK and,
+        // after shape translation, `codex.mcpServers` for the Codex app-server.
+        //
+        // Secrets from the OS keychain expand the ${VAR_NAME} placeholders in
+        // those configs. A server whose placeholders don't resolve is dropped
+        // rather than injected with blanks — see resolveMcpServers.
         const resolvedSecrets = this.manager.secretEnvResolver?.() ?? {};
-        const externalMcps = readClaudeSettingsMcp(resolvedSecrets);
+        const { servers: externalMcps, warnings } = resolveMcpServers(
+          this.settings.mcpServers,
+          { ...(process.env as Record<string, string>), ...resolvedSecrets },
+        );
         const externalCount = Object.keys(externalMcps).length;
         if (externalCount > 0) {
-          debugLog(`[ClaudeThreads] Merging ${externalCount} external MCP server(s) from ~/.claude/settings.json:`, Object.keys(externalMcps));
+          debugLog(`[ClaudeThreads] Merging ${externalCount} external MCP server(s) from plugin settings:`, Object.keys(externalMcps));
         }
+        this.reportMcpWarnings(warnings);
 
         return mergeMcpServers(mcpServers, externalMcps);
       } catch (err) {
@@ -1477,6 +1498,25 @@ export default class ClaudeThreadsPlugin extends Plugin {
    * `this.manifest?.dir` is optional-chained because the screenshot harness
    * mounts views against a mock plugin object with no `manifest`.
    */
+  /**
+   * Surface MCP servers that were refused at session start.
+   *
+   * Deduped for the life of the plugin load: the server factory runs on every
+   * thread start, and a persistent misconfiguration would otherwise fire a
+   * Notice every time. Each distinct message is shown once, then only logged.
+   */
+  private reportMcpWarnings(warnings: string[]): void {
+    if (warnings.length === 0) return;
+    // Tests build this class without running field initializers.
+    this.reportedMcpWarnings ??= new Set<string>();
+    for (const warning of warnings) {
+      console.warn(`[ClaudeThreads] ${warning}`);
+      if (this.reportedMcpWarnings.has(warning)) continue;
+      this.reportedMcpWarnings.add(warning);
+      new Notice(warning, 10000);
+    }
+  }
+
   getPluginSkillsRoot(): string {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) return '';
@@ -2024,6 +2064,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.settings.projects = this.settings.projects ?? [];
     // Ensure secretEnvKeys array exists for installs predating this feature
     this.settings.secretEnvKeys = this.settings.secretEnvKeys ?? [];
+    // Ensure mcpServers map exists for installs predating this feature. There is
+    // deliberately no import from ~/.claude/settings.json here: the plugin does
+    // not read that file at all any more.
+    this.settings.mcpServers = this.settings.mcpServers ?? {};
     // Ensure scheduledItems array exists for installs predating this feature
     this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature

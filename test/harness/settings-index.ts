@@ -87,11 +87,34 @@ const fixtureScheduled: ScheduledItem[] = [
   },
 ];
 
+// One server per transport for the Settings → MCP tab screenshot. `compass`
+// references ${COMPASS_API_KEY}, which is deliberately NOT in secretEnvKeys
+// below, so the baseline also captures the "will be skipped" warning that
+// replaced silently injecting a blank Authorization header.
+const fixtureMcpServers: PluginSettings['mcpServers'] = {
+  obsidian_notes: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', '@example/obsidian-notes-mcp'],
+    env: { NOTES_API_TOKEN: '${NOTES_API_TOKEN}' },
+  },
+  compass: {
+    type: 'http',
+    url: 'https://compass.rbcodelabs.com/api/mcp',
+    headers: { Authorization: 'Bearer ${COMPASS_API_KEY}' },
+  },
+  team_events: {
+    type: 'sse',
+    url: 'https://events.example.com/sse',
+  },
+};
+
 const settings: PluginSettings = {
   ...DEFAULT_SETTINGS,
   claudeBinaryPath: '/opt/homebrew/bin/claude',
   defaultModel: 'sonnet',
-  secretEnvKeys: ['STRIPE_SECRET_KEY'],
+  secretEnvKeys: ['STRIPE_SECRET_KEY', 'NOTES_API_TOKEN'],
+  mcpServers: fixtureMcpServers,
   alwaysAllowedTools: ['Bash', 'Read', 'mcp__obsidian__obsidian_search_vault'],
   escalationEnabled: true,
   summarizationEnabled: true,
