@@ -11,12 +11,23 @@ import { debugLog } from './logger';
  * Hosts disagree about which write API exists, so every write walks a
  * three-rung fallback ladder (see `write`). The plugin runs inside both
  * Obsidian and Geode, and Geode's Obsidian shim implements only a subset of
- * `FileSystemAdapter`: `getBasePath`, `getName`, `getResourcePath`, `exists`
- * and nothing else. Assuming the full adapter is what broke this class. The
- * `instanceof FileSystemAdapter` guard passes under Geode, then `ensureDir`
- * called `adapter.mkdir(...)`, which is `undefined` there, so a TypeError
- * unwound out of `write()` before it ever reached `createBinary` and every
+ * `FileSystemAdapter`: `getBasePath`, `getName`, `getResourcePath` and
+ * `exists`. Assuming the full adapter is what broke this class.
+ *
+ * The exact failure, confirmed by running this class against a surface
+ * reconstructed from Geode's own source rather than inferred: the
+ * `instanceof FileSystemAdapter` guard passes under Geode (its shim returns a
+ * real instance, deliberately, so plugin desktop guards resolve). `ensureDir`
+ * then called `adapter.mkdir(...)`, which is `undefined` there - but that
+ * TypeError was already swallowed by ensureDir's own catch, so it was NOT
+ * what killed the write. The throw that actually escaped `write()` came one
+ * step later, from `app.vault.createBinary` being undefined too. Every
  * attachment silently stayed inline as base64 in data.json.
+ *
+ * Both are worth stating because fixing only the `mkdir` call would have left
+ * the bug fully intact. Note also that Geode DOES implement
+ * `vault.createFolder`, so under Geode `ensureDir` now succeeds via that
+ * branch; it is the write itself that still falls through to rung 3.
  *
  * Desktop-only: every method is a no-op off a FileSystemAdapter (mobile is
  * relay-fed and cannot resolve a desktop attachment path). Never throws into the
