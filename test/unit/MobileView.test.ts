@@ -1165,8 +1165,8 @@ describe('MobileView — visualize markers', () => {
   }
 
   it('renders a card instead of leaking the raw marker as text', async () => {
-    const el = await renderAssistant('Here:\n\nvisualize{"path":"/desktop/Charts/rev.html"}');
-    expect(el.textContent).not.toContain('visualize{');
+    const el = await renderAssistant('Here:\n\nvisualize{"path":"/desktop/Charts/rev.html"}');
+    expect(el.textContent).not.toContain('visualize');
     expect(el.querySelector('.ct-visualize-card')).not.toBeNull();
   });
 
@@ -1177,7 +1177,7 @@ describe('MobileView — visualize markers', () => {
   });
 
   it('shows the title in the card header', async () => {
-    const el = await renderAssistant('visualize{"path":"/desktop/Charts/rev.html","title":"Revenue"}');
+    const el = await renderAssistant('visualize{"path":"/desktop/Charts/rev.html","title":"Revenue"}');
     expect(el.querySelector('.ct-visualize-title')?.textContent).toBe('Revenue');
   });
 

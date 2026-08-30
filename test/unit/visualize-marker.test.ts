@@ -101,6 +101,40 @@ describe('extractVisualizeMarkers', () => {
     expect(text.endsWith('\n\nDone.')).toBe(true);
   });
 
+  it('replaces the exact canonical wrapped content reference emitted by Codex', () => {
+    const { text, markers } = extractVisualizeMarkers(
+      'visualize{"path":"/tmp/chart.html"}',
+    );
+    expect(markers).toEqual([{ index: 0, path: '/tmp/chart.html' }]);
+    expect(text).toContain(`<a class="${VISUALIZE_SLOT_CLASS}" data-ct-viz="0" href="#">chart.html</a>`);
+    expect(text).not.toContain('visualize');
+  });
+
+  it('captures canonical mode and title', () => {
+    const { markers } = extractVisualizeMarkers(
+      'visualize{"path":"/tmp/chart.html","mode":"wide","title":"Revenue"}',
+    );
+    expect(markers).toEqual([
+      { index: 0, path: '/tmp/chart.html', mode: 'wide', title: 'Revenue' },
+    ]);
+  });
+
+  it('numbers canonical and legacy markers together in document order', () => {
+    const { markers } = extractVisualizeMarkers([
+      'visualize{"path":"/canonical.html"}',
+      'visualize{"path":"/legacy.html"}',
+    ].join('\n'));
+    expect(markers.map((marker) => [marker.index, marker.path])).toEqual([
+      [0, '/canonical.html'],
+      [1, '/legacy.html'],
+    ]);
+  });
+
+  it('preserves CRLF around a canonical marker', () => {
+    const { text } = extractVisualizeMarkers('a\r\nvisualize{"path":"/a.html"}\r\nb');
+    expect(text).toBe(`a\r\n<a class="${VISUALIZE_SLOT_CLASS}" data-ct-viz="0" href="#">a.html</a>\r\nb`);
+  });
+
   it('captures mode and title and uses the title as the anchor label', () => {
     const { text, markers } = extractVisualizeMarkers(
       'visualize{"path":"/tmp/a.html","mode":"wide","title":"Revenue by region"}',
@@ -175,6 +209,17 @@ describe('extractVisualizeMarkers', () => {
     expect(extractVisualizeMarkers(src)).toEqual({ text: src, markers: [] });
   });
 
+  it('ignores a canonical marker inside fenced, indented, or inline code', () => {
+    const marker = 'visualize{"path":"/a.html"}';
+    for (const src of [
+      ['```text', marker, '```'].join('\n'),
+      `    ${marker}`,
+      `Emit \`${marker}\` on its own line.`,
+    ]) {
+      expect(extractVisualizeMarkers(src)).toEqual({ text: src, markers: [] });
+    }
+  });
+
   // ── Malformed input ───────────────────────────────────────────────────────
 
   it('leaves malformed JSON as literal text when settled', () => {
@@ -199,6 +244,19 @@ describe('extractVisualizeMarkers', () => {
 
   it('accepts trailing whitespace after the object', () => {
     expect(extractVisualizeMarkers('visualize{"path":"/a.html"}   ').markers).toHaveLength(1);
+  });
+
+  it('leaves malformed canonical references visible without swallowing prose', () => {
+    for (const src of [
+      'visualize{"path": /a.html}',
+      'visualize{"path":"relative.html"}',
+      'visualize{"path":"/a.html"}',
+      'visualize{"path":"/a.html"}',
+      'visualize{"path":"/a.html"}',
+      'visualize{"path":"/a.html"} and then some',
+    ]) {
+      expect(extractVisualizeMarkers(src)).toEqual({ text: src, markers: [] });
+    }
   });
 
   // ── Streaming ─────────────────────────────────────────────────────────────
@@ -233,5 +291,39 @@ describe('extractVisualizeMarkers', () => {
   it('leaves a malformed marker visible once settled', () => {
     const src = 'visualize{"path":"/tmp/ch';
     expect(extractVisualizeMarkers(src, { streaming: false }).text).toBe(src);
+  });
+
+  it('suppresses only plausible trailing canonical prefixes while streaming', () => {
+    for (const partial of [
+      '',
+      'visual',
+      'visualize',
+      'visualize',
+      'visualize{"path":"/tmp/ch',
+      'visualize{"path":"/tmp/chart.html"}',
+    ]) {
+      expect(extractVisualizeMarkers(`Here it is.\n\n${partial}`, { streaming: true })).toEqual({
+        text: 'Here it is.\n\n',
+        markers: [],
+      });
+    }
+  });
+
+  it('does not suppress malformed canonical delimiters while streaming', () => {
+    for (const src of [
+      'visualize{"path":"/a.html"}',
+      'visualize{"path":"/a.html"}',
+      'visualize this for me',
+    ]) {
+      expect(extractVisualizeMarkers(src, { streaming: true })).toEqual({ text: src, markers: [] });
+    }
+  });
+
+  it('renders a complete canonical marker while streaming', () => {
+    const { markers } = extractVisualizeMarkers(
+      'visualize{"path":"/a.html"}',
+      { streaming: true },
+    );
+    expect(markers).toHaveLength(1);
   });
 });

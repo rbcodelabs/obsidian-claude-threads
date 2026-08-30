@@ -238,8 +238,8 @@ test.describe('Claude Threads UI', () => {
     // The marker must never survive as text in the bubble.
     await page.waitForSelector('.ct-visualize-card');
     const bubbleText = await page.locator('.ct-message-assistant .ct-message-content').innerText();
-    if (bubbleText.includes('visualize{')) {
-      throw new Error('visualize marker leaked into the message as raw text');
+    if (bubbleText.includes('visualize')) {
+      throw new Error('canonical visualize reference leaked into the message as raw text');
     }
 
     // The frame is the containment boundary: allow-scripts and nothing else.
@@ -351,7 +351,7 @@ test.describe('Claude Threads UI', () => {
       const scratch = document.createElement('div');
       document.querySelector('.ct-messages')!.appendChild(scratch);
       await view['renderMarkdown'](
-        'visualize{"path":"/Users/mock/viz/quarterly-revenue.html"}',
+        'visualize{"path":"/Users/mock/viz/quarterly-revenue.html"}',
         scratch,
         { streaming: true },
       );
@@ -360,7 +360,7 @@ test.describe('Claude Threads UI', () => {
         statics: scratch.querySelectorAll('.ct-visualize-card.ct-visualize-static').length,
         frames: scratch.querySelectorAll('iframe').length,
         popouts: scratch.querySelectorAll('.ct-visualize-action').length,
-        leaked: scratch.textContent!.includes('visualize{'),
+        leaked: scratch.textContent!.includes('visualize'),
       };
     });
     expect(streamingFrames).toEqual({ cards: 1, statics: 1, frames: 0, popouts: 0, leaked: false });

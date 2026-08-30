@@ -2,17 +2,19 @@
  * visualizeMarker.ts
  *
  * Scanner for the inline-visualization content reference emitted by OpenAI's
- * Codex `visualize` plugin. The model puts the marker on its own line in its
- * final response, where the visual should appear:
+ * Codex `visualize` skill. The model puts a wrapped content reference on its
+ * own line in its final response, where the visual should appear:
  *
- *     visualize{"path":"/abs/path/to/thing.html"}
- *     visualize{"path":"/abs/path/to/thing.html","mode":"wide","title":"…"}
+ *     visualize{"path":"/abs/path/to/thing.html"}
+ *     visualize{"path":"/abs/path/to/thing.html","mode":"wide","title":"…"}
  *
- * It is not a tool call, so nothing in the harness layer sees it. This module
- * rewrites each valid marker line into an anchor placeholder *before* the text
- * reaches `marked`, so the markdown is parsed exactly once and list numbering,
- * reference links, and footnotes that span a marker keep working. The renderer
- * swaps those anchors for cards after `sanitizeHTMLToDom`.
+ * Older persisted messages may contain the legacy bare `visualize{…}` form,
+ * which remains supported. These references are not tool calls, so nothing in
+ * the harness layer sees them. This module rewrites each valid line into an
+ * anchor placeholder *before* the text reaches `marked`, so the markdown is
+ * parsed exactly once and list numbering, reference links, and footnotes that
+ * span a marker keep working. The renderer swaps those anchors for cards after
+ * `sanitizeHTMLToDom`.
  *
  * Purity contract: no `fs`, no `path`, no `os`, no Obsidian imports. This module
  * is reachable from MobileView, which is loaded at bundle-init on every
@@ -59,21 +61,25 @@ export interface ExtractVisualizeResult {
 /** Absolute POSIX path, or a Windows drive path. Relative paths are rejected. */
 const ABSOLUTE_PATH_RE = /^([A-Za-z]:[\\/]|\/)/;
 
+/** Private-use delimiters in Codex's canonical content-reference wire format. */
+export const VISUALIZE_REFERENCE_OPEN = '\uE200visualize\uE202';
+export const VISUALIZE_REFERENCE_CLOSE = '\uE201';
+
 /**
- * A candidate marker line: `visualize{` at the very start of the line, allowing
- * the 0-3 leading spaces CommonMark permits before a block. Anchoring to the
- * line start is what makes the inline-code case (`` `visualize{…}` ``) safe for
- * free: it can never be at column 0 of its own line.
+ * Candidate marker lines at the very start of the line, allowing the 0-3
+ * leading spaces CommonMark permits before a block. Anchoring to the line start
+ * makes inline-code examples safe for free: they cannot begin at column 0.
  */
-const MARKER_LINE_RE = /^ {0,3}visualize\{/;
+const CANONICAL_MARKER_LINE_RE = /^ {0,3}\uE200visualize\uE202\{/;
+const LEGACY_MARKER_LINE_RE = /^ {0,3}visualize\{/;
 
 /**
  * A trailing line that is the bare token with no object yet (streaming only).
  * Deliberately exact: `visualize this for me` is ordinary prose and must never
  * be swallowed. Lines that have already reached `visualize{` are handled by
- * {@link MARKER_LINE_RE}.
+ * {@link LEGACY_MARKER_LINE_RE}.
  */
-const PARTIAL_MARKER_RE = /^ {0,3}visualize\s*$/;
+const PARTIAL_LEGACY_MARKER_RE = /^ {0,3}visualize\s*$/;
 
 /** Opening or closing fence: 3+ backticks or tildes, indented at most 3 spaces. */
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
@@ -87,6 +93,13 @@ const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
  * is that we never *mistake* indented content for markup.
  */
 const INDENTED_RE = /^(?: {4,}|\t)/;
+
+/** True only for a prefix that could still become a canonical reference. */
+function isPartialCanonicalMarker(body: string): boolean {
+  const indent = /^ {0,3}/.exec(body)?.[0].length ?? 0;
+  const content = body.slice(indent);
+  return content.length > 0 && VISUALIZE_REFERENCE_OPEN.startsWith(content);
+}
 
 function escapeHtml(value: string): string {
   return value
@@ -162,8 +175,8 @@ export function basename(filePath: string): string {
 }
 
 /**
- * Rewrite every valid `visualize{…}` marker line in `src` into an anchor
- * placeholder and return the markers found, in document order.
+ * Rewrite every valid canonical wrapped reference (and legacy bare marker) in
+ * `src` into an anchor placeholder and return markers in document order.
  *
  * Markers inside fenced code blocks are ignored: `SKILL.md` documents the
  * marker syntax inside ```` ```text ```` fences, and models quote their own
@@ -173,7 +186,7 @@ export function extractVisualizeMarkers(
   src: string,
   options: ExtractVisualizeOptions = {},
 ): ExtractVisualizeResult {
-  if (!src.includes('visualize')) return { text: src, markers: [] };
+  if (!src.includes('visualize') && !src.includes('\uE200')) return { text: src, markers: [] };
 
   const lines = src.split('\n');
   const markers: VisualizeMarker[] = [];
@@ -205,9 +218,15 @@ export function extractVisualizeMarkers(
     }
     if (fenceChar !== null) continue;
 
-    if (!MARKER_LINE_RE.test(body)) {
-      if (options.streaming && i === lines.length - 1 && PARTIAL_MARKER_RE.test(body)) {
-        // The bare token, with the object still arriving.
+    const canonical = CANONICAL_MARKER_LINE_RE.test(body);
+    const legacy = !canonical && LEGACY_MARKER_LINE_RE.test(body);
+    if (!canonical && !legacy) {
+      if (
+        options.streaming
+        && i === lines.length - 1
+        && (PARTIAL_LEGACY_MARKER_RE.test(body) || isPartialCanonicalMarker(body))
+      ) {
+        // The token or canonical wrapper prefix, with the object still arriving.
         lines[i] = '';
         changed = true;
       }
@@ -220,24 +239,40 @@ export function extractVisualizeMarkers(
 
     if (end === -1) {
       // Unterminated object. Mid-stream this is simply a marker still arriving.
-      if (options.streaming && isLastLine) {
+      // A canonical close delimiter before the object balances is malformed,
+      // not partial, and must remain visible for diagnosis.
+      const hasPrematureCanonicalDelimiter = canonical
+        && body.slice(braceAt).includes(VISUALIZE_REFERENCE_CLOSE);
+      if (options.streaming && isLastLine && !hasPrematureCanonicalDelimiter) {
         lines[i] = '';
         changed = true;
       }
       continue;
     }
-    // Anything other than whitespace after the object means this is prose that
-    // merely starts with the token, not a content reference.
-    if (body.slice(end).trim()) continue;
+
+    if (canonical) {
+      const tail = body.slice(end);
+      if (!tail.startsWith(VISUALIZE_REFERENCE_CLOSE)) {
+        // A balanced object with no close delimiter may still be in flight.
+        // Any other trailing content is malformed and stays visible.
+        if (options.streaming && isLastLine && tail.length === 0) {
+          lines[i] = '';
+          changed = true;
+        }
+        continue;
+      }
+      if (tail.slice(VISUALIZE_REFERENCE_CLOSE.length).trim()) continue;
+    } else if (body.slice(end).trim()) {
+      // Legacy markers accept whitespace only after the JSON object.
+      continue;
+    }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(body.slice(braceAt, end));
     } catch {
-      if (options.streaming && isLastLine) {
-        lines[i] = '';
-        changed = true;
-      }
+      // Balanced invalid JSON is malformed rather than partial. Keep it visible
+      // even while streaming so parser errors never swallow user-facing prose.
       continue;
     }
 

@@ -237,9 +237,9 @@ You can open any of them directly from here.`,
 
 // ─── Thread: inline visualization ────────────────────────────────────────────
 // Used by ui.spec.ts's "inline visualization card" test. Codex's `visualize`
-// plugin emits a bare marker on its own line where the visual belongs; without
-// the inline renderer it leaks into the bubble as raw text. The fragment the
-// path points at is served by test/harness/mocks/fs.ts.
+// skill emits a canonical wrapped content reference on its own line where the
+// visual belongs; without the inline renderer it leaks into the bubble as raw
+// text. The fragment path is served by test/harness/mocks/fs.ts.
 
 const threadVisualizeMessages: ChatMessage[] = [
   {
@@ -253,7 +253,7 @@ const threadVisualizeMessages: ChatMessage[] = [
     role: 'assistant',
     content: `North America still carries the quarter, but APAC is the fastest riser off a small base.
 
-visualize{"path":"/Users/mock/viz/quarterly-revenue.html","title":"Quarterly revenue"}
+visualize{"path":"/Users/mock/viz/quarterly-revenue.html","title":"Quarterly revenue"}
 
 Europe is flat quarter over quarter.`,
     timestamp: T3 + 12000,

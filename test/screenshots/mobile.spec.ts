@@ -210,8 +210,8 @@ test.describe('Mobile View', () => {
 
       // The marker must never survive as raw text.
       const text = await page.locator('.ct-mobile-messages').innerText();
-      if (text.includes('visualize{')) {
-        throw new Error('visualize marker leaked into the mobile message as raw text');
+      if (text.includes('visualize')) {
+        throw new Error('canonical visualize reference leaked into the mobile message as raw text');
       }
       await expect(page.locator('iframe')).toHaveCount(0);
       await expect(page.locator('.ct-visualize-card.ct-visualize-static')).toHaveCount(1);
