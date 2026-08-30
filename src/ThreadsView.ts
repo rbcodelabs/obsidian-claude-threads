@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter, TFile } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
@@ -36,7 +36,7 @@ import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
 import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
 import { deleteScheduledActivity, scheduledActivityForThread, scheduledActivitySummary, type ScheduledActivity } from './scheduledActivity';
-import { ConversationViewPlacementState } from './conversationFirstPlacement';
+import { ConversationViewPlacementState, resolveHostRestoredActiveThread } from './conversationFirstPlacement';
 
 export const VIEW_TYPE = 'claude-threads:chat';
 
@@ -359,8 +359,14 @@ export class ThreadsView extends ItemView {
   async setState(state: unknown, result: ViewStateResult): Promise<void> {
     await super.setState(state, result);
     this.conversationPlacement.apply(state);
-    const activeThreadId = (state as { activeThreadId?: unknown } | null)?.activeThreadId;
-    if (typeof activeThreadId !== 'string' || !this.manager.getThread(activeThreadId)) return;
+    const incoming = (state as { activeThreadId?: unknown } | null)?.activeThreadId;
+    const activeThreadId = resolveHostRestoredActiveThread(
+      this.activeThreadId,
+      typeof incoming === 'string' ? incoming : null,
+      this.plugin.settings.activeThreadId,
+      (id) => Boolean(this.manager.getThread(id)),
+    );
+    if (!activeThreadId) return;
     this.activeThreadId = activeThreadId;
     if (this.rootEl) await this.setActiveThread(activeThreadId);
   }
@@ -1580,9 +1586,10 @@ export class ThreadsView extends ItemView {
     if (this.plugin.isConversationFirst()) {
       const { formatCompanionEditedFilesNotice, resolveFinalCompanionFile } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
       const resolved = resolveFinalCompanionFile(relPaths, (relPath) =>
-        this.app.vault.getAbstractFileByPath(relPath) as import('obsidian').TFile | null,
+        this.app.vault.getAbstractFileByPath(relPath),
+        (candidate) => candidate instanceof TFile,
       );
-      if (resolved) await this.plugin.contextPanel.openFile(resolved.file);
+      if (resolved) await this.plugin.contextPanel.openFile(resolved.file as TFile);
       new Notice(formatCompanionEditedFilesNotice(resolved?.path ?? '', resolved?.validCount ?? 0));
       return;
     }

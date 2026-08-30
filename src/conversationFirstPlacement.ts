@@ -122,6 +122,18 @@ export function resolvePersistedActiveThread(
   return fallbackId;
 }
 
+export function resolveHostRestoredActiveThread(
+  activeAfterOnOpen: string | null,
+  incomingHostStateId: string | null,
+  settingsId: string | undefined,
+  exists: (id: string) => boolean,
+): string | null {
+  if (settingsId && exists(settingsId)) return settingsId;
+  if (activeAfterOnOpen && exists(activeAfterOnOpen)) return activeAfterOnOpen;
+  if (incomingHostStateId && exists(incomingHostStateId)) return incomingHostStateId;
+  return null;
+}
+
 export async function transitionConversationPlacement(
   settings: { threadViewPlacement: ConversationPlacement },
   next: ConversationPlacement,
@@ -155,12 +167,13 @@ export function formatCompanionEditedFilesNotice(lastPath: string, fileCount: nu
 export function resolveFinalCompanionFile<T>(
   paths: string[],
   resolve: (path: string) => T | null,
+  isFile: (candidate: T) => boolean = () => true,
 ): { path: string; file: T; validCount: number } | null {
   let final: { path: string; file: T } | null = null;
   let validCount = 0;
   for (const path of paths) {
     const file = resolve(path);
-    if (!file) continue;
+    if (!file || !isFile(file)) continue;
     final = { path, file };
     validCount++;
   }

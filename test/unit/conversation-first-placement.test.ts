@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceLeaf } from 'obsidian';
-import { activateChatPlacement, activateConversationFirstChat, ConversationViewPlacementState, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, resolveFinalCompanionFile, resolvePersistedActiveThread, sanitizeConversationCompanionSettings, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
+import { activateChatPlacement, activateConversationFirstChat, ConversationViewPlacementState, formatCompanionEditedFilesNotice, isConversationFirstPlacement, persistActiveThreadSelection, planClassicChat, planConversationFirstChat, resolveFinalCompanionFile, resolveHostRestoredActiveThread, resolvePersistedActiveThread, sanitizeConversationCompanionSettings, transitionConversationPlacement } from '../../src/conversationFirstPlacement';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
 function leaf(state: Record<string, unknown> = {}): WorkspaceLeaf {
@@ -149,6 +149,16 @@ describe('conversation placement persistence', () => {
     expect(resolvePersistedActiveThread('thread-a', 'thread-b', (id) => existing.has(id), 'thread-a'))
       .toBe('thread-b');
   });
+  it('keeps settings-selected B when Geode runs onOpen(B) before setState(stale A)', () => {
+    const existing = new Set(['thread-a', 'thread-b']);
+    const afterOnOpen = 'thread-b';
+    expect(resolveHostRestoredActiveThread(
+      afterOnOpen,
+      'thread-a',
+      'thread-b',
+      (id) => existing.has(id),
+    )).toBe('thread-b');
+  });
 
   it('re-persists the prior policy if persistence fails after a successful migration', async () => {
     const settings: { threadViewPlacement: 'classic' | 'conversation-first' } = { threadViewPlacement: 'classic' };
@@ -169,6 +179,16 @@ describe('companion edited-file feedback', () => {
     const files = new Map([['Notes/a.md', { path: 'Notes/a.md' }], ['Notes/c.md', { path: 'Notes/c.md' }]]);
     expect(resolveFinalCompanionFile(['Notes/a.md', 'Notes/missing.md', 'Notes/c.md'], (path) => files.get(path) ?? null))
       .toEqual({ path: 'Notes/c.md', file: { path: 'Notes/c.md' }, validCount: 2 });
+  });
+  it('skips folders and returns only a real file candidate', () => {
+    const folder = { path: 'Notes', children: [] };
+    const file = { path: 'Notes/a.md' };
+    const resolved = resolveFinalCompanionFile(
+      ['Notes', 'Notes/a.md'],
+      (path) => path === 'Notes' ? folder : file,
+      (candidate) => !('children' in candidate),
+    );
+    expect(resolved).toEqual({ path: 'Notes/a.md', file, validCount: 1 });
   });
   it('emits correct feedback when no edited vault files still exist', () => {
     expect(formatCompanionEditedFilesNotice('', 0)).toBe('No edited vault files are available.');

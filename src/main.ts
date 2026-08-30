@@ -337,10 +337,12 @@ export default class ClaudeThreadsPlugin extends Plugin {
       this.app.workspace.getLeavesOfType(VIEW_TYPE)[0] ?? null,
       () => this.settings.conversationCompanionMarker,
       async (marker) => {
-        this.settings.conversationCompanionMarker = marker;
+        if (marker) this.settings.conversationCompanionMarker = marker;
+        else delete this.settings.conversationCompanionMarker;
         await this.saveSettings();
       },
     );
+    this.register(() => { void this.contextPanel.dispose(); });
     const deferredThreadArchiver = createDeferredThreadArchiver(
       this.manager,
       async (id) => {

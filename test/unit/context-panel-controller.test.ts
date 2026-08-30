@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { App, TFile, WorkspaceLeaf } from 'obsidian';
-import { ContextPanelController } from '../../src/ContextPanelController';
+import { ContextPanelController, createCompanionOwnershipStore } from '../../src/ContextPanelController';
 
 function makeLeaf(name: string) {
   return {
     name,
     view: {},
     getViewState: vi.fn().mockReturnValue({ type: 'markdown', state: {} }),
+    detach: vi.fn(),
     openFile: vi.fn().mockResolvedValue(undefined),
     setViewState: vi.fn().mockResolvedValue(undefined),
   } as unknown as WorkspaceLeaf & {
@@ -16,11 +17,19 @@ function makeLeaf(name: string) {
   };
 }
 
-function makeHarness(restoredMarker?: string, unrelatedLeaves: WorkspaceLeaf[] = []) {
+function makeHarness(
+  restoredMarker?: string,
+  unrelatedLeaves: WorkspaceLeaf[] = [],
+  store = createCompanionOwnershipStore(),
+  persistOverride?: (marker: string | undefined) => Promise<void>,
+) {
   const chat = makeLeaf('chat');
   const firstCompanion = makeLeaf('companion-1');
   const secondCompanion = makeLeaf('companion-2');
   const attached = new Set<WorkspaceLeaf>([chat, ...unrelatedLeaves]);
+  let chatLeaf = chat as WorkspaceLeaf;
+  firstCompanion.detach = vi.fn(() => attached.delete(firstCompanion));
+  secondCompanion.detach = vi.fn(() => attached.delete(secondCompanion));
   const splitActiveLeaf = vi
     .fn()
     .mockImplementationOnce(() => {
@@ -41,14 +50,19 @@ function makeHarness(restoredMarker?: string, unrelatedLeaves: WorkspaceLeaf[] =
   };
   const app = { workspace } as unknown as App;
   let marker = restoredMarker;
-  const createController = () => new ContextPanelController(
+  const createController = (ownershipStore = store) => new ContextPanelController(
     app,
-    () => chat,
+    () => chatLeaf,
     () => marker,
-    async (next) => { marker = next; },
+    persistOverride ?? (async (next) => { marker = next; }),
+    ownershipStore,
   );
   const controller = createController();
-  return { controller, createController, workspace, chat, firstCompanion, secondCompanion, attached, getMarker: () => marker };
+  return {
+    controller, createController, workspace, chat, firstCompanion, secondCompanion, attached,
+    getMarker: () => marker,
+    replaceChat: (next: WorkspaceLeaf) => { attached.delete(chatLeaf); chatLeaf = next; attached.add(next); },
+  };
 }
 
 describe('ContextPanelController', () => {
@@ -145,5 +159,38 @@ describe('ContextPanelController', () => {
     await controller.setViewState({ type: 'webviewer', state: { url: 'https://example.com?token=secret' } });
     expect(getMarker()).toMatch(/^ct-companion-/);
     expect(JSON.stringify(getMarker())).not.toContain('secret');
+  });
+
+  it('retires the owned companion before an ownership-store/module reload', async () => {
+    const storeBeforeReload = createCompanionOwnershipStore();
+    const { controller, workspace, firstCompanion, createController, getMarker } = makeHarness(undefined, [], storeBeforeReload);
+    await controller.openFile({ path: 'Notes/first.md' } as TFile);
+    await controller.dispose();
+    expect(firstCompanion.detach).toHaveBeenCalledOnce();
+    expect(getMarker()).toBeUndefined();
+
+    const storeAfterReload = createCompanionOwnershipStore();
+    const postReload = createController(storeAfterReload);
+    await postReload.openFile({ path: 'Notes/second.md' } as TFile);
+    expect(workspace.splitActiveLeaf).toHaveBeenCalledTimes(2);
+  });
+
+  it('retires the old companion when a placement round trip replaces the chat leaf', async () => {
+    const { controller, replaceChat, firstCompanion, secondCompanion, workspace } = makeHarness();
+    await controller.openFile({ path: 'Notes/context.md' } as TFile);
+    replaceChat(makeLeaf('replacement-chat'));
+    await controller.openFile({ path: 'Notes/after-round-trip.md' } as TFile);
+    expect(firstCompanion.detach).toHaveBeenCalledOnce();
+    expect(workspace.splitActiveLeaf).toHaveBeenCalledTimes(2);
+    expect(secondCompanion.openFile).toHaveBeenCalledOnce();
+  });
+
+  it('continues navigation after marker persistence fails and retries on the next operation', async () => {
+    const persist = vi.fn().mockRejectedValueOnce(new Error('disk failed')).mockResolvedValue(undefined);
+    const { controller, firstCompanion } = makeHarness(undefined, [], createCompanionOwnershipStore(), persist);
+    await expect(controller.openFile({ path: 'Notes/first.md' } as TFile)).resolves.toBeUndefined();
+    await expect(controller.openFile({ path: 'Notes/second.md' } as TFile)).resolves.toBeUndefined();
+    expect(firstCompanion.openFile).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenCalledTimes(2);
   });
 });
