@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import path from 'path';
-import { settleView, shot } from './helpers';
+import { anchorFocusedComposerToBottom, settleView, shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -77,7 +77,7 @@ test.describe('Bridge-aware edits', () => {
       await view.setActiveThread('thread-brainstorm');
       await view.setActiveThread('thread-fix-auth');
     });
-    await page.waitForTimeout(300);
+    await anchorFocusedComposerToBottom(page);
 
     // Bridge-mapped file counts as a vault file: sorts before the two
     // non-vault repo files and its tooltip shows the vault-relative path.
@@ -117,7 +117,7 @@ test.describe('Bridge-aware edits', () => {
     await page.waitForSelector('.ct-messages');
 
     await installBridgeMocks(page);
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const manager = (window as any).__manager;
       const view = (window as any).__view;
       const thread = manager.getThread('thread-brainstorm');
@@ -134,9 +134,9 @@ test.describe('Bridge-aware edits', () => {
         timestamp: ts,
       });
       // Switch to the thread so its messages render with the mocks in place.
-      view.focusThread('thread-brainstorm');
+      await view.focusThread('thread-brainstorm');
     });
-    await page.waitForTimeout(300);
+    await anchorFocusedComposerToBottom(page);
 
     // Paths under the bridge source folder (plain text AND inline code) are
     // linkified to the synced vault copy.
