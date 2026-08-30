@@ -24,6 +24,8 @@ export interface DesignArtifactFs {
 export interface DesignThreadDispatchDeps {
   createThread(title: string, agentHarness?: 'claude' | 'codex'): Thread;
   deleteThread(threadId: string): void;
+  getActiveThreadId(): string | null;
+  restoreActiveThread(threadId: string | null): Promise<void>;
   saveSettings(): Promise<void>;
   sendMessage(threadId: string, message: string): Promise<void>;
   openThread(threadId: string): Promise<void>;
@@ -180,6 +182,7 @@ export async function dispatchDesignThread(
   deps: DesignThreadDispatchDeps,
   fileFs: DesignArtifactFs = defaultFs,
 ): Promise<string> {
+  const previousActiveThreadId = deps.getActiveThreadId();
   const thread = deps.createThread(designTitle(brief), agentHarness);
   try {
     const artifact = await ensureDesignArtifact(thread, vaultRoot, brief, Date.now(), fileFs);
@@ -195,6 +198,11 @@ export async function dispatchDesignThread(
       // Rollback remains retry-safe even when filesystem cleanup is unavailable.
     }
     deps.deleteThread(thread.id);
+    try {
+      await deps.restoreActiveThread(previousActiveThreadId);
+    } catch {
+      // Keep rollback progressing so the provisional thread is not persisted.
+    }
     try {
       await deps.saveSettings();
     } catch {

@@ -2021,6 +2021,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
         createThread: (title, harness) =>
           this.manager.createThread(title, this.getEffectiveCwd(), undefined, harness),
         deleteThread: (threadId) => this.manager.deleteThread(threadId),
+        getActiveThreadId: () => this.getActiveThreadId(),
+        restoreActiveThread: async (threadId) => {
+          const view = this.getView();
+          if (view) await view.restoreThreadSelection(threadId);
+        },
         saveSettings: () => this.saveSettings(),
         sendMessage: (threadId, message) => this.manager.sendMessage(threadId, message),
         openThread: (threadId) => this.openThreadInChatView(threadId),

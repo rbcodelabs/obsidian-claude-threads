@@ -935,6 +935,29 @@ export class ThreadsView extends ItemView {
     return this.setActiveThread(id);
   }
 
+  /** Restore a valid selection after a provisional dispatch thread is rolled back. */
+  async restoreThreadSelection(preferredId: string | null): Promise<void> {
+    const targetId = preferredId && this.manager.getThread(preferredId)
+      ? preferredId
+      : this.manager.getThreads()[0]?.id ?? null;
+    if (targetId) {
+      await this.setActiveThread(targetId);
+      return;
+    }
+
+    this.activeThreadId = null;
+    this.plugin.settings.activeThreadId = undefined;
+    this.app.workspace.requestSaveLayout?.();
+    await this.plugin.saveSettings();
+    if (!this.titleEl) return;
+    this.renderTitleBar();
+    await this.renderMessages();
+    this.setRunningState(false);
+    this.dispatchInput?.setValue('');
+    this.dispatchInput?.clearAttachments();
+    this.refreshLeafHeader();
+  }
+
   /** Update the density data-attribute live when the user changes the setting. */
   applyDensity(): void {
     if (this.rootEl) {
