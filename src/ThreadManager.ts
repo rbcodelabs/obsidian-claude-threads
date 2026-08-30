@@ -74,6 +74,8 @@ export type ThreadEvent =
   | { type: 'usage'; usage: import('./Usage').UsageSnapshot }
   | { type: 'interrupted' }
   | { type: 'cwd_changed'; cwd: string }
+  | { type: 'project_changed' }
+  | { type: 'projects_changed' }
   | { type: 'thread_deleted' }
   | { type: 'thread_created' }
   | { type: 'threads_loaded'; threadIds: string[] }
@@ -368,20 +370,25 @@ export class ThreadManager {
       createdAt: Date.now(),
     };
     this.projects.set(project.id, project);
+    this.emit('', { type: 'projects_changed' });
     return project;
   }
 
   updateProject(id: string, updates: Partial<Omit<Project, 'id' | 'createdAt'>>): void {
     const project = this.projects.get(id);
-    if (project) Object.assign(project, updates);
+    if (project) {
+      Object.assign(project, updates);
+      this.emit('', { type: 'projects_changed' });
+    }
   }
 
   deleteProject(id: string): void {
     this.projects.delete(id);
     // Detach threads that belonged to this project
     for (const thread of this.threads.values()) {
-      if (thread.projectId === id) thread.projectId = undefined;
+      if (thread.projectId === id) this.setThreadProject(thread.id, null);
     }
+    this.emit('', { type: 'projects_changed' });
   }
 
   /**
@@ -393,6 +400,19 @@ export class ThreadManager {
     if (!this.vaultRoot) return project.vaultFolder;
     const path = require('path') as typeof import('path');
     return path.join(this.vaultRoot, project.vaultFolder);
+  }
+
+  /** Assign or detach a thread from a Project, optionally aligning its cwd. */
+  setThreadProject(id: string, projectId: string | null, alignCwd = false): void {
+    const thread = this.threads.get(id);
+    if (!thread) throw new Error(`Thread not found: ${id}`);
+    const project = projectId === null ? undefined : this.projects.get(projectId);
+    if (projectId !== null && !project) throw new Error(`Project not found: ${projectId}`);
+
+    thread.projectId = projectId ?? undefined;
+    thread.updatedAt = Date.now();
+    this.emit(id, { type: 'project_changed' });
+    if (alignCwd && project) this.setThreadCwd(id, this.getProjectCwd(project));
   }
 
   // ── Threads ──────────────────────────────────────────────────────────────────

@@ -385,10 +385,9 @@ export interface DesignArtifact {
 }
 
 /**
- * A Project groups related threads and scopes Claude's context to a specific
- * vault sub-folder. When a project is active, new threads use the project's
- * filesystem path as their working directory, giving Claude focused access to
- * just that folder's content.
+ * A Project groups related threads and chooses their initial working context.
+ * It is not a security or filesystem-isolation boundary: vault tools, MCP
+ * servers, skills, and secrets may still have a broader configured scope.
  */
 export interface Project {
   id: string;
@@ -443,7 +442,7 @@ export interface ScheduledItem {
   prompt: string;
   schedule: ScheduledItemSchedule;
   enabled: boolean;
-  /** Optional cwd override. Falls back to plugin default. */
+  /** Optional cwd override. Otherwise resolves from Project, then plugin default. */
   cwd?: string;
   /** Optional project ID for new threads */
   projectId?: string;

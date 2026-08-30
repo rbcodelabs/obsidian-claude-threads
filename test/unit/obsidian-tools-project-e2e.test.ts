@@ -60,13 +60,11 @@ async function makeE2EFixture() {
   const createProject = (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => {
     const p = manager.createProject(name, vaultFolder, description, cwdOverride);
     saveSettings().catch(console.error);
-    return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder };
+    return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder, cwdOverride: p.cwdOverride, effectiveCwd: manager.getProjectCwd(p) };
   };
 
-  const setThreadProject = (threadId: string, projectId: string | null) => {
-    const thread = manager.getThread(threadId);
-    if (!thread) throw new Error(`Thread not found: ${threadId}`);
-    thread.projectId = projectId ?? undefined;
+  const setThreadProject = (threadId: string, projectId: string | null, alignCwd?: boolean) => {
+    manager.setThreadProject(threadId, projectId, alignCwd);
     saveSettings().catch(console.error);
   };
 

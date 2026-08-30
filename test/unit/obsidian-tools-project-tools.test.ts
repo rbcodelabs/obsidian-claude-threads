@@ -71,6 +71,7 @@ const fakeProject: ProjectSnapshot = {
   name: 'HipTrip',
   vaultFolder: 'Projects/HipTrip',
   description: 'Travel curation app',
+  effectiveCwd: '/vault/Projects/HipTrip',
 };
 
 // ── obsidian_create_project ───────────────────────────────────────────────────
@@ -170,7 +171,17 @@ describe('obsidian_set_thread_project', () => {
 
     await tool._handler({ threadId: 'thread-1', projectId: 'proj-abc123' });
 
-    expect(setThreadProject).toHaveBeenCalledWith('thread-1', 'proj-abc123');
+    expect(setThreadProject).toHaveBeenCalledWith('thread-1', 'proj-abc123', false);
+  });
+
+  it('passes alignCwd through when requested', async () => {
+    const setThreadProject = vi.fn();
+    const server = createObsidianMcpServer(makeApp(), { setThreadProject }) as unknown as CapturedServer;
+    const tool = getTool(server, 'obsidian_set_thread_project');
+
+    await tool._handler({ threadId: 'thread-1', projectId: 'proj-abc123', alignCwd: true });
+
+    expect(setThreadProject).toHaveBeenCalledWith('thread-1', 'proj-abc123', true);
   });
 
   it('returns success: true with the threadId and projectId on assignment', async () => {
@@ -192,7 +203,7 @@ describe('obsidian_set_thread_project', () => {
     const result = await tool._handler({ threadId: 'thread-1', projectId: null });
 
     expect(result.isError).toBeUndefined();
-    expect(setThreadProject).toHaveBeenCalledWith('thread-1', null);
+    expect(setThreadProject).toHaveBeenCalledWith('thread-1', null, false);
     expect((parseResult(result) as { projectId: unknown }).projectId).toBeNull();
   });
 

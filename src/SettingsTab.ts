@@ -1669,7 +1669,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     // — Projects —
     new Setting(containerEl)
       .setName('Projects')
-      .setDesc('Projects group threads and scope Claude\'s working directory to a vault sub-folder.')
+      .setDesc('Projects group threads and focus their working context. They do not restrict vault access, tools, MCP servers, skills, or secrets.')
       .setHeading();
 
     const projectsListEl = containerEl.createDiv({ cls: 'ct-projects-list' });
@@ -1688,6 +1688,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     let nameInput: HTMLInputElement | null = null;
     let folderInput: HTMLInputElement | null = null;
+    let cwdInput: HTMLInputElement | null = null;
     new Setting(containerEl)
       .setName('New project')
       .addText((text) => {
@@ -1698,6 +1699,10 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         text.setPlaceholder('Vault folder (e.g. Work/Acme)');
         folderInput = text.inputEl;
       })
+      .addText((text) => {
+        text.setPlaceholder('Filesystem cwd (optional)');
+        cwdInput = text.inputEl;
+      })
       .addButton((btn) =>
         btn.setButtonText('Add').setCta().onClick(async () => {
           const name = nameInput?.value.trim() ?? '';
@@ -1706,10 +1711,12 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
             new Notice('Enter both a project name and vault folder.');
             return;
           }
-          this.plugin.manager.createProject(name, folder);
+          const cwdOverride = cwdInput?.value.trim() || undefined;
+          this.plugin.manager.createProject(name, folder, undefined, cwdOverride);
           await this.plugin.saveSettings();
           if (nameInput) nameInput.value = '';
           if (folderInput) folderInput.value = '';
+          if (cwdInput) cwdInput.value = '';
           renderProjects();
         }),
       );
@@ -1718,7 +1725,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
   private renderProjectRow(container: HTMLElement, project: Project, refresh: () => void): void {
     const row = new Setting(container)
       .setName(project.name)
-      .setDesc(`📁 ${project.vaultFolder}`);
+      .setDesc(`Vault folder: ${project.vaultFolder} · Effective cwd: ${this.plugin.manager.getProjectCwd(project)}`);
 
     row.addText((text) =>
       text
@@ -1743,6 +1750,26 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           refresh();
         }),
     );
+
+    new Setting(container)
+      .setName('Filesystem cwd override')
+      .setDesc(`Optional absolute path. Clear it to derive cwd from the vault folder. Effective cwd: ${this.plugin.manager.getProjectCwd(project)}`)
+      .setClass('ct-project-cwd-setting')
+      .addText((text) => {
+        text
+          .setPlaceholder('Derived from vault folder')
+          .setValue(project.cwdOverride ?? '');
+        text.inputEl.addClass('ct-settings-wide-input');
+        // Commit on blur so the effective-cwd description refreshes once the
+        // edit is complete without rebuilding the row on every keystroke.
+        text.inputEl.addEventListener('blur', async () => {
+          const cwdOverride = text.inputEl.value.trim() || undefined;
+          if (cwdOverride === project.cwdOverride) return;
+          this.plugin.manager.updateProject(project.id, { cwdOverride });
+          await this.plugin.saveSettings();
+          refresh();
+        });
+      });
 
     new Setting(container)
       .setName('Project context')
@@ -2071,7 +2098,13 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         );
       }
       this.renderScheduledMetadata(metadata, 'Project', item.projectId ? (projectNames.get(item.projectId) ?? 'Unknown project') : 'None');
-      this.renderScheduledMetadata(metadata, 'Working directory', item.cwd ?? this.plugin.getEffectiveCwd());
+      let effectiveCwd: string;
+      try {
+        effectiveCwd = this.plugin.scheduler.getEffectiveCwd(item);
+      } catch (err) {
+        effectiveCwd = err instanceof Error ? err.message : String(err);
+      }
+      this.renderScheduledMetadata(metadata, 'Working directory', effectiveCwd);
       if (item.gate?.command) {
         const timeout = item.gate.timeoutSeconds ?? 30;
         const failureMode = item.gate.failOpen === false ? 'fail closed' : 'fail open';

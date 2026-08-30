@@ -225,6 +225,50 @@ describe('DispatchInput — placeholder', () => {
   });
 });
 
+describe('DispatchInput — failed dispatch recovery', () => {
+  it('restores prompt and attachments when onSend rejects', async () => {
+    const onSend = vi.fn().mockRejectedValue(new Error('Project not found: deleted'));
+    const di = new DispatchInput({ app: makeApp(), onSend });
+    const root = di.mount(makeContainer());
+    di.setValue('Keep this prompt');
+    di.setPendingAttachment('notes.txt\nimportant context');
+    di.setPendingImages([{ name: 'mock.png', base64: 'abc', mediaType: 'image/png' }]);
+
+    di.triggerSend();
+    await vi.waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+
+    expect(di.getValue()).toBe('Keep this prompt');
+    expect(di.getPendingAttachment()).toBe('notes.txt\nimportant context');
+    expect(di.getPendingImages()).toEqual([{ name: 'mock.png', base64: 'abc', mediaType: 'image/png' }]);
+    expect(root.querySelectorAll('.ct-paste-chip')).toHaveLength(2);
+  });
+
+  it('merges the failed payload with newer draft edits made while dispatch is pending', async () => {
+    let rejectDispatch!: (error: Error) => void;
+    const onSend = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      rejectDispatch = reject;
+    }));
+    const di = new DispatchInput({ app: makeApp(), onSend });
+    di.mount(makeContainer());
+    di.setValue('Original prompt');
+    di.setPendingAttachment('original.txt\noriginal context');
+    di.setPendingImages([{ name: 'original.png', base64: 'old', mediaType: 'image/png' }]);
+
+    di.triggerSend();
+    await vi.waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    di.setValue('New prompt typed while waiting');
+    di.setPendingAttachment('new.txt\nnew context');
+    di.setPendingImages([{ name: 'new.png', base64: 'new', mediaType: 'image/png' }]);
+    rejectDispatch(new Error('Project not found: deleted'));
+
+    await vi.waitFor(() => expect(di.getValue()).toContain('Original prompt'));
+    expect(di.getValue()).toContain('New prompt typed while waiting');
+    expect(di.getPendingAttachment()).toContain('original.txt\noriginal context');
+    expect(di.getPendingAttachment()).toContain('new.txt\nnew context');
+    expect(di.getPendingImages().map((image) => image.name)).toEqual(['original.png', 'new.png']);
+  });
+});
+
 describe('DispatchInput — harness picker', () => {
   function mountPicker(onSend = vi.fn()) {
     const di = new DispatchInput({

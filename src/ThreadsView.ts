@@ -627,7 +627,10 @@ export class ThreadsView extends ItemView {
 
   /** Refresh list-derived chrome after a batch of threads enters memory. */
   private handleThreadListEvent(event: ThreadEvent): void {
-    if (event.type === 'threads_loaded') this.renderProjectBar();
+    if (event.type === 'threads_loaded' || event.type === 'projects_changed') {
+      this.renderProjectBar();
+      if (event.type === 'projects_changed') this.updateProjectIndicator();
+    }
   }
 
   async onClose(): Promise<void> {
@@ -4196,6 +4199,13 @@ export class ThreadsView extends ItemView {
       }
 
       case 'cwd_changed': {
+        this.renderThreadInfo();
+        break;
+      }
+
+      case 'project_changed': {
+        this.renderProjectBar();
+        this.updateProjectIndicator();
         this.renderThreadInfo();
         break;
       }

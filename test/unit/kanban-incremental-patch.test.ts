@@ -139,6 +139,18 @@ describe('KanbanView.handleEvent — incremental patch routing', () => {
     expect(patchSpy).not.toHaveBeenCalled();
   });
 
+  it.each(['project_changed', 'cwd_changed', 'projects_changed'])('%s schedules a full board rebuild', (type) => {
+    const idle = makeThread('idle', { reviewed: false });
+    const { view } = makeView([idle], new Set());
+    view.render();
+    spy(view);
+
+    view.handleEvent('idle', { type });
+
+    expect(renderSpy).toHaveBeenCalledOnce();
+    expect(patchSpy).not.toHaveBeenCalled();
+  });
+
   it('summary_updated on an idle card patches in place (no rebuild)', () => {
     const idle = makeThread('idle', { reviewed: false });
     const { view } = makeView([idle], new Set());

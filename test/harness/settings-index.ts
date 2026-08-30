@@ -8,6 +8,7 @@ const fixtureProjects: Project[] = [
     id: 'proj-1',
     name: 'Acme Webapp',
     vaultFolder: 'Work/Acme',
+    cwdOverride: '/Users/mock/projects/acme-webapp',
     description: 'Next.js app. Prefer server components; run pnpm test before pushing.',
     createdAt: 1700000000000,
   },
@@ -135,7 +136,12 @@ const mockPlugin = {
   settings,
   manager: {
     getProjects: () => settings.projects,
-    updateProject: () => {},
+    getProject: (id: string) => settings.projects.find((project) => project.id === id),
+    getProjectCwd: (project: Project) => project.cwdOverride ?? `/Users/mock/vault/${project.vaultFolder}`,
+    updateProject: (id: string, updates: Partial<Project>) => {
+      const project = settings.projects.find((candidate) => candidate.id === id);
+      if (project) Object.assign(project, updates);
+    },
     deleteProject: () => {},
     createProject: () => {},
     updateSettings: () => {},
@@ -144,6 +150,9 @@ const mockPlugin = {
   scheduler: {
     updateItem: () => {},
     deleteItem: () => {},
+    getEffectiveCwd: (item: ScheduledItem) => item.cwd ?? (item.projectId
+      ? (settings.projects.find((project) => project.id === item.projectId)?.cwdOverride ?? `/Users/mock/vault/${settings.projects.find((project) => project.id === item.projectId)?.vaultFolder}`)
+      : '/Users/mock/vault'),
   },
   wakeLock: { setEnabled: () => {} },
   relayClient: null,
