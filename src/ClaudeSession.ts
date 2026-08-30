@@ -760,11 +760,17 @@ export class ClaudeSession {
                 if (callbacks.onToolResultImages && Array.isArray(b.content)) {
                   const images: Array<{ mediaType: string; data: string }> = [];
                   for (const inner of b.content as Array<Record<string, unknown>>) {
-                    if (inner.type === 'image') {
-                      const src = inner.source as Record<string, unknown>;
-                      if (src?.type === 'base64' && src.data && src.media_type) {
-                        images.push({ mediaType: src.media_type as string, data: src.data as string });
-                      }
+                    if (inner.type !== 'image') continue;
+                    const src = inner.source as Record<string, unknown> | undefined;
+                    if (src?.type === 'base64' && src.data && src.media_type) {
+                      images.push({ mediaType: src.media_type as string, data: src.data as string });
+                    } else if (inner.data && inner.mimeType) {
+                      // MCP's own image block shape ({ type, data, mimeType }).
+                      // The SDK/CLI is expected to normalise this to the
+                      // Anthropic shape above, but no built-in tool returns an
+                      // image yet, so that conversion is unproven. Accept both
+                      // rather than silently drop the image.
+                      images.push({ mediaType: inner.mimeType as string, data: inner.data as string });
                     }
                   }
                   if (images.length > 0) callbacks.onToolResultImages(images);

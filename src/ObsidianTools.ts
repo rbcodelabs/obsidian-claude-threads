@@ -2500,8 +2500,64 @@ function toDeprecatedLegacyToolDefinition(definition: SdkMcpToolDefinition<any>)
   );
 }
 
-/** Adapts built-in MCP definitions to host-native tool calls. */
-function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynamicTool[] {
+/** A tool-result content block, as loosely as a harness has to treat one. */
+type ToolResultContentBlock = { type: string; text?: string } & Record<string, unknown>;
+
+/**
+ * Render one image content block as a short placeholder, e.g.
+ * `[image: image/png, 124kB]`.
+ *
+ * Accepts both shapes seen in the wild: the Anthropic block
+ * (`{ source: { media_type, data } }`) and the MCP block
+ * (`{ data, mimeType }`).
+ */
+function imagePlaceholder(item: ToolResultContentBlock): string {
+  const source = item.source as { media_type?: unknown; data?: unknown } | undefined;
+  const mediaType =
+    (typeof item.mimeType === 'string' && item.mimeType)
+    || (typeof source?.media_type === 'string' && source.media_type)
+    || 'image';
+  const base64 =
+    (typeof item.data === 'string' && item.data)
+    || (typeof source?.data === 'string' && source.data)
+    || '';
+  if (!base64) return `[image: ${mediaType}]`;
+  // base64 encodes 3 bytes per 4 characters.
+  const kb = Math.max(1, Math.round((base64.length * 3) / 4 / 1024));
+  return `[image: ${mediaType}, ${kb}kB]`;
+}
+
+/**
+ * Flatten an MCP tool result's content blocks into the single plain-text
+ * payload a native harness (e.g. Codex) expects.
+ *
+ * Image blocks become a short placeholder rather than being serialized. A
+ * screenshot is multiple megabytes of base64, and dropping that verbatim into
+ * a harness context window burns the budget and tells the model nothing.
+ *
+ * This has to live in the adapter, not in the tool handlers, because
+ * `toHarnessDynamicTools` invokes `toolDefinition.handler` directly. A handler
+ * has no way to know it is being called on the harness path rather than over
+ * MCP, where the image block is the whole point.
+ *
+ * Exported for tests.
+ */
+export function harnessTextFromToolContent(content: readonly ToolResultContentBlock[]): string {
+  return content
+    .map((item) => {
+      if (item.type === 'text') return typeof item.text === 'string' ? item.text : '';
+      if (item.type === 'image') return imagePlaceholder(item);
+      return JSON.stringify(item);
+    })
+    .join('\n');
+}
+
+/**
+ * Adapts built-in MCP definitions to host-native tool calls.
+ *
+ * Exported for tests (see test/unit/host-tool-harness-image-adapter.test.ts).
+ */
+export function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynamicTool[] {
   // Reuse the canonical MCP definitions for every harness. The conservative
   // read-only set bypasses prompts; every other operation is presented through
   // the same SessionCallbacks.onPermissionRequest UI Claude already uses.
@@ -2526,9 +2582,7 @@ function toHarnessDynamicTools(tools: SdkMcpToolDefinition<any>[]): HarnessDynam
     async invoke(args: Record<string, unknown>) {
       try {
         const result = await toolDefinition.handler(args as never, {});
-        const text = result.content
-          .map((item) => item.type === 'text' ? item.text : JSON.stringify(item))
-          .join('\n');
+        const text = harnessTextFromToolContent(result.content as ToolResultContentBlock[]);
         return { success: !result.isError, text };
       } catch (error) {
         return { success: false, text: error instanceof Error ? error.message : String(error) };
