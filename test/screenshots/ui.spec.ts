@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
-import { shot } from './helpers';
+import { anchorFocusedComposerToBottom, shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
@@ -172,6 +172,10 @@ test.describe('Claude Threads UI', () => {
     // thread-fix-auth is seeded with no agent runs in this test.
     await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
     await expect(page.locator('.ct-agent-pill')).toHaveClass(/ct-hidden/);
+    // The harness autofocuses the composer, which intentionally pins the
+    // hover-only footer open via :focus-within. Move to the actual rest state
+    // before asserting that the agent pill no longer pins it independently.
+    await page.locator('.ct-input').blur();
     // With the pill hidden the :has() pin stops matching, so the footer collapses.
     await expect.poll(() => page.locator('.ct-input-footer').evaluate(
       (el) => getComputedStyle(el).maxHeight,
@@ -2006,6 +2010,7 @@ test.describe('Claude Threads UI', () => {
       await expect(card.locator('.ct-usage-account')).toHaveCount(0);
       expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await anchorFocusedComposerToBottom(page);
       await shot(page, usageViewport.golden, { fullPage: true });
     });
   }

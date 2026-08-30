@@ -60,6 +60,28 @@ export async function settleView(page: Page): Promise<void> {
   });
 }
 
+export async function anchorFocusedComposerToBottom(
+  page: Page,
+  expectedMaxHeight?: string,
+): Promise<void> {
+  const viewport = page.viewportSize();
+  const canonicalMaxHeight = expectedMaxHeight
+    ?? (viewport && viewport.width <= 600 ? '58px' : '50px');
+  const footer = page.locator('.ct-input-footer');
+
+  await expect.poll(() => footer.evaluate(
+    (element) => getComputedStyle(element).maxHeight,
+  )).toBe(canonicalMaxHeight);
+
+  const messages = page.locator('.ct-messages');
+  await messages.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => messages.evaluate(
+    (element) => element.scrollHeight - element.clientHeight - element.scrollTop,
+  )).toBeLessThanOrEqual(1);
+}
+
 /**
  * Settle the view, then assert a screenshot. Use this instead of calling
  * `expect(page).toHaveScreenshot(...)` directly so new tests inherit the
