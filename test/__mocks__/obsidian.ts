@@ -59,7 +59,11 @@ export class WorkspaceLeaf {
 }
 
 export class Notice {
-  constructor(_message: string, _duration?: number) {}
+  static messages: Array<{ message: string; duration?: number }> = [];
+
+  constructor(message: string, duration?: number) {
+    Notice.messages.push({ message, duration });
+  }
 }
 
 export class Modal {
