@@ -17,10 +17,11 @@ import {
 import { mockLeaf } from './obsidian-mock';
 
 const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
+const dashboardMode = new URLSearchParams(window.location.search).has('dashboard');
 const manager = new ThreadManager(settings);
 manager.loadProjects(kanbanFixtureProjects);
 const agentFixtureThread = kanbanFixtureThreads.find(thread => thread.id === kanbanRunningThreadId);
-if (agentFixtureThread) {
+if (dashboardMode && agentFixtureThread) {
   agentFixtureThread.agentRuns = Array.from({ length: 7 }, (_, index) => ({
     id: `dashboard-agent-${index}`,
     threadId: agentFixtureThread.id,
@@ -88,7 +89,6 @@ const mockPlugin = {
 };
 
 const container = document.getElementById('app')!;
-const dashboardMode = new URLSearchParams(window.location.search).has('dashboard');
 const view = dashboardMode
   ? new AgentDashboard(mockLeaf as any, mockPlugin as any)
   : new KanbanView(mockLeaf as any, mockPlugin as any);
