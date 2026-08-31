@@ -55,7 +55,7 @@ function makeOptions(overrides: Partial<SchedulerOptions> = {}): {
     sendMessage,
     getDefaultCwd: () => '/tmp',
     runGate,
-    getGateBaseEnv: () => ({ BASE_ENV: 'yes' }),
+    getGateBaseEnv: () => ({ env: { BASE_ENV: 'yes' }, sensitiveValues: [] }),
     ...overrides,
   };
   return { options, sendMessage, createThread, saveItem, runGate };
@@ -154,6 +154,85 @@ describe('Scheduler gate gating in fire()', () => {
     scheduler.destroy();
   });
 
+  it('exit 75 is indeterminate and fails open by default with a persisted diagnostic', async () => {
+    const item = gatedItem();
+    const { options, createThread, sendMessage } = makeOptions({
+      runGate: vi.fn().mockResolvedValue({
+        exitCode: 75,
+        stdout: 'must not persist',
+        stderr: 'HTTP 401 Unauthorized',
+        timedOut: false,
+      }),
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([item]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(createThread).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const saved = scheduler.getItem('gated-item');
+    expect(saved?.lastGateExitCode).toBe(75);
+    expect(saved?.lastGateError).toContain('HTTP 401 Unauthorized');
+    expect(JSON.stringify(saved)).not.toContain('must not persist');
+    expect(saved?.runHistory?.[0]).toMatchObject({
+      outcome: 'fired',
+      gateExitCode: 75,
+    });
+    expect(saved?.runHistory?.[0]?.note).toContain('HTTP 401 Unauthorized');
+
+    scheduler.destroy();
+  });
+
+  it('exit 75 honors failOpen:false and records the diagnostic on the skipped event', async () => {
+    const item = gatedItem({ gate: { command: 'check.sh', failOpen: false } });
+    const { options, createThread, sendMessage } = makeOptions({
+      runGate: vi.fn().mockResolvedValue({
+        exitCode: 75,
+        stdout: '',
+        stderr: 'invalid feedback count',
+        timedOut: false,
+      }),
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([item]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(createThread).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    const saved = scheduler.getItem('gated-item');
+    expect(saved?.lastGateExitCode).toBe(75);
+    expect(saved?.lastGateError).toContain('invalid feedback count');
+    expect(saved?.runHistory?.[0]).toMatchObject({
+      outcome: 'skipped-gate',
+      gateExitCode: 75,
+    });
+    expect(saved?.runHistory?.[0]?.note).toContain('invalid feedback count');
+
+    scheduler.destroy();
+  });
+
+  it('clears an indeterminate diagnostic after a later deliberate empty-queue skip', async () => {
+    const runGate = vi.fn()
+      .mockResolvedValueOnce({ exitCode: 75, stdout: '', stderr: 'HTTP 401', timedOut: false })
+      .mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: '', timedOut: false });
+    const { options } = makeOptions({ runGate });
+    const scheduler = new Scheduler(options);
+    scheduler.start([gatedItem()]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(scheduler.getItem('gated-item')?.lastGateError).toContain('HTTP 401');
+
+    await vi.advanceTimersByTimeAsync(3600 * 1000);
+    const saved = scheduler.getItem('gated-item');
+    expect(saved?.lastGateExitCode).toBe(1);
+    expect(saved?.lastGateError).toBeUndefined();
+    expect(saved?.lastSkipReason).toBe('gate');
+
+    scheduler.destroy();
+  });
+
   it('exit 0 with stdout: substitutes {{gateOutput}} in the prompt sent to the agent', async () => {
     const item = gatedItem({ prompt: 'Process these:\n{{gateOutput}}' });
     const { options, sendMessage } = makeOptions({
@@ -204,7 +283,7 @@ describe('Scheduler gate gating in fire()', () => {
   it('fail-open by default: a timeout still fires and records lastGateError', async () => {
     const item = gatedItem();
     const { options, createThread, sendMessage } = makeOptions({
-      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', timedOut: true }),
+      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', stderr: 'partial timeout detail', timedOut: true }),
     });
     const scheduler = new Scheduler(options);
     scheduler.start([item]);
@@ -215,6 +294,7 @@ describe('Scheduler gate gating in fire()', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const saved = scheduler.getItem('gated-item');
     expect(saved?.lastGateError).toMatch(/timed out/i);
+    expect(saved?.lastGateError).toContain('partial timeout detail');
     expect(saved?.lastSkipReason).toBeUndefined();
 
     scheduler.destroy();
@@ -223,7 +303,13 @@ describe('Scheduler gate gating in fire()', () => {
   it('fail-open by default: a spawn failure still fires and records lastGateError', async () => {
     const item = gatedItem();
     const { options, createThread } = makeOptions({
-      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', timedOut: false, spawnError: 'command not found' }),
+      runGate: vi.fn().mockResolvedValue({
+        exitCode: null,
+        stdout: '',
+        stderr: 'spawn diagnostic',
+        timedOut: false,
+        spawnError: 'command not found',
+      }),
     });
     const scheduler = new Scheduler(options);
     scheduler.start([item]);
@@ -232,7 +318,8 @@ describe('Scheduler gate gating in fire()', () => {
 
     expect(createThread).toHaveBeenCalledTimes(1);
     const saved = scheduler.getItem('gated-item');
-    expect(saved?.lastGateError).toBe('command not found');
+    expect(saved?.lastGateError).toContain('command not found');
+    expect(saved?.lastGateError).toContain('spawn diagnostic');
 
     scheduler.destroy();
   });
@@ -240,7 +327,7 @@ describe('Scheduler gate gating in fire()', () => {
   it('failOpen:false, timeout: skips the cycle and records lastGateError', async () => {
     const item = gatedItem({ gate: { command: 'sleep 999', failOpen: false } });
     const { options, createThread, sendMessage } = makeOptions({
-      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', timedOut: true }),
+      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', stderr: 'timeout closed', timedOut: true }),
     });
     const scheduler = new Scheduler(options);
     scheduler.start([item]);
@@ -252,6 +339,8 @@ describe('Scheduler gate gating in fire()', () => {
     const saved = scheduler.getItem('gated-item');
     expect(saved?.lastSkipReason).toBe('gate');
     expect(saved?.lastGateError).toMatch(/timed out/i);
+    expect(saved?.lastGateError).toContain('timeout closed');
+    expect(saved?.runHistory?.[0]?.note).toContain('timeout closed');
     expect(saved?.lastRun).toBeDefined(); // cycle still advances
 
     scheduler.destroy();
@@ -260,7 +349,13 @@ describe('Scheduler gate gating in fire()', () => {
   it('failOpen:false, spawn failure: skips the cycle', async () => {
     const item = gatedItem({ gate: { command: 'nope', failOpen: false } });
     const { options, createThread, sendMessage } = makeOptions({
-      runGate: vi.fn().mockResolvedValue({ exitCode: null, stdout: '', timedOut: false, spawnError: 'not found' }),
+      runGate: vi.fn().mockResolvedValue({
+        exitCode: null,
+        stdout: '',
+        stderr: 'spawn closed',
+        timedOut: false,
+        spawnError: 'not found',
+      }),
     });
     const scheduler = new Scheduler(options);
     scheduler.start([item]);
@@ -270,6 +365,8 @@ describe('Scheduler gate gating in fire()', () => {
     expect(createThread).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(scheduler.getItem('gated-item')?.lastSkipReason).toBe('gate');
+    expect(scheduler.getItem('gated-item')?.lastGateError).toContain('spawn closed');
+    expect(scheduler.getItem('gated-item')?.runHistory?.[0]?.note).toContain('spawn closed');
 
     scheduler.destroy();
   });
@@ -349,7 +446,10 @@ describe('Scheduler gate gating in fire()', () => {
     const lastRun = new Date(2024, 0, 1, 9, 0, 0).getTime();
     const item = gatedItem({ id: 'triage-1', name: 'Triage', lastRun, nextRun: Date.now() - 1_000 });
     const runGate = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', timedOut: false });
-    const { options } = makeOptions({ runGate, getGateBaseEnv: () => ({ BASE_ENV: 'yes' }) });
+    const { options } = makeOptions({
+      runGate,
+      getGateBaseEnv: () => ({ env: { BASE_ENV: 'yes' }, sensitiveValues: [] }),
+    });
     const scheduler = new Scheduler(options);
     scheduler.start([item]);
 
@@ -364,6 +464,38 @@ describe('Scheduler gate gating in fire()', () => {
     expect(opts.env.CRON_ITEM_NAME).toBe('Triage');
     expect(opts.env.CRON_LAST_RUN_MS).toBe(String(lastRun));
     expect(opts.env.BASE_ENV).toBe('yes');
+
+    scheduler.destroy();
+  });
+
+  it('passes keychain-backed secrets ephemerally without persisting their values', async () => {
+    const secret = 'compass-keychain-secret';
+    const runGate = vi.fn().mockResolvedValue({
+      exitCode: 75,
+      stdout: 'failed stdout must not persist',
+      stderr: 'HTTP 401 Bearer [REDACTED]',
+      timedOut: false,
+    });
+    const { options } = makeOptions({
+      runGate,
+      getGateBaseEnv: () => ({
+        env: { COMPASS_MCP_API_KEY: secret },
+        sensitiveValues: [secret],
+      }),
+    });
+    const scheduler = new Scheduler(options);
+    scheduler.start([gatedItem()]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(runGate.mock.calls[0]?.[1]).toMatchObject({
+      env: { COMPASS_MCP_API_KEY: secret },
+      sensitiveValues: [secret],
+    });
+    const persisted = JSON.stringify(scheduler.getItem('gated-item'));
+    expect(persisted).not.toContain(secret);
+    expect(persisted).not.toContain('failed stdout must not persist');
+    expect(persisted).toContain('[REDACTED]');
 
     scheduler.destroy();
   });

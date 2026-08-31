@@ -1,6 +1,11 @@
 import type { ScheduledItem, ScheduledItemSchedule, RunEvent } from './types';
 import cron, { type ScheduledTask } from 'node-cron';
 import { sharedScheduleCoordinator } from './ScheduleCoordinator';
+import {
+  GATE_INDETERMINATE_EXIT_CODE,
+  type GateEnvironment,
+  type GateResult,
+} from './gateRunner';
 
 /**
  * Fields that can be updated on a ScheduledItem. The `schedule` field accepts
@@ -81,22 +86,22 @@ export interface SchedulerOptions {
    * imports and remains unit-testable. Resolves with the command's exit code
    * and stdout; `timedOut` is true when the command exceeded `timeoutMs` and
    * was killed, and `spawnError` is set when the command could not be launched
-   * at all (e.g. command-not-found). Both of those are "could not evaluate"
-   * conditions handled by the fail-open logic in fire(); a clean non-zero
-   * `exitCode` is a deliberate "skip this cycle" signal. When this option is
+   * at all (e.g. command-not-found). Those and reserved exit 75 are "could not
+   * evaluate" conditions handled by the fail-open logic in fire(); other clean
+   * non-zero exit codes deliberately skip the cycle. When this option is
    * absent (e.g. on mobile), a configured gate fails open (fires).
    */
   runGate?: (
     command: string,
-    opts: { cwd: string; timeoutMs: number; env: Record<string, string | undefined> },
-  ) => Promise<{ exitCode: number | null; stdout: string; timedOut: boolean; spawnError?: string }>;
+    opts: { cwd: string; timeoutMs: number } & GateEnvironment,
+  ) => Promise<GateResult>;
   /**
-   * Supplies the base environment for gate commands (typically execEnv() from
-   * dashboardUtils, which augments PATH so tools like `gh`/`jq` resolve). fire()
-   * layers CRON_LAST_RUN_MS / CRON_ITEM_ID / CRON_ITEM_NAME on top. Keeping the
-   * PATH-augmentation in the caller keeps this module node-free.
+   * Supplies the ephemeral environment and keychain values used for diagnostic
+   * redaction. fire() layers CRON_LAST_RUN_MS / CRON_ITEM_ID / CRON_ITEM_NAME
+   * on top. Keeping host environment resolution in the caller keeps this module
+   * node-free and prevents secrets from entering scheduled-item persistence.
    */
-  getGateBaseEnv?: () => NodeJS.ProcessEnv;
+  getGateBaseEnv?: () => GateEnvironment;
 }
 
 /** Default gate timeout when an item doesn't specify one. */
@@ -617,23 +622,34 @@ export class Scheduler {
                 Math.max(gate.timeoutSeconds ?? GATE_DEFAULT_TIMEOUT_SECONDS, 1),
                 GATE_MAX_TIMEOUT_SECONDS,
               ) * 1000;
+            const gateEnvironment = this.options.getGateBaseEnv?.() ?? { env: {}, sensitiveValues: [] };
             const env: Record<string, string | undefined> = {
-              ...(this.options.getGateBaseEnv?.() ?? {}),
+              ...gateEnvironment.env,
               CRON_LAST_RUN_MS: current.lastRun !== undefined ? String(current.lastRun) : '',
               CRON_ITEM_ID: current.id,
               CRON_ITEM_NAME: current.name,
             };
-            const result = await this.options.runGate(gate.command, { cwd: effectiveCwd, timeoutMs, env });
+            const result = await this.options.runGate(gate.command, {
+              cwd: effectiveCwd,
+              timeoutMs,
+              env,
+              sensitiveValues: gateEnvironment.sensitiveValues,
+            });
 
-            if (result.timedOut || result.spawnError) {
+            if (result.timedOut || result.spawnError || result.exitCode === GATE_INDETERMINATE_EXIT_CODE) {
               // Could not evaluate the gate. Fail open by default so a broken
               // check never silently stops a real cron; failOpen:false opts
-              // into fail-closed (skip) instead. A clean non-zero exit is a
-              // different case handled below — that IS a deliberate skip.
-              current.lastGateError = result.timedOut
+              // into fail-closed (skip) instead. Other clean non-zero exits are
+              // handled below as deliberate skips.
+              const reason = result.timedOut
                 ? `Gate timed out after ${timeoutMs}ms`
-                : result.spawnError ?? 'Gate failed to run';
-              current.lastGateExitCode = undefined;
+                : result.spawnError
+                  ? `Gate failed to run: ${result.spawnError}`
+                  : `Gate indeterminate (exit ${GATE_INDETERMINATE_EXIT_CODE})`;
+              current.lastGateError = result.stderr ? `${reason}\n${result.stderr}` : reason;
+              current.lastGateExitCode = result.exitCode === GATE_INDETERMINATE_EXIT_CODE
+                ? GATE_INDETERMINATE_EXIT_CODE
+                : undefined;
               gateSkip = gate.failOpen === false;
             } else if (result.exitCode === 0) {
               // Fire: fold the gate's stdout into the prompt so the agent has
@@ -709,9 +725,13 @@ export class Scheduler {
         event.note = fireError;
       } else if (gateSkip) {
         event.gateExitCode = current.lastGateExitCode;
+        if (current.lastGateError) event.note = current.lastGateError;
       } else {
         if (current.lastThreadId) event.threadId = current.lastThreadId;
-        if (current.lastGateError) event.note = `fired open despite gate error: ${current.lastGateError}`;
+        if (current.lastGateError) {
+          event.gateExitCode = current.lastGateExitCode;
+          event.note = `fired open despite gate error: ${current.lastGateError}`;
+        }
       }
 
       try {
