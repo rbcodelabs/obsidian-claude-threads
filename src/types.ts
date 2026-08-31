@@ -297,6 +297,10 @@ export interface Thread {
    * the underlying Claude session's context.
    */
   managerNotes?: string;
+  /** Thread that last wrote managerNotes. Missing on legacy persisted notes. */
+  managerNotesSourceThreadId?: string;
+  /** Epoch milliseconds when managerNotes was last updated. */
+  managerNotesUpdatedAt?: number;
   /** Current lifecycle status of the thread. */
   status?: ThreadStatus;
   /**
@@ -414,6 +418,8 @@ export interface Project {
    * the cwd automatically from vaultFolder + vault root.
    */
   cwdOverride?: string;
+  /** Project-scoped orchestrator. The settings-level id remains the portfolio orchestrator. */
+  orchestratorThreadId?: string;
   createdAt: number;
 }
 

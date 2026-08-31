@@ -47,7 +47,8 @@ function makeDeps(overrides: Partial<OrchestratorWakeupDeps> = {}): {
     return 'timer-handle';
   });
   const deps: OrchestratorWakeupDeps = {
-    getOrchestratorThreadId: () => 'orchestrator-thread',
+    resolveBucket: (threadId) => threadId.startsWith('project-') ? `project:${threadId.split('-')[1]}` : 'portfolio',
+    resolveTarget: () => 'orchestrator-thread',
     threadExists: () => true,
     sendMessage,
     setTimeoutFn,
@@ -144,6 +145,33 @@ describe('OrchestratorWakeup', () => {
     expect(message).toBe('New activity on 1 thread — run your review pass.\n- thread-1 "Flaky thread" (done)');
   });
 
+  it('debounces projects independently and resolves each target at flush time', async () => {
+    const { manager, emit } = makeManager({ 'project-a-worker': 'A', 'project-b-worker': 'B' });
+    const targets = new Map([['project:a', 'orch-a'], ['project:b', 'orch-b']]);
+    const callbacks: Array<() => void> = [];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const wakeup = new OrchestratorWakeup(manager, {
+      resolveBucket: (threadId) => threadId.includes('-a-') ? 'project:a' : 'project:b',
+      resolveTarget: async (bucket) => targets.get(bucket),
+      threadExists: () => true,
+      sendMessage,
+      setTimeoutFn: (cb) => { callbacks.push(cb); return cb; },
+      clearTimeoutFn: () => {},
+    });
+    wakeup.start();
+
+    emit('project-a-worker', { type: 'done' });
+    emit('project-b-worker', { type: 'error', error: new Error('boom') });
+    targets.set('project:a', 'replacement-a');
+    callbacks.forEach(cb => cb());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledWith('replacement-a', expect.stringContaining('project-a-worker'));
+    expect(sendMessage).toHaveBeenCalledWith('orch-b', expect.stringContaining('project-b-worker'));
+  });
+
   it('clears pending state on flush even if it is empty, and never calls sendMessage', async () => {
     const { manager } = makeManager();
     const { deps, sendMessage, setTimeoutFn } = makeDeps();
@@ -168,5 +196,21 @@ describe('OrchestratorWakeup', () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(onWarn).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports a summary-only portfolio fallback without exposing Project thread details', async () => {
+    const { manager, emit } = makeManager({ 'project-a-worker': 'Sensitive task' });
+    const { deps, sendMessage, runTimer } = makeDeps({
+      resolveBucket: () => 'project:a',
+      resolveTarget: () => ({ threadId: 'portfolio', summaryOnly: true }),
+    });
+    const wakeup = new OrchestratorWakeup(manager, deps);
+    wakeup.start();
+    emit('project-a-worker', { type: 'error', error: new Error('boom') });
+    runTimer();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledWith('portfolio', 'New activity in Project a — the Project orchestrator could not be reached.');
   });
 });

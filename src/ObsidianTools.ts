@@ -142,6 +142,8 @@ export interface ThreadSnapshot {
    * context — visible here purely so the orchestrator can read back its own prior notes.
    */
   managerNotes?: string;
+  managerNotesSourceThreadId?: string;
+  managerNotesUpdatedAt?: number;
   /** An AI-proposed reply awaiting human approval, set via obsidian_set_thread_proposed_reply. */
   proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string };
 }
@@ -165,6 +167,7 @@ export interface ProjectSnapshot {
   vaultFolder?: string;
   cwdOverride?: string;
   effectiveCwd: string;
+  orchestratorThreadId?: string;
 }
 
 // ── Vault Bridge schema ───────────────────────────────────────────────────────
@@ -233,6 +236,7 @@ export interface ObsidianMcpServerOptions {
     title?: string;
     cwd?: string;
     projectId?: string | null;
+    elevatedProjectId?: string;
   }) => Promise<{ threadId: string; title: string }>;
   /**
    * Initial effective cwd for this session. Pre-seeds the in-session cwd tracker so
@@ -243,10 +247,16 @@ export interface ObsidianMcpServerOptions {
   threadId?: string;
   /** Returns the ID of the thread running the bundled orchestrator skill, if one has been created. */
   getOrchestratorThreadId?: () => string | undefined;
+  /** Returns whether a thread is any referenced portfolio or Project orchestrator. */
+  isOrchestratorThread?: (threadId: string) => boolean;
   /** Returns full detail (metadata + messages) for a thread by ID. */
   getThreadDetail?: (id: string) => ThreadDetail | undefined;
   /** Returns metadata snapshots for all threads. */
   getAllThreads?: () => ThreadSnapshot[];
+  /** Central coordination boundary. False must be reported without target disclosure. */
+  authorizeThread?: (threadId: string, elevatedProjectId: string | undefined, operation: 'read' | 'write' | 'notes') => boolean;
+  /** Authorizes the requested destination Project for reassignment. */
+  authorizeProjectDestination?: (projectId: string | undefined, elevatedProjectId: string | undefined) => boolean;
   /**
    * Reads parsed entries from a thread's raw JSONL conversation log, filtered
    * by `type` and tailed to the most recent `limit` entries. Resolves null if
@@ -1109,6 +1119,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         .describe(
           'Optional project ID override. Omit to inherit the current project; pass null to create without a project.',
         ),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this creation.'),
     },
     async (args, _extra) => {
       if (!options.createThread) {
@@ -1164,13 +1175,13 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
   const boundListThreads = tool(
     'obsidian_list_threads',
     'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
-    {},
-    async (_args, _extra) => {
+    { projectId: z.string().optional().describe('Portfolio orchestrator only: explicitly elevate this call into one Project.') },
+    async (args, _extra) => {
       try {
         if (!options.getAllThreads) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
         }
-        const threads = options.getAllThreads();
+        const threads = options.getAllThreads().filter(thread => options.authorizeThread?.(thread.id, args.projectId, 'read') ?? true);
         return { content: [{ type: 'text' as const, text: JSON.stringify(threads, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1242,12 +1253,15 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         .nullable()
         .describe('Project ID to assign to the thread, or null to clear the project assignment'),
       alignCwd: z.boolean().optional().describe('Also switch the thread to the Project cwd and start a fresh session on the next turn. Defaults to false.'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
         if (!options.setThreadProject) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadProject is not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
+        if (options.authorizeProjectDestination && !options.authorizeProjectDestination(args.projectId ?? undefined, args.elevatedProjectId)) throw new Error('Destination Project is outside coordination scope.');
         options.setThreadProject(args.threadId, args.projectId, args.alignCwd ?? false);
         return {
           content: [
@@ -1271,12 +1285,14 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to read'),
       limit: z.number().int().positive().optional().describe('Return only the last N messages (default 20)'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
         if (!options.getThreadDetail) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'read')) throw new Error('Target is outside coordination scope.');
         const detail = options.getThreadDetail(args.threadId);
         if (!detail) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Thread not found: ${args.threadId}` }) }], isError: true };
@@ -1298,6 +1314,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       threadId: z.string().optional().describe('ID of the thread whose log to read. Defaults to the current thread.'),
       limit: z.number().int().nonnegative().optional().describe('Return only the most recent N entries (default 100). Pass 0 for all entries. Type filtering is applied before tailing.'),
       type: z.string().optional().describe('Only return entries with this envelope type, e.g. "assistant", "user", "result", "system", "session_start", "tool_use_summary".'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
@@ -1308,6 +1325,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         if (!threadId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No threadId provided and no current thread in context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(threadId, args.elevatedProjectId, 'read')) throw new Error('Target is outside coordination scope.');
         const result = await options.readThreadLog(threadId, { limit: args.limit, type: args.type });
         if (!result) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `No raw log found for thread: ${threadId}. Raw logging may be disabled, or the thread has not produced any events yet.` }) }], isError: true };
@@ -1326,12 +1344,14 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to wait for'),
       timeoutSeconds: z.number().optional().describe('Maximum seconds to wait before giving up (default 120)'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
         if (!options.isThreadRunning) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread state not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'read')) throw new Error('Target is outside coordination scope.');
         const timeoutMs = Math.min((args.timeoutSeconds ?? 120) * 1000, 600_000);
         const start = Date.now();
         const pollMs = 1_000;
@@ -1363,6 +1383,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to send the message to'),
       message: z.string().describe('The message text to send'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
@@ -1372,6 +1393,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         if (args.threadId === options.threadId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot send a message to the current thread.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
         await options.sendMessageToThread(args.threadId, args.message);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
       } catch (err: unknown) {
@@ -1393,14 +1415,16 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to archive'),
       confirm: z.boolean().optional().describe('Must be true to archive the orchestrator thread (the thread tracked in settings.orchestratorThreadId). Not required for any other thread.'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
         if (!options.archiveThread) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread archiving not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
         if (args.threadId === options.threadId) {
-          if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {
+          if ((options.isOrchestratorThread?.(args.threadId) ?? args.threadId === options.getOrchestratorThreadId?.()) && !args.confirm) {
             return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is the Thread Orchestrator. Pass confirm: true to archive it anyway — doing so stops automatic thread review until "Open Thread Orchestrator" is run again.' }) }], isError: true };
           }
           const currentThread = options.getThreadDetail?.(args.threadId);
@@ -1410,7 +1434,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           }
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot archive the current thread.' }) }], isError: true };
         }
-        if (args.threadId === options.getOrchestratorThreadId?.() && !args.confirm) {
+        if ((options.isOrchestratorThread?.(args.threadId) ?? args.threadId === options.getOrchestratorThreadId?.()) && !args.confirm) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'This is the Thread Orchestrator. Pass confirm: true to archive it anyway — doing so stops automatic thread review until "Open Thread Orchestrator" is run again.' }) }], isError: true };
         }
         await options.archiveThread(args.threadId);
@@ -1437,12 +1461,14 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to annotate'),
       notes: z.string().describe('Tracking notes text. Pass an empty string to clear existing notes.'),
+      elevatedProjectId: z.string().optional().describe('Reserved for explicit portfolio reads; portfolio elevation cannot write Project notes.'),
     },
     async (args, _extra) => {
       try {
         if (!options.setThreadNotes) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadNotes is not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'notes')) throw new Error('Target is outside coordination scope.');
         options.setThreadNotes(args.threadId, args.notes);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
       } catch (err: unknown) {
@@ -1464,6 +1490,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     {
       threadId: z.string().describe('ID of the thread to propose a reply for'),
       text: z.string().describe('The proposed reply text'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
@@ -1473,6 +1500,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         if (args.threadId === options.threadId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Cannot set a proposed reply on the current thread.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
         options.setThreadProposedReply(args.threadId, args.text);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
       } catch (err: unknown) {
@@ -1488,12 +1516,14 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     'Clears a thread\'s pending proposed reply, if any, without sending it. Use this when a prior proposal is stale or no longer relevant.',
     {
       threadId: z.string().describe('ID of the thread to clear the proposed reply on'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
     },
     async (args, _extra) => {
       try {
         if (!options.clearThreadProposedReply) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'clearThreadProposedReply is not available in this context.' }) }], isError: true };
         }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
         options.clearThreadProposedReply(args.threadId);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
       } catch (err: unknown) {

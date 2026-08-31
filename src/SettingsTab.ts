@@ -1749,12 +1749,24 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     row.addButton((btn) =>
       btn
+        .setButtonText(project.orchestratorThreadId ? 'Open orchestrator' : 'Create orchestrator')
+        .onClick(async () => {
+          await this.plugin.ensureProjectOrchestratorThread(project.id, true);
+          refresh();
+        }),
+    );
+
+    row.addButton((btn) =>
+      btn
         .setIcon('trash')
         .setWarning()
         .setTooltip('Delete project (threads are kept)')
         .onClick(async () => {
-          this.plugin.manager.deleteProject(project.id);
-          await this.plugin.saveSettings();
+          const threadCount = this.plugin.manager.getThreadsByProject(project.id).length;
+          const scheduleCount = (this.plugin.settings.scheduledItems ?? []).filter(item => item.projectId === project.id).length;
+          const confirmed = window.confirm(`Delete ${project.name}? ${threadCount} thread(s) will be detached and ${scheduleCount} schedule(s) will keep their current effective cwd.`);
+          if (!confirmed) return;
+          await this.plugin.deleteProject(project.id);
           refresh();
         }),
     );
@@ -1961,8 +1973,8 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     // — Orchestrator —
     new Setting(containerEl)
-      .setName('Orchestrator')
-      .setDesc('The persistent thread that runs the bundled thread-orchestrator skill, reviewing other threads and proposing replies.')
+      .setName('Portfolio Orchestrator')
+      .setDesc('The persistent portfolio-level thread that reviews unassigned work and Project summaries.')
       .setHeading();
 
     {
@@ -1972,11 +1984,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       if (!orchestratorId) {
         new Setting(containerEl)
           .setName('Not yet created')
-          .setDesc('Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create it.');
+          .setDesc('Run "Open Portfolio Orchestrator" from the command palette (Cmd+P) to create it.');
       } else if (orchestratorThread) {
         new Setting(containerEl)
           .setName(orchestratorThread.title)
-          .setDesc('This is your Thread Orchestrator thread. It is marked with a bot badge in the Agent Dashboard, Kanban board, and thread switcher.')
+          .setDesc('This is your Portfolio Orchestrator thread. It is marked with a bot badge in the Agent Dashboard, Kanban board, and thread switcher.')
           .addButton((btn) =>
             btn.setButtonText('Open').setCta().onClick(() => {
               void this.plugin.openThreadInChatView(orchestratorId);
@@ -1986,8 +1998,8 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         const warning = containerEl.createDiv({ cls: 'ct-settings-warning' });
         warning.createEl('strong', { text: 'Orchestrator thread missing: ' });
         warning.appendText(
-          'The thread previously tracked as your Thread Orchestrator was deleted or archived. ' +
-          'Run "Open Thread Orchestrator" from the command palette (Cmd+P) to create a new one.',
+          'The thread previously tracked as your Portfolio Orchestrator was deleted or archived. ' +
+          'Run "Open Portfolio Orchestrator" from the command palette (Cmd+P) to create a new one.',
         );
       }
     }

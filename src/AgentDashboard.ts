@@ -547,7 +547,7 @@ export class AgentDashboard extends ItemView {
 
     const body = row.createDiv('ct-agents-row-body');
     const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
-    appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId);
+    appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId, thread.projectId ? this.manager.getProject(thread.projectId)?.orchestratorThreadId : undefined);
 
     // Show full summary for completed threads — this is the canonical home for summaries
     const summary = thread.summary || thread.recap;

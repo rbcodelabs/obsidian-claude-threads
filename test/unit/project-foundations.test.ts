@@ -102,4 +102,33 @@ describe('ThreadManager project foundations', () => {
     expect(thread.cwd).toBe('/current');
     expect(events).toEqual(['project_changed']);
   });
+
+  it('protects referenced orchestrators from project reassignment', () => {
+    const settings = { ...DEFAULT_SETTINGS, orchestratorThreadId: undefined as string | undefined };
+    const manager = new ThreadManager(settings);
+    const project = manager.createProject('Repo', 'Projects/Repo');
+    const portfolio = manager.createThread('Portfolio', '/root');
+    settings.orchestratorThreadId = portfolio.id;
+    const projectOrchestrator = manager.createThread('Repo Orchestrator', '/repo', project.id);
+    manager.updateProject(project.id, { orchestratorThreadId: projectOrchestrator.id });
+
+    expect(() => manager.setThreadProject(projectOrchestrator.id, null)).toThrow(/Project orchestrator/);
+    expect(() => manager.setThreadProject(portfolio.id, project.id)).toThrow(/Portfolio orchestrator/);
+  });
+
+  it('clears proposals but preserves note provenance when ordinary threads move', () => {
+    const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+    const a = manager.createProject('A', 'A');
+    const b = manager.createProject('B', 'B');
+    const thread = manager.createThread('Task', '/a', a.id);
+    thread.managerNotes = 'historical';
+    thread.managerNotesSourceThreadId = 'orch-a';
+    thread.proposedReply = { text: 'reply', generatedAt: 1, sourceThreadId: 'orch-a' };
+
+    manager.setThreadProject(thread.id, b.id);
+
+    expect(thread.managerNotes).toBe('historical');
+    expect(thread.managerNotesSourceThreadId).toBe('orch-a');
+    expect(thread.proposedReply).toBeUndefined();
+  });
 });

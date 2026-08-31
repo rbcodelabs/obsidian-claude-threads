@@ -1811,6 +1811,17 @@ export class ThreadsView extends ItemView {
       this.renderManagerNotesPanel();
     });
 
+    const expectedOwner = thread.projectId
+      ? this.manager.getProject(thread.projectId)?.orchestratorThreadId
+      : this.plugin.settings.orchestratorThreadId;
+    const source = thread.managerNotesSourceThreadId;
+    const sourceTitle = source ? this.manager.getThread(source)?.title ?? source : 'Legacy source unknown';
+    const updated = thread.managerNotesUpdatedAt ? new Date(thread.managerNotesUpdatedAt).toLocaleString() : 'Legacy timestamp unknown';
+    const stale = !!source && source !== expectedOwner;
+    this.managerNotesPanelEl.createDiv({
+      cls: `ct-manager-notes-provenance${stale ? ' ct-manager-notes-stale' : ''}`,
+      text: `${stale ? 'Stale ownership · ' : ''}${sourceTitle} · ${updated}`,
+    });
     this.managerNotesPanelEl.createEl('pre', { cls: 'ct-manager-notes-text', text: notes });
   }
 
@@ -5645,7 +5656,7 @@ export class ThreadsView extends ItemView {
 
         const body = row.createDiv('ct-agents-row-body');
         const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
-        appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId);
+        appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId, thread.projectId ? this.manager.getProject(thread.projectId)?.orchestratorThreadId : undefined);
 
         // Summary for idle threads (same as AgentDashboard)
         const summary = thread.summary || thread.recap;
@@ -5806,11 +5817,14 @@ export class ThreadsView extends ItemView {
     const threads = this.manager.getThreads();
     if (threads.length <= 1) return;
 
-    if (id === this.plugin.settings.orchestratorThreadId) {
+    const projectOrchestrator = this.manager.getProjects().find(project => project.orchestratorThreadId === id);
+    if (id === this.plugin.settings.orchestratorThreadId || projectOrchestrator) {
       const confirmed = await new Promise<boolean>((resolve) => {
         new ConfirmModal(
           this.app,
-          'This is your Thread Orchestrator. Deleting it stops automatic thread review until you run "Open Thread Orchestrator" again to create a new one.',
+          projectOrchestrator
+            ? `This is the ${projectOrchestrator.name} Project Orchestrator. Deleting it stops automatic Project review until it is recreated.`
+            : 'This is your Portfolio Orchestrator. Deleting it stops portfolio review until you run "Open Portfolio Orchestrator" again to create a new one.',
           'Delete anyway',
           resolve,
         ).open();
@@ -5818,19 +5832,7 @@ export class ThreadsView extends ItemView {
       if (!confirmed) return;
     }
 
-    const thread = this.manager.getThread(id);
-    const hasMessages = thread && thread.messages.some((m) => m.role !== 'compact' && m.role !== 'notice');
-
-    if (hasMessages && this.plugin.settings.saveThreadsToVault && this.plugin.persistence) {
-      // Archive to vault before removing from memory so the Bases Kanban retains it.
-      // Awaited so the vault note is guaranteed to carry status:archived before we
-      // delete the thread — otherwise a quick Obsidian restart could leave the note
-      // with status:waiting and trigger crash recovery to resurrect it.
-      thread.status = 'archived';
-      await this.plugin.persistence.saveThread(thread);
-    }
-
-    this.manager.deleteThread(id);
+    await this.plugin.archiveThreadById(id, true);
     await this.plugin.saveSettings();
 
     if (this.activeThreadId === id) {

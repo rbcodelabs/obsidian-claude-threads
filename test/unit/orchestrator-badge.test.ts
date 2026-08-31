@@ -36,4 +36,10 @@ describe('appendOrchestratorBadge', () => {
     expect(parent.querySelector('.ct-orchestrator-badge')).toBeNull();
     expect(parent.childElementCount).toBe(0);
   });
+
+  it('renders a distinct Project orchestrator badge', () => {
+    const parent = document.createElement('div');
+    appendOrchestratorBadge(parent, 'project-orch', undefined, 'project-orch');
+    expect(parent.querySelector('.ct-project-orchestrator-badge')).not.toBeNull();
+  });
 });

@@ -54,6 +54,11 @@ describe('isThreadIdleForArchive', () => {
     expect(isThreadIdleForArchive(orch, { ...opts, orchestratorThreadId: 'orch' })).toBe(false);
   });
 
+  it('does not select any referenced project orchestrator', () => {
+    const orch = thread({ id: 'project-orch', updatedAt: NOW - 30 * DAY });
+    expect(isThreadIdleForArchive(orch, { ...opts, orchestratorThreadIds: ['portfolio', 'project-orch'] })).toBe(false);
+  });
+
   it('does NOT select a thread with a pending plan', () => {
     expect(isThreadIdleForArchive(thread({ pendingPlan: 'do the thing' }), opts)).toBe(false);
   });

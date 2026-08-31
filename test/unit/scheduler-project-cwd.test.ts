@@ -32,6 +32,27 @@ function setup(projectCwds: Record<string, string> = { project: '/repos/old' }) 
 }
 
 describe('Scheduler project cwd resolution', () => {
+  it('does not partially mutate schedules when atomic Project detach persistence fails', async () => {
+    const items = [
+      { id: 'job-1', name: 'One', prompt: 'run', schedule: { type: 'interval' as const, intervalSeconds: 60 }, enabled: false, projectId: 'project' },
+      { id: 'job-2', name: 'Two', prompt: 'run', schedule: { type: 'interval' as const, intervalSeconds: 60 }, enabled: false, projectId: 'project' },
+    ];
+    const scheduler = new Scheduler({
+      getItems: () => items,
+      saveItem: vi.fn(), removeItem: vi.fn(), saveItems: vi.fn().mockRejectedValue(new Error('persist failed')),
+      createThread: vi.fn(), sendMessage: vi.fn(), getDefaultCwd: () => '/global', getProjectCwd: () => '/repo',
+    });
+    scheduler.start(items);
+
+    await expect(scheduler.detachProject('project', '/repo')).rejects.toThrow('persist failed');
+    expect(scheduler.listItems()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'job-1', projectId: 'project' }),
+      expect.objectContaining({ id: 'job-2', projectId: 'project' }),
+    ]));
+    expect(scheduler.listItems().every(item => !('cwd' in item))).toBe(true);
+    scheduler.destroy();
+  });
+
   it('resolves project cwd dynamically at fire time and uses it for gate and thread', async () => {
     const projectCwds = { project: '/repos/old' };
     const { scheduler, createThread, runGate } = setup(projectCwds);
