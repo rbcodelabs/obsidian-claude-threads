@@ -322,13 +322,24 @@ export class CodexSession {
   async setModel(model: string | undefined): Promise<void> {
     if (!this.codexThreadId) return;
     await this.validateConfiguredEffort(model, true);
-    await this.request('thread/settings/update', {
+    const result = await this.request('thread/settings/update', {
       threadId: this.codexThreadId,
       model: model ?? null,
       effort: this.options?.codex?.effort ?? null,
     });
-    this.activeModel = model ?? '';
+    this.activeModel = model ?? await this.resolveDefaultModel(result?.model);
     if (this.options) this.options.model = model;
+  }
+
+  private async resolveDefaultModel(authoritativeModel?: unknown): Promise<string> {
+    if (typeof authoritativeModel === 'string' && authoritativeModel.trim()) return authoritativeModel;
+    const result = await this.request('model/list', { limit: 100 });
+    const model = (result?.data ?? []).find((entry: { isDefault?: boolean }) => entry.isDefault === true);
+    const resolved = model?.id ?? model?.model;
+    if (typeof resolved !== 'string' || !resolved.trim()) {
+      throw new Error('Codex did not report an effective default model.');
+    }
+    return resolved;
   }
 
   async setPermissionMode(mode: any): Promise<void> {
@@ -402,7 +413,7 @@ export class CodexSession {
     return {
       mode,
       settings: {
-        model: this.activeModel,
+        ...(this.activeModel.trim() ? { model: this.activeModel } : {}),
         reasoning_effort: this.options?.codex?.effort ?? null,
         developer_instructions: null,
       },
