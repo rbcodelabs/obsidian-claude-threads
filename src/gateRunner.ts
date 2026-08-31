@@ -6,7 +6,7 @@ const GATE_DIAGNOSTIC_TRUNCATED = '\n… [gate diagnostic truncated]';
 
 export interface GateEnvironment {
   env: NodeJS.ProcessEnv;
-  /** Keychain-backed values used only to redact diagnostics before persistence. */
+  /** Keychain-backed names and values used only to redact diagnostics before persistence. */
   sensitiveValues: string[];
 }
 
@@ -43,7 +43,7 @@ export type GateExec = (
 export function makeGateEnvironment(baseEnv: NodeJS.ProcessEnv, secretEnv: Record<string, string>): GateEnvironment {
   return {
     env: { ...baseEnv, ...secretEnv },
-    sensitiveValues: Object.values(secretEnv).filter((value) => value.length > 0),
+    sensitiveValues: Object.entries(secretEnv).flatMap(([name, value]) => value ? [name, value] : [name]),
   };
 }
 

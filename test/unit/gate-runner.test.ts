@@ -20,7 +20,14 @@ describe('makeGateEnvironment', () => {
       COMPASS_MCP_API_KEY: 'keychain-value',
       SECOND_TOKEN: 'second-value',
     });
-    expect(bundle.sensitiveValues).toEqual(['keychain-value', 'second-value']);
+    expect(bundle.sensitiveValues).toEqual([
+      'COMPASS_MCP_API_KEY', 'keychain-value', 'SECOND_TOKEN', 'second-value',
+    ]);
+  });
+
+  it('includes configured secret names in diagnostic redactions', () => {
+    const bundle = makeGateEnvironment({}, { COMPASS_MCP_API_KEY: 'keychain-value' });
+    expect(bundle.sensitiveValues).toContain('COMPASS_MCP_API_KEY');
   });
 });
 
