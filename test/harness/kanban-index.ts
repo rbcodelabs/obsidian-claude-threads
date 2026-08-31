@@ -36,6 +36,15 @@ if (dashboardMode && agentFixtureThread) {
     events: [],
   }));
 }
+if (dashboardMode) {
+  const planFixtureThread = kanbanFixtureThreads.find(thread => thread.title.includes('Going too?'));
+  if (planFixtureThread) planFixtureThread.pendingPlan = 'Approve the rollout plan';
+  const questionFixtureThread = kanbanFixtureThreads.find(thread => thread.title === 'Mobile layout polish');
+  if (questionFixtureThread) questionFixtureThread.pendingQuestions = [{
+    question: 'Which mobile density should we ship?', header: 'Density', multiSelect: false,
+    options: [{ label: 'Compact', description: 'Show more threads' }],
+  }];
+}
 manager.loadThreads(kanbanFixtureThreads);
 
 // Running / Awaiting state lives in the manager's private session & permission
@@ -70,6 +79,7 @@ m.lastActivityAt.set(kanbanAwaitingThreadId, Date.now());
 const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason: string }[]>();
 pendingWakeups.set(kanbanWaitingThreadId, [{ timerId: 0, fireAt: kanbanWaitingFireAt, reason: kanbanWaitingReason }]);
 const dispatchCalls: unknown[][] = [];
+const openedAgentTeams: string[] = [];
 
 const mockPlugin = {
   app: (mockLeaf as any).app,
@@ -79,6 +89,7 @@ const mockPlugin = {
   saveSettings: async () => {},
   getActiveThreadId: () => null,
   openThreadInChatView: async () => {},
+  openAgentTeamInChatView: async (threadId: string) => { openedAgentTeams.push(threadId); },
   dispatchNewThread: async (...args: unknown[]) => {
     dispatchCalls.push(args);
     return 'new-thread';
@@ -100,6 +111,7 @@ void view.onOpen();
 (window as any).__dashboard = view;
 (window as any).__manager = manager;
 (window as any).__dispatchCalls = dispatchCalls;
+(window as any).__openedAgentTeams = openedAgentTeams;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   if (dashboardMode) return;
   settings.kanbanGroupBy = mode;

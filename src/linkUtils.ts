@@ -6,6 +6,16 @@
  */
 import type { App, WorkspaceLeaf } from 'obsidian';
 
+/** Whether a rendered Markdown href represents vault navigation. */
+export function classifyRenderedMarkdownLink(href: string): 'vault' | 'external' {
+  const trimmed = href.trim();
+  if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return 'external';
+  // Any URI scheme (http:, mailto:, obsidian:, file:, data:, etc.) remains
+  // under the host/browser's ordinary external-link behavior.
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmed)) return 'external';
+  return 'vault';
+}
+
 export interface OpenUrlDeps {
   /** Whether the Web Viewer core plugin is enabled. */
   webViewerEnabled: boolean;

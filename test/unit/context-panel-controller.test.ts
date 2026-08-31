@@ -115,12 +115,29 @@ describe('ContextPanelController', () => {
     expect(workspace.openLinkText).not.toHaveBeenCalled();
   });
 
-  it('gracefully falls back to standard link handling when a vault link cannot be resolved', async () => {
-    const { controller, workspace } = makeHarness();
+  it.each([
+    ['Notes/Plan#Launch checklist', 'Notes/Plan', '#Launch checklist'],
+    ['Notes/Plan#^decision-7', 'Notes/Plan', '#^decision-7'],
+    ['../Project%20Notes/Roadmap#Q4', '../Project Notes/Roadmap', '#Q4'],
+  ])('preserves the subpath for %s while resolving only the decoded path', async (linktext, resolvedPath, subpath) => {
+    const { controller, firstCompanion, resolveLink } = makeHarness();
+    const file = { path: 'Project Notes/Roadmap.md' } as TFile;
+    resolveLink(resolvedPath, 'Claude/thread.md', file);
 
-    await controller.openLinkText('Missing note', 'Claude/thread.md');
+    await controller.openLinkText(linktext, 'Claude/thread.md');
 
-    expect(workspace.openLinkText).toHaveBeenCalledWith('Missing note', 'Claude/thread.md', false);
+    expect(firstCompanion.openFile).toHaveBeenCalledWith(file, { eState: { subpath } });
+  });
+
+  it('keeps unresolved vault links confined to the companion leaf', async () => {
+    const { controller, workspace, firstCompanion } = makeHarness();
+
+    await controller.openLinkText('Missing%20note#Draft', 'Claude/thread.md');
+
+    expect(workspace.openLinkText).not.toHaveBeenCalled();
+    expect(firstCompanion.setViewState).toHaveBeenCalledWith({
+      type: 'markdown', active: true, state: { file: 'Missing note' }, eState: { subpath: '#Draft' },
+    });
   });
 
   it('uses the optional atomic ratio split when the host provides it', async () => {

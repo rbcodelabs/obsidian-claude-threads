@@ -110,6 +110,10 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
 }
 
 export function normalizePath(path: string): string { return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/|\/$/g, ''); }
+export function parseLinktext(linktext: string): { path: string; subpath: string } {
+  const match = linktext.match(/^([^#]*)(#.*)?$/);
+  return { path: match?.[1] ?? linktext, subpath: match?.[2] ?? '' };
+}
 
 export function addIcon(_iconId: string, _svgContent: string) {}
 

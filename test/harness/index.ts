@@ -75,6 +75,9 @@ const mockPlugin = {
   },
   getEffectiveCwd: () => '/Users/mock/projects/my-app',
   isConversationFirst: () => settings.threadViewPlacement === 'conversation-first',
+  contextPanel: {
+    openLinkText: async (href: string, sourcePath: string) => { (window as any).__contextLinkCalls.push([href, sourcePath]); },
+  },
   // Empty on purpose: this harness has no vault skills fixture, and the
   // Skills Manager harness (skills-index.ts) is where the populated case is
   // screenshotted. Must still be present — ThreadsView calls it while
@@ -93,6 +96,10 @@ const mockPlugin = {
     }
     manager.notifyWakeupChanged(threadId);
   },
+};
+(window as any).__contextLinkCalls = [];
+(window as any).__setConversationFirst = (enabled: boolean) => {
+  settings.threadViewPlacement = enabled ? 'conversation-first' : 'classic';
 };
 
 // Goal-action probes let Playwright exercise delayed persistence and thread

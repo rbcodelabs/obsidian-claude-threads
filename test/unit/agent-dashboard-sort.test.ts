@@ -148,6 +148,13 @@ describe('AgentDashboard — background-task-only thread folds into Working', ()
     expect(working).toContain(t);
   });
 
+  it('a restored question or plan remains in Working even without a running session', () => {
+    const t = makeThread('restored-action', 1_000, true);
+    const { working, unreviewed } = agentDashboardGroups([withFlags(t, false, true)]);
+    expect(working).toContain(t);
+    expect(unreviewed).not.toContain(t);
+  });
+
   it('a thread with no background task and no other active state still lands in New/Reviewed/Ready as before', () => {
     const unreviewedThread = makeThread('u', 1_000, true);
     const reviewedThread = { ...makeThread('r', 1_000, true), reviewed: true } as Thread;

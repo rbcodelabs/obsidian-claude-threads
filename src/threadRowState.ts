@@ -15,15 +15,16 @@
  * the pre-refactor inline implementations (see kanban-bucketing.test.ts —
  * "waiting" is already checked before "error", etc.):
  *
- *   1. isRunning            → 'awaiting' if hasPendingPermission, else 'running'
- *   2. hasActiveBackgroundTasks → 'running' (folds into the existing Working
+ *   1. hasPendingPermission → 'awaiting' (including restored question/plan state)
+ *   2. isRunning            → 'running'
+ *   3. hasActiveBackgroundTasks → 'running' (folds into the existing Working
  *      bucket per product decision — a thread with no active foreground turn
  *      but an outstanding background task/subagent/workflow is still "doing
  *      something," it just isn't the caller's own turn anymore)
- *   3. hasPendingWakeup     → 'waiting'
- *   4. lastError            → 'error'
- *   5. messageCount > 0     → 'idle-reviewed' if reviewed, else 'idle-new'
- *   6. else                 → 'empty'
+ *   4. hasPendingWakeup     → 'waiting'
+ *   5. lastError            → 'error'
+ *   6. messageCount > 0     → 'idle-reviewed' if reviewed, else 'idle-new'
+ *   7. else                 → 'empty'
  */
 
 export type ThreadRowState =
@@ -47,9 +48,10 @@ export interface ThreadClassificationFlags {
 }
 
 export function classifyThreadRow(flags: ThreadClassificationFlags): ThreadRowState {
-  if (flags.isRunning) {
-    return flags.hasPendingPermission ? 'awaiting' : 'running';
-  }
+  // Persisted question/plan prompts remain action-required even after their
+  // foreground session has parked or the app has reloaded.
+  if (flags.hasPendingPermission) return 'awaiting';
+  if (flags.isRunning) return 'running';
   if (flags.hasActiveBackgroundTasks) {
     return 'running';
   }

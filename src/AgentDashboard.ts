@@ -10,7 +10,7 @@ import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirec
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads } from './threadRowState';
-import { flattenAgentTree } from './agentRuns/agentTreeModel';
+import { ACTIVE_AGENT_STATUSES, flattenAgentTree } from './agentRuns/agentTreeModel';
 import { handleDesignDispatch } from './designDispatchRouting';
 import { resolveGitRepoRoot, resolveThreadProjectName } from './pathUtils';
 import { parsePrUrlRepo } from './gitDiffUtils';
@@ -291,7 +291,10 @@ export class AgentDashboard extends ItemView {
       event.type === 'permission_request' ||
       event.type === 'permission_resolved' ||
       event.type === 'question_ready' ||
-      event.type === 'pending_question_changed'
+      event.type === 'pending_question_changed' ||
+      event.type === 'pending_plan_changed' ||
+      event.type === 'plan_ready' ||
+      event.type === 'plan_transition_error'
     ) {
       this.scheduleRender();
       return;
@@ -327,6 +330,7 @@ export class AgentDashboard extends ItemView {
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
       event.type === 'project_changed' ||
+      event.type === 'cwd_changed' ||
       event.type === 'agent_runs_changed' ||
       event.type === 'status_tags';
     if (isStateChange) {
@@ -500,7 +504,9 @@ export class AgentDashboard extends ItemView {
     }
     const stackable = (label === 'New' || label === 'Reviewed' || label === 'Ready')
       && (this.plugin.settings.stackScheduledThreads ?? true);
-    const partitioned = stackable ? partitionScheduledStacks(threads) : { stacks: [], standalone: threads };
+    // Preserve the dashboard's historical minCount=1 behavior: even a single
+    // quiet run appears as a job rollup, now scoped to its project/status.
+    const partitioned = stackable ? partitionScheduledStacks(threads, 1) : { stacks: [], standalone: threads };
     const items = [
       ...partitioned.standalone.map(thread => ({ kind: 'thread' as const, thread, updatedAt: thread.updatedAt })),
       ...partitioned.stacks.map(stack => ({ kind: 'stack' as const, stack, updatedAt: stack.threads[0].updatedAt })),
@@ -514,9 +520,13 @@ export class AgentDashboard extends ItemView {
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
-    const hasPending = state === 'running' && (this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id));
+    const hasPermission = this.manager.hasPendingPermission(thread.id);
+    const hasQuestion = this.manager.hasPendingQuestion(thread.id);
+    const hasPlan = this.manager.hasPendingPlan(thread.id);
+    const hasPending = state === 'running' && (hasPermission || hasQuestion || hasPlan);
+    const attentionClass = hasPlan ? ' ct-agents-row-plan' : hasQuestion ? ' ct-agents-row-question' : '';
     const row = parent.createDiv({
-      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}${attentionClass}`,
     });
     this.rowEls.set(thread.id, row);
     row.toggleClass('ct-stale', this.manager.isRunStale(thread.id));
@@ -538,28 +548,31 @@ export class AgentDashboard extends ItemView {
 
     if (hasPending) {
       const pendingInfo = this.manager.getPendingPermission(thread.id);
-      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'permission' });
+      const attentionLabel = hasPlan ? 'Plan ready — open to review' : hasQuestion ? 'Question ready — open to answer' : pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'Permission required';
+      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: attentionLabel });
       if (pendingInfo?.detail) {
         activityEl.createSpan({ cls: 'ct-agents-permission-detail', text: pendingInfo.detail });
       }
 
-      const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
+      if (hasPermission) {
+        const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
 
-      const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
-      deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
+        const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
+        deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
 
-      const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
-      allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
+        const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
+        allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
 
-      const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
-      always.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (pendingInfo) {
-          this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
-          await this.plugin.saveSettings();
-        }
-        this.manager.resolvePermission(thread.id, true);
-      });
+        const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
+        always.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (pendingInfo) {
+            this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
+            await this.plugin.saveSettings();
+          }
+          this.manager.resolvePermission(thread.id, true);
+        });
+      }
     } else {
       activityEl.setText(this.getActivityText(thread, state));
 
@@ -615,17 +628,16 @@ export class AgentDashboard extends ItemView {
     const agentRuns = this.manager.getAgentRuns(thread.id);
     if (agentRuns.length) {
       const flattened = flattenAgentTree(agentRuns);
-      const selected = flattened.find(({ run }) => run.status === 'working' || run.status === 'waiting') ?? flattened[0];
+      const active = flattened.find(({ run }) => ACTIVE_AGENT_STATUSES.has(run.status));
       const button = body.createEl('button', {
-        cls: 'ct-dashboard-agent-count',
+        cls: `ct-dashboard-agent-count${active ? ` ct-agent-${active.run.status}` : ''}`,
         attr: { 'aria-label': `Open ${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'} in ${thread.title}` },
       });
       button.createSpan({ cls: 'ct-agent-status-dot' });
       button.createSpan({ text: `${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'}` });
       button.addEventListener('click', e => {
         e.stopPropagation();
-        this.manager.selectAgentRun(thread.id, selected.run.id);
-        this.plugin.openThreadInChatView(thread.id);
+        void this.plugin.openAgentTeamInChatView(thread.id);
       });
     }
 

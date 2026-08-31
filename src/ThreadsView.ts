@@ -23,7 +23,7 @@ import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile,
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
-import { openUrlPreferringWebViewer } from './linkUtils';
+import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
@@ -2121,10 +2121,24 @@ export class ThreadsView extends ItemView {
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
         if (this.plugin.isConversationFirst()) {
-          void this.plugin.contextPanel.openLinkText(href);
+          void this.plugin.contextPanel.openLinkText(href, this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '');
         } else {
           void this.app.workspace.openLinkText(href, '', false);
         }
+      });
+    });
+    // marked renders ordinary `[label](path.md#heading)` links without the
+    // custom wikilink class. In conversation-first mode, intercept only
+    // relative/vault-shaped hrefs; protocols and same-page anchors retain the
+    // browser/host's standard behavior.
+    el.querySelectorAll<HTMLAnchorElement>('a:not(.internal-link):not(.ct-visualize-slot)').forEach((a) => {
+      const href = a.getAttribute('href') ?? '';
+      if (!this.plugin.isConversationFirst() || classifyRenderedMarkdownLink(href) !== 'vault') return;
+      a.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
+        void this.plugin.contextPanel.openLinkText(href, sourcePath);
       });
     });
     this.linkifyBridgePaths(el);
@@ -2627,6 +2641,11 @@ export class ThreadsView extends ItemView {
       this.agentPopoverOutsideHandler = outsideHandler;
       document.addEventListener('mousedown', outsideHandler, true);
     }, 0);
+  }
+
+  /** Open the native team picker without changing the current agent selection. */
+  public openAgentTeamPicker(): void {
+    if (!this.agentPopoverEl) this.openAgentPopover();
   }
 
   /** Escape closes; Up/Down/Home/End move roving focus through the agent rows. */

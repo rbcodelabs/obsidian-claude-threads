@@ -2959,6 +2959,10 @@
 .ct-agents-row-permission,
 .ct-agents-row-waiting,
 .ct-agents-row-error:has(.ct-aws-reauth-btn) { align-items: flex-start; padding-block: 7px; }
+.ct-agents-row-plan,
+.ct-agents-row-question { min-height: 56px; }
+.ct-agents-row-plan { border-left: 2px solid var(--interactive-accent); }
+.ct-agents-row-question { border-left: 2px solid var(--color-yellow, #e0a030); }
 .ct-agents-row-permission .ct-agents-row-body,
 .ct-agents-row-waiting .ct-agents-row-body,
 .ct-agents-row-error:has(.ct-aws-reauth-btn) .ct-agents-row-body { grid-template-columns: minmax(0, 1fr) auto; }
@@ -2974,6 +2978,8 @@
   .ct-agents-row-body { grid-template-columns: minmax(110px, 1fr) minmax(80px, 1fr) auto; }
   .ct-agents-row-cwd { display: none; }
   .ct-dashboard-agent-count { min-height: 44px; }
+  .ct-agents-permission-actions .ct-permission-btn,
+  .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }
 }
 
 /* ── Scheduled Jobs section (Agent Dashboard) ───────────────────────────── */

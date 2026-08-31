@@ -1,4 +1,4 @@
-import type { App, TFile, ViewState, WorkspaceLeaf } from 'obsidian';
+import { parseLinktext, type App, type OpenViewState, type TFile, type ViewState, type WorkspaceLeaf } from 'obsidian';
 
 interface OwnedCompanion { workspace: object; chatLeaf: WorkspaceLeaf; companionLeaf: WorkspaceLeaf }
 interface RatioWorkspace {
@@ -44,20 +44,32 @@ export class ContextPanelController {
     return companionLeaf;
   }
 
-  async openFile(file: TFile): Promise<void> {
+  async openFile(file: TFile, openState?: OpenViewState): Promise<void> {
     const leaf = this.getLeaf();
     await this.ensureMarkerPersisted();
-    await leaf.openFile(file);
+    if (openState) await leaf.openFile(file, openState);
+    else await leaf.openFile(file);
     this.app.workspace.revealLeaf(leaf);
   }
 
   async openLinkText(linktext: string, sourcePath = ''): Promise<void> {
-    const file = this.app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
-    if (!file) {
-      await this.app.workspace.openLinkText(linktext, sourcePath, false);
+    const parsed = parseLinktext(linktext);
+    let linkPath = parsed.path;
+    try { linkPath = decodeURIComponent(linkPath); } catch { /* preserve malformed text for native resolution */ }
+    const file = this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath);
+    const openState = parsed.subpath ? { eState: { subpath: parsed.subpath } } : undefined;
+    if (file) {
+      await this.openFile(file, openState);
       return;
     }
-    await this.openFile(file);
+
+    // Never delegate unresolved conversation-first links to workspace-level
+    // routing: it may target the active chat leaf. Keep the native markdown
+    // attempt confined to the owned companion instead.
+    const leaf = this.getLeaf();
+    await this.ensureMarkerPersisted();
+    await leaf.setViewState({ type: 'markdown', active: true, state: { file: linkPath }, ...openState });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   async setViewState(viewState: ViewState): Promise<boolean> {
