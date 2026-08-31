@@ -1910,7 +1910,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundCronCreate = tool(
     'CronCreate',
-    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week. Optionally scope it to a local-time active-hours window (e.g. business hours) with activeHoursStart/activeHoursEnd so cycles outside that window are skipped automatically — no thread created, no message sent — instead of firing a thread just to check the clock and bail. Optionally add a deterministic gate command (gateCommand) that runs before each cycle fires: exit 0 fires the agent, any clean non-zero exit skips the cycle entirely (no thread, no LLM turn), so mechanical 'is there anything to do?' checks don't burn a turn. On a fire, the gate's stdout is fed into the prompt — it replaces a {{gateOutput}} placeholder if present, otherwise it's appended as a 'Gate output:' block. The gate env includes CRON_LAST_RUN_MS, CRON_ITEM_ID, and CRON_ITEM_NAME.",
+    "Creates a new scheduled item that fires a prompt into a new thread on a recurring schedule. Use scheduleType 'interval' for every-N-seconds, 'daily' for once per day at a specific time, 'weekly' for specific days of the week. Optionally scope it to a local-time active-hours window (e.g. business hours) with activeHoursStart/activeHoursEnd so cycles outside that window are skipped automatically — no thread created, no message sent — instead of firing a thread just to check the clock and bail. Optionally add a deterministic gate command (gateCommand) that runs before each cycle fires: exit 0 fires the agent, exit 1 deliberately skips an empty queue, exit 75 reports an indeterminate evaluation and honors gateFailOpen, and other clean non-zero exits preserve deliberate-skip behavior. On a fire, the gate's stdout is fed into the prompt — it replaces a {{gateOutput}} placeholder if present, otherwise it's appended as a 'Gate output:' block. The gate env includes configured keychain-backed secrets plus CRON_LAST_RUN_MS, CRON_ITEM_ID, and CRON_ITEM_NAME.",
     {
       name: z.string().describe('Human-readable name for this scheduled task'),
       prompt: z.string().describe('The prompt to send when this item fires. May contain a {{gateOutput}} placeholder that is replaced with the gate command stdout on a fire.'),
@@ -1924,7 +1924,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         .string()
         .optional()
         .describe(
-          "Optional deterministic pre-check shell command run before each cycle fires (runs in the item's cwd). Exit 0 = fire the agent; any clean non-zero exit = skip this cycle entirely (no thread, no LLM turn). On a fire, stdout is interpolated into the prompt ({{gateOutput}} placeholder, else appended). Env includes CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.",
+          "Optional deterministic pre-check shell command run before each cycle fires (runs in the item's cwd). Exit 0 = fire; exit 1 = deliberate empty-queue skip; exit 75 = indeterminate and honors gateFailOpen; other clean non-zero exits preserve deliberate-skip behavior. On a fire, stdout is interpolated into the prompt ({{gateOutput}} placeholder, else appended). Env includes configured keychain-backed secrets and CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.",
         ),
       gateTimeoutSeconds: z
         .number()
@@ -1934,7 +1934,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         .boolean()
         .optional()
         .describe(
-          'When the gate cannot be evaluated (timeout or spawn failure such as command-not-found), whether to fire anyway. Defaults to true so a broken check never silently stops a real cron. A clean non-zero exit is always a deliberate skip regardless of this flag.',
+          'When the gate cannot be evaluated (exit 75, timeout, or spawn failure such as command-not-found), whether to fire anyway. Defaults to true so a broken check never silently stops a real cron. Other clean non-zero exits are deliberate skips regardless of this flag.',
         ),
       activeHoursStart: z
         .string()
@@ -2024,7 +2024,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundCronUpdate = tool(
     'CronUpdate',
-    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true. Use activeHoursStart/activeHoursEnd to set or change the local-time window this item is allowed to fire in (cycles outside it are skipped automatically); use clearActiveHours to remove that restriction entirely. Use gateCommand/gateTimeoutSeconds/gateFailOpen to set or change the deterministic pre-check that runs before each cycle fires (exit 0 = fire, any clean non-zero exit = skip the cycle with no thread or LLM turn; stdout is interpolated into the prompt via {{gateOutput}}); use clearGate to remove the gate entirely.',
+    'Updates an existing scheduled item. Only provided fields are changed. To pause/resume a schedule set enabled to false/true. Use activeHoursStart/activeHoursEnd to set or change the local-time window this item is allowed to fire in (cycles outside it are skipped automatically); use clearActiveHours to remove that restriction entirely. Use gateCommand/gateTimeoutSeconds/gateFailOpen to set or change the deterministic pre-check that runs before each cycle fires (exit 0 = fire; exit 1 = deliberate empty-queue skip; exit 75 = indeterminate and honors gateFailOpen; other clean non-zero exits preserve deliberate-skip behavior; stdout is interpolated into the prompt via {{gateOutput}}); use clearGate to remove the gate entirely.',
     {
       id: z.string().describe('ID of the scheduled item to update'),
       name: z.string().optional().describe('New human-readable name'),
@@ -2039,7 +2039,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         .string()
         .optional()
         .describe(
-          'New deterministic pre-check shell command run before each cycle fires. Exit 0 = fire; any clean non-zero exit = skip the cycle (no thread, no LLM turn). On a fire, stdout is interpolated into the prompt via {{gateOutput}} (else appended). Env includes CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.',
+          'New deterministic pre-check shell command run before each cycle fires. Exit 0 = fire; exit 1 = deliberate empty-queue skip; exit 75 = indeterminate and honors gateFailOpen; other clean non-zero exits preserve deliberate-skip behavior. On a fire, stdout is interpolated into the prompt via {{gateOutput}} (else appended). Env includes configured keychain-backed secrets and CRON_LAST_RUN_MS/CRON_ITEM_ID/CRON_ITEM_NAME. Desktop only.',
         ),
       gateTimeoutSeconds: z
         .number()
@@ -2048,7 +2048,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       gateFailOpen: z
         .boolean()
         .optional()
-        .describe('New fail-open behavior: when the gate cannot be evaluated (timeout/spawn failure), whether to fire anyway (default true). Only applied when a gate command is or becomes set.'),
+        .describe('New fail-open behavior: when the gate cannot be evaluated (exit 75, timeout, or spawn failure), whether to fire anyway (default true). Only applied when a gate command is or becomes set.'),
       clearGate: z.boolean().optional().describe('Set to true to remove the gate entirely, so this item fires every cycle without a pre-check.'),
       activeHoursStart: z
         .string()

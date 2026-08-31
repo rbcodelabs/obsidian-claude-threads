@@ -497,22 +497,23 @@ export interface ScheduledItem {
   /**
    * Optional deterministic pre-check run before firing (see Scheduler.fire()).
    * A shell command evaluated at fire time: exit 0 means "fire the agent",
-   * any clean non-zero exit means "nothing to do, skip this cycle" (matching
-   * the convention of `test -s file` / `grep -q`). On a fire, the gate's
+   * exit 75 means the gate could not determine whether work exists, and other
+   * clean non-zero exits mean "nothing to do, skip this cycle" (matching the
+   * convention of `test -s file` / `grep -q`). On a fire, the gate's
    * stdout is interpolated into the prompt so the agent doesn't have to
    * re-derive what changed. Runs at fire time regardless of schedule type, so
    * it lives at the top level rather than on `schedule`.
    */
   gate?: {
-    /** Shell command; exit 0 = fire, any clean non-zero exit = skip this cycle. */
+    /** Shell command; exit 0 = fire, exit 75 = indeterminate, other non-zero = skip. */
     command: string;
     /** Max seconds the gate may run before it's killed. Defaults to 30. */
     timeoutSeconds?: number;
     /**
-     * When the gate cannot be evaluated (timeout, or a spawn failure such as
-     * command-not-found), whether to fire anyway. Defaults to true so a broken
-     * check never silently blackholes a real cron. A clean non-zero exit is
-     * always a deliberate skip regardless of this flag.
+     * When the gate cannot be evaluated (exit 75, timeout, or a spawn failure
+     * such as command-not-found), whether to fire anyway. Defaults to true so a
+     * broken check never silently blackholes a real cron. Other clean non-zero
+     * exits are deliberate skips regardless of this flag.
      */
     failOpen?: boolean;
   };
@@ -525,7 +526,7 @@ export interface ScheduledItem {
   lastSkipReason?: 'gate' | 'active-hours';
   /** Exit code of the most recent gate evaluation (0 on a fire, non-zero on a gated skip). */
   lastGateExitCode?: number;
-  /** Set when the most recent gate could not be evaluated (timeout or spawn failure). */
+  /** Bounded, sanitized detail when the most recent gate was indeterminate, timed out, or failed to spawn. */
   lastGateError?: string;
   /**
    * Bounded ring buffer of recent cycle outcomes (oldest first, most recent
@@ -558,14 +559,14 @@ export interface RunEvent {
   /**
    * What happened on this cycle:
    * - 'fired'                 → a thread was created or reused and the prompt sent
-   * - 'skipped-gate'          → the gate command returned a clean non-zero exit
+   * - 'skipped-gate'          → the gate deliberately skipped, or an indeterminate gate failed closed
    * - 'skipped-active-hours'  → the cycle came due outside the active-hours window
    * - 'error'                 → thread creation / send threw (see `note`)
    */
   outcome: 'fired' | 'skipped-gate' | 'skipped-active-hours' | 'error';
   /** For 'fired': the thread the prompt was sent to (absent for a stale heartbeat). */
   threadId?: string;
-  /** For 'skipped-gate': the gate command's exit code. */
+  /** Gate exit code when relevant, including exit 75 on an indeterminate evaluation. */
   gateExitCode?: number;
   /**
    * Optional short human-readable detail — an error message for 'error', or a

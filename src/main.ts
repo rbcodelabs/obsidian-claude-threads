@@ -30,6 +30,7 @@ import { selectIdleThreadsForArchive } from './autoArchive';
 import { createDeferredThreadArchiver } from './deferredThreadArchive';
 import { getVaultBridgesAPI, findBridgesForFiles, type BridgeInfo } from './bridgeUtils';
 import { execEnv } from './dashboardUtils';
+import { createGateRunner, makeGateEnvironment, type GateExec } from './gateRunner';
 import { ClaudeThreadsSettingTab, isWebViewerEnabled, RequestSecretModal } from './SettingsTab';
 import { RelayClient } from './RelayClient';
 import { MobileThreadStore } from './MobileThreadStore';
@@ -888,42 +889,23 @@ export default class ClaudeThreadsPlugin extends Plugin {
       threadExists: (threadId) => !!this.manager.getThread(threadId),
       isThreadBusy: (threadId) => this.manager.isRunning(threadId),
       onOrchestratorHeartbeatStale: () => console.warn('[ClaudeThreads] Orchestrator heartbeat target missing — run "Open Thread Orchestrator" to recreate it.'),
-      // Base env for gate commands: reuse execEnv() so gates get the same
-      // PATH-augmented environment as the status-line/AWS commands (so tools
-      // like `gh`/`jq` resolve despite Obsidian's minimal PATH). fire() layers
-      // the per-item CRON_* vars on top of this.
-      getGateBaseEnv: Platform.isMobile ? undefined : () => execEnv(),
+      // Resolve the PATH-augmented base env and keychain values once per gate
+      // evaluation. The bundle is passed only to the subprocess and diagnostic
+      // redactor; Scheduler never stores it on a scheduled item.
+      getGateBaseEnv: Platform.isMobile
+        ? undefined
+        : () => makeGateEnvironment(execEnv(), this.manager.secretEnvResolver?.() ?? {}),
       // Deterministic gate runner (desktop only). Resolves — never rejects —
       // classifying the outcome so fire()'s fail-open logic can distinguish a
-      // clean non-zero exit (deliberate skip) from a timeout or spawn failure
+      // deliberate skip from exit 75, a timeout, or a spawn failure
       // (could-not-evaluate). Mirrors the StatusLineService exec wiring.
       runGate: Platform.isMobile
         ? undefined
-        : (command, { cwd, timeoutMs, env }) => {
+        : (() => {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const childProcess = require('child_process') as typeof import('child_process');
-            return new Promise((resolve) => {
-              childProcess.exec(
-                command,
-                { cwd, timeout: timeoutMs, env, maxBuffer: 1024 * 1024 },
-                (err, stdout) => {
-                  const e = err as (Error & { killed?: boolean; code?: number | string }) | null;
-                  if (e && e.killed) {
-                    // Killed by the timeout.
-                    resolve({ exitCode: null, stdout: stdout ?? '', timedOut: true });
-                  } else if (e && typeof e.code !== 'number') {
-                    // No numeric exit code means the process never ran (e.g.
-                    // command-not-found) — a spawn failure, not a clean exit.
-                    resolve({ exitCode: null, stdout: stdout ?? '', timedOut: false, spawnError: e.message });
-                  } else {
-                    // Clean exit; code is 0 (err null) or the non-zero code.
-                    const code = typeof e?.code === 'number' ? e.code : 0;
-                    resolve({ exitCode: code, stdout: stdout ?? '', timedOut: false });
-                  }
-                },
-              );
-            });
-          },
+            return createGateRunner(childProcess.exec as GateExec);
+          })(),
     });
     this.scheduler.start(this.settings.scheduledItems ?? []);
     if (repairedOrchestrators) await this.saveSettings();
