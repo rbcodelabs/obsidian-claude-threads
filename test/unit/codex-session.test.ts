@@ -400,12 +400,17 @@ describe('CodexSession protocol notifications', () => {
     expect(internal.queuedTurns).toEqual([{ text: 'Queued user follow-up' }]);
   });
 
-  it('updates cached permission mode and explicitly changes Codex collaboration mode', async () => {
+  it('resolves Default before resyncing collaboration mode on an existing session', async () => {
     const session = new CodexSession('codex');
     const internal = session as any;
     internal.codexThreadId = 'codex-thread';
     internal.options = { permissionMode: 'plan', callbacks: {} };
-    const request = vi.spyOn(internal, 'request').mockResolvedValue({});
+    const request = vi.spyOn(internal, 'request').mockImplementation((method: string) => {
+      if (method === 'thread/settings/update') return Promise.resolve({ model: 'gpt-5.6-codex' });
+      return Promise.resolve({});
+    });
+
+    await session.setModel(undefined);
 
     await session.setPermissionMode('default');
 
@@ -414,8 +419,79 @@ describe('CodexSession protocol notifications', () => {
       threadId: 'codex-thread',
       collaborationMode: {
         mode: 'default',
-        settings: { model: '', reasoning_effort: null, developer_instructions: null },
+        settings: { model: 'gpt-5.6-codex', reasoning_effort: null, developer_instructions: null },
       },
+    }));
+  });
+
+  it('replaces an explicit model with the catalog Default when settings omit the effective model', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.activeModel = 'gpt-5.4-mini';
+    internal.options = { model: 'gpt-5.4-mini', permissionMode: 'default', callbacks: {} };
+    const request = vi.spyOn(internal, 'request').mockImplementation((method: string) => {
+      if (method === 'model/list') {
+        return Promise.resolve({ data: [
+          { id: 'gpt-5.4-mini', isDefault: false },
+          { id: 'gpt-5.6-codex', isDefault: true },
+        ] });
+      }
+      return Promise.resolve({});
+    });
+
+    await session.setModel(undefined);
+    await session.setPermissionMode('default');
+
+    expect(internal.activeModel).toBe('gpt-5.6-codex');
+    expect(internal.options.model).toBeUndefined();
+    expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({
+      collaborationMode: expect.objectContaining({
+        settings: expect.objectContaining({ model: 'gpt-5.6-codex' }),
+      }),
+    }));
+  });
+
+  it('keeps the resolved Default through Plan entry and exit', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: {} };
+    const request = vi.spyOn(internal, 'request').mockImplementation((method: string) => {
+      if (method === 'thread/settings/update' && request.mock.calls.length === 1) {
+        return Promise.resolve({ model: 'gpt-5.6-codex' });
+      }
+      return Promise.resolve({});
+    });
+
+    await session.setModel(undefined);
+    await session.setPermissionMode('plan');
+    await session.setPermissionMode('default');
+
+    const collaborationUpdates = request.mock.calls
+      .filter(([method, params]) => method === 'thread/settings/update' && params.collaborationMode)
+      .map(([, params]) => params.collaborationMode);
+    expect(collaborationUpdates).toEqual([
+      { mode: 'plan', settings: { model: 'gpt-5.6-codex', reasoning_effort: null, developer_instructions: null } },
+      { mode: 'default', settings: { model: 'gpt-5.6-codex', reasoning_effort: null, developer_instructions: null } },
+    ]);
+  });
+
+  it('preserves an explicit model across collaboration mode changes', async () => {
+    const session = new CodexSession('codex');
+    const internal = session as any;
+    internal.codexThreadId = 'codex-thread';
+    internal.options = { permissionMode: 'default', callbacks: {} };
+    const request = vi.spyOn(internal, 'request').mockResolvedValue({});
+
+    await session.setModel('gpt-5.4-mini');
+    await session.setPermissionMode('plan');
+    await session.setPermissionMode('default');
+
+    expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({
+      collaborationMode: expect.objectContaining({
+        settings: expect.objectContaining({ model: 'gpt-5.4-mini' }),
+      }),
     }));
   });
 
