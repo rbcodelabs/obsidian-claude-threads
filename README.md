@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.30.1-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.30.2-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -789,9 +789,13 @@ The project uses a worktree-based workflow — edits directly to the main checko
    cd ~/.geode/worktrees/obsidian-claude-threads/chore/bump-version-X.Y.Z
    ```
 
-2. **Bump the version** in `manifest.json` and `package.json` (both must match), then commit and push:
+2. **Bump the version** with the repository workflow. This updates `package.json`, `package-lock.json`, and `manifest.json`, then syncs `versions.json`. Update the README version badge to the same version and verify all five files agree:
    ```bash
-   git add manifest.json package.json
+   npm version X.Y.Z --no-git-tag-version
+   npm run sync-versions
+   npm run check-versions
+   # Confirm the README badge also says X.Y.Z.
+   git add manifest.json package.json package-lock.json versions.json README.md
    git commit -m "chore: bump version to vX.Y.Z"
    git push -u origin chore/bump-version-X.Y.Z
    ```
@@ -809,7 +813,7 @@ The project uses a worktree-based workflow — edits directly to the main checko
    git push origin vX.Y.Z
    ```
 
-5. That's it. The [release workflow](.github/workflows/release.yml) automatically builds the plugin and publishes a GitHub release with `main.js`, `styles.css`, and `manifest.json` attached — BRAT will pick it up within a few minutes.
+5. That's it. The [release workflow](.github/workflows/release.yml) verifies the tag and committed `versions.json`, builds the plugin, and publishes a GitHub release with `main.js`, `styles.css`, `manifest.json`, and `versions.json` attached — BRAT will pick it up within a few minutes.
 
 ## License
 
