@@ -5,6 +5,7 @@ import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { resolveGitRepoRoot, resolveThreadProjectName } from './pathUtils';
+import { parsePrUrlRepo } from './gitDiffUtils';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
@@ -744,7 +745,21 @@ export class KanbanView extends ItemView {
       }
 
       const repo = resolveThreadProjectName(thread);
-      if (repo) return { key: `cwd:${threadRoot}`, label: repo };
+      if (repo) {
+        // Legacy orphaned worktrees predate originRepoPath. Their persisted PR
+        // URL is the only stable repository identity left after the distinct
+        // worktree cwd paths disappear; projectNameOverride remains display-only.
+        if (!thread.originRepoPath && thread.projectNameOverride && !resolveGitRepoRoot(thread.cwd)) {
+          const prRepo = parsePrUrlRepo(thread.prUrl);
+          if (prRepo) {
+            return {
+              key: `github:${prRepo.owner.toLowerCase()}/${prRepo.repo.toLowerCase()}`,
+              label: repo,
+            };
+          }
+        }
+        return { key: `cwd:${threadRoot}`, label: repo };
+      }
       // Fallback for non-repo paths (resolveThreadProjectName already returns
       // the last path segment, but guard anyway): shortened cwd label.
       const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);

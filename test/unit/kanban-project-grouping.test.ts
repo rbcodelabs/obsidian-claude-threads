@@ -37,7 +37,11 @@ function makeProject(id: string, name: string, effectiveCwd: string): TestProjec
   return { id, name, effectiveCwd, cwdOverride: effectiveCwd, vaultFolder: name, createdAt: 1 };
 }
 
-function renderProjectColumns(threads: Thread[], projects: TestProject[]): HTMLElement {
+function renderKanbanBoard(
+  threads: Thread[],
+  projects: TestProject[],
+  kanbanGroupBy: 'folder' | 'project' = 'project',
+): HTMLElement {
   const projectById = new Map(projects.map(project => [project.id, project]));
   const manager = {
     vaultRoot: '/vault',
@@ -56,7 +60,7 @@ function renderProjectColumns(threads: Thread[], projects: TestProject[]): HTMLE
   const plugin = {
     manager,
     settings: {
-      kanbanGroupBy: 'project',
+      kanbanGroupBy,
       stackScheduledThreads: false,
       orchestratorThreadId: undefined,
       alwaysAllowedTools: [],
@@ -76,6 +80,9 @@ function renderProjectColumns(threads: Thread[], projects: TestProject[]): HTMLE
   view.render();
   return view.boardEl;
 }
+
+const renderProjectColumns = (threads: Thread[], projects: TestProject[]): HTMLElement =>
+  renderKanbanBoard(threads, projects, 'project');
 
 function columns(board: HTMLElement): Array<{ label: string; cards: string[] }> {
   return Array.from(board.querySelectorAll<HTMLElement>('.ct-kanban-project-col')).map(column => ({
@@ -152,5 +159,68 @@ describe('KanbanView Project grouping identity', () => {
     ], [laterId, earlierId]);
 
     expect(columns(board)).toEqual([{ label: 'Alpha', cards: ['ambiguous'] }]);
+  });
+
+  it('keeps legacy orphaned worktrees from the same persisted PR repository in one column', () => {
+    const board = renderProjectColumns([
+      makeThread('legacy-one', {
+        cwd: '/tmp/claude-worktrees/stale-one',
+        projectNameOverride: 'obsidian-claude-threads',
+        prUrl: 'https://github.com/rbcodelabs/obsidian-claude-threads/pull/478',
+      }),
+      makeThread('legacy-two', {
+        cwd: '/tmp/claude-worktrees/stale-two',
+        projectNameOverride: 'obsidian-claude-threads',
+        prUrl: 'https://github.com/rbcodelabs/obsidian-claude-threads/pull/479',
+      }),
+    ], []);
+
+    expect(columns(board)).toEqual([{
+      label: 'obsidian-claude-threads',
+      cards: ['legacy-one', 'legacy-two'],
+    }]);
+  });
+
+  it('uses the same persisted PR repository identity for legacy folder swimlanes', () => {
+    const board = renderKanbanBoard([
+      makeThread('legacy-one', {
+        cwd: '/tmp/claude-worktrees/stale-one',
+        projectNameOverride: 'obsidian-claude-threads',
+        prUrl: 'https://github.com/rbcodelabs/obsidian-claude-threads/pull/478',
+      }),
+      makeThread('legacy-two', {
+        cwd: '/tmp/claude-worktrees/stale-two',
+        projectNameOverride: 'obsidian-claude-threads',
+        prUrl: 'https://github.com/rbcodelabs/obsidian-claude-threads/pull/479',
+      }),
+    ], [], 'folder');
+
+    const lanes = Array.from(board.querySelectorAll<HTMLElement>('.ct-kanban-lane'));
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0].querySelector('.ct-kanban-lane-name')?.textContent).toBe('obsidian-claude-threads');
+    expect(Array.from(lanes[0].querySelectorAll<HTMLElement>('.ct-kanban-card-title')).map(card => card.textContent)).toEqual([
+      'legacy-one',
+      'legacy-two',
+    ]);
+  });
+
+  it('keeps same-looking legacy labels from different persisted PR repositories separate', () => {
+    const board = renderProjectColumns([
+      makeThread('first-owner', {
+        cwd: '/tmp/claude-worktrees/stale-first-owner',
+        projectNameOverride: 'shared-repo',
+        prUrl: 'https://github.com/first-owner/shared-repo/pull/1',
+      }),
+      makeThread('second-owner', {
+        cwd: '/tmp/claude-worktrees/stale-second-owner',
+        projectNameOverride: 'shared-repo',
+        prUrl: 'https://github.com/second-owner/shared-repo/pull/2',
+      }),
+    ], []);
+
+    expect(columns(board)).toEqual([
+      { label: 'shared-repo', cards: ['first-owner'] },
+      { label: 'shared-repo', cards: ['second-owner'] },
+    ]);
   });
 });
