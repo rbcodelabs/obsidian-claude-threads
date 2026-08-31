@@ -24,7 +24,9 @@
       --interactive-accent-hover: #6d28d9;
       --font-ui-small: 13px;
       --font-ui-smaller: 11px;
-      --font-monospace: 'SFMono-Regular', Consolas, monospace;
+      /* Avoid a process-dependent fallback from the PostScript-only
+         SFMono-Regular name in headless Chromium screenshot runs. */
+      --font-monospace: ui-monospace, monospace;
       --color-red: #e06c75;
       --color-yellow: #e5c07b;
       --code-background: #282c34;
