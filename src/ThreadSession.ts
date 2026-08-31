@@ -78,7 +78,7 @@ export class ThreadSession {
    * rejected it before the model saw it, so no new transcript message is
    * added — see the replay in `pumpMessages()`'s catch block).
    */
-  private lastUserTurn: { text: string; images?: ImageAttachment[] } | null = null;
+  private lastUserTurn: { text: string; images?: ImageAttachment[]; userMessageUuid?: string } | null = null;
   private recapEmitted = false;
   /** Resolves the plugin-initiated /compact maintenance turn, if one is active. */
   private internalCompactionResolve: ((completed: boolean) => void) | null = null;
@@ -389,7 +389,7 @@ export class ThreadSession {
     // or rate-limit replay — is deliberate: whatever turn is in flight is
     // exactly what a subsequent rate-limit rejection must re-send, and
     // re-recording the same replayed turn is idempotent.
-    this.lastUserTurn = { text, images };
+    this.lastUserTurn = { text, images, userMessageUuid };
     const message: SDKUserMessage = {
       type: 'user',
       ...(userMessageUuid ? { uuid: userMessageUuid as NonNullable<SDKUserMessage['uuid']> } : {}),
@@ -999,7 +999,7 @@ export class ThreadSession {
               // close() was called during the backoff — nothing to restart.
             } else {
               await this.restart('rate-limit');
-              if (turn) this.send(turn.text, turn.images);
+              if (turn) this.send(turn.text, turn.images, turn.userMessageUuid);
             }
           } catch (retryErr) {
             console.error('[ClaudeThreads] ThreadSession rate-limit auto-retry failed:', retryErr);
