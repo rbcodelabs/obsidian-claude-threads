@@ -358,7 +358,7 @@ export class CodexSession {
     if (this.options) this.options.permissionMode = mode;
   }
 
-  send(text: string, images?: ImageAttachment[]): void {
+  send(text: string, images?: ImageAttachment[], _userMessageUuid?: string): void {
     if (this.closed || !this.codexThreadId) throw new Error('Codex session is not running');
     if (this._turnInFlight || this.awaitingPlanApproval) {
       this.queuedTurns.push({ text, images });

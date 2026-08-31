@@ -379,7 +379,7 @@ export class ThreadSession {
    * internal queue-and-wait: the CLI coalesces a concurrent push into the
    * generation already running.
    */
-  send(text: string, images?: ImageAttachment[]): void {
+  send(text: string, images?: ImageAttachment[], userMessageUuid?: string): void {
     if (!this.query) {
       throw new Error('[ClaudeThreads] ThreadSession.send() called before start() (or after close())');
     }
@@ -392,6 +392,7 @@ export class ThreadSession {
     this.lastUserTurn = { text, images };
     const message: SDKUserMessage = {
       type: 'user',
+      ...(userMessageUuid ? { uuid: userMessageUuid as NonNullable<SDKUserMessage['uuid']> } : {}),
       parent_tool_use_id: null,
       message: {
         role: 'user',
@@ -667,7 +668,11 @@ export class ThreadSession {
                 this.internalCompactionResolve = null;
                 resolve(true);
               } else {
-                callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+                const result = msg as typeof msg & { queued_turn_count?: number; user_message_uuid?: string };
+                callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns, {
+                  queuedTurnCount: result.queued_turn_count,
+                  userMessageUuid: result.user_message_uuid,
+                });
               }
             } else if (this.interrupted) {
               callbacks.onInterrupted(this.lastKnownSessionId ?? '');
@@ -683,7 +688,10 @@ export class ThreadSession {
             // No release-gate here (ADR-0002 §2) — the channel stays open
             // regardless of this result; it only closes when close()/restart()
             // says so. A `result` just marks the turn done.
-            this._turnInFlight = false;
+            const queuedTurnCount = msg.subtype === 'success'
+              ? (msg as typeof msg & { queued_turn_count?: number }).queued_turn_count ?? 0
+              : 0;
+            if (queuedTurnCount === 0) this._turnInFlight = false;
             break;
           }
 
@@ -763,12 +771,23 @@ export class ThreadSession {
                   sys.decision_reason_type as string | undefined,
                 );
                 break;
-              case 'model_fallback':
-                callbacks.onModelFallback?.(
-                  sys.trigger as string,
-                  sys.from_model as string,
-                  sys.to_model as string,
-                );
+              case 'model_refusal_fallback':
+                callbacks.onModelRefusalFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  fallbackModel: sys.fallback_model as string,
+                  scope: (sys.scope as 'session' | 'local' | undefined) ?? 'session',
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
+                break;
+              case 'model_refusal_no_fallback':
+                callbacks.onModelRefusalNoFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
                 break;
               case 'memory_recall': {
                 const paths = ((sys.memories as Array<{ path: string }>) ?? []).map(m => m.path);

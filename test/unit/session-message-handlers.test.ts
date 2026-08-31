@@ -155,6 +155,32 @@ describe('model_fallback → onModelFallback', () => {
   });
 });
 
+describe('Claude refusal events', () => {
+  it('emits distinct typed fallback and no-fallback events without replacing Codex fallback', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T');
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, event) => events.push(event));
+    await manager.sendMessage(thread.id, 'hi');
+
+    mock.callbacks!.onModelRefusalFallback!({
+      content: 'Retried safely.', originalModel: 'opus', fallbackModel: 'sonnet',
+      scope: 'session', category: 'cyber', explanation: 'Refused',
+    });
+    mock.callbacks!.onModelRefusalNoFallback!({
+      content: 'Could not answer.', originalModel: 'opus', category: 'bio',
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'model_refusal_fallback', content: 'Retried safely.', fallbackModel: 'sonnet',
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'model_refusal_no_fallback', content: 'Could not answer.', originalModel: 'opus',
+    }));
+    driveResponse();
+  });
+});
+
 // ─── task_updated ─────────────────────────────────────────────────────────────
 
 describe('task_updated → onTaskUpdated', () => {
