@@ -296,19 +296,20 @@ test.describe('Claude Threads UI', () => {
   test('inline visualization follows the host theme, not the OS colour scheme', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
 
     // Repaint the host as a light theme and re-render the thread. Inside a
     // sandboxed opaque origin, `color-scheme: light dark` resolves against the
     // OS rather than the app, so the document must instead carry literal
     // resolved values and an explicit data-theme.
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       document.body.classList.remove('theme-dark');
       document.body.classList.add('theme-light');
       const root = document.documentElement.style;
       root.setProperty('--background-primary', 'rgb(255, 255, 255)');
       root.setProperty('--text-normal', 'rgb(34, 34, 34)');
-      (window as any).__view.focusThread('thread-visualize');
+      await (window as any).__view.focusThread('thread-visualize');
     });
     await page.waitForSelector('.ct-visualize-frame');
 
@@ -321,14 +322,14 @@ test.describe('Claude Threads UI', () => {
     expect(light).not.toContain('light-dark(');
 
     // Flip back to dark; the card must follow the host, not the OS.
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       document.body.classList.remove('theme-light');
       document.body.classList.add('theme-dark');
       const root = document.documentElement.style;
       root.setProperty('--background-primary', 'rgb(30, 30, 30)');
       root.setProperty('--text-normal', 'rgb(220, 221, 222)');
-      (window as any).__view.focusThread('thread-fix-auth');
-      (window as any).__view.focusThread('thread-visualize');
+      await (window as any).__view.focusThread('thread-fix-auth');
+      await (window as any).__view.focusThread('thread-visualize');
     });
     await page.waitForSelector('.ct-visualize-frame');
     await expect
