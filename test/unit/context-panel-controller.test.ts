@@ -48,7 +48,14 @@ function makeHarness(
     revealLeaf: vi.fn(),
     openLinkText: vi.fn().mockResolvedValue(undefined),
   };
-  const app = { workspace } as unknown as App;
+  const resolvedFiles = new Map<string, TFile>();
+  const app = {
+    workspace,
+    metadataCache: {
+      getFirstLinkpathDest: vi.fn((linktext: string, sourcePath: string) =>
+        resolvedFiles.get(`${sourcePath}::${linktext}`) ?? null),
+    },
+  } as unknown as App;
   let marker = restoredMarker;
   const createController = (ownershipStore = store) => new ContextPanelController(
     app,
@@ -61,6 +68,9 @@ function makeHarness(
   return {
     controller, createController, workspace, chat, firstCompanion, secondCompanion, attached,
     getMarker: () => marker,
+    resolveLink: (linktext: string, sourcePath: string, file: TFile) => {
+      resolvedFiles.set(`${sourcePath}::${linktext}`, file);
+    },
     replaceChat: (next: WorkspaceLeaf) => { attached.delete(chatLeaf); chatLeaf = next; attached.add(next); },
   };
 }
@@ -94,12 +104,39 @@ describe('ContextPanelController', () => {
   });
 
   it('opens internal links from the companion instead of replacing chat', async () => {
-    const { controller, workspace, firstCompanion } = makeHarness();
+    const { controller, workspace, firstCompanion, resolveLink } = makeHarness();
+    const file = { path: 'Daily/Today.md' } as TFile;
+    resolveLink('Daily/Today', 'Claude/thread.md', file);
 
     await controller.openLinkText('Daily/Today', 'Claude/thread.md');
 
     expect(workspace.revealLeaf).toHaveBeenLastCalledWith(firstCompanion);
-    expect(workspace.openLinkText).toHaveBeenCalledWith('Daily/Today', 'Claude/thread.md', false);
+    expect(firstCompanion.openFile).toHaveBeenCalledWith(file);
+    expect(workspace.openLinkText).not.toHaveBeenCalled();
+  });
+
+  it('gracefully falls back to standard link handling when a vault link cannot be resolved', async () => {
+    const { controller, workspace } = makeHarness();
+
+    await controller.openLinkText('Missing note', 'Claude/thread.md');
+
+    expect(workspace.openLinkText).toHaveBeenCalledWith('Missing note', 'Claude/thread.md', false);
+  });
+
+  it('uses the optional atomic ratio split when the host provides it', async () => {
+    const { controller, workspace, firstCompanion, attached } = makeHarness();
+    const splitWithRatio = vi.fn(() => {
+      attached.add(firstCompanion);
+      return firstCompanion;
+    });
+    (workspace as typeof workspace & { splitActiveLeafWithRatio: typeof splitWithRatio }).splitActiveLeafWithRatio = splitWithRatio;
+
+    await controller.openFile({ path: 'Notes/first.md' } as TFile);
+    await controller.openFile({ path: 'Notes/second.md' } as TFile);
+
+    expect(splitWithRatio).toHaveBeenCalledOnce();
+    expect(splitWithRatio).toHaveBeenCalledWith('vertical', 0.3);
+    expect(workspace.splitActiveLeaf).not.toHaveBeenCalled();
   });
 
   it('can place a native registered view in the same reusable companion', async () => {

@@ -1,5 +1,6 @@
 import './obsidian-mock'; // must be first — sets up HTMLElement.prototype
 import { KanbanView } from '../../src/KanbanView';
+import { AgentDashboard } from '../../src/AgentDashboard';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import {
@@ -18,6 +19,22 @@ import { mockLeaf } from './obsidian-mock';
 const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
 const manager = new ThreadManager(settings);
 manager.loadProjects(kanbanFixtureProjects);
+const agentFixtureThread = kanbanFixtureThreads.find(thread => thread.id === kanbanRunningThreadId);
+if (agentFixtureThread) {
+  agentFixtureThread.agentRuns = Array.from({ length: 7 }, (_, index) => ({
+    id: `dashboard-agent-${index}`,
+    threadId: agentFixtureThread.id,
+    nativeAgentId: `native-${index}`,
+    harness: 'claude' as const,
+    role: 'engineer',
+    description: `Sub-agent ${index + 1}`,
+    status: index < 2 ? 'working' as const : 'completed' as const,
+    startedAt: Date.now() - 10_000,
+    updatedAt: Date.now(),
+    capabilities: { viewTranscript: true, sendMessage: true, interrupt: true },
+    events: [],
+  }));
+}
 manager.loadThreads(kanbanFixtureThreads);
 
 // Running / Awaiting state lives in the manager's private session & permission
@@ -70,20 +87,25 @@ const mockPlugin = {
   hasPendingWakeup: (threadId: string) => (pendingWakeups.get(threadId)?.length ?? 0) > 0,
 };
 
-const view = new KanbanView(mockLeaf as any, mockPlugin as any);
 const container = document.getElementById('app')!;
+const dashboardMode = new URLSearchParams(window.location.search).has('dashboard');
+const view = dashboardMode
+  ? new AgentDashboard(mockLeaf as any, mockPlugin as any)
+  : new KanbanView(mockLeaf as any, mockPlugin as any);
 container.appendChild(view.containerEl);
-view.onOpen();
+void view.onOpen();
 
 // Expose for Playwright
 (window as any).__kanban = view;
+(window as any).__dashboard = view;
 (window as any).__manager = manager;
 (window as any).__dispatchCalls = dispatchCalls;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
+  if (dashboardMode) return;
   settings.kanbanGroupBy = mode;
-  view.render();
+  (view as KanbanView).render();
   // Keep the toggle button glyph/state in sync with the forced mode.
-  (view as any).updateGroupByBtn?.();
+  (view as KanbanView & { updateGroupByBtn?: () => void }).updateGroupByBtn?.();
 };
 
 // Lets screenshot tests seed settings.orchestratorThreadId so the bot badge

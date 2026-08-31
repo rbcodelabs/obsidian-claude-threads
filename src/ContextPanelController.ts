@@ -1,6 +1,9 @@
 import type { App, TFile, ViewState, WorkspaceLeaf } from 'obsidian';
 
 interface OwnedCompanion { workspace: object; chatLeaf: WorkspaceLeaf; companionLeaf: WorkspaceLeaf }
+interface RatioWorkspace {
+  splitActiveLeafWithRatio?(direction: 'vertical' | 'horizontal', ratio: number): WorkspaceLeaf;
+}
 export type CompanionOwnershipStore = Map<string, OwnedCompanion>;
 export function createCompanionOwnershipStore(): CompanionOwnershipStore { return new Map(); }
 const defaultOwnershipStore = createCompanionOwnershipStore();
@@ -28,7 +31,10 @@ export class ContextPanelController {
 
     const workspace = this.app.workspace;
     workspace.revealLeaf(chatLeaf);
-    const companionLeaf = workspace.splitActiveLeaf('vertical');
+    const ratioWorkspace = workspace as typeof workspace & RatioWorkspace;
+    const companionLeaf = typeof ratioWorkspace.splitActiveLeafWithRatio === 'function'
+      ? ratioWorkspace.splitActiveLeafWithRatio('vertical', 0.3)
+      : workspace.splitActiveLeaf('vertical');
     const marker = createMarker();
     this.ownershipStore.set(marker, { workspace, chatLeaf, companionLeaf });
     this.activeMarker = marker;
@@ -46,10 +52,12 @@ export class ContextPanelController {
   }
 
   async openLinkText(linktext: string, sourcePath = ''): Promise<void> {
-    const leaf = this.getLeaf();
-    await this.ensureMarkerPersisted();
-    this.app.workspace.revealLeaf(leaf);
-    await this.app.workspace.openLinkText(linktext, sourcePath, false);
+    const file = this.app.metadataCache.getFirstLinkpathDest(linktext, sourcePath);
+    if (!file) {
+      await this.app.workspace.openLinkText(linktext, sourcePath, false);
+      return;
+    }
+    await this.openFile(file);
   }
 
   async setViewState(viewState: ViewState): Promise<boolean> {

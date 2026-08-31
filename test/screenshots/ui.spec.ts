@@ -1734,6 +1734,38 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'kanban-project-columns.png', { fullPage: true });
   });
 
+  test('agent dashboard — project-first compact rows', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-agents-project');
+
+    const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
+    expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
+    expect(projects.at(-1)).toBe('Unassigned');
+
+    const hiptrip = page.locator('.ct-agents-project').filter({
+      has: page.locator('.ct-agents-project-name', { hasText: 'HipTrip' }),
+    });
+    const sections = (await hiptrip.locator('.ct-agents-group-label > span:first-child').allInnerTexts()).map(label => label.trim().toUpperCase());
+    expect(sections).toEqual(expect.arrayContaining(['WORKING', 'WAITING', 'NEW', 'REVIEWED']));
+    expect(sections.indexOf('WORKING')).toBeLessThan(sections.indexOf('WAITING'));
+    expect(sections.indexOf('WAITING')).toBeLessThan(sections.indexOf('NEW'));
+
+    const normalRow = hiptrip.locator('.ct-agents-row:not(.ct-agents-row-permission):not(.ct-agents-row-waiting)').first();
+    expect((await normalRow.boundingBox())?.height).toBeLessThanOrEqual(44);
+    await expect(normalRow.locator('.ct-agents-row-summary')).toHaveCount(0);
+
+    await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveCount(1);
+    await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveText('7 agents');
+    await expect(hiptrip.locator('.ct-dashboard-agent')).toHaveCount(0);
+
+    const permissionRow = page.locator('.ct-agents-row-permission');
+    await expect(permissionRow.locator('.ct-agents-permission-actions')).toBeVisible();
+    expect((await permissionRow.boundingBox())?.height).toBeGreaterThan(44);
+
+    await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
+  });
+
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {
     // Same run-state-settling root cause as the scheduled-pill test above, on the dashboard
     // side: KanbanView.handleEvent's isStateChange didn't include
