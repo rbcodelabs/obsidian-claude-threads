@@ -1,17 +1,17 @@
 /**
- * Resolves a human-readable project name (git repo name) from a working directory path.
+ * Resolves a git repository root from a working directory path.
  *
  * Strategy (in order):
  * 1. Walk up from `cwd` looking for a `.git` entry.
- *    - `.git` is a *directory*  → we found the main repo root; return its basename.
+ *    - `.git` is a *directory*  → we found the main repo root; return it.
  *    - `.git` is a *file*       → we're in a worktree; parse the `gitdir:` pointer,
  *                                  navigate to the main `.git` dir, and return the
- *                                  repo root's basename.
+ *                                  repo root.
  * 2. If nothing is found, return null — callers decide their own fallback.
  *
  * Uses synchronous fs calls (acceptable — only called from UI render paths on desktop).
  */
-export function resolveGitProjectName(cwd: string): string | null {
+export function resolveGitRepoRoot(cwd: string): string | null {
   if (!cwd) return null;
 
   try {
@@ -23,9 +23,7 @@ export function resolveGitProjectName(cwd: string): string | null {
     // Claude worktree layout without needing any filesystem I/O.
     const worktreesIdx = cwd.indexOf('/.worktrees/');
     if (worktreesIdx !== -1) {
-      const before = cwd.slice(0, worktreesIdx);
-      const lastSlashBefore = before.lastIndexOf('/');
-      return lastSlashBefore === -1 ? before : before.slice(lastSlashBefore + 1);
+      return nodePath.normalize(cwd.slice(0, worktreesIdx));
     }
 
     // For absolute paths only: walk up the directory tree looking for a .git
@@ -44,7 +42,7 @@ export function resolveGitProjectName(cwd: string): string | null {
 
           if (stat.isDirectory()) {
             // Standard repo root — the parent of .git is the project.
-            return nodePath.basename(dir);
+            return dir;
           }
 
           if (stat.isFile()) {
@@ -60,10 +58,10 @@ export function resolveGitProjectName(cwd: string): string | null {
               if (idx !== -1) {
                 const mainGitDir = gitdirPath.slice(0, idx);       // /repo/.git
                 const repoRoot   = nodePath.dirname(mainGitDir);   // /repo
-                return nodePath.basename(repoRoot);
+                return repoRoot;
               }
               // Fallback: just use the parent of the gitdir we found
-              return nodePath.basename(nodePath.dirname(nodePath.dirname(gitdirPath)));
+              return nodePath.dirname(nodePath.dirname(gitdirPath));
             }
           }
         }
@@ -78,6 +76,14 @@ export function resolveGitProjectName(cwd: string): string | null {
   }
 
   return null;
+}
+
+export function resolveGitProjectName(cwd: string): string | null {
+  const root = resolveGitRepoRoot(cwd);
+  if (!root) return null;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const nodePath = require('path') as typeof import('path');
+  return nodePath.basename(root);
 }
 
 /**
