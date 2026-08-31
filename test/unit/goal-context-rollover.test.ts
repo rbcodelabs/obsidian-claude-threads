@@ -18,6 +18,7 @@ function makeFakeSession(harness: 'claude' | 'codex') {
   return {
     harness,
     sent: [] as string[],
+    sentUserMessageUuids: [] as (string | undefined)[],
     starts: [] as HarnessSessionOptions[],
     closeCount: 0,
     get turnInFlight() { return turnInFlight; },
@@ -37,7 +38,11 @@ function makeFakeSession(harness: 'claude' | 'codex') {
         });
       }
     },
-    send(text: string) { this.sent.push(text); turnInFlight = true; },
+    send(text: string, _images?: unknown, userMessageUuid?: string) {
+      this.sent.push(text);
+      this.sentUserMessageUuids.push(userMessageUuid);
+      turnInFlight = true;
+    },
     async interrupt() {},
     close() { this.closeCount += 1; turnInFlight = false; },
     async setModel() {},
@@ -94,6 +99,7 @@ describe.each(['claude', 'codex'] as const)('goal context rollover — %s', (har
     expect(second.starts[0].resume).toBe('durable-session');
     expect(second.starts[0].appendSystemPrompt).toContain('Ship the release');
     expect(second.sent).toEqual([goalKickoffMessage('Ship the release')]);
+    expect(second.sentUserMessageUuids).toEqual([thread.messages.at(-1)?.id]);
     await expect(sent).resolves.toBe(true);
   });
 

@@ -109,7 +109,7 @@ export interface SessionCallbacks {
    * before this fires — they're reconstructed in the final `assistant` message.
    */
   onRawEvent?: (event: { type?: string } & Record<string, unknown>) => void;
-  /** Fired when Claude falls back to an alternate model (e.g. primary overloaded). */
+  /** Harness-neutral reroute callback retained for Codex model/rerouted events. */
   onModelFallback?: (trigger: string, fromModel: string, toModel: string) => void;
   onModelRefusalFallback?: (refusal: ModelRefusalFallback) => void;
   onModelRefusalNoFallback?: (refusal: ModelRefusalNoFallback) => void;
