@@ -3,6 +3,7 @@ import type { RunEvent, ScheduledItem } from './types';
 export interface SchedulePersistenceAdapter {
   saveItem(item: ScheduledItem): Promise<void>;
   removeItem(id: string): Promise<void>;
+  saveItems?(items: ScheduledItem[]): Promise<void>;
 }
 
 export interface ScheduleCompletion {
@@ -127,6 +128,17 @@ export class ScheduleCoordinator {
     return this.enqueue(async () => {
       this.items.delete(id);
       await this.requireAdapter().removeItem(id);
+    });
+  }
+
+  replaceAll(items: ScheduledItem[]): Promise<ScheduledItem[]> {
+    return this.enqueue(async () => {
+      const adapter = this.requireAdapter();
+      if (!adapter.saveItems) throw new Error('Atomic schedule replacement is not available');
+      const replacements = items.map(copyItem);
+      await adapter.saveItems(replacements.map(copyItem));
+      this.items = new Map(replacements.map(item => [item.id, item]));
+      return replacements.map(copyItem);
     });
   }
 

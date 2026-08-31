@@ -9,9 +9,12 @@ export function appendOrchestratorBadge(
   parent: HTMLElement,
   threadId: string,
   orchestratorThreadId: string | undefined,
+  projectOrchestratorThreadId?: string,
 ): void {
-  if (threadId !== orchestratorThreadId) return;
-  const badge = parent.createSpan({ cls: 'ct-orchestrator-badge' });
+  const isPortfolio = threadId === orchestratorThreadId;
+  const isProject = threadId === projectOrchestratorThreadId;
+  if (!isPortfolio && !isProject) return;
+  const badge = parent.createSpan({ cls: `ct-orchestrator-badge ${isProject ? 'ct-project-orchestrator-badge' : 'ct-portfolio-orchestrator-badge'}` });
   setIcon(badge, 'bot');
-  setTooltip(badge, 'Thread Orchestrator');
+  setTooltip(badge, isProject ? 'Project Orchestrator' : 'Portfolio Orchestrator');
 }

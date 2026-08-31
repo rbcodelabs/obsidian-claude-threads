@@ -13,7 +13,7 @@ export interface SchedulerItemPatch {
   enabled?: boolean;
   schedule?: Partial<ScheduledItemSchedule>;
   cwd?: string;
-  projectId?: string;
+  projectId?: string | null;
   lastRun?: number;
   nextRun?: number;
   lastThreadId?: string;
@@ -29,6 +29,7 @@ export interface SchedulerOptions {
   getItems: () => ScheduledItem[];
   saveItem: (item: ScheduledItem) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
+  saveItems?: (items: ScheduledItem[]) => Promise<void>;
   createThread: (title: string, cwd: string, projectId?: string, scheduledItemId?: string) => { id: string };
   sendMessage: (threadId: string, prompt: string) => Promise<void>;
   getDefaultCwd: () => string;
@@ -779,7 +780,7 @@ export class Scheduler {
     }
 
     const existing = this.items[idx];
-    if (patch.projectId !== undefined) this.validateProject(patch.projectId);
+    if (patch.projectId) this.validateProject(patch.projectId);
 
     // Merge schedule sub-fields so callers can change just timeOfDay without
     // supplying the full ScheduledItemSchedule object.
@@ -787,8 +788,10 @@ export class Scheduler {
       ? { ...existing.schedule, ...patch.schedule }
       : existing.schedule;
 
-    const { schedule: _schedulePatch, ...restPatch } = patch;
+    const { schedule: _schedulePatch, projectId: projectIdPatch, ...restPatch } = patch;
     const updated: ScheduledItem = { ...existing, ...restPatch, schedule: mergedSchedule };
+    if (projectIdPatch === null) delete updated.projectId;
+    else if (projectIdPatch !== undefined) updated.projectId = projectIdPatch;
 
     // If schedule or enabled changed, recompute nextRun
     const scheduleChanged =
@@ -812,8 +815,10 @@ export class Scheduler {
         const freshSchedule: ScheduledItemSchedule = patch.schedule
           ? { ...fresh.schedule, ...patch.schedule }
           : fresh.schedule;
-        const { schedule: _ignoredSchedule, ...freshRestPatch } = patch;
+        const { schedule: _ignoredSchedule, projectId: freshProjectIdPatch, ...freshRestPatch } = patch;
         const merged: ScheduledItem = { ...fresh, ...freshRestPatch, schedule: freshSchedule };
+        if (freshProjectIdPatch === null) delete merged.projectId;
+        else if (freshProjectIdPatch !== undefined) merged.projectId = freshProjectIdPatch;
         if (scheduleChanged) merged.nextRun = computeNextRun(merged, true);
         return merged;
       });
@@ -845,6 +850,20 @@ export class Scheduler {
     }
   }
 
+  async detachProject(projectId: string, effectiveCwd: string): Promise<void> {
+    const removedIds = this.items.filter(item => item.projectId === projectId && item.isOrchestratorHeartbeat).map(item => item.id);
+    const replacements = this.items
+      .filter(item => !removedIds.includes(item.id))
+      .map(item => item.projectId === projectId
+        ? { ...item, cwd: item.cwd ?? effectiveCwd, projectId: undefined }
+        : item);
+    this.activateCoordinator();
+    const persisted = await this.coordinator.replaceAll(replacements);
+    for (const id of removedIds) this.cancelWakeSources(id);
+    this.items = persisted;
+    for (const item of this.items) this.armTimer(item);
+  }
+
   listItems(): ScheduledItem[] {
     return this.items.map((i) => this.publicCopy(i));
   }
@@ -865,6 +884,7 @@ export class Scheduler {
       {
         saveItem: this.options.saveItem,
         removeItem: this.options.removeItem,
+        saveItems: this.options.saveItems,
       },
       this.coordinatorRegistration,
     );

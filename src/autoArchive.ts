@@ -27,6 +27,8 @@ export interface IdleArchiveOptions {
   now: number;
   /** The orchestrator thread is never auto-archived. */
   orchestratorThreadId?: string;
+  /** All portfolio and Project orchestrator ids protected from automatic archive. */
+  orchestratorThreadIds?: string[];
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -46,6 +48,7 @@ export function isThreadIdleForArchive(
   if (!opts.autoArchiveIdleDays || opts.autoArchiveIdleDays <= 0) return false;
   if (thread.status !== 'waiting') return false;
   if (opts.orchestratorThreadId && thread.id === opts.orchestratorThreadId) return false;
+  if (opts.orchestratorThreadIds?.includes(thread.id)) return false;
   if (thread.pendingPlan) return false;
   if (thread.pendingQuestions && thread.pendingQuestions.length > 0) return false;
   const idleMs = opts.autoArchiveIdleDays * MS_PER_DAY;

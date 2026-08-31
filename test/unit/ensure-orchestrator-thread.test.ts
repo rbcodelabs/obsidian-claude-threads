@@ -28,7 +28,9 @@ function makePlugin() {
     vi.fn().mockResolvedValue(undefined);
 
   const deleteItem = vi.fn().mockResolvedValue(undefined);
-  const createItem = vi.fn().mockResolvedValue(undefined);
+  const createItem = vi.fn().mockImplementation(async (item: ScheduledItem) => {
+    plugin.settings.scheduledItems = [...(plugin.settings.scheduledItems ?? []), { ...item, id: item.id ?? crypto.randomUUID() }];
+  });
   (plugin as unknown as { scheduler: { deleteItem: typeof deleteItem; createItem: typeof createItem } }).scheduler = {
     deleteItem,
     createItem,
@@ -38,6 +40,87 @@ function makePlugin() {
 }
 
 describe('ClaudeThreadsPlugin.ensureOrchestratorThread() — stale heartbeat cleanup', () => {
+  it('keeps the live orchestrator, reference, and heartbeat when archive persistence fails', async () => {
+    const { plugin, deleteItem } = makePlugin();
+    const orchestrator = plugin.manager.createThread('Portfolio', '/tmp');
+    plugin.settings.orchestratorThreadId = orchestrator.id;
+    plugin.settings.saveThreadsToVault = true;
+    plugin.settings.scheduledItems = [{
+      id: 'heartbeat', name: 'Heartbeat', prompt: 'review', schedule: { type: 'interval', intervalSeconds: 3600 },
+      enabled: true, targetThreadId: orchestrator.id, isOrchestratorHeartbeat: true,
+    }];
+    plugin.persistence = { saveThread: vi.fn().mockRejectedValue(new Error('vault write failed')) } as never;
+
+    await expect((plugin as unknown as { archiveThreadById: (id: string) => Promise<void> }).archiveThreadById(orchestrator.id)).rejects.toThrow('vault write failed');
+
+    expect(plugin.manager.getThread(orchestrator.id)).toBe(orchestrator);
+    expect(plugin.settings.orchestratorThreadId).toBe(orchestrator.id);
+    expect(plugin.settings.scheduledItems).toHaveLength(1);
+    expect(deleteItem).not.toHaveBeenCalled();
+  });
+
+  it('restores the live vault note when retirement fails after archive persistence', async () => {
+    const { plugin, deleteItem } = makePlugin();
+    const orchestrator = plugin.manager.createThread('Portfolio', '/tmp');
+    orchestrator.status = 'waiting';
+    plugin.settings.orchestratorThreadId = orchestrator.id;
+    plugin.settings.saveThreadsToVault = true;
+    plugin.settings.scheduledItems = [{
+      id: 'heartbeat', name: 'Heartbeat', prompt: 'review', schedule: { type: 'interval', intervalSeconds: 3600 },
+      enabled: true, targetThreadId: orchestrator.id, isOrchestratorHeartbeat: true,
+    }];
+    const saveThread = vi.fn().mockResolvedValue(undefined);
+    plugin.persistence = { saveThread } as never;
+    deleteItem.mockRejectedValueOnce(new Error('heartbeat cleanup failed'));
+
+    await expect(plugin.archiveThreadById(orchestrator.id)).rejects.toThrow('heartbeat cleanup failed');
+
+    expect(saveThread).toHaveBeenCalledTimes(2);
+    expect(saveThread.mock.calls[0]![0].status).toBe('archived');
+    expect(saveThread.mock.calls[1]![0].status).toBe('waiting');
+    expect(plugin.manager.getThread(orchestrator.id)).toBe(orchestrator);
+    expect(plugin.settings.orchestratorThreadId).toBe(orchestrator.id);
+    expect(plugin.settings.scheduledItems).toHaveLength(1);
+  });
+
+
+  it('retires portfolio and Project orchestrators by clearing refs and heartbeats first', async () => {
+    const { plugin, deleteItem } = makePlugin();
+    const portfolio = plugin.manager.createThread('Portfolio', '/tmp');
+    plugin.settings.orchestratorThreadId = portfolio.id;
+    const project = plugin.manager.createProject('HipTrip', 'HipTrip');
+    const projectOrch = plugin.manager.createThread('HipTrip Orchestrator', '/tmp', project.id);
+    plugin.manager.updateProject(project.id, { orchestratorThreadId: projectOrch.id });
+    plugin.settings.scheduledItems = [
+      { id: 'portfolio-heartbeat', name: 'P', prompt: 'p', schedule: { type: 'interval', intervalSeconds: 3600 }, enabled: true, targetThreadId: portfolio.id, isOrchestratorHeartbeat: true },
+      { id: 'project-heartbeat', name: 'J', prompt: 'j', schedule: { type: 'interval', intervalSeconds: 3600 }, enabled: true, targetThreadId: projectOrch.id, projectId: project.id, isOrchestratorHeartbeat: true },
+    ];
+
+    await plugin.retireOrchestratorThread(portfolio.id);
+    await plugin.retireOrchestratorThread(projectOrch.id);
+
+    expect(deleteItem).toHaveBeenCalledWith('portfolio-heartbeat');
+    expect(deleteItem).toHaveBeenCalledWith('project-heartbeat');
+    expect(plugin.settings.orchestratorThreadId).toBeUndefined();
+    expect(plugin.manager.getProject(project.id)?.orchestratorThreadId).toBeUndefined();
+  });
+
+  it('creates one Project orchestrator and one Project-aware heartbeat without opening it', async () => {
+    const { plugin, createItem } = makePlugin();
+    plugin.manager.vaultRoot = '/vault';
+    const project = plugin.manager.createProject('HipTrip', 'Products/HipTrip', undefined, '/repos/hiptrip');
+
+    const threadId = await plugin.ensureProjectOrchestratorThread(project.id, false);
+    const reusedId = await plugin.ensureProjectOrchestratorThread(project.id, false);
+
+    expect(reusedId).toBe(threadId);
+    expect(plugin.manager.getProject(project.id)?.orchestratorThreadId).toBe(threadId);
+    expect(plugin.manager.getThread(threadId!)!).toMatchObject({ title: 'HipTrip Orchestrator', cwd: '/repos/hiptrip', projectId: project.id });
+    expect(createItem).toHaveBeenCalledOnce();
+    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({ targetThreadId: threadId, projectId: project.id, isOrchestratorHeartbeat: true }));
+    expect(plugin.openThreadInChatView).not.toHaveBeenCalled();
+  });
+
   it('deletes heartbeat items targeting the stale thread id when recreating the orchestrator thread', async () => {
     const { plugin, deleteItem } = makePlugin();
 

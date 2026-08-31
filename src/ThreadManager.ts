@@ -383,11 +383,17 @@ export class ThreadManager {
   }
 
   deleteProject(id: string): void {
-    this.projects.delete(id);
+    const project = this.projects.get(id);
+    if (!project) return;
+    project.orchestratorThreadId = undefined;
     // Detach threads that belonged to this project
     for (const thread of this.threads.values()) {
-      if (thread.projectId === id) this.setThreadProject(thread.id, null);
+      if (thread.projectId === id) {
+        delete thread.proposedReply;
+        this.setThreadProject(thread.id, null);
+      }
     }
+    this.projects.delete(id);
     this.emit('', { type: 'projects_changed' });
   }
 
@@ -408,8 +414,17 @@ export class ThreadManager {
     if (!thread) throw new Error(`Thread not found: ${id}`);
     const project = projectId === null ? undefined : this.projects.get(projectId);
     if (projectId !== null && !project) throw new Error(`Project not found: ${projectId}`);
+    if (id === this.settings.orchestratorThreadId && projectId !== null) {
+      throw new Error('The Portfolio orchestrator cannot be assigned to a Project.');
+    }
+    const ownedProject = this.getProjects().find(candidate => candidate.orchestratorThreadId === id);
+    if (ownedProject && projectId !== ownedProject.id) {
+      throw new Error('A Project orchestrator cannot be reassigned or detached while referenced by its Project.');
+    }
 
+    const changed = thread.projectId !== (projectId ?? undefined);
     thread.projectId = projectId ?? undefined;
+    if (changed) delete thread.proposedReply;
     thread.updatedAt = Date.now();
     this.emit(id, { type: 'project_changed' });
     if (alignCwd && project) this.setThreadCwd(id, this.getProjectCwd(project));

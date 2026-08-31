@@ -863,7 +863,7 @@ export class KanbanView extends ItemView {
       this.applyStateIcon(iconEl, state);
     }
     const cardTitleEl = cardHeader.createDiv({ cls: 'ct-kanban-card-title', text: thread.title });
-    appendOrchestratorBadge(cardTitleEl, thread.id, this.plugin.settings.orchestratorThreadId);
+    appendOrchestratorBadge(cardTitleEl, thread.id, this.plugin.settings.orchestratorThreadId, thread.projectId ? this.manager.getProject(thread.projectId)?.orchestratorThreadId : undefined);
     const agentCount = this.manager.getAgentRuns?.(thread.id).length ?? 0;
     if (agentCount) cardHeader.createDiv({ cls: 'ct-kanban-agent-count', text: `◉ ${agentCount}`, attr: { title: `${agentCount} native agent${agentCount === 1 ? '' : 's'}` } });
 

@@ -516,13 +516,13 @@ When you switch back to a thread you haven't viewed in over a minute, a **contex
 
 ### Projects
 
-Projects group related threads, choose their initial working directory, and inject shared context into every message, so an agent starts with the right product context. A Project is a workspace preset, not an isolation boundary: the configured vault tools, MCP servers, skills, secrets, and coordination tools may still expose broader scope.
+Projects group related threads, choose their initial working directory, inject shared context, and may own a Project Orchestrator. Project coordination tools are operationally scoped; vault tools, MCP servers, skills, secrets, and filesystem access remain broader capabilities rather than a security boundary.
 
 **Creating a project:** Go to Settings → Vault → Projects, enter a project name and vault folder path, and click **Add**. Optionally set a filesystem cwd override for a repo outside the vault. Settings shows the resolved effective cwd; clear the override to derive it from the vault folder again. You can also add a project context prompt — a few sentences describing the project's goals, conventions, and key files that Claude should always keep in mind.
 
 **Opening a thread in a project:** The Agent Dashboard and Kanban kickoff panels have an accessible **Project** selector. Choose a Project before dispatching, or deliberately leave **Unassigned** to use the global default cwd. Model, goal, loop, attachment, image, and harness kickoff options preserve that selection. The chat view's New Thread flow and agent-created child threads keep their existing Project inheritance behavior.
 
-**Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Existing-thread `/loop` schedules remain pinned to that thread and its cwd. `threads_set_project` changes association only by default, or accepts `alignCwd: true` to switch through the safe next-turn cwd reset path. Detaching a Project always leaves the current cwd unchanged. Deleting a project keeps all its threads — they just lose the project association.
+**Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Create or open the Project Orchestrator from the same row; the first completed Project thread also creates it automatically without stealing focus. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Deleting a Project detaches its threads, clears pending proposals, removes its orchestrator heartbeat, and pins affected schedules to the Project's former effective cwd.
 
 **Scheduled work:** Cron items resolve their effective cwd at fire time in this order: explicit scheduled-item cwd, current Project cwd, then the global default. The same resolved path is used for a gate command and its spawned thread. Cron create/update rejects unknown Projects, and a deleted Project reference fails the run rather than dispatching in an unrelated fallback directory.
 
@@ -650,12 +650,12 @@ Control the current thread's session state.
 
 ### Thread coordination tools
 
-Discover, read, and message other running threads. These tools enable agent-to-agent delegation — one thread can assign work to another, wait for it to finish, and read the result.
+Discover, read, and message other running threads. Project threads coordinate only within their Project; unassigned threads coordinate with unassigned threads. The Portfolio Orchestrator sees unassigned work by default and uses explicit per-call Project elevation for raw Project access.
 
 | Tool | Parameters | Description |
 |---|---|---|
 | `threads_get_current` | — | Returns this thread's metadata, live status, project, cwd, PR, schedule origin, raw-log path, and message count. |
-| `threads_list` | — | Returns the same metadata for every thread, including live `isRunning` state. |
+| `threads_list` | `projectId?` | Returns authorized thread metadata. Portfolio passes a Project id for one-call elevation. |
 | `threads_list_projects` | — | Returns configured projects with `cwdOverride` and resolved `effectiveCwd`. |
 | `threads_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates and persists a project. |
 | `threads_set_project` | `threadId`, `projectId`, `alignCwd?` | Assigns a thread to a project, or detaches it with `null`. Association-only by default; `alignCwd: true` also switches to a non-null Project's cwd on the next safe turn. Detaching never relocates the thread. |
@@ -663,8 +663,8 @@ Discover, read, and message other running threads. These tools enable agent-to-a
 | `threads_get_log` | `threadId?`, `limit?`, `type?` | Returns parsed raw JSONL event-log entries. |
 | `threads_wait` | `threadId`, `timeoutSeconds?` | Waits until a target thread becomes idle. |
 | `threads_send_message` | `threadId`, `message` | Queues a message on another thread and triggers it. |
-| `threads_archive` | `threadId`, `confirm?` | Saves and removes a completed thread. A scheduled thread may target itself; the archive is deferred until its current run settles. Other threads cannot archive themselves. Archiving the Thread Orchestrator requires `confirm: true`. |
-| `threads_set_notes` | `threadId`, `notes` | Sets orchestrator tracking notes. |
+| `threads_archive` | `threadId`, `confirm?`, `elevatedProjectId?` | Saves and removes a completed thread. Archiving any referenced orchestrator requires `confirm: true`. |
+| `threads_set_notes` | `threadId`, `notes` | Sets owner-scoped orchestrator tracking notes with source/timestamp provenance. |
 | `threads_set_proposed_reply` | `threadId`, `text` | Stages a proposed reply for human approval. |
 | `threads_clear_proposed_reply` | `threadId` | Clears a stale proposed reply. |
 

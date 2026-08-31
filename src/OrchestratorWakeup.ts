@@ -18,8 +18,10 @@
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 
 export interface OrchestratorWakeupDeps {
-  /** Returns the current orchestrator thread id, or undefined if not set up yet. */
-  getOrchestratorThreadId: () => string | undefined;
+  /** Resolves the logical destination bucket for a completed thread. */
+  resolveBucket: (threadId: string) => string | undefined;
+  /** Resolves or creates the bucket's current target at flush time. */
+  resolveTarget: (bucket: string) => string | { threadId: string; summaryOnly: true } | undefined | Promise<string | { threadId: string; summaryOnly: true } | undefined>;
   /** Returns true if a thread with the given id still exists. */
   threadExists: (threadId: string) => boolean;
   /** Sends the wake-up ping to the orchestrator thread. */
@@ -42,8 +44,8 @@ export class OrchestratorWakeup {
   private deps: OrchestratorWakeupDeps;
   private unsubscribe: (() => void) | null = null;
   /** Thread id -> most recent event type ('done' | 'error') since the last flush. */
-  private pending = new Map<string, 'done' | 'error'>();
-  private timer: unknown = null;
+  private pending = new Map<string, Map<string, 'done' | 'error'>>();
+  private timers = new Map<string, unknown>();
 
   constructor(manager: ThreadManager, deps: OrchestratorWakeupDeps) {
     this.manager = manager;
@@ -60,47 +62,66 @@ export class OrchestratorWakeup {
       this.unsubscribe();
       this.unsubscribe = null;
     }
-    this.clearTimer();
+    for (const bucket of this.timers.keys()) this.clearTimer(bucket);
     this.pending.clear();
   }
 
   private onEvent(threadId: string, event: ThreadEvent): void {
     if (event.type !== 'done' && event.type !== 'error') return;
 
-    const orchestratorId = this.deps.getOrchestratorThreadId();
-    if (!orchestratorId) return; // orchestrator not set up yet — nothing to wake
-    if (threadId === orchestratorId) return; // never ping itself
-
-    this.pending.set(threadId, event.type);
-    this.armTimer(orchestratorId);
+    const bucket = this.deps.resolveBucket(threadId);
+    if (!bucket) return;
+    const bucketPending = this.pending.get(bucket) ?? new Map<string, 'done' | 'error'>();
+    bucketPending.set(threadId, event.type);
+    this.pending.set(bucket, bucketPending);
+    this.armTimer(bucket);
   }
 
-  private armTimer(orchestratorId: string): void {
-    this.clearTimer();
+  private armTimer(bucket: string): void {
+    this.clearTimer(bucket);
     const setTimeoutFn = this.deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms));
     const debounceMs = this.deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
-    this.timer = setTimeoutFn(() => {
-      this.timer = null;
-      void this.flush(orchestratorId);
+    const timer = setTimeoutFn(() => {
+      this.timers.delete(bucket);
+      void this.flush(bucket);
     }, debounceMs);
+    this.timers.set(bucket, timer);
   }
 
-  private clearTimer(): void {
-    if (this.timer === null) return;
+  private clearTimer(bucket: string): void {
+    const timer = this.timers.get(bucket);
+    if (timer === undefined) return;
     const clearTimeoutFn = this.deps.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
-    clearTimeoutFn(this.timer);
-    this.timer = null;
+    clearTimeoutFn(timer);
+    this.timers.delete(bucket);
   }
 
-  private async flush(orchestratorId: string): Promise<void> {
+  private async flush(bucket: string): Promise<void> {
     // Snapshot before clearing — building the message reads this data, so
     // clearing first (as this used to do) would silently drop it.
-    const entries = Array.from(this.pending.entries());
-    this.pending.clear();
+    const entries = Array.from(this.pending.get(bucket)?.entries() ?? []);
+    this.pending.delete(bucket);
     if (entries.length === 0) return;
+
+    const resolvedTarget = await this.deps.resolveTarget(bucket);
+    if (!resolvedTarget) {
+      this.deps.onWarn?.(`Orchestrator wake-up: no target available for ${bucket}, skipping`);
+      return;
+    }
+    const orchestratorId = typeof resolvedTarget === 'string' ? resolvedTarget : resolvedTarget.threadId;
 
     if (!this.deps.threadExists(orchestratorId)) {
       this.deps.onWarn?.(`Orchestrator wake-up: thread ${orchestratorId} no longer exists, skipping`);
+      return;
+    }
+
+    if (typeof resolvedTarget !== 'string' && resolvedTarget.summaryOnly) {
+      const projectId = bucket.startsWith('project:') ? bucket.slice('project:'.length) : 'unknown';
+      try {
+        await this.deps.sendMessage(orchestratorId, `New activity in Project ${projectId} — the Project orchestrator could not be reached.`);
+      } catch (err) {
+        this.deps.onError?.(err);
+      }
       return;
     }
 
