@@ -553,6 +553,11 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
   return tpl.content;
 }
 
+export function parseLinktext(linktext: string): { path: string; subpath: string } {
+  const match = linktext.match(/^([^#]*)(#.*)?$/);
+  return { path: match?.[1] ?? linktext, subpath: match?.[2] ?? '' };
+}
+
 export class Menu {
   private items: MenuItem[] = [];
 

@@ -2018,6 +2018,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     await view?.focusThread(threadId);
   }
 
+  async openAgentTeamInChatView(threadId: string): Promise<void> {
+    await this.openThreadInChatView(threadId);
+    this.getView()?.openAgentTeamPicker();
+  }
+
   /**
    * Creates the persistent thread-orchestrator thread if none is set yet (or if
    * the previously stored one no longer exists), then opens it. Also ensures a

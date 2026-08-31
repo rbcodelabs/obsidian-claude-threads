@@ -232,6 +232,27 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'wikilink-rendering.png', { fullPage: true });
   });
 
+  test('conversation-first routes ordinary Markdown vault links to the companion and leaves protocols alone', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(async () => {
+      const w = window as any;
+      w.__setConversationFirst(true);
+      await w.__view.focusThread('thread-brainstorm');
+      w.__manager.getThread('thread-brainstorm').noteFile = 'Claude/thread.md';
+      const host = document.createElement('div');
+      host.id = 'standard-markdown-links';
+      document.body.appendChild(host);
+      await w.__view.renderMarkdown('[Roadmap](../Projects/Roadmap%20Q4.md#Decision) [External](https://example.com)', host);
+    });
+
+    await page.locator('#standard-markdown-links a').first().click();
+    expect(await page.evaluate(() => (window as any).__contextLinkCalls)).toEqual([
+      ['../Projects/Roadmap%20Q4.md#Decision', 'Claude/thread.md'],
+    ]);
+    await expect(page.locator('#standard-markdown-links a').nth(1)).toHaveAttribute('href', 'https://example.com');
+  });
+
   test('inline visualization card', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
@@ -1732,6 +1753,59 @@ test.describe('Claude Threads UI', () => {
 
     await page.waitForTimeout(200);
     await shot(page, 'kanban-project-columns.png', { fullPage: true });
+  });
+
+  test('agent dashboard — project-first compact rows', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-agents-project');
+
+    const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
+    expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
+    expect(projects.at(-1)).toBe('Unassigned');
+
+    const hiptrip = page.locator('.ct-agents-project').filter({
+      has: page.locator('.ct-agents-project-name', { hasText: 'HipTrip' }),
+    });
+    const sections = (await hiptrip.locator('.ct-agents-group-label > span:first-child').allInnerTexts()).map(label => label.trim().toUpperCase());
+    expect(sections).toEqual(expect.arrayContaining(['WORKING', 'WAITING', 'NEW', 'REVIEWED']));
+    expect(sections.indexOf('WORKING')).toBeLessThan(sections.indexOf('WAITING'));
+    expect(sections.indexOf('WAITING')).toBeLessThan(sections.indexOf('NEW'));
+
+    const normalRow = hiptrip.locator('.ct-agents-row:not(.ct-agents-row-permission):not(.ct-agents-row-waiting)').first();
+    expect((await normalRow.boundingBox())?.height).toBeLessThanOrEqual(44);
+    await expect(normalRow.locator('.ct-agents-row-summary')).toHaveCount(0);
+
+    await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveCount(1);
+    await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveText('7 agents');
+    await expect(hiptrip.locator('.ct-dashboard-agent')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__manager.getSelectedAgentRun('k-hiptrip-running'))).toBeUndefined();
+    await hiptrip.locator('.ct-dashboard-agent-count').click();
+    expect(await page.evaluate(() => (window as any).__manager.getSelectedAgentRun('k-hiptrip-running'))).toBeUndefined();
+    expect(await page.evaluate(() => (window as any).__openedAgentTeams)).toEqual(['k-hiptrip-running']);
+
+    const permissionRow = page.locator('.ct-agents-row-permission:not(.ct-agents-row-plan):not(.ct-agents-row-question)');
+    await expect(permissionRow.locator('.ct-agents-permission-actions')).toBeVisible();
+    expect((await permissionRow.boundingBox())?.height).toBeGreaterThan(44);
+
+    const planRow = page.locator('.ct-agents-row-plan');
+    await expect(planRow).toContainText('Plan ready — open to review');
+    expect((await planRow.boundingBox())?.height).toBeGreaterThan(44);
+    const questionRow = page.locator('.ct-agents-row-question');
+    await expect(questionRow).toContainText('Question ready — open to answer');
+    expect((await questionRow.boundingBox())?.height).toBeGreaterThan(44);
+
+    await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
+  });
+
+  test('agent dashboard — narrow exceptional states remain usable', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-agents-row-plan');
+    await expect(page.locator('.ct-agents-permission-actions .ct-permission-btn').first()).toHaveCSS('min-height', '44px');
+    await expect(page.locator('.ct-dashboard-agent-count')).toHaveCSS('min-height', '44px');
+    expect(await page.locator('.ct-agents-list').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await shot(page, 'agent-dashboard-exceptional-mobile.png', { fullPage: true });
   });
 
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {

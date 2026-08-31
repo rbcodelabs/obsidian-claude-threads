@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { openUrlPreferringWebViewer } from '../../src/linkUtils';
+import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer } from '../../src/linkUtils';
 import type { App } from 'obsidian';
 
 function fakeApp(opts: { existingWebviewer?: boolean } = {}) {
@@ -86,5 +86,15 @@ describe('openUrlPreferringWebViewer', () => {
     const path = openUrlPreferringWebViewer(app, 'https://x', { webViewerEnabled: true, openExternal });
     expect(path).toBe('external');
     expect(openExternal).toHaveBeenCalledWith('https://x');
+  });
+});
+
+describe('classifyRenderedMarkdownLink', () => {
+  it.each(['Notes/Plan.md', '../Plans/Roadmap%20Q4.md#Decision', 'Daily/Today#^block'])('classifies %s as a vault link', (href) => {
+    expect(classifyRenderedMarkdownLink(href)).toBe('vault');
+  });
+
+  it.each(['https://example.com', 'mailto:team@example.com', 'obsidian://open?vault=x', 'tel:+15551212', '#same-page', 'file:///tmp/a.md'])('keeps %s outside vault routing', (href) => {
+    expect(classifyRenderedMarkdownLink(href)).toBe('external');
   });
 });

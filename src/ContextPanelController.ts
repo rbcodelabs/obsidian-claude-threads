@@ -1,6 +1,9 @@
-import type { App, TFile, ViewState, WorkspaceLeaf } from 'obsidian';
+import { parseLinktext, type App, type OpenViewState, type TFile, type ViewState, type WorkspaceLeaf } from 'obsidian';
 
 interface OwnedCompanion { workspace: object; chatLeaf: WorkspaceLeaf; companionLeaf: WorkspaceLeaf }
+interface RatioWorkspace {
+  splitActiveLeafWithRatio?(direction: 'vertical' | 'horizontal', ratio: number): WorkspaceLeaf;
+}
 export type CompanionOwnershipStore = Map<string, OwnedCompanion>;
 export function createCompanionOwnershipStore(): CompanionOwnershipStore { return new Map(); }
 const defaultOwnershipStore = createCompanionOwnershipStore();
@@ -28,7 +31,10 @@ export class ContextPanelController {
 
     const workspace = this.app.workspace;
     workspace.revealLeaf(chatLeaf);
-    const companionLeaf = workspace.splitActiveLeaf('vertical');
+    const ratioWorkspace = workspace as typeof workspace & RatioWorkspace;
+    const companionLeaf = typeof ratioWorkspace.splitActiveLeafWithRatio === 'function'
+      ? ratioWorkspace.splitActiveLeafWithRatio('vertical', 0.3)
+      : workspace.splitActiveLeaf('vertical');
     const marker = createMarker();
     this.ownershipStore.set(marker, { workspace, chatLeaf, companionLeaf });
     this.activeMarker = marker;
@@ -38,18 +44,32 @@ export class ContextPanelController {
     return companionLeaf;
   }
 
-  async openFile(file: TFile): Promise<void> {
+  async openFile(file: TFile, openState?: OpenViewState): Promise<void> {
     const leaf = this.getLeaf();
     await this.ensureMarkerPersisted();
-    await leaf.openFile(file);
+    if (openState) await leaf.openFile(file, openState);
+    else await leaf.openFile(file);
     this.app.workspace.revealLeaf(leaf);
   }
 
   async openLinkText(linktext: string, sourcePath = ''): Promise<void> {
+    const parsed = parseLinktext(linktext);
+    let linkPath = parsed.path;
+    try { linkPath = decodeURIComponent(linkPath); } catch { /* preserve malformed text for native resolution */ }
+    const file = this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath);
+    const openState = parsed.subpath ? { eState: { subpath: parsed.subpath } } : undefined;
+    if (file) {
+      await this.openFile(file, openState);
+      return;
+    }
+
+    // Never delegate unresolved conversation-first links to workspace-level
+    // routing: it may target the active chat leaf. Keep the native markdown
+    // attempt confined to the owned companion instead.
     const leaf = this.getLeaf();
     await this.ensureMarkerPersisted();
+    await leaf.setViewState({ type: 'markdown', active: true, state: { file: linkPath }, ...openState });
     this.app.workspace.revealLeaf(leaf);
-    await this.app.workspace.openLinkText(linktext, sourcePath, false);
   }
 
   async setViewState(viewState: ViewState): Promise<boolean> {

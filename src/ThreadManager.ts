@@ -913,7 +913,8 @@ export class ThreadManager {
   }
 
   hasPendingQuestion(threadId: string): boolean {
-    return this.pendingQuestionResolvers.has(threadId);
+    return this.pendingQuestionResolvers.has(threadId)
+      || (this.threads.get(threadId)?.pendingQuestions?.length ?? 0) > 0;
   }
 
   /**

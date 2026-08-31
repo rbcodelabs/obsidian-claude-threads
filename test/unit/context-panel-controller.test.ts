@@ -48,7 +48,14 @@ function makeHarness(
     revealLeaf: vi.fn(),
     openLinkText: vi.fn().mockResolvedValue(undefined),
   };
-  const app = { workspace } as unknown as App;
+  const resolvedFiles = new Map<string, TFile>();
+  const app = {
+    workspace,
+    metadataCache: {
+      getFirstLinkpathDest: vi.fn((linktext: string, sourcePath: string) =>
+        resolvedFiles.get(`${sourcePath}::${linktext}`) ?? null),
+    },
+  } as unknown as App;
   let marker = restoredMarker;
   const createController = (ownershipStore = store) => new ContextPanelController(
     app,
@@ -61,6 +68,9 @@ function makeHarness(
   return {
     controller, createController, workspace, chat, firstCompanion, secondCompanion, attached,
     getMarker: () => marker,
+    resolveLink: (linktext: string, sourcePath: string, file: TFile) => {
+      resolvedFiles.set(`${sourcePath}::${linktext}`, file);
+    },
     replaceChat: (next: WorkspaceLeaf) => { attached.delete(chatLeaf); chatLeaf = next; attached.add(next); },
   };
 }
@@ -94,12 +104,56 @@ describe('ContextPanelController', () => {
   });
 
   it('opens internal links from the companion instead of replacing chat', async () => {
-    const { controller, workspace, firstCompanion } = makeHarness();
+    const { controller, workspace, firstCompanion, resolveLink } = makeHarness();
+    const file = { path: 'Daily/Today.md' } as TFile;
+    resolveLink('Daily/Today', 'Claude/thread.md', file);
 
     await controller.openLinkText('Daily/Today', 'Claude/thread.md');
 
     expect(workspace.revealLeaf).toHaveBeenLastCalledWith(firstCompanion);
-    expect(workspace.openLinkText).toHaveBeenCalledWith('Daily/Today', 'Claude/thread.md', false);
+    expect(firstCompanion.openFile).toHaveBeenCalledWith(file);
+    expect(workspace.openLinkText).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Notes/Plan#Launch checklist', 'Notes/Plan', '#Launch checklist'],
+    ['Notes/Plan#^decision-7', 'Notes/Plan', '#^decision-7'],
+    ['../Project%20Notes/Roadmap#Q4', '../Project Notes/Roadmap', '#Q4'],
+  ])('preserves the subpath for %s while resolving only the decoded path', async (linktext, resolvedPath, subpath) => {
+    const { controller, firstCompanion, resolveLink } = makeHarness();
+    const file = { path: 'Project Notes/Roadmap.md' } as TFile;
+    resolveLink(resolvedPath, 'Claude/thread.md', file);
+
+    await controller.openLinkText(linktext, 'Claude/thread.md');
+
+    expect(firstCompanion.openFile).toHaveBeenCalledWith(file, { eState: { subpath } });
+  });
+
+  it('keeps unresolved vault links confined to the companion leaf', async () => {
+    const { controller, workspace, firstCompanion } = makeHarness();
+
+    await controller.openLinkText('Missing%20note#Draft', 'Claude/thread.md');
+
+    expect(workspace.openLinkText).not.toHaveBeenCalled();
+    expect(firstCompanion.setViewState).toHaveBeenCalledWith({
+      type: 'markdown', active: true, state: { file: 'Missing note' }, eState: { subpath: '#Draft' },
+    });
+  });
+
+  it('uses the optional atomic ratio split when the host provides it', async () => {
+    const { controller, workspace, firstCompanion, attached } = makeHarness();
+    const splitWithRatio = vi.fn(() => {
+      attached.add(firstCompanion);
+      return firstCompanion;
+    });
+    (workspace as typeof workspace & { splitActiveLeafWithRatio: typeof splitWithRatio }).splitActiveLeafWithRatio = splitWithRatio;
+
+    await controller.openFile({ path: 'Notes/first.md' } as TFile);
+    await controller.openFile({ path: 'Notes/second.md' } as TFile);
+
+    expect(splitWithRatio).toHaveBeenCalledOnce();
+    expect(splitWithRatio).toHaveBeenCalledWith('vertical', 0.3);
+    expect(workspace.splitActiveLeaf).not.toHaveBeenCalled();
   });
 
   it('can place a native registered view in the same reusable companion', async () => {

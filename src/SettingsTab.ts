@@ -1960,7 +1960,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Stack scheduled job threads')
-      .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack in the Kanban board\'s quiet columns (New, Done, Ready) and group them into a "Scheduled Jobs" section on the Agent Dashboard. A run that\'s running, waiting on input, or errored is never stacked.')
+          .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack within each project\'s quiet status sections on the Agent Dashboard and Kanban board. A run that\'s running, waiting on input, or errored is never stacked.')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.stackScheduledThreads ?? true)

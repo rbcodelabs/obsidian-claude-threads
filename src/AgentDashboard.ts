@@ -10,8 +10,11 @@ import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirec
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads } from './threadRowState';
-import { agentLabel, flattenAgentTree } from './agentRuns/agentTreeModel';
+import { ACTIVE_AGENT_STATUSES, flattenAgentTree } from './agentRuns/agentTreeModel';
 import { handleDesignDispatch } from './designDispatchRouting';
+import { resolveGitRepoRoot, resolveThreadProjectName } from './pathUtils';
+import { parsePrUrlRepo } from './gitDiffUtils';
+import { groupDashboardThreads } from './dashboardProjectGroups';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -288,7 +291,10 @@ export class AgentDashboard extends ItemView {
       event.type === 'permission_request' ||
       event.type === 'permission_resolved' ||
       event.type === 'question_ready' ||
-      event.type === 'pending_question_changed'
+      event.type === 'pending_question_changed' ||
+      event.type === 'pending_plan_changed' ||
+      event.type === 'plan_ready' ||
+      event.type === 'plan_transition_error'
     ) {
       this.scheduleRender();
       return;
@@ -324,6 +330,7 @@ export class AgentDashboard extends ItemView {
       event.type === 'thread_created' ||
       event.type === 'summary_updated' ||
       event.type === 'project_changed' ||
+      event.type === 'cwd_changed' ||
       event.type === 'agent_runs_changed' ||
       event.type === 'status_tags';
     if (isStateChange) {
@@ -401,52 +408,6 @@ export class AgentDashboard extends ItemView {
           )
         )
       : allThreads;
-    const buckets = partitionThreads(threads, (t) => ({
-      isRunning: this.manager.isRunning(t.id),
-      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
-      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
-      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
-      lastError: t.lastError,
-      messageCount: t.messages.length,
-      reviewed: t.reviewed,
-    }));
-    // No separate "Awaiting" column exists on this dashboard (unlike Kanban) —
-    // a permission/question request keeps the row under "Working" and is
-    // surfaced instead via the per-row "?" treatment inside renderRow(),
-    // which checks hasPendingPermission/hasPendingQuestion live at render time.
-    const running: Thread[] = [...buckets.running, ...buckets.awaiting];
-    const waiting: Thread[] = buckets.waiting;
-    let unreviewed: Thread[] = buckets['idle-new'];
-    let reviewed: Thread[] = buckets['idle-reviewed'];
-    const errors: Thread[] = buckets.error;
-    let empty: Thread[] = buckets.empty;
-
-    // Sort each group by most recently updated first
-    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
-    running.sort(byRecency);
-    waiting.sort(byRecency);
-    unreviewed.sort(byRecency);
-    reviewed.sort(byRecency);
-    errors.sort(byRecency);
-    empty.sort(byRecency);
-
-    // Pull "quiet" scheduled-job runs (unreviewed / reviewed / empty only —
-    // running, waiting, and errored runs always stay in their normal group,
-    // untouched) into a separate rollup section so a busy hourly job doesn't
-    // bury manually-created threads. Gated behind a setting; disabled it's a
-    // no-op and the dashboard behaves exactly as it did before this existed.
-    let scheduledStacks: ScheduledStack[] = [];
-    if (this.plugin.settings.stackScheduledThreads ?? true) {
-      const scheduledQuiet = [...unreviewed, ...reviewed, ...empty].filter(t => t.scheduledItemId);
-      unreviewed = unreviewed.filter(t => !t.scheduledItemId);
-      reviewed = reviewed.filter(t => !t.scheduledItemId);
-      empty = empty.filter(t => !t.scheduledItemId);
-      // minCount=1: every distinct job gets its own row even with only one
-      // quiet run right now, so the section doesn't pop in/out of existence.
-      scheduledStacks = partitionScheduledStacks(scheduledQuiet, 1).stacks
-        .sort((a, b) => b.threads[0].updatedAt - a.threads[0].updatedAt);
-    }
-
     if (threads.length === 0) {
       const emptyEl = this.listEl.createDiv('ct-agents-empty');
       if (q) {
@@ -457,25 +418,44 @@ export class AgentDashboard extends ItemView {
       }
     }
 
-    if (running.length > 0) this.renderGroup('Working', running, 'running');
-    if (waiting.length > 0) this.renderGroup('Waiting', waiting, 'waiting');
-    if (unreviewed.length > 0) this.renderGroup('New', unreviewed, 'idle', unreviewed.length);
-    if (reviewed.length > 0) this.renderGroup('Reviewed', reviewed, 'idle');
-    if (errors.length > 0) this.renderGroup('Failed', errors, 'error');
-    if (empty.length > 0) this.renderGroup('Ready', empty, 'empty');
-    if (scheduledStacks.length > 0) this.renderScheduledJobsGroup(scheduledStacks);
+    let runningCount = 0;
+    for (const project of groupDashboardThreads(threads, thread => this.threadGroup(thread))) {
+      const projectEl = this.listEl.createEl('section', { cls: 'ct-agents-project', attr: { 'aria-label': project.label } });
+      const header = projectEl.createDiv('ct-agents-project-header');
+      const icon = header.createSpan('ct-agents-project-icon');
+      setIcon(icon, project.key === 'unassigned' ? 'folder-minus' : 'folder');
+      header.createSpan({ cls: 'ct-agents-project-name', text: project.label });
+      header.createSpan({ cls: 'ct-agents-project-count', text: String(project.threads.length) });
+      runningCount += this.renderProjectStatuses(projectEl, project.key, project.threads);
+    }
 
-    this.updateHeader(threads.length, running.length);
+    this.updateHeader(threads.length, runningCount);
   }
 
-  /** Renders the "Scheduled Jobs" section — one collapsed rollup row per distinct cron job with quiet runs. Always last (least urgent content). */
-  private renderScheduledJobsGroup(stacks: ScheduledStack[]): void {
-    const group = this.listEl.createDiv('ct-agents-group');
-    const labelEl = group.createDiv('ct-agents-group-label');
-    labelEl.createSpan({ text: 'Scheduled Jobs' });
-    for (const stack of stacks) {
-      this.renderScheduledJobRow(stack, group);
+  private renderProjectStatuses(parent: HTMLElement, projectKey: string, threads: Thread[]): number {
+    const buckets = partitionThreads(threads, (t) => ({
+      isRunning: this.manager.isRunning(t.id),
+      hasPendingPermission: this.manager.hasPendingPermission(t.id) || this.manager.hasPendingQuestion(t.id) || this.manager.hasPendingPlan(t.id),
+      hasActiveBackgroundTasks: this.manager.hasActiveBackgroundTasks(t.id),
+      hasPendingWakeup: this.plugin.hasPendingWakeup(t.id),
+      lastError: t.lastError,
+      messageCount: t.messages.length,
+      reviewed: t.reviewed,
+    }));
+    const byRecency = (a: Thread, b: Thread) => b.updatedAt - a.updatedAt;
+    const sections: Array<{ label: string; threads: Thread[]; state: RowState }> = [
+      { label: 'Working', threads: [...buckets.running, ...buckets.awaiting].sort(byRecency), state: 'running' },
+      { label: 'Waiting', threads: buckets.waiting.sort(byRecency), state: 'waiting' },
+      { label: 'New', threads: buckets['idle-new'].sort(byRecency), state: 'idle' },
+      { label: 'Reviewed', threads: buckets['idle-reviewed'].sort(byRecency), state: 'idle' },
+      { label: 'Failed', threads: buckets.error.sort(byRecency), state: 'error' },
+      { label: 'Ready', threads: buckets.empty.sort(byRecency), state: 'empty' },
+    ];
+    for (const section of sections) {
+      if (!section.threads.length) continue;
+      this.renderGroup(section.label, section.threads, section.state, section.label === 'New' ? section.threads.length : undefined, parent, projectKey);
     }
+    return sections[0].threads.length;
   }
 
   /**
@@ -483,8 +463,8 @@ export class AgentDashboard extends ItemView {
    * job name, run count, latest-run relative time, and a chevron that
    * expands into one normal `renderRow()` per underlying thread.
    */
-  private renderScheduledJobRow(stack: ScheduledStack, parent: HTMLElement): void {
-    const key = stack.scheduledItemId;
+  private renderScheduledJobRow(stack: ScheduledStack, parent: HTMLElement, scopeKey = ''): void {
+    const key = `${scopeKey}:${stack.scheduledItemId}`;
     const expanded = this.expandedScheduledStacks.has(key);
 
     const row = parent.createDiv('ct-agents-row ct-agents-row-scheduled-stack');
@@ -515,24 +495,38 @@ export class AgentDashboard extends ItemView {
     }
   }
 
-  private renderGroup(label: string, threads: Thread[], state: RowState, badge?: number): void {
-    const group = this.listEl.createDiv('ct-agents-group');
+  private renderGroup(label: string, threads: Thread[], state: RowState, badge?: number, parent = this.listEl, scopeKey = ''): void {
+    const group = parent.createDiv('ct-agents-group');
     const labelEl = group.createDiv('ct-agents-group-label');
     labelEl.createSpan({ text: label });
     if (badge !== undefined) {
       labelEl.createSpan({ cls: 'ct-agents-group-badge', text: String(badge) });
     }
-    for (const thread of threads) {
-      this.renderRow(thread, state, group);
+    const stackable = (label === 'New' || label === 'Reviewed' || label === 'Ready')
+      && (this.plugin.settings.stackScheduledThreads ?? true);
+    // Preserve the dashboard's historical minCount=1 behavior: even a single
+    // quiet run appears as a job rollup, now scoped to its project/status.
+    const partitioned = stackable ? partitionScheduledStacks(threads, 1) : { stacks: [], standalone: threads };
+    const items = [
+      ...partitioned.standalone.map(thread => ({ kind: 'thread' as const, thread, updatedAt: thread.updatedAt })),
+      ...partitioned.stacks.map(stack => ({ kind: 'stack' as const, stack, updatedAt: stack.threads[0].updatedAt })),
+    ].sort((a, b) => b.updatedAt - a.updatedAt);
+    for (const item of items) {
+      if (item.kind === 'thread') this.renderRow(item.thread, state, group);
+      else this.renderScheduledJobRow(item.stack, group, `${scopeKey}:${label}`);
     }
   }
 
   private renderRow(thread: Thread, state: RowState, parent: HTMLElement): void {
     const isActive = thread.id === this.activeThreadId;
     const isUnreviewed = state === 'idle' && !thread.reviewed;
-    const hasPending = state === 'running' && (this.manager.hasPendingPermission(thread.id) || this.manager.hasPendingQuestion(thread.id));
+    const hasPermission = this.manager.hasPendingPermission(thread.id);
+    const hasQuestion = this.manager.hasPendingQuestion(thread.id);
+    const hasPlan = this.manager.hasPendingPlan(thread.id);
+    const hasPending = state === 'running' && (hasPermission || hasQuestion || hasPlan);
+    const attentionClass = hasPlan ? ' ct-agents-row-plan' : hasQuestion ? ' ct-agents-row-question' : '';
     const row = parent.createDiv({
-      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}`,
+      cls: `ct-agents-row ct-agents-row-${state}${isActive ? ' ct-agents-row-active' : ''}${isUnreviewed ? ' ct-agents-row-unreviewed' : ''}${hasPending ? ' ct-agents-row-permission' : ''}${attentionClass}`,
     });
     this.rowEls.set(thread.id, row);
     row.toggleClass('ct-stale', this.manager.isRunStale(thread.id));
@@ -549,39 +543,36 @@ export class AgentDashboard extends ItemView {
     const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
     appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId, thread.projectId ? this.manager.getProject(thread.projectId)?.orchestratorThreadId : undefined);
 
-    // Show full summary for completed threads — this is the canonical home for summaries
-    const summary = thread.summary || thread.recap;
-    if (summary && state === 'idle') {
-      body.createDiv({ cls: 'ct-agents-row-summary', text: summary });
-    }
-
     const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
     this.activityEls.set(thread.id, activityEl);
 
     if (hasPending) {
       const pendingInfo = this.manager.getPendingPermission(thread.id);
-      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'permission' });
+      const attentionLabel = hasPlan ? 'Plan ready — open to review' : hasQuestion ? 'Question ready — open to answer' : pendingInfo?.toolName ? formatToolName(pendingInfo.toolName) : 'Permission required';
+      activityEl.createSpan({ cls: 'ct-agents-permission-tool', text: attentionLabel });
       if (pendingInfo?.detail) {
         activityEl.createSpan({ cls: 'ct-agents-permission-detail', text: pendingInfo.detail });
       }
 
-      const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
+      if (hasPermission) {
+        const btns = body.createDiv({ cls: 'ct-agents-permission-actions' });
 
-      const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
-      deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
+        const deny = btns.createEl('button', { text: 'Deny', cls: 'ct-permission-btn ct-permission-deny' });
+        deny.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, false); });
 
-      const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
-      allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
+        const allow = btns.createEl('button', { text: 'Allow', cls: 'ct-permission-btn ct-permission-allow' });
+        allow.addEventListener('click', (e) => { e.stopPropagation(); this.manager.resolvePermission(thread.id, true); });
 
-      const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
-      always.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (pendingInfo) {
-          this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
-          await this.plugin.saveSettings();
-        }
-        this.manager.resolvePermission(thread.id, true);
-      });
+        const always = btns.createEl('button', { text: 'Always Allow', cls: 'ct-permission-btn ct-permission-always' });
+        always.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (pendingInfo) {
+            this.plugin.settings.alwaysAllowedTools.push(pendingInfo.toolName);
+            await this.plugin.saveSettings();
+          }
+          this.manager.resolvePermission(thread.id, true);
+        });
+      }
     } else {
       activityEl.setText(this.getActivityText(thread, state));
 
@@ -636,17 +627,18 @@ export class AgentDashboard extends ItemView {
 
     const agentRuns = this.manager.getAgentRuns(thread.id);
     if (agentRuns.length) {
-      const tree = body.createDiv({ cls: 'ct-dashboard-agent-tree', attr: { role: 'tree', 'aria-label': `Agents in ${thread.title}` } });
-      // Shares the cycle-safe flattening used by the composer popover, so a
-      // self-parenting run can never hang this render.
-      for (const { run: agent, level } of flattenAgentTree(agentRuns)) {
-        const button = tree.createEl('button', { cls: `ct-dashboard-agent ct-agent-${agent.status}`, attr: { role: 'treeitem', 'aria-level': String(level), title: `Open ${agent.description}` } });
-        button.createSpan({ cls: 'ct-agent-status-dot' });
-        button.createSpan({ text: agentLabel(agent) });
-        button.addEventListener('click', e => {
-          e.stopPropagation(); this.manager.selectAgentRun(thread.id, agent.id); this.plugin.openThreadInChatView(thread.id);
-        });
-      }
+      const flattened = flattenAgentTree(agentRuns);
+      const active = flattened.find(({ run }) => ACTIVE_AGENT_STATUSES.has(run.status));
+      const button = body.createEl('button', {
+        cls: `ct-dashboard-agent-count${active ? ` ct-agent-${active.run.status}` : ''}`,
+        attr: { 'aria-label': `Open ${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'} in ${thread.title}` },
+      });
+      button.createSpan({ cls: 'ct-agent-status-dot' });
+      button.createSpan({ text: `${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'}` });
+      button.addEventListener('click', e => {
+        e.stopPropagation();
+        void this.plugin.openAgentTeamInChatView(thread.id);
+      });
     }
 
     const meta = row.createDiv('ct-agents-row-meta');
@@ -657,6 +649,45 @@ export class AgentDashboard extends ItemView {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
       this.plugin.openThreadInChatView(thread.id);
     });
+  }
+
+  private normalizedRepoOrCwd(cwd: string): string {
+    const root = resolveGitRepoRoot(cwd);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodePath = require('path') as typeof import('path');
+    const normalized = nodePath.resolve(root ?? cwd);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require('fs').realpathSync(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
+  /** Resolve the same stable project/repository identity used by Kanban grouping. */
+  private threadGroup(thread: Thread): { key: string; label: string } {
+    if (thread.projectId) {
+      const project = this.manager.getProject(thread.projectId);
+      if (project) return { key: `project:${project.id}`, label: project.name };
+    }
+    if (thread.cwd || thread.originRepoPath) {
+      const threadRoot = this.normalizedRepoOrCwd(thread.originRepoPath || thread.cwd);
+      const matchingProject = this.manager.getProjects()
+        .filter(project => this.normalizedRepoOrCwd(this.manager.getProjectCwd(project)) === threadRoot)
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
+      if (matchingProject) return { key: `project:${matchingProject.id}`, label: matchingProject.name };
+      const repo = resolveThreadProjectName(thread);
+      if (repo) {
+        if (!thread.originRepoPath && thread.projectNameOverride && !resolveGitRepoRoot(thread.cwd)) {
+          const prRepo = parsePrUrlRepo(thread.prUrl);
+          if (prRepo) return { key: `github:${prRepo.owner.toLowerCase()}/${prRepo.repo.toLowerCase()}`, label: repo };
+        }
+        return { key: `cwd:${threadRoot}`, label: repo };
+      }
+      const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);
+      if (label) return { key: `cwd:${threadRoot}`, label };
+    }
+    return { key: 'unassigned', label: 'Unassigned' };
   }
 
   private applyStateIcon(el: HTMLElement, state: RowState): void {

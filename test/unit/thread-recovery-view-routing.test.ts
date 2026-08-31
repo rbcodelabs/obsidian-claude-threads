@@ -30,6 +30,21 @@ describe('recovered-thread view routing', () => {
     expect(scheduleRender).toHaveBeenCalledOnce();
   });
 
+  it.each(['cwd_changed', 'pending_plan_changed', 'plan_ready', 'plan_transition_error'])(
+    'AgentDashboard schedules a regroup for %s',
+    (type) => {
+      const view = new AgentDashboard({} as never, { manager: {} } as never) as unknown as {
+        handleEvent: (threadId: string, event: { type: string }) => void;
+        scheduleRender: () => void;
+      };
+      const scheduleRender = vi.spyOn(view as never, 'scheduleRender').mockImplementation(() => {});
+
+      view.handleEvent('thread-a', { type });
+
+      expect(scheduleRender).toHaveBeenCalledOnce();
+    },
+  );
+
   it('ThreadsView refreshes project-bar thread counts for threads_loaded', () => {
     const view = new ThreadsView({} as never, { manager: {} } as never) as unknown as {
       handleThreadListEvent: (event: { type: string }) => void;
