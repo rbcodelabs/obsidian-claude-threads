@@ -213,4 +213,69 @@ describe('OrchestratorWakeup', () => {
 
     expect(sendMessage).toHaveBeenCalledWith('portfolio', 'New activity in Project a — the Project orchestrator could not be reached.');
   });
+
+  it('invalidates a queued bucket before its debounce fires', async () => {
+    const { manager, emit } = makeManager({ 'project-a-worker': 'A' });
+    const { deps, sendMessage, runTimer } = makeDeps({ resolveBucket: () => 'project:a' });
+    const wakeup = new OrchestratorWakeup(manager, deps);
+    wakeup.start();
+
+    emit('project-a-worker', { type: 'done' });
+    wakeup.invalidateBucket('project:a');
+    runTimer();
+    await Promise.resolve();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(deps.resolveTarget).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a bucket while its target is resolving', async () => {
+    const { manager, emit } = makeManager({ 'project-a-worker': 'A' });
+    let finishResolve!: (target: string) => void;
+    const resolveTarget = vi.fn(() => new Promise<string>(resolve => { finishResolve = resolve; }));
+    const { deps, sendMessage, runTimer } = makeDeps({ resolveBucket: () => 'project:a', resolveTarget });
+    const wakeup = new OrchestratorWakeup(manager, deps);
+    wakeup.start();
+
+    emit('project-a-worker', { type: 'done' });
+    runTimer();
+    await Promise.resolve();
+    wakeup.invalidateBucket('project:a');
+    finishResolve('old-orchestrator');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not revive an invalidated flush when new activity arrives in the same bucket', async () => {
+    const { manager, emit } = makeManager({ 'project-a-old': 'Old', 'project-a-new': 'New' });
+    const callbacks: Array<() => void> = [];
+    const resolvers: Array<(target: string) => void> = [];
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const wakeup = new OrchestratorWakeup(manager, {
+      resolveBucket: () => 'project:a',
+      resolveTarget: () => new Promise<string>(resolve => resolvers.push(resolve)),
+      threadExists: () => true,
+      sendMessage,
+      setTimeoutFn: cb => { callbacks.push(cb); return cb; },
+      clearTimeoutFn: () => {},
+    });
+    wakeup.start();
+
+    emit('project-a-old', { type: 'done' });
+    callbacks.shift()!();
+    await Promise.resolve();
+    wakeup.invalidateBucket('project:a');
+    emit('project-a-new', { type: 'done' });
+    callbacks.shift()!();
+    await Promise.resolve();
+    resolvers[0]!('old-orchestrator');
+    resolvers[1]!('new-orchestrator');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledWith('new-orchestrator', expect.stringContaining('project-a-new'));
+  });
 });

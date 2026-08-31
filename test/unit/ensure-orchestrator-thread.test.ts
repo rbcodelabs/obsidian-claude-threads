@@ -23,6 +23,7 @@ function makePlugin() {
   const plugin = Object.create(ClaudeThreadsPlugin.prototype) as ClaudeThreadsPlugin;
   plugin.manager = new ThreadManager({ ...DEFAULT_SETTINGS });
   plugin.settings = { ...DEFAULT_SETTINGS, defaultCwd: '/tmp', scheduledItems: [] };
+  plugin.orchestratorWakeup = { invalidateBucket: vi.fn() } as never;
   (plugin as unknown as { saveData: (d: unknown) => Promise<void> }).saveData = vi.fn().mockResolvedValue(undefined);
   (plugin as unknown as { openThreadInChatView: (id: string) => Promise<void> }).openThreadInChatView =
     vi.fn().mockResolvedValue(undefined);
@@ -119,6 +120,69 @@ describe('ClaudeThreadsPlugin.ensureOrchestratorThread() — stale heartbeat cle
     expect(createItem).toHaveBeenCalledOnce();
     expect(createItem).toHaveBeenCalledWith(expect.objectContaining({ targetThreadId: threadId, projectId: project.id, isOrchestratorHeartbeat: true }));
     expect(plugin.openThreadInChatView).not.toHaveBeenCalled();
+    expect(plugin.manager.getProject(project.id)?.orchestratorEnabled).toBe(true);
+  });
+
+  it('disables a Project before persistence and removes every matching heartbeat before deleting the thread', async () => {
+    const { plugin, deleteItem } = makePlugin();
+    const project = plugin.manager.createProject('HipTrip', 'HipTrip');
+    const orchestrator = plugin.manager.createThread('HipTrip Orchestrator', '/tmp', project.id);
+    plugin.manager.updateProject(project.id, { orchestratorThreadId: orchestrator.id });
+    plugin.settings.scheduledItems = ['one', 'two'].map(id => ({
+      id, name: id, prompt: 'review', schedule: { type: 'interval' as const, intervalSeconds: 3600 }, enabled: true,
+      targetThreadId: orchestrator.id, projectId: project.id, isOrchestratorHeartbeat: true,
+    }));
+    const saveData = (plugin as unknown as { saveData: ReturnType<typeof vi.fn> }).saveData;
+
+    await plugin.archiveThreadById(orchestrator.id);
+
+    expect(plugin.orchestratorWakeup?.invalidateBucket).toHaveBeenCalledWith(`project:${project.id}`);
+    expect(deleteItem).toHaveBeenCalledTimes(2);
+    expect(plugin.manager.getProject(project.id)).toMatchObject({ orchestratorEnabled: false, orchestratorThreadId: undefined });
+    expect(saveData).toHaveBeenCalled();
+    expect(plugin.manager.getThread(orchestrator.id)).toBeUndefined();
+  });
+
+  it('does not automatically create an orchestrator for a disabled Project', async () => {
+    const { plugin, createItem } = makePlugin();
+    const project = plugin.manager.createProject('HipTrip', 'HipTrip');
+    plugin.manager.updateProject(project.id, { orchestratorEnabled: false });
+
+    await expect(plugin.ensureProjectOrchestratorThread(project.id, false)).resolves.toBeUndefined();
+
+    expect(plugin.manager.getThreadsByProject(project.id)).toHaveLength(0);
+    expect(createItem).not.toHaveBeenCalled();
+  });
+
+  it('deliberate open re-enables a disabled Project idempotently', async () => {
+    const { plugin, createItem } = makePlugin();
+    const project = plugin.manager.createProject('HipTrip', 'HipTrip');
+    plugin.manager.updateProject(project.id, { orchestratorEnabled: false });
+
+    const first = await plugin.ensureProjectOrchestratorThread(project.id, true);
+    const second = await plugin.ensureProjectOrchestratorThread(project.id, true);
+
+    expect(second).toBe(first);
+    expect(plugin.manager.getProject(project.id)?.orchestratorEnabled).toBe(true);
+    expect(createItem).toHaveBeenCalledOnce();
+  });
+
+  it('restores Project enablement, reference, and all deleted heartbeats when retirement fails', async () => {
+    const { plugin, deleteItem, createItem } = makePlugin();
+    const project = plugin.manager.createProject('HipTrip', 'HipTrip');
+    const orchestrator = plugin.manager.createThread('HipTrip Orchestrator', '/tmp', project.id);
+    plugin.manager.updateProject(project.id, { orchestratorThreadId: orchestrator.id });
+    plugin.settings.scheduledItems = ['one', 'two'].map(id => ({
+      id, name: id, prompt: 'review', schedule: { type: 'interval' as const, intervalSeconds: 3600 }, enabled: true,
+      targetThreadId: orchestrator.id, projectId: project.id, isOrchestratorHeartbeat: true,
+    }));
+    deleteItem.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('cleanup failed'));
+
+    await expect(plugin.retireOrchestratorThread(orchestrator.id)).rejects.toThrow('cleanup failed');
+
+    expect(plugin.manager.getProject(project.id)).toMatchObject({ orchestratorEnabled: true, orchestratorThreadId: orchestrator.id });
+    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'one' }));
+    expect(plugin.orchestratorWakeup?.invalidateBucket).toHaveBeenCalledOnce();
   });
 
   it('deletes heartbeat items targeting the stale thread id when recreating the orchestrator thread', async () => {
