@@ -4,7 +4,8 @@ import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, TaskItem } from './types';
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
-import { resolveThreadProjectName } from './pathUtils';
+import { resolveGitRepoRoot, resolveThreadProjectName } from './pathUtils';
+import { parsePrUrlRepo } from './gitDiffUtils';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { DispatchInput } from './DispatchInput';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
@@ -19,6 +20,8 @@ export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 type RowState = 'running' | 'idle' | 'error' | 'empty' | 'waiting';
 
 type ColDef = { label: string; threads: Thread[]; state: RowState; accentClass?: string; badge?: number };
+type ThreadGroup = { key: string; label: string };
+type ThreadGroupEntry = { key: string; label: string; threads: Thread[] };
 
 /** Group key + display label for a thread's app/project, used by folder grouping. */
 const UNASSIGNED_GROUP = 'Unassigned';
@@ -554,20 +557,20 @@ export class KanbanView extends ItemView {
     const board = this.boardEl.createDiv('ct-kanban-board ct-kanban-swimlanes');
     board.dataset.scrollKey = '__board__';
 
-    const groups = new Map<string, Thread[]>();
+    const groups = new Map<string, ThreadGroupEntry>();
     for (const t of threads) {
-      const key = this.groupLabel(t);
-      const bucket = groups.get(key);
-      if (bucket) bucket.push(t);
-      else groups.set(key, [t]);
+      const group = this.threadGroup(t);
+      const bucket = groups.get(group.key);
+      if (bucket) bucket.threads.push(t);
+      else groups.set(group.key, { ...group, threads: [t] });
     }
 
     // Sort lanes alphabetically (case-insensitive) so they stay put as threads
     // update — the last-modified sort happens WITHIN each lane (per status column
     // in bucketize), not across lanes. The catch-all group always sinks last.
-    const lanes = this.sortGroupEntries(Array.from(groups.entries()));
+    const lanes = this.sortGroupEntries(Array.from(groups.values()));
 
-    for (const [label, laneThreads] of lanes) {
+    for (const { key, label, threads: laneThreads } of lanes) {
       const lane = board.createDiv('ct-kanban-lane');
 
       const header = lane.createDiv('ct-kanban-lane-header');
@@ -578,11 +581,11 @@ export class KanbanView extends ItemView {
       header.createSpan({ cls: 'ct-kanban-lane-count', text: String(laneThreads.length) });
 
       const laneBoard = lane.createDiv('ct-kanban-lane-board');
-      laneBoard.dataset.scrollKey = `lane::${label}`;
+      laneBoard.dataset.scrollKey = `lane::${key}`;
       const cols = this.bucketize(laneThreads);
       for (const col of cols) {
         if (col.threads.length === 0) continue;
-        this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge, `${label}::${col.label}`);
+        this.renderColumn(laneBoard, col.label, col.threads, col.state, col.accentClass, col.badge, `${key}::${col.label}`);
       }
     }
   }
@@ -593,16 +596,17 @@ export class KanbanView extends ItemView {
    * last regardless of name. Shared by renderFolderBoard() and
    * renderProjectColumnsBoard() so both grouping modes agree on lane/column order.
    */
-  private sortGroupEntries(entries: [string, Thread[]][]): [string, Thread[]][] {
+  private sortGroupEntries(entries: ThreadGroupEntry[]): ThreadGroupEntry[] {
     return entries.slice().sort((a, b) => {
-      if (a[0] === UNASSIGNED_GROUP) return 1;
-      if (b[0] === UNASSIGNED_GROUP) return -1;
-      return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
+      if (a.key === 'unassigned') return 1;
+      if (b.key === 'unassigned') return -1;
+      const byLabel = a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+      return byLabel || a.key.localeCompare(b.key);
     });
   }
 
   /**
-   * Groups threads by app/project (via groupLabel(), same resolution as folder
+   * Groups threads by app/project (via threadGroup(), same resolution as folder
    * swimlanes) and renders one vertical column per project — alphabetically
    * sorted, Unassigned last. Unlike renderFolderBoard()'s nested per-lane status
    * columns, each project column here stacks status SECTIONS vertically inside
@@ -613,17 +617,17 @@ export class KanbanView extends ItemView {
     const board = this.boardEl.createDiv('ct-kanban-board');
     board.dataset.scrollKey = '__board__';
 
-    const groups = new Map<string, Thread[]>();
+    const groups = new Map<string, ThreadGroupEntry>();
     for (const t of threads) {
-      const key = this.groupLabel(t);
-      const bucket = groups.get(key);
-      if (bucket) bucket.push(t);
-      else groups.set(key, [t]);
+      const group = this.threadGroup(t);
+      const bucket = groups.get(group.key);
+      if (bucket) bucket.threads.push(t);
+      else groups.set(group.key, { ...group, threads: [t] });
     }
 
-    const columns = this.sortGroupEntries(Array.from(groups.entries()));
-    for (const [label, colThreads] of columns) {
-      this.renderProjectColumn(board, label, colThreads);
+    const columns = this.sortGroupEntries(Array.from(groups.values()));
+    for (const { key, label, threads: colThreads } of columns) {
+      this.renderProjectColumn(board, key, label, colThreads);
     }
   }
 
@@ -632,7 +636,7 @@ export class KanbanView extends ItemView {
    * renderColumn()'s header) plus a body containing one subsection per
    * non-empty status bucket from sectionsForColumn().
    */
-  private renderProjectColumn(board: HTMLElement, label: string, threads: Thread[]): void {
+  private renderProjectColumn(board: HTMLElement, groupKey: string, label: string, threads: Thread[]): void {
     const col = board.createDiv('ct-kanban-col ct-kanban-project-col');
 
     const header = col.createDiv('ct-kanban-col-header');
@@ -641,7 +645,7 @@ export class KanbanView extends ItemView {
     header.createSpan({ cls: 'ct-kanban-col-count', text: String(threads.length) });
 
     const body = col.createDiv('ct-kanban-col-body');
-    body.dataset.scrollKey = `project::${label}`;
+    body.dataset.scrollKey = `project::${groupKey}`;
 
     const sections = this.sectionsForColumn(threads);
     if (sections.length === 0) {
@@ -656,7 +660,7 @@ export class KanbanView extends ItemView {
       if (section.badge !== undefined) {
         labelEl.createSpan({ cls: 'ct-agents-group-badge ct-kanban-badge', text: String(section.badge) });
       }
-      this.populateCardBody(sectionEl, section.threads, section.state, section.label, `${label}::${section.label}`);
+      this.populateCardBody(sectionEl, section.threads, section.state, section.label, `${groupKey}::${section.label}`);
     }
   }
 
@@ -712,20 +716,56 @@ export class KanbanView extends ItemView {
    * `thread.projectNameOverride` when the live cwd can no longer resolve a repo
    * name (e.g. its worktree directory was deleted) — see pathUtils.ts.
    */
-  private groupLabel(thread: Thread): string {
+  private normalizedRepoOrCwd(cwd: string): string {
+    const root = resolveGitRepoRoot(cwd);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const nodePath = require('path') as typeof import('path');
+    const normalized = nodePath.resolve(root ?? cwd);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require('fs').realpathSync(normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
+  private threadGroup(thread: Thread): ThreadGroup {
     if (thread.projectId) {
       const project = this.manager.getProject(thread.projectId);
-      if (project) return project.name;
+      if (project) return { key: `project:${project.id}`, label: project.name };
     }
+
     if (thread.cwd || thread.originRepoPath) {
+      const threadRoot = this.normalizedRepoOrCwd(thread.originRepoPath || thread.cwd);
+      const matchingProject = this.manager.getProjects()
+        .filter(project => this.normalizedRepoOrCwd(this.manager.getProjectCwd(project)) === threadRoot)
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
+      if (matchingProject) {
+        return { key: `project:${matchingProject.id}`, label: matchingProject.name };
+      }
+
       const repo = resolveThreadProjectName(thread);
-      if (repo) return repo;
+      if (repo) {
+        // Legacy orphaned worktrees predate originRepoPath. Their persisted PR
+        // URL is the only stable repository identity left after the distinct
+        // worktree cwd paths disappear; projectNameOverride remains display-only.
+        if (!thread.originRepoPath && thread.projectNameOverride && !resolveGitRepoRoot(thread.cwd)) {
+          const prRepo = parsePrUrlRepo(thread.prUrl);
+          if (prRepo) {
+            return {
+              key: `github:${prRepo.owner.toLowerCase()}/${prRepo.repo.toLowerCase()}`,
+              label: repo,
+            };
+          }
+        }
+        return { key: `cwd:${threadRoot}`, label: repo };
+      }
       // Fallback for non-repo paths (resolveThreadProjectName already returns
       // the last path segment, but guard anyway): shortened cwd label.
       const label = buildCwdLabel(thread.cwd, this.manager.vaultRoot);
-      if (label) return label;
+      if (label) return { key: `cwd:${threadRoot}`, label };
     }
-    return UNASSIGNED_GROUP;
+    return { key: 'unassigned', label: UNASSIGNED_GROUP };
   }
 
   private renderColumn(
@@ -1033,11 +1073,11 @@ export class KanbanView extends ItemView {
     const mode = this.groupBy;
     if (mode === 'project') {
       const { label, state } = PROJECT_SECTION_MAP[rowState];
-      return { bucketKey: `${this.groupLabel(thread)}::${label}`, state };
+      return { bucketKey: `${this.threadGroup(thread).key}::${label}`, state };
     }
     const { label, state } = STATUS_COLUMN_MAP[rowState];
     if (mode === 'folder') {
-      return { bucketKey: `${this.groupLabel(thread)}::${label}`, state };
+      return { bucketKey: `${this.threadGroup(thread).key}::${label}`, state };
     }
     return { bucketKey: label, state };
   }

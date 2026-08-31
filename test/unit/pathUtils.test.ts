@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { resolveProjectName, resolveGitProjectName, resolveThreadProjectName } from '../../src/pathUtils';
+import { resolveProjectName, resolveGitProjectName, resolveGitRepoRoot, resolveThreadProjectName } from '../../src/pathUtils';
 
 describe('resolveProjectName', () => {
   it('returns the last path component for a normal project path', () => {
@@ -65,6 +65,7 @@ describe('resolveGitProjectName', () => {
     fs.mkdirSync(path.join(repoRoot, '.git'));
     const sub = path.join(repoRoot, 'src', 'nested');
     fs.mkdirSync(sub, { recursive: true });
+    expect(resolveGitRepoRoot(sub)).toBe(repoRoot);
     expect(resolveGitProjectName(sub)).toBe(path.basename(repoRoot));
   });
 
@@ -80,6 +81,7 @@ describe('resolveGitProjectName', () => {
     fs.mkdirSync(worktreesMeta, { recursive: true });
     fs.writeFileSync(path.join(worktreeDir, '.git'), `gitdir: ${worktreesMeta}\n`);
 
+    expect(resolveGitRepoRoot(worktreeDir)).toBe(repoRoot);
     expect(resolveGitProjectName(worktreeDir)).toBe(path.basename(repoRoot));
   });
 
