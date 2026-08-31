@@ -14,7 +14,7 @@ The composer stays live while a child view is open. Its placeholder notes that a
 
 The Agent Dashboard and Kanban dispatch controls show the harness that will own the new thread. A normal click dispatches with the shown Claude or Codex harness. Right-click, press and hold, or focus the button and press `Shift+F10` to choose the other harness without sending. The selection remains local to that mounted view; the Agent harness setting is only its initial default, and changing the kickoff selection never switches an existing thread.
 
-The Agent Dashboard also shows compact child-agent entries. Agent role, task, and current activity are included in dashboard search.
+The Agent Dashboard groups conversations by resolved Project and orders compact rows into Working, Waiting, New, Reviewed, Failed, and Ready sections. Permission, question, plan, waiting, and AWS reauthentication states expand inline when action is required. Child-agent activity is summarized by one accessible agent-count control that opens the team picker without changing the current selection. Agent role, task, and current activity remain included in dashboard search.
 
 ## Codex proactive agents and questions
 

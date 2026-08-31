@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.30.2-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.30.3-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
@@ -299,7 +299,7 @@ When the context window fills up, Claude compacts the conversation automatically
 
 ### Agent dashboard
 
-Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance. Each thread appears as a row showing its name, working directory, current model, and status.
+Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance. Threads are grouped by resolved Project, with compact rows organized into **Working**, **Waiting**, **New**, **Reviewed**, **Failed**, and **Ready** sections. Permission, question, plan, waiting, and AWS reauthentication states expand inline when your attention is required. Child-agent activity is summarized by one accessible agent-count control; click it to open the team picker without losing your current agent selection.
 
 The dispatch button shows the harness that will run the new thread: **Claude** or **Codex**. Click normally to start with the shown harness. Right-click, press and hold, or use `Shift+F10` while the button is focused to open the harness menu; choosing an option changes the button without dispatching. That choice stays with the mounted dashboard while you launch more threads. **Settings → Agent harness** supplies the initial default only—the dashboard choice does not change the global setting, and existing threads remain on their original harness.
 
