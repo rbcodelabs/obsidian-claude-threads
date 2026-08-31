@@ -216,7 +216,8 @@ describe('OrchestratorWakeup', () => {
 
   it('invalidates a queued bucket before its debounce fires', async () => {
     const { manager, emit } = makeManager({ 'project-a-worker': 'A' });
-    const { deps, sendMessage, runTimer } = makeDeps({ resolveBucket: () => 'project:a' });
+    const resolveTarget = vi.fn(() => 'orchestrator-thread');
+    const { deps, sendMessage, runTimer } = makeDeps({ resolveBucket: () => 'project:a', resolveTarget });
     const wakeup = new OrchestratorWakeup(manager, deps);
     wakeup.start();
 
@@ -226,7 +227,7 @@ describe('OrchestratorWakeup', () => {
     await Promise.resolve();
 
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(deps.resolveTarget).not.toHaveBeenCalled();
+    expect(resolveTarget).not.toHaveBeenCalled();
   });
 
   it('invalidates a bucket while its target is resolving', async () => {

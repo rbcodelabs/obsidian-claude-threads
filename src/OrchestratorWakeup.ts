@@ -21,7 +21,7 @@ export interface OrchestratorWakeupDeps {
   /** Resolves the logical destination bucket for a completed thread. */
   resolveBucket: (threadId: string) => string | undefined;
   /** Resolves or creates the bucket's current target at flush time. */
-  resolveTarget: (bucket: string) => string | { threadId: string; summaryOnly: true } | undefined | Promise<string | { threadId: string; summaryOnly: true } | undefined>;
+  resolveTarget: (bucket: string, isCurrent: () => boolean) => string | { threadId: string; summaryOnly: true } | undefined | Promise<string | { threadId: string; summaryOnly: true } | undefined>;
   /** Returns true if a thread with the given id still exists. */
   threadExists: (threadId: string) => boolean;
   /** Sends the wake-up ping to the orchestrator thread. */
@@ -46,6 +46,8 @@ export class OrchestratorWakeup {
   /** Thread id -> most recent event type ('done' | 'error') since the last flush. */
   private pending = new Map<string, Map<string, 'done' | 'error'>>();
   private timers = new Map<string, unknown>();
+  /** Incremented whenever queued/in-flight work for a bucket is retired. */
+  private generations = new Map<string, number>();
 
   constructor(manager: ThreadManager, deps: OrchestratorWakeupDeps) {
     this.manager = manager;
@@ -64,6 +66,21 @@ export class OrchestratorWakeup {
     }
     for (const bucket of this.timers.keys()) this.clearTimer(bucket);
     this.pending.clear();
+    this.generations.clear();
+  }
+
+  /**
+   * Permanently discards the bucket's currently queued and in-flight batch.
+   * A later event starts a fresh generation and cannot revive an older flush.
+   */
+  invalidateBucket(bucket: string): void {
+    this.clearTimer(bucket);
+    this.pending.delete(bucket);
+    this.generations.set(bucket, this.generation(bucket) + 1);
+  }
+
+  private generation(bucket: string): number {
+    return this.generations.get(bucket) ?? 0;
   }
 
   private onEvent(threadId: string, event: ThreadEvent): void {
@@ -97,13 +114,16 @@ export class OrchestratorWakeup {
   }
 
   private async flush(bucket: string): Promise<void> {
+    const generation = this.generation(bucket);
     // Snapshot before clearing — building the message reads this data, so
     // clearing first (as this used to do) would silently drop it.
     const entries = Array.from(this.pending.get(bucket)?.entries() ?? []);
     this.pending.delete(bucket);
     if (entries.length === 0) return;
 
-    const resolvedTarget = await this.deps.resolveTarget(bucket);
+    const isCurrent = () => this.generation(bucket) === generation;
+    const resolvedTarget = await this.deps.resolveTarget(bucket, isCurrent);
+    if (this.generation(bucket) !== generation) return;
     if (!resolvedTarget) {
       this.deps.onWarn?.(`Orchestrator wake-up: no target available for ${bucket}, skipping`);
       return;
@@ -118,6 +138,7 @@ export class OrchestratorWakeup {
     if (typeof resolvedTarget !== 'string' && resolvedTarget.summaryOnly) {
       const projectId = bucket.startsWith('project:') ? bucket.slice('project:'.length) : 'unknown';
       try {
+        if (this.generation(bucket) !== generation) return;
         await this.deps.sendMessage(orchestratorId, `New activity in Project ${projectId} — the Project orchestrator could not be reached.`);
       } catch (err) {
         this.deps.onError?.(err);
@@ -134,6 +155,7 @@ export class OrchestratorWakeup {
     const message = [`New activity on ${count} thread${count === 1 ? '' : 's'} — run your review pass.`, ...lines].join('\n');
 
     try {
+      if (this.generation(bucket) !== generation) return;
       await this.deps.sendMessage(orchestratorId, message);
     } catch (err) {
       this.deps.onError?.(err);

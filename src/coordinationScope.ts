@@ -7,6 +7,7 @@ export type CoordinationRole =
 export interface OrchestratedProjectRef {
   id: string;
   orchestratorThreadId?: string;
+  orchestratorEnabled?: boolean;
 }
 
 export function resolveCoordinationRole(
@@ -58,6 +59,10 @@ export function repairStaleProjectOrchestrators(
 ): boolean {
   let changed = false;
   for (const project of projects) {
+    if (project.orchestratorEnabled === undefined) {
+      project.orchestratorEnabled = true;
+      changed = true;
+    }
     if (project.orchestratorThreadId && threadProjectId(project.orchestratorThreadId) !== project.id) {
       project.orchestratorThreadId = undefined;
       changed = true;

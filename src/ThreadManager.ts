@@ -367,6 +367,7 @@ export class ThreadManager {
       description,
       vaultFolder: vaultFolder.trim(),
       cwdOverride,
+      orchestratorEnabled: true,
       createdAt: Date.now(),
     };
     this.projects.set(project.id, project);

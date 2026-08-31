@@ -420,6 +420,8 @@ export interface Project {
   cwdOverride?: string;
   /** Project-scoped orchestrator. The settings-level id remains the portfolio orchestrator. */
   orchestratorThreadId?: string;
+  /** False after the Project orchestrator is intentionally archived. */
+  orchestratorEnabled: boolean;
   createdAt: number;
 }
 

@@ -68,7 +68,7 @@ describe('coordination scope', () => {
   });
 
   it('removes standalone orphan heartbeats even when every Project reference is valid', () => {
-    const mutableProjects = [{ id: 'b', orchestratorThreadId: 'orch-b' }];
+    const mutableProjects = [{ id: 'b', orchestratorThreadId: 'orch-b', orchestratorEnabled: true }];
     const items = [
       { isOrchestratorHeartbeat: true, targetThreadId: 'orphan' },
       { isOrchestratorHeartbeat: true, targetThreadId: 'orch-b' },
@@ -78,7 +78,7 @@ describe('coordination scope', () => {
   });
 
   it('returns false when references and heartbeat targets are already valid', () => {
-    const mutableProjects = [{ id: 'b', orchestratorThreadId: 'orch-b' }];
+    const mutableProjects = [{ id: 'b', orchestratorThreadId: 'orch-b', orchestratorEnabled: true }];
     const items = [{ isOrchestratorHeartbeat: true, targetThreadId: 'orch-b' }];
     expect(repairStaleProjectOrchestrators(mutableProjects, () => 'b', items, 'portfolio')).toBe(false);
   });
