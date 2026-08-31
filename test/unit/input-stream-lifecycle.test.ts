@@ -232,6 +232,20 @@ describe('ThreadSession — push-channel content shape', () => {
     session.close();
   });
 
+  it('stamps the host user-message id onto the SDK message uuid', async () => {
+    sdk.generations = [];
+    sdk.nextIterable = makeChannel();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks()));
+
+    const iter = sdk.generations[0].promptArg[Symbol.asyncIterator]();
+    session.send('hello there', undefined, 'host-message-123');
+    const first = await iter.next();
+
+    expect(first.value).toMatchObject({ type: 'user', uuid: 'host-message-123' });
+    session.close();
+  });
+
   it('pushes text+image content blocks for an image send()', async () => {
     sdk.generations = [];
     sdk.nextIterable = makeChannel();
@@ -302,6 +316,26 @@ describe('ThreadSession — proactive compaction guard', () => {
 });
 
 describe('ThreadSession — channel stays open regardless of turn state (no release gate)', () => {
+  it('keeps the turn in flight and reports result correlation while SDK turns remain queued', async () => {
+    sdk.generations = [];
+    const out = makeChannel();
+    sdk.nextIterable = out;
+    const onDone = vi.fn();
+    const session = new ThreadSession('/fake/claude');
+    await session.start(baseOptions(minimalCallbacks({ onDone })));
+    session.send('hi', undefined, 'user-1');
+
+    out.push({ ...successResult(), queued_turn_count: 1, user_message_uuid: 'user-1' });
+    await flush();
+
+    expect(onDone).toHaveBeenCalledWith('s', 0, 1, {
+      queuedTurnCount: 1,
+      userMessageUuid: 'user-1',
+    });
+    expect(session.turnInFlight).toBe(true);
+    session.close();
+  });
+
   it('does NOT auto-close the channel after a result — only close()/restart() ends it', async () => {
     sdk.generations = [];
     const out = makeChannel();
