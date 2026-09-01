@@ -43,14 +43,27 @@ test.describe('Claude Threads UI', () => {
         return { left: bounds.left, right: bounds.right, width: bounds.width };
       };
       const messages = document.querySelector('.ct-messages')!;
+      const composerWrapper = document.querySelector('.ct-panel-wrapper')!;
+      const popover = document.createElement('div');
+      popover.className = 'ct-agent-popover';
+      composerWrapper.appendChild(popover);
+      const popoverBounds = popover.getBoundingClientRect();
+      popover.remove();
       return {
         messages: rect('.ct-messages'),
         assistant: rect('.ct-message-assistant'),
         user: rect('.ct-message-user'),
         toolCard: rect('.ct-message-assistant .ct-tools'),
         header: rect('.ct-title-row'),
-        composer: rect('.ct-panel-wrapper'),
+        composerWrapper: rect('.ct-panel-wrapper'),
+        composerPanel: rect('.ct-floating-panel'),
+        composerPopover: {
+          left: popoverBounds.left,
+          right: popoverBounds.right,
+          width: popoverBounds.width,
+        },
         hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       };
     });
 
@@ -61,8 +74,15 @@ test.describe('Claude Threads UI', () => {
     expect(layout.toolCard.left).toBeGreaterThanOrEqual(layout.assistant.left);
     expect(layout.toolCard.right).toBeLessThanOrEqual(layout.assistant.right);
     expect(layout.header.width).toBeGreaterThan(layout.assistant.width);
-    expect(layout.composer.width).toBeGreaterThan(layout.assistant.width);
+    expect(layout.composerPanel.width).toBeCloseTo(layout.assistant.width, 0);
+    expect(layout.composerPanel.left).toBeCloseTo(layout.assistant.left, 0);
+    expect(layout.composerPanel.right).toBeCloseTo(layout.assistant.right, 0);
+    expect(layout.composerWrapper.left).toBeCloseTo(layout.composerPanel.left, 0);
+    expect(layout.composerWrapper.right).toBeCloseTo(layout.composerPanel.right, 0);
+    expect(layout.composerPopover.left).toBeCloseTo(layout.composerPanel.left, 0);
+    expect(layout.composerPopover.right).toBeCloseTo(layout.composerPanel.right, 0);
     expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
     await shot(page.locator('#app'), 'conversation-readable-wide.png');
   });
 
@@ -77,6 +97,10 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-notice'));
 
     const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const bounds = document.querySelector(selector)!.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
       const messages = document.querySelector('.ct-messages')!;
       const contentWidth = messages.clientWidth
         - parseFloat(getComputedStyle(messages).paddingLeft)
@@ -90,6 +114,9 @@ test.describe('Claude Threads UI', () => {
         messageWidths,
         noticeInsideTimeline: notice.left >= message.left && notice.right <= message.right,
         noticeIsCentered: Math.abs((notice.left - message.left) - (message.right - notice.right)) < 1,
+        messages: rect('.ct-messages'),
+        composerWrapper: rect('.ct-panel-wrapper'),
+        composerPanel: rect('.ct-floating-panel'),
         hasOverflow: messages.scrollWidth > messages.clientWidth,
         documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       };
@@ -99,6 +126,9 @@ test.describe('Claude Threads UI', () => {
     for (const width of layout.messageWidths) expect(width).toBeCloseTo(layout.contentWidth, 0);
     expect(layout.noticeInsideTimeline).toBe(true);
     expect(layout.noticeIsCentered).toBe(true);
+    expect(layout.composerWrapper.width).toBeCloseTo(layout.messages.width, 0);
+    expect(layout.composerPanel.left - layout.composerWrapper.left).toBeCloseTo(10, 0);
+    expect(layout.composerWrapper.right - layout.composerPanel.right).toBeCloseTo(10, 0);
     expect(layout.hasOverflow).toBe(false);
     expect(layout.documentHasOverflow).toBe(false);
     await shot(page.locator('#app'), 'conversation-readable-narrow.png');
