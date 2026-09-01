@@ -689,6 +689,17 @@
   gap: 12px;
 }
 
+/* Keep the transcript readable when the conversation pane is very wide.
+   Each top-level timeline row shares the same centered column, so messages,
+   notices, and standalone inline cards stay aligned. Below 900px this resolves
+   to the existing full width. The child-agent activity view intentionally
+   keeps its own workspace layout, and the header/composer are siblings of the
+   scroller so they remain unconstrained. */
+.ct-messages:not(.ct-messages-agent-view) > * {
+  width: min(100%, 900px);
+  margin-inline: auto;
+}
+
 /* ── Empty state ──────────────────────────────────────────────── */
 .ct-empty {
   display: flex;

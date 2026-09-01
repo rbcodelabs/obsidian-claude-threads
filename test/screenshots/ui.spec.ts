@@ -26,6 +26,84 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'main-view.png', { fullPage: true });
   });
 
+  test('wide conversation pane centers the complete readable timeline', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '1200px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const element = document.querySelector(selector)!;
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
+      const messages = document.querySelector('.ct-messages')!;
+      return {
+        messages: rect('.ct-messages'),
+        assistant: rect('.ct-message-assistant'),
+        user: rect('.ct-message-user'),
+        toolCard: rect('.ct-message-assistant .ct-tools'),
+        header: rect('.ct-title-row'),
+        composer: rect('.ct-panel-wrapper'),
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+      };
+    });
+
+    expect(layout.assistant.width).toBeLessThanOrEqual(900);
+    expect(layout.user.width).toBe(layout.assistant.width);
+    expect(layout.assistant.left - layout.messages.left)
+      .toBeCloseTo(layout.messages.right - layout.assistant.right, 0);
+    expect(layout.toolCard.left).toBeGreaterThanOrEqual(layout.assistant.left);
+    expect(layout.toolCard.right).toBeLessThanOrEqual(layout.assistant.right);
+    expect(layout.header.width).toBeGreaterThan(layout.assistant.width);
+    expect(layout.composer.width).toBeGreaterThan(layout.assistant.width);
+    expect(layout.hasOverflow).toBe(false);
+    await shot(page.locator('#app'), 'conversation-readable-wide.png');
+  });
+
+  test('narrow conversation pane keeps the timeline full width without overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '760px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-notice'));
+
+    const layout = await page.evaluate(() => {
+      const messages = document.querySelector('.ct-messages')!;
+      const contentWidth = messages.clientWidth
+        - parseFloat(getComputedStyle(messages).paddingLeft)
+        - parseFloat(getComputedStyle(messages).paddingRight);
+      const messageWidths = Array.from(messages.querySelectorAll(':scope > .ct-message'))
+        .map((element) => (element as HTMLElement).getBoundingClientRect().width);
+      const notice = messages.querySelector('.ct-notice-row')!.getBoundingClientRect();
+      const message = messages.querySelector('.ct-message')!.getBoundingClientRect();
+      return {
+        contentWidth,
+        messageWidths,
+        noticeInsideTimeline: notice.left >= message.left && notice.right <= message.right,
+        noticeIsCentered: Math.abs((notice.left - message.left) - (message.right - notice.right)) < 1,
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.messageWidths.length).toBeGreaterThan(0);
+    for (const width of layout.messageWidths) expect(width).toBeCloseTo(layout.contentWidth, 0);
+    expect(layout.noticeInsideTimeline).toBe(true);
+    expect(layout.noticeIsCentered).toBe(true);
+    expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
+    await shot(page.locator('#app'), 'conversation-readable-narrow.png');
+  });
+
   test('set latest message as goal context menu', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
