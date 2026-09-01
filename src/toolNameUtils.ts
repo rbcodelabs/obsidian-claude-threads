@@ -115,6 +115,7 @@ const LEGACY_BUILT_IN_TOOLS = new Set([
   'obsidian_list_commands', 'obsidian_execute_command', 'obsidian_open_url',
   'obsidian_get_current_thread', 'obsidian_list_threads', 'obsidian_list_projects',
   'obsidian_create_project', 'obsidian_set_thread_project', 'obsidian_get_thread_messages',
+  'obsidian_open_thread',
   'obsidian_get_thread_log', 'obsidian_wait_for_thread', 'obsidian_send_message_to_thread',
   'obsidian_archive_thread', 'obsidian_set_thread_notes', 'obsidian_set_thread_proposed_reply',
   'obsidian_clear_thread_proposed_reply',
@@ -126,6 +127,7 @@ const CANONICAL_BUILT_IN_TOOLS = new Set([
   'workspace_insert_at_cursor', 'host_list_commands', 'host_execute_command', 'host_open_url',
   'threads_get_current', 'threads_list', 'threads_create', 'threads_list_projects', 'threads_create_project',
   'threads_set_project', 'threads_get_messages', 'threads_get_log', 'threads_wait',
+  'threads_open',
   'threads_send_message', 'threads_archive', 'threads_set_notes', 'threads_set_proposed_reply',
   'threads_clear_proposed_reply',
 ]);

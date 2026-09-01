@@ -485,6 +485,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
               })),
             };
           },
+          openThread: (id: string) => this.openThreadInChatView(id),
           getAllThreads: () => this.manager.getThreads().map((t: { id: string; title: string; status?: string; lastError?: string; reviewed?: boolean; projectId?: string; cwd?: string; originRepoPath?: string; projectNameOverride?: string; prUrl?: string; scheduledItemId?: string; scheduledItemName?: string; updatedAt: number; rawLogPath?: string; managerNotes?: string; proposedReply?: { text: string; generatedAt: number; sourceThreadId?: string }; messages: Array<{ role: string }> }) => {
             const isRunning = this.manager.isRunning(t.id);
             const messageCount = t.messages.filter((m: { role: string }) => m.role !== 'compact').length;

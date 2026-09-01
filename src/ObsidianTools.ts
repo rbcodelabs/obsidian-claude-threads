@@ -251,6 +251,8 @@ export interface ObsidianMcpServerOptions {
   isOrchestratorThread?: (threadId: string) => boolean;
   /** Returns full detail (metadata + messages) for a thread by ID. */
   getThreadDetail?: (id: string) => ThreadDetail | undefined;
+  /** Opens and focuses a thread by ID through the host UI. */
+  openThread?: (id: string) => Promise<void>;
   /** Returns metadata snapshots for all threads. */
   getAllThreads?: () => ThreadSnapshot[];
   /** Central coordination boundary. False must be reported without target disclosure. */
@@ -1300,6 +1302,32 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         const limit = args.limit ?? 20;
         const messages = detail.messages.slice(-limit);
         return { content: [{ type: 'text' as const, text: JSON.stringify(messages, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
+      }
+    },
+  );
+
+  const boundOpenThread = tool(
+    'obsidian_open_thread',
+    'Opens and focuses a thread by its exact ID. A successful open marks the thread reviewed and persists the active selection.',
+    {
+      threadId: z.string().describe('ID of the thread to open'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit Project elevation for this call.'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.openThread) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Thread navigation is not available in this context.' }) }], isError: true };
+        }
+        if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'read')) throw new Error('Target is outside coordination scope.');
+        const detail = options.getThreadDetail?.(args.threadId);
+        if (!detail) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Thread not found: ${args.threadId}` }) }], isError: true };
+        }
+        await options.openThread(args.threadId);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true, threadId: args.threadId }) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
@@ -2430,6 +2458,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundCreateProject,
       boundSetThreadProject,
       boundGetThreadMessages,
+      boundOpenThread,
       boundGetThreadLog,
       boundWaitForThread,
       boundSendMessageToThread,
@@ -2508,6 +2537,7 @@ export const LEGACY_TO_CANONICAL_TOOL_NAMES: Readonly<Record<string, string>> = 
   obsidian_create_project: 'threads_create_project',
   obsidian_set_thread_project: 'threads_set_project',
   obsidian_get_thread_messages: 'threads_get_messages',
+  obsidian_open_thread: 'threads_open',
   obsidian_get_thread_log: 'threads_get_log',
   obsidian_wait_for_thread: 'threads_wait',
   obsidian_send_message_to_thread: 'threads_send_message',
