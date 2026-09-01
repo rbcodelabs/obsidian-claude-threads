@@ -516,6 +516,7 @@
   flex: 1;
   overflow: hidden;
   position: relative;
+  container: ct-conversation-pane / inline-size;
 }
 
 /* ── Summary peek banner ─────────────────────────────────────────────────── */
@@ -687,6 +688,19 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* Keep the transcript readable when the conversation pane is very wide.
+   Each top-level timeline row shares the same centered column, so messages,
+   notices, and standalone inline cards stay aligned. The query starts only
+   when the scroller's 900px content column plus its 16px horizontal padding
+   fits, preserving every existing narrow-pane margin. The child-agent activity
+   view intentionally keeps its own workspace layout. */
+@container ct-conversation-pane (min-width: 917px) {
+  .ct-messages:not(.ct-messages-agent-view) > * {
+    width: 900px;
+    margin-inline: auto;
+  }
 }
 
 /* ── Empty state ──────────────────────────────────────────────── */
@@ -2066,6 +2080,23 @@
   flex-shrink: 0;
   padding: 4px 10px 8px;
   position: relative;
+}
+
+/* Align the complete composer surface with the readable timeline on wide
+   conversation panes. Removing only the wrapper's horizontal padding keeps
+   the visible panel and wrapper-anchored popovers on the same 900px edges;
+   narrow panes retain their existing 10px inset. */
+@container ct-conversation-pane (min-width: 917px) {
+  .ct-panel-wrapper {
+    width: 900px;
+    margin-inline: auto;
+    padding-inline: 0;
+  }
+
+  .ct-panel-wrapper > :is(.ct-agent-popover, .ct-schedule-popover) {
+    left: 0;
+    right: 0;
+  }
 }
 
 /* Floating input panel — visual card inside the wrapper */

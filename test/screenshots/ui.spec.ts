@@ -26,6 +26,146 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'main-view.png', { fullPage: true });
   });
 
+  test('wide conversation pane centers the complete readable timeline', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '1200px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const element = document.querySelector(selector)!;
+        const bounds = element.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
+      const messages = document.querySelector('.ct-messages')!;
+      const composerWrapper = document.querySelector('.ct-panel-wrapper')!;
+      const popover = document.createElement('div');
+      popover.className = 'ct-agent-popover';
+      composerWrapper.appendChild(popover);
+      const popoverBounds = popover.getBoundingClientRect();
+      popover.remove();
+      return {
+        messages: rect('.ct-messages'),
+        assistant: rect('.ct-message-assistant'),
+        user: rect('.ct-message-user'),
+        toolCard: rect('.ct-message-assistant .ct-tools'),
+        header: rect('.ct-title-row'),
+        composerWrapper: rect('.ct-panel-wrapper'),
+        composerPanel: rect('.ct-floating-panel'),
+        composerPopover: {
+          left: popoverBounds.left,
+          right: popoverBounds.right,
+          width: popoverBounds.width,
+        },
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.assistant.width).toBeLessThanOrEqual(900);
+    expect(layout.user.width).toBe(layout.assistant.width);
+    expect(layout.assistant.left - layout.messages.left)
+      .toBeCloseTo(layout.messages.right - layout.assistant.right, 0);
+    expect(layout.toolCard.left).toBeGreaterThanOrEqual(layout.assistant.left);
+    expect(layout.toolCard.right).toBeLessThanOrEqual(layout.assistant.right);
+    expect(layout.header.width).toBeGreaterThan(layout.assistant.width);
+    expect(layout.composerPanel.width).toBeCloseTo(layout.assistant.width, 0);
+    expect(layout.composerPanel.left).toBeCloseTo(layout.assistant.left, 0);
+    expect(layout.composerPanel.right).toBeCloseTo(layout.assistant.right, 0);
+    expect(layout.composerWrapper.left).toBeCloseTo(layout.composerPanel.left, 0);
+    expect(layout.composerWrapper.right).toBeCloseTo(layout.composerPanel.right, 0);
+    expect(layout.composerPopover.left).toBeCloseTo(layout.composerPanel.left, 0);
+    expect(layout.composerPopover.right).toBeCloseTo(layout.composerPanel.right, 0);
+    expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
+    await shot(page.locator('#app'), 'conversation-readable-wide.png');
+  });
+
+  test('narrow conversation pane keeps the timeline full width without overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '760px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-notice'));
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const bounds = document.querySelector(selector)!.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
+      const messages = document.querySelector('.ct-messages')!;
+      const contentWidth = messages.clientWidth
+        - parseFloat(getComputedStyle(messages).paddingLeft)
+        - parseFloat(getComputedStyle(messages).paddingRight);
+      const messageWidths = Array.from(messages.querySelectorAll(':scope > .ct-message'))
+        .map((element) => (element as HTMLElement).getBoundingClientRect().width);
+      const notice = messages.querySelector('.ct-notice-row')!.getBoundingClientRect();
+      const message = messages.querySelector('.ct-message')!.getBoundingClientRect();
+      return {
+        contentWidth,
+        messageWidths,
+        noticeInsideTimeline: notice.left >= message.left && notice.right <= message.right,
+        noticeIsCentered: Math.abs((notice.left - message.left) - (message.right - notice.right)) < 1,
+        messages: rect('.ct-messages'),
+        composerWrapper: rect('.ct-panel-wrapper'),
+        composerPanel: rect('.ct-floating-panel'),
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.messageWidths.length).toBeGreaterThan(0);
+    for (const width of layout.messageWidths) expect(width).toBeCloseTo(layout.contentWidth, 0);
+    expect(layout.noticeInsideTimeline).toBe(true);
+    expect(layout.noticeIsCentered).toBe(true);
+    expect(layout.composerWrapper.width).toBeCloseTo(layout.messages.width, 0);
+    expect(layout.composerPanel.left - layout.composerWrapper.left).toBeCloseTo(10, 0);
+    expect(layout.composerWrapper.right - layout.composerPanel.right).toBeCloseTo(10, 0);
+    expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
+    await shot(page.locator('#app'), 'conversation-readable-narrow.png');
+  });
+
+  test('conversation timeline and composer activate together near the readable-width boundary', async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '925px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const bounds = document.querySelector(selector)!.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
+      const messages = document.querySelector('.ct-messages')!;
+      return {
+        assistant: rect('.ct-message-assistant'),
+        composer: rect('.ct-floating-panel'),
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.assistant.width).toBeCloseTo(900, 0);
+    expect(layout.composer.width).toBeCloseTo(layout.assistant.width, 0);
+    expect(layout.composer.left).toBeCloseTo(layout.assistant.left, 0);
+    expect(layout.composer.right).toBeCloseTo(layout.assistant.right, 0);
+    expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
+  });
+
   test('set latest message as goal context menu', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
