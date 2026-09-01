@@ -1896,10 +1896,12 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'kanban-project-columns.png', { fullPage: true });
   });
 
-  test('agent dashboard — project-first compact rows', async ({ page }) => {
+  test('agents list — project-first adaptive rows', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 820 });
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-agents-project');
+    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents List');
+    expect(await page.evaluate(() => (window as any).__dashboard.getIcon())).toBe('list');
 
     const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
     expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
@@ -1914,8 +1916,13 @@ test.describe('Claude Threads UI', () => {
     expect(sections.indexOf('WAITING')).toBeLessThan(sections.indexOf('NEW'));
 
     const normalRow = hiptrip.locator('.ct-agents-row:not(.ct-agents-row-permission):not(.ct-agents-row-waiting)').first();
-    expect((await normalRow.boundingBox())?.height).toBeLessThanOrEqual(44);
     await expect(normalRow.locator('.ct-agents-row-summary')).toHaveCount(0);
+    await expect(normalRow.locator('.ct-agents-row-primary')).toHaveCount(1);
+    await expect(normalRow.locator('.ct-agents-row-secondary')).toHaveCount(1);
+    await expect(normalRow.locator('.ct-agents-row-primary .ct-agents-row-title')).toBeVisible();
+    await expect(normalRow.locator('.ct-agents-row-primary .ct-agents-row-time')).toBeVisible();
+    await expect(normalRow.locator('.ct-agents-row-secondary .ct-agents-row-activity')).toBeVisible();
+    await expect(normalRow.locator('.ct-agents-row-secondary .ct-agents-row-cwd')).toBeVisible();
 
     await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveCount(1);
     await expect(hiptrip.locator('.ct-dashboard-agent-count')).toHaveText('7 agents');
@@ -1939,7 +1946,48 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
   });
 
-  test('agent dashboard — narrow exceptional states remain usable', async ({ page }) => {
+  for (const { width, height } of [
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 760, height: 844 },
+    { width: 1240, height: 844 },
+  ]) {
+    test(`agents list — two-line rows avoid horizontal overflow at ${width}x${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(kanbanUrl + '?dashboard=1');
+      await page.waitForSelector('.ct-agents-row-primary');
+
+      await expect(page.locator('.ct-agents-row-primary').first()).toBeVisible();
+      await expect(page.locator('.ct-agents-row-secondary').first()).toBeVisible();
+      expect(await page.locator('.ct-agents-list').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+
+      await shot(page, `agents-list-${width}.png`, { fullPage: true });
+    });
+  }
+
+  test('agents list — responds to pane width inside a wide workspace', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 844 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-dashboard-root');
+
+    for (const width of [390, 760, 1160]) {
+      await page.locator('#app').evaluate((host, paneWidth) => {
+        host.style.width = `${paneWidth}px`;
+      }, width);
+
+      const list = page.locator('.ct-agents-list');
+      await expect(list).toHaveCSS('width', `${width}px`);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+
+      if (width === 390) {
+        await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');
+      }
+    }
+  });
+
+  test('agents list — narrow exceptional states remain usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-agents-row-plan');

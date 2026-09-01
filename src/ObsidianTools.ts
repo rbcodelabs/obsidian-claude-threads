@@ -71,7 +71,7 @@ const executeCommandSchema = {
 export type UiStatus = 'working' | 'new' | 'reviewed' | 'failed' | 'ready';
 
 /**
- * Returns the Agent Dashboard UI bucket label for a thread.
+ * Returns the Agents List UI bucket label for a thread.
  *
  * Mirrors the exact bucketing logic in AgentDashboard.render():
  *   - working  — thread is actively running, OR has no active foreground
@@ -105,12 +105,12 @@ export interface ThreadSnapshot {
   title: string;
   /**
    * Internal lifecycle status (waiting | active | error | archived).
-   * @deprecated Prefer `uiStatus` for display logic — it matches the Agent Dashboard UI labels.
+   * @deprecated Prefer `uiStatus` for display logic — it matches the Agents List UI labels.
    * Use `isRunning` to check whether Claude is actively processing.
    */
   status: string;
   /**
-   * The Agent Dashboard UI bucket this thread belongs to.
+   * The Agents List UI bucket this thread belongs to.
    * One of: 'working' | 'new' | 'reviewed' | 'failed' | 'ready'
    */
   uiStatus: UiStatus;
@@ -1159,7 +1159,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with threads_get_log).',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agents List UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with threads_get_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1183,7 +1183,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agents List UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
     { projectId: z.string().optional().describe('Portfolio orchestrator only: explicitly elevate this call into one Project.') },
     async (args, _extra) => {
       try {

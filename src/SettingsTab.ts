@@ -1814,7 +1814,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     // — Summarization —
     new Setting(containerEl)
       .setName('Summarization')
-      .setDesc('Short summary + suggested title per thread, generated with the Claude CLI. Keeps the agent dashboard readable at a glance.')
+      .setDesc('Short summary + suggested title per thread, generated with the Claude CLI. Keeps the Agents List readable at a glance.')
       .setHeading();
 
     new Setting(containerEl)
@@ -1960,7 +1960,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Stack scheduled job threads')
-          .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack within each project\'s quiet status sections on the Agent Dashboard and Kanban board. A run that\'s running, waiting on input, or errored is never stacked.')
+          .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack within each project\'s quiet status sections on the Agents List and Kanban board. A run that\'s running, waiting on input, or errored is never stacked.')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.stackScheduledThreads ?? true)
@@ -1988,7 +1988,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       } else if (orchestratorThread) {
         new Setting(containerEl)
           .setName(orchestratorThread.title)
-          .setDesc('This is your Portfolio Orchestrator thread. It is marked with a bot badge in the Agent Dashboard, Kanban board, and thread switcher.')
+          .setDesc('This is your Portfolio Orchestrator thread. It is marked with a bot badge in the Agents List, Kanban board, and thread switcher.')
           .addButton((btn) =>
             btn.setButtonText('Open').setCta().onClick(() => {
               void this.plugin.openThreadInChatView(orchestratorId);
