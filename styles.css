@@ -687,17 +687,21 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  container: ct-conversation-timeline / inline-size;
 }
 
 /* Keep the transcript readable when the conversation pane is very wide.
    Each top-level timeline row shares the same centered column, so messages,
-   notices, and standalone inline cards stay aligned. Below 900px this resolves
-   to the existing full width. The child-agent activity view intentionally
-   keeps its own workspace layout, and the header/composer are siblings of the
-   scroller so they remain unconstrained. */
-.ct-messages:not(.ct-messages-agent-view) > * {
-  width: min(100%, 900px);
-  margin-inline: auto;
+   notices, and standalone inline cards stay aligned. The query starts only
+   when the scroller's 900px content column plus its 16px horizontal padding
+   fits, preserving every existing narrow-pane margin. The child-agent activity
+   view intentionally keeps its own workspace layout, and the header/composer
+   are siblings of the scroller so they remain unconstrained. */
+@container ct-conversation-timeline (min-width: 917px) {
+  .ct-messages:not(.ct-messages-agent-view) > * {
+    width: 900px;
+    margin-inline: auto;
+  }
 }
 
 /* ── Empty state ──────────────────────────────────────────────── */
