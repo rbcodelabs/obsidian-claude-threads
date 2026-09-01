@@ -16,6 +16,7 @@ import type { SerializedThread, SerializedMessage, PendingPermission, PendingQue
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
+import { classifyRenderedMarkdownLink } from './linkUtils';
 import {
   VISUALIZE_SLOT_ATTR,
   VISUALIZE_SLOT_CLASS,
@@ -560,6 +561,30 @@ export class MobileView extends ItemView {
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
         void this.app.workspace.openLinkText(href, '', false);
+      });
+    });
+    // marked renders ordinary `[label](path.md#heading)` links without the
+    // custom wikilink class, so — unlike the block above — they never got a
+    // click handler at all: mobile is always classic placement, and this view
+    // had no equivalent of ThreadsView's plain-markdown-link wiring. Some
+    // hrefs are OS-absolute paths that happen to fall under the synced vault
+    // (e.g. a fragment written from outside Obsidian) — resolve those via the
+    // same suffix-probing used for visualize markers (resolveVaultCopy)
+    // before opening.
+    el.querySelectorAll<HTMLAnchorElement>(`a:not(.internal-link):not(.${VISUALIZE_SLOT_CLASS})`).forEach((a) => {
+      const href = a.getAttribute('href') ?? '';
+      if (classifyRenderedMarkdownLink(href) !== 'vault') return;
+      // marked percent-encodes spaces and other special characters in the
+      // href it emits (e.g. a path segment with a space becomes `%20`), but
+      // vault paths are compared/opened as literal text. Decode before
+      // suffix-matching and before handing off to openLinkText.
+      let decodedHref = href;
+      try { decodedHref = decodeURIComponent(href); } catch { /* preserve malformed text for native resolution */ }
+      const resolvedHref = this.resolveVaultCopy(decodedHref) ?? decodedHref;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void this.app.workspace.openLinkText(resolvedHref, '', false);
       });
     });
   }

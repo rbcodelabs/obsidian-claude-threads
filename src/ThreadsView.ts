@@ -23,7 +23,7 @@ import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile,
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
-import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer } from './linkUtils';
+import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
@@ -2128,17 +2128,32 @@ export class ThreadsView extends ItemView {
       });
     });
     // marked renders ordinary `[label](path.md#heading)` links without the
-    // custom wikilink class. In conversation-first mode, intercept only
-    // relative/vault-shaped hrefs; protocols and same-page anchors retain the
-    // browser/host's standard behavior.
+    // custom wikilink class. Intercept only relative/vault-shaped hrefs;
+    // protocols and same-page anchors retain the browser/host's standard
+    // behavior. Some hrefs are OS-absolute paths that happen to fall under the
+    // vault root (e.g. a fragment written from outside Obsidian) — resolve
+    // those to a vault-relative path before handing them to the open calls,
+    // which expect vault linktext, not filesystem paths.
     el.querySelectorAll<HTMLAnchorElement>('a:not(.internal-link):not(.ct-visualize-slot)').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
-      if (!this.plugin.isConversationFirst() || classifyRenderedMarkdownLink(href) !== 'vault') return;
+      if (classifyRenderedMarkdownLink(href) !== 'vault') return;
+      // marked percent-encodes spaces and other special characters in the
+      // href it emits (e.g. a path segment with a space becomes `%20`), but
+      // vault paths are compared/opened as literal text. Decode before
+      // suffix-matching and before handing off to the open calls, mirroring
+      // ContextPanelController.openLinkText's own defensive decode.
+      let decodedHref = href;
+      try { decodedHref = decodeURIComponent(href); } catch { /* preserve malformed text for native resolution */ }
+      const resolvedHref = resolveAbsoluteVaultHref(decodedHref, (p) => !!this.app.vault.getAbstractFileByPath(p)) ?? decodedHref;
       a.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
-        void this.plugin.contextPanel.openLinkText(href, sourcePath);
+        if (this.plugin.isConversationFirst()) {
+          const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
+          void this.plugin.contextPanel.openLinkText(resolvedHref, sourcePath);
+        } else {
+          void this.app.workspace.openLinkText(resolvedHref, '', false);
+        }
       });
     });
     this.linkifyBridgePaths(el);
