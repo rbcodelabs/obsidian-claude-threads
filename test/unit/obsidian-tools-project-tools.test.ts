@@ -151,6 +151,61 @@ describe('obsidian_create_project', () => {
   });
 });
 
+describe('obsidian_update_project', () => {
+  it('returns an error when updateProject callback is not provided', async () => {
+    const server = createObsidianMcpServer(makeApp(), {}) as unknown as CapturedServer;
+    const result = await getTool(server, 'obsidian_update_project')._handler({ projectId: fakeProject.id, name: 'Trips' });
+    expect(result.isError).toBe(true);
+    expect((parseResult(result) as { error: string }).error).toMatch(/updateProject is not available/i);
+  });
+
+  it('passes a normalized partial patch and returns the persisted snapshot', async () => {
+    const updated = { ...fakeProject, name: 'Trips', description: undefined, cwdOverride: '/tmp/trips', effectiveCwd: '/tmp/trips' };
+    const updateProject = vi.fn().mockResolvedValue(updated);
+    const server = createObsidianMcpServer(makeApp(), { updateProject }) as unknown as CapturedServer;
+    const result = await getTool(server, 'obsidian_update_project')._handler({
+      projectId: fakeProject.id,
+      name: '  Trips  ',
+      description: null,
+      cwdOverride: '  /tmp/trips  ',
+      elevatedProjectId: fakeProject.id,
+    });
+    expect(updateProject).toHaveBeenCalledWith(fakeProject.id, {
+      name: 'Trips', description: undefined, cwdOverride: '/tmp/trips',
+    });
+    expect(parseResult(result)).toEqual(updated);
+  });
+
+  it.each([
+    [{ projectId: fakeProject.id }, /at least one/i],
+    [{ projectId: fakeProject.id, name: '   ' }, /name/i],
+    [{ projectId: fakeProject.id, cwdOverride: 'relative/path' }, /absolute/i],
+    [{ projectId: fakeProject.id, cwdOverride: '   ' }, /cwdOverride/i],
+  ])('rejects invalid patches without invoking the callback: %o', async (args, message) => {
+    const updateProject = vi.fn();
+    const server = createObsidianMcpServer(makeApp(), { updateProject }) as unknown as CapturedServer;
+    const result = await getTool(server, 'obsidian_update_project')._handler(args);
+    expect(result.isError).toBe(true);
+    expect((parseResult(result) as { error: string }).error).toMatch(message);
+    expect(updateProject).not.toHaveBeenCalled();
+  });
+
+  it('preserves empty description strings and clears cwdOverride with null', async () => {
+    const updateProject = vi.fn().mockResolvedValue(fakeProject);
+    const server = createObsidianMcpServer(makeApp(), { updateProject }) as unknown as CapturedServer;
+    await getTool(server, 'obsidian_update_project')._handler({ projectId: fakeProject.id, description: '', cwdOverride: null });
+    expect(updateProject).toHaveBeenCalledWith(fakeProject.id, { description: '', cwdOverride: undefined });
+  });
+
+  it.each(['C:\\repos\\trips', '\\\\server\\share\\trips'])('accepts Windows absolute cwd paths: %s', async (cwdOverride) => {
+    const updateProject = vi.fn().mockResolvedValue(fakeProject);
+    const server = createObsidianMcpServer(makeApp(), { updateProject }) as unknown as CapturedServer;
+    const result = await getTool(server, 'obsidian_update_project')._handler({ projectId: fakeProject.id, cwdOverride });
+    expect(result.isError).toBeUndefined();
+    expect(updateProject).toHaveBeenCalledWith(fakeProject.id, { cwdOverride });
+  });
+});
+
 // ── obsidian_set_thread_project ───────────────────────────────────────────────
 
 describe('obsidian_set_thread_project', () => {

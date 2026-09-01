@@ -658,6 +658,7 @@ Discover, read, and message other running threads. Project threads coordinate on
 | `threads_list` | `projectId?` | Returns authorized thread metadata. Portfolio passes a Project id for one-call elevation. |
 | `threads_list_projects` | — | Returns configured projects with `cwdOverride` and resolved `effectiveCwd`. |
 | `threads_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates and persists a project. |
+| `threads_update_project` | `projectId`, `name?`, `description?`, `cwdOverride?`, `elevatedProjectId?` | Updates the caller's Project name, context, or cwd override and waits for persistence. Pass `null` for description or cwd override to clear it. Existing threads retain their cwd and live session; future Project threads and dynamic schedules use the updated cwd. Portfolio callers must explicitly elevate to the matching Project. |
 | `threads_set_project` | `threadId`, `projectId`, `alignCwd?` | Assigns a thread to a project, or detaches it with `null`. Association-only by default; `alignCwd: true` also switches to a non-null Project's cwd on the next safe turn. Detaching never relocates the thread. |
 | `threads_get_messages` | `threadId`, `limit?` | Returns recent user and assistant messages. |
 | `threads_get_log` | `threadId?`, `limit?`, `type?` | Returns parsed raw JSONL event-log entries. |

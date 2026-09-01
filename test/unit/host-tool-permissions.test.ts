@@ -7,6 +7,8 @@ describe('built-in tool permission classification', () => {
     expect(isTrustedBuiltInTool('mcp__obsidian__obsidian_search_vault')).toBe(true);
     expect(isTrustedBuiltInTool('threads_send_message')).toBe(true);
     expect(isTrustedBuiltInTool('threads_create')).toBe(true);
+    expect(isTrustedBuiltInTool('threads_update_project')).toBe(true);
+    expect(isTrustedBuiltInTool('mcp__obsidian__obsidian_update_project')).toBe(true);
     expect(isTrustedBuiltInTool('fork_conversation')).toBe(false);
   });
 
