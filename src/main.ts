@@ -109,13 +109,13 @@ Reopen the panels any time from the ribbon icons (left edge of the window) or vi
 1. Click the **Agents List** ribbon icon or press \`Cmd+P\` → "Open Agents List"
 2. Type a task in the **dispatch box** at the top — e.g. \`Summarize the README in my project folder\`
 3. Hit **Enter** — Claude spins up a new thread and starts working
-4. Watch progress in the dashboard; click any thread row to open the full conversation in Chat
+4. Watch progress in the Agents List; click any thread row to open the full conversation in Chat
 
 ## Tips
 
-- **Projects**: Group threads by folder. Create a project in the dashboard to scope Claude's working directory.
+- **Projects**: Group threads by folder. Create a project in the Agents List to scope Claude's working directory.
 - **Permission mode**: Set to "Accept Edits" in Settings → Claude Threads to let Claude edit files without prompting.
-- **Multiple threads**: Run several agents in parallel — each gets its own row in the dashboard.
+- **Multiple threads**: Run several agents in parallel — each gets its own row in the Agents List.
 - **Keyboard shortcuts**: \`Cmd+]\` / \`Cmd+[\` to cycle threads in Chat; \`Cmd+1–9\` to jump to a specific thread.
 - **Interrupt**: Use "Interrupt active thread" from the command palette to stop a running agent mid-task.
 
@@ -1403,7 +1403,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       console.error('[ClaudeThreads] Failed to open welcome guide:', err);
     }
 
-    // 4. Open agent dashboard in the RIGHT sidebar
+    // 4. Open the Agents List in the RIGHT sidebar
     try {
       const existingDash = workspace.getLeavesOfType(AGENT_VIEW_TYPE)[0];
       if (!existingDash) {
@@ -1414,7 +1414,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         workspace.revealLeaf(existingDash);
       }
     } catch (err) {
-      console.error('[ClaudeThreads] Failed to open agent dashboard:', err);
+      console.error('[ClaudeThreads] Failed to open Agents List:', err);
     }
 
     // 5. Welcome notice

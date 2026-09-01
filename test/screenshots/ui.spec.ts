@@ -1821,6 +1821,27 @@ test.describe('Claude Threads UI', () => {
     });
   }
 
+  test('agents list — responds to pane width inside a wide workspace', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 844 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-dashboard-root');
+
+    for (const width of [390, 760, 1160]) {
+      await page.locator('#app').evaluate((host, paneWidth) => {
+        host.style.width = `${paneWidth}px`;
+      }, width);
+
+      const list = page.locator('.ct-agents-list');
+      await expect(list).toHaveCSS('width', `${width}px`);
+      expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+
+      if (width === 390) {
+        await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');
+      }
+    }
+  });
+
   test('agents list — narrow exceptional states remain usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(kanbanUrl + '?dashboard=1');

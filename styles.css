@@ -2595,6 +2595,7 @@
 }
 
 .ct-agents-root {
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2984,6 +2985,18 @@
 .ct-agents-row-error .ct-aws-reauth-btn { width: fit-content; max-width: 100%; }
 
 @media (max-width: 700px) {
+  .ct-agents-row { min-height: 52px; }
+  .ct-agents-row-secondary { gap: 6px; }
+  .ct-agents-row-activity { flex-shrink: 1; }
+  .ct-agents-row-cwd { flex-shrink: 2; }
+  .ct-dashboard-agent-count { min-height: 44px; }
+  .ct-agents-permission-actions .ct-permission-btn,
+  .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }
+}
+
+/* Obsidian sidebars can be narrow inside a wide desktop window, so pane
+   responsiveness must follow this view's own inline size, not the viewport. */
+@container (max-width: 700px) {
   .ct-agents-row { min-height: 52px; }
   .ct-agents-row-secondary { gap: 6px; }
   .ct-agents-row-activity { flex-shrink: 1; }
