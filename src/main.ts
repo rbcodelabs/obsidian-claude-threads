@@ -10,7 +10,7 @@ import type { ThreadManager } from './ThreadManager';
 import type { VaultPersistence } from './VaultPersistence';
 import type { InProcessSummarizer } from './InProcessSummarizer';
 import type { WakeLockService } from './WakeLockService';
-import type { createClaudeThreadsMcpServers } from './ObsidianTools';
+import type { createClaudeThreadsMcpServers, ProjectSnapshot, ProjectUpdatePatch } from './ObsidianTools';
 import type { ContextPanelController } from './ContextPanelController';
 import { detectHostName } from './hostEnvironment';
 import { mergeMcpServers } from './mcpServerMerge';
@@ -86,6 +86,56 @@ export function createAgentThreadCallback(deps: {
     await deps.saveSettings();
     void deps.sendMessage(createdThread.id, prompt);
     return { threadId: createdThread.id, title: createdThread.title };
+  };
+}
+
+/** Builds the persistence boundary behind the agent-facing Project update tool. */
+export function createAgentProjectUpdateCallback(deps: {
+  getProject: (id: string) => Project | undefined;
+  updateProject: (id: string, patch: ProjectUpdatePatch) => Project;
+  getProjectCwd: (project: Project) => string;
+  saveSettings: () => Promise<void>;
+}): (projectId: string, patch: ProjectUpdatePatch) => Promise<ProjectSnapshot> {
+  let transactionQueue: Promise<void> = Promise.resolve();
+  const runUpdate = async (projectId: string, patch: ProjectUpdatePatch): Promise<ProjectSnapshot> => {
+    const current = deps.getProject(projectId);
+    if (!current) throw new Error(`Project not found: ${projectId}`);
+    const patchKeys = Object.keys(patch) as Array<keyof ProjectUpdatePatch>;
+    const changed = patchKeys
+      .some(key => current[key] !== patch[key]);
+    if (!changed) throw new Error('Update does not change Project settings.');
+    const previous: ProjectUpdatePatch = {};
+    for (const key of patchKeys) previous[key] = current[key];
+    const updated = deps.updateProject(projectId, patch);
+    const applied: ProjectUpdatePatch = {};
+    for (const key of patchKeys) applied[key] = updated[key];
+    try {
+      await deps.saveSettings();
+    } catch (error) {
+      const latest = deps.getProject(projectId);
+      const rollback: ProjectUpdatePatch = {};
+      if (latest) {
+        for (const key of patchKeys) {
+          if (latest[key] === applied[key]) rollback[key] = previous[key];
+        }
+      }
+      if (Object.keys(rollback).length > 0) deps.updateProject(projectId, rollback);
+      throw error;
+    }
+    return {
+      id: updated.id,
+      name: updated.name,
+      description: updated.description,
+      vaultFolder: updated.vaultFolder,
+      cwdOverride: updated.cwdOverride,
+      effectiveCwd: deps.getProjectCwd(updated),
+      orchestratorThreadId: updated.orchestratorThreadId,
+    };
+  };
+  return (projectId, patch) => {
+    const transaction = transactionQueue.then(() => runUpdate(projectId, patch));
+    transactionQueue = transaction.then(() => undefined, () => undefined);
+    return transaction;
   };
 }
 
@@ -361,6 +411,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
     );
     this.register(() => deferredThreadArchiver.dispose());
     this.manager.hostName = detectHostName(window as unknown as { geode?: unknown });
+    // One callback instance means one transaction queue across every per-thread
+    // MCP server. Project updates from separate threads cannot overlap saves or
+    // rollbacks against the shared manager state.
+    const updateProjectFromAgent = createAgentProjectUpdateCallback({
+      getProject: id => this.manager.getProject(id),
+      updateProject: (id, patch) => this.manager.updateProject(id, patch),
+      getProjectCwd: project => this.manager.getProjectCwd(project),
+      saveSettings: () => this.saveSettings(),
+    });
     // Use a per-thread factory so the set_working_directory tool can close over the
     // correct threadId without shared mutable state across concurrent sessions.
     this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
@@ -532,6 +591,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             this.saveSettings().catch(console.error);
             return { id: p.id, name: p.name, description: p.description, vaultFolder: p.vaultFolder, cwdOverride: p.cwdOverride, effectiveCwd: this.manager.getProjectCwd(p) };
           },
+          updateProject: updateProjectFromAgent,
           setThreadProject: (threadId, projectId, alignCwd) => {
             this.manager.setThreadProject(threadId, projectId, alignCwd);
             this.saveSettings().catch(console.error);
@@ -2394,22 +2454,37 @@ export default class ClaudeThreadsPlugin extends Plugin {
   // an in-flight write is never lost, just coalesced into the next pass.
   private savePromise: Promise<void> | null = null;
   private saveAgainRequested = false;
+  // Each caller waits only for the first write that includes the state visible
+  // when it requested a save. A later coalesced pass cannot revoke that commit.
+  private saveRequestedGeneration = 0;
+  private saveCommittedGeneration = 0;
+  private saveWaiters: Array<{
+    generation: number;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }> = [];
 
   async saveSettings(): Promise<void> {
     // Telemetry: every save request (many coalesce into one disk write below).
     telemetry.recordSaveRequested();
+    const generation = (this.saveRequestedGeneration ?? 0) + 1;
+    this.saveRequestedGeneration = generation;
+    const acknowledged = new Promise<void>((resolve, reject) => {
+      (this.saveWaiters ??= []).push({ generation, resolve, reject });
+    });
     if (this.savePromise) {
       this.saveAgainRequested = true;
-      return this.savePromise;
+      return acknowledged;
     }
     this.savePromise = this.runSaveLoop();
-    return this.savePromise;
+    return acknowledged;
   }
 
   private async runSaveLoop(): Promise<void> {
     try {
       do {
         this.saveAgainRequested = false;
+        const passGeneration = this.saveRequestedGeneration;
         // Persist projects + thread state (without streaming content)
         // manager is null on mobile — skip thread persistence there
         if (this.manager) {
@@ -2423,7 +2498,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
         // Telemetry: an actual disk write (measures coalescing effectiveness vs.
         // savesRequested).
         telemetry.recordSaveWritten();
-      } while (this.saveAgainRequested);
+        this.saveCommittedGeneration = passGeneration;
+        const committed = this.saveWaiters.filter(waiter => waiter.generation <= passGeneration);
+        this.saveWaiters = this.saveWaiters.filter(waiter => waiter.generation > passGeneration);
+        for (const waiter of committed) waiter.resolve();
+      } while (this.saveAgainRequested || (this.saveCommittedGeneration ?? 0) < this.saveRequestedGeneration);
+    } catch (error) {
+      const uncommitted = this.saveWaiters;
+      this.saveWaiters = [];
+      for (const waiter of uncommitted) waiter.reject(error);
     } finally {
       this.savePromise = null;
     }

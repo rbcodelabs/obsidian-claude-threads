@@ -10,6 +10,7 @@ import type { ScheduledItem } from './types';
 import type { SchedulerItemPatch } from './Scheduler';
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 import { execFileSync } from 'child_process';
 import { secretStorageKey } from './secretUtils';
@@ -170,6 +171,12 @@ export interface ProjectSnapshot {
   orchestratorThreadId?: string;
 }
 
+export interface ProjectUpdatePatch {
+  name?: string;
+  description?: string;
+  cwdOverride?: string;
+}
+
 // ── Vault Bridge schema ───────────────────────────────────────────────────────
 
 const addVaultBridgeSchema = {
@@ -270,6 +277,8 @@ export interface ObsidianMcpServerOptions {
   getAllProjects?: () => ProjectSnapshot[];
   /** Creates a new project and persists it. Returns the created project snapshot. */
   createProject?: (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => ProjectSnapshot;
+  /** Updates editable Project settings, persists them, and returns the durable snapshot. */
+  updateProject?: (projectId: string, patch: ProjectUpdatePatch) => Promise<ProjectSnapshot>;
   /** Assigns or clears the project on a thread. Pass null to detach. */
   setThreadProject?: (threadId: string, projectId: string | null, alignCwd?: boolean) => void;
   /** Returns true if the given thread is currently processing a request. */
@@ -1234,6 +1243,56 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'createProject is not available in this context.' }) }], isError: true };
         }
         const project = options.createProject(args.name, args.vaultFolder, args.description, args.cwdOverride);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundUpdateProject = tool(
+    'obsidian_update_project',
+    'Updates a Project name, context description, or working-directory override. Omitted fields are preserved; null clears description or cwdOverride. Existing threads keep their current cwd and live session. New Project threads and dynamic schedules use the updated effective cwd.',
+    {
+      projectId: z.string().trim().min(1).describe('ID of the Project to update'),
+      name: z.string().optional().describe('New human-readable Project name; trimmed and must not be blank'),
+      description: z.string().nullable().optional().describe('New Project context description; null clears it'),
+      cwdOverride: z.string().nullable().optional().describe('New absolute filesystem cwd; null restores the vault-derived cwd'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit matching Project elevation for this call.'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.updateProject) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'updateProject is not available in this context.' }) }], isError: true };
+        }
+        if (options.authorizeProjectDestination && !options.authorizeProjectDestination(args.projectId, args.elevatedProjectId)) {
+          throw new Error('Target is outside coordination scope.');
+        }
+        const hasName = args.name !== undefined;
+        const hasDescription = args.description !== undefined;
+        const hasCwdOverride = args.cwdOverride !== undefined;
+        if (!hasName && !hasDescription && !hasCwdOverride) throw new Error('At least one editable field is required.');
+
+        const patch: ProjectUpdatePatch = {};
+        if (hasName) {
+          const name = args.name!.trim();
+          if (!name) throw new Error('Project name must not be blank.');
+          patch.name = name;
+        }
+        if (hasDescription) patch.description = args.description ?? undefined;
+        if (hasCwdOverride) {
+          if (args.cwdOverride === null) {
+            patch.cwdOverride = undefined;
+          } else {
+            const cwdOverride = args.cwdOverride!.trim();
+            if (!cwdOverride) throw new Error('cwdOverride must not be blank; pass null to clear it.');
+            if (!path.posix.isAbsolute(cwdOverride) && !path.win32.isAbsolute(cwdOverride)) throw new Error('cwdOverride must be an absolute filesystem path.');
+            patch.cwdOverride = cwdOverride;
+          }
+        }
+        const project = await options.updateProject(args.projectId, patch);
         return { content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -2428,6 +2487,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundListThreads,
       boundListProjects,
       boundCreateProject,
+      boundUpdateProject,
       boundSetThreadProject,
       boundGetThreadMessages,
       boundGetThreadLog,
@@ -2506,6 +2566,7 @@ export const LEGACY_TO_CANONICAL_TOOL_NAMES: Readonly<Record<string, string>> = 
   obsidian_list_threads: 'threads_list',
   obsidian_list_projects: 'threads_list_projects',
   obsidian_create_project: 'threads_create_project',
+  obsidian_update_project: 'threads_update_project',
   obsidian_set_thread_project: 'threads_set_project',
   obsidian_get_thread_messages: 'threads_get_messages',
   obsidian_get_thread_log: 'threads_get_log',
