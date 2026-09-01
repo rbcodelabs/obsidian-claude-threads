@@ -29,19 +29,24 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import ClaudeThreadsPlugin, { subscribeAgentRunPersistence } from '../../src/main';
+import ClaudeThreadsPlugin, {
+  createAgentProjectUpdateCallback,
+  subscribeAgentRunPersistence,
+} from '../../src/main';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 
 /** A deferred promise whose resolution the test controls explicitly. */
 function deferred<T>() {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((r, j) => { resolve = r; reject = j; });
+  return { promise, resolve, reject };
 }
 
 interface SavedSettingsShape {
   threads: Array<{ id: string }>;
+  projects?: Array<{ id: string; name: string }>;
 }
 
 /**
@@ -149,5 +154,35 @@ describe('ClaudeThreadsPlugin.saveSettings() — serialized write queue', () => 
 
     expect(disk.state?.threads.find((t) => t.id === t1.id)).toBeUndefined();
     expect(disk.state?.threads.find((t) => t.id === t2.id)).toBeDefined();
+  });
+
+  it('acknowledges a Project update committed in pass 1 even when a later coalesced pass fails', async () => {
+    const { plugin, saveData, disk } = makePlugin();
+    const project = plugin.manager.createProject('Original', 'Projects/One');
+    const pass1 = deferred<void>();
+    const pass2 = deferred<void>();
+    queueWrite(saveData, disk, pass1.promise);
+
+    const updateProject = createAgentProjectUpdateCallback({
+      getProject: id => plugin.manager.getProject(id),
+      updateProject: (id, patch) => plugin.manager.updateProject(id, patch),
+      getProjectCwd: value => plugin.manager.getProjectCwd(value),
+      saveSettings: () => plugin.saveSettings(),
+    });
+
+    const toolResult = updateProject(project.id, { name: 'Committed' });
+    await vi.waitFor(() => expect(saveData).toHaveBeenCalledTimes(1));
+
+    saveData.mockImplementationOnce(() => pass2.promise);
+    const laterSave = plugin.saveSettings();
+    const laterFailure = expect(laterSave).rejects.toThrow('pass 2 failed');
+    pass1.resolve();
+
+    await expect(toolResult).resolves.toMatchObject({ name: 'Committed' });
+    expect(plugin.manager.getProject(project.id)?.name).toBe('Committed');
+    expect(disk.state?.projects?.find(value => value.id === project.id)?.name).toBe('Committed');
+
+    pass2.reject(new Error('pass 2 failed'));
+    await laterFailure;
   });
 });

@@ -2454,22 +2454,37 @@ export default class ClaudeThreadsPlugin extends Plugin {
   // an in-flight write is never lost, just coalesced into the next pass.
   private savePromise: Promise<void> | null = null;
   private saveAgainRequested = false;
+  // Each caller waits only for the first write that includes the state visible
+  // when it requested a save. A later coalesced pass cannot revoke that commit.
+  private saveRequestedGeneration = 0;
+  private saveCommittedGeneration = 0;
+  private saveWaiters: Array<{
+    generation: number;
+    resolve: () => void;
+    reject: (error: unknown) => void;
+  }> = [];
 
   async saveSettings(): Promise<void> {
     // Telemetry: every save request (many coalesce into one disk write below).
     telemetry.recordSaveRequested();
+    const generation = (this.saveRequestedGeneration ?? 0) + 1;
+    this.saveRequestedGeneration = generation;
+    const acknowledged = new Promise<void>((resolve, reject) => {
+      (this.saveWaiters ??= []).push({ generation, resolve, reject });
+    });
     if (this.savePromise) {
       this.saveAgainRequested = true;
-      return this.savePromise;
+      return acknowledged;
     }
     this.savePromise = this.runSaveLoop();
-    return this.savePromise;
+    return acknowledged;
   }
 
   private async runSaveLoop(): Promise<void> {
     try {
       do {
         this.saveAgainRequested = false;
+        const passGeneration = this.saveRequestedGeneration;
         // Persist projects + thread state (without streaming content)
         // manager is null on mobile — skip thread persistence there
         if (this.manager) {
@@ -2483,7 +2498,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
         // Telemetry: an actual disk write (measures coalescing effectiveness vs.
         // savesRequested).
         telemetry.recordSaveWritten();
-      } while (this.saveAgainRequested);
+        this.saveCommittedGeneration = passGeneration;
+        const committed = this.saveWaiters.filter(waiter => waiter.generation <= passGeneration);
+        this.saveWaiters = this.saveWaiters.filter(waiter => waiter.generation > passGeneration);
+        for (const waiter of committed) waiter.resolve();
+      } while (this.saveAgainRequested || (this.saveCommittedGeneration ?? 0) < this.saveRequestedGeneration);
+    } catch (error) {
+      const uncommitted = this.saveWaiters;
+      this.saveWaiters = [];
+      for (const waiter of uncommitted) waiter.reject(error);
     } finally {
       this.savePromise = null;
     }
