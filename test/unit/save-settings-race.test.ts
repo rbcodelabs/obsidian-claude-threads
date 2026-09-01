@@ -178,11 +178,12 @@ describe('ClaudeThreadsPlugin.saveSettings() — serialized write queue', () => 
     const laterFailure = expect(laterSave).rejects.toThrow('pass 2 failed');
     pass1.resolve();
 
-    await expect(toolResult).resolves.toMatchObject({ name: 'Committed' });
-    expect(plugin.manager.getProject(project.id)?.name).toBe('Committed');
-    expect(disk.state?.projects?.find(value => value.id === project.id)?.name).toBe('Committed');
-
+    const committedResult = await toolResult;
     pass2.reject(new Error('pass 2 failed'));
     await laterFailure;
+
+    expect(committedResult).toMatchObject({ name: 'Committed' });
+    expect(plugin.manager.getProject(project.id)?.name).toBe('Committed');
+    expect(disk.state?.projects?.find(value => value.id === project.id)?.name).toBe('Committed');
   });
 });
