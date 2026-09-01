@@ -688,7 +688,6 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  container: ct-conversation-timeline / inline-size;
 }
 
 /* Keep the transcript readable when the conversation pane is very wide.
@@ -697,7 +696,7 @@
    when the scroller's 900px content column plus its 16px horizontal padding
    fits, preserving every existing narrow-pane margin. The child-agent activity
    view intentionally keeps its own workspace layout. */
-@container ct-conversation-timeline (min-width: 917px) {
+@container ct-conversation-pane (min-width: 917px) {
   .ct-messages:not(.ct-messages-agent-view) > * {
     width: 900px;
     margin-inline: auto;

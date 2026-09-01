@@ -134,6 +134,38 @@ test.describe('Claude Threads UI', () => {
     await shot(page.locator('#app'), 'conversation-readable-narrow.png');
   });
 
+  test('conversation timeline and composer activate together near the readable-width boundary', async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await page.goto(harnessUrl);
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '925px';
+      element.style.height = '760px';
+    });
+    await page.waitForSelector('.ct-messages');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-agentic'));
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector: string) => {
+        const bounds = document.querySelector(selector)!.getBoundingClientRect();
+        return { left: bounds.left, right: bounds.right, width: bounds.width };
+      };
+      const messages = document.querySelector('.ct-messages')!;
+      return {
+        assistant: rect('.ct-message-assistant'),
+        composer: rect('.ct-floating-panel'),
+        hasOverflow: messages.scrollWidth > messages.clientWidth,
+        documentHasOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+
+    expect(layout.assistant.width).toBeCloseTo(900, 0);
+    expect(layout.composer.width).toBeCloseTo(layout.assistant.width, 0);
+    expect(layout.composer.left).toBeCloseTo(layout.assistant.left, 0);
+    expect(layout.composer.right).toBeCloseTo(layout.assistant.right, 0);
+    expect(layout.hasOverflow).toBe(false);
+    expect(layout.documentHasOverflow).toBe(false);
+  });
+
   test('set latest message as goal context menu', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(harnessUrl);
