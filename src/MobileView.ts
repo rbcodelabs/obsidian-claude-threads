@@ -16,7 +16,7 @@ import type { SerializedThread, SerializedMessage, PendingPermission, PendingQue
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
-import { classifyRenderedMarkdownLink } from './linkUtils';
+import { classifyRenderedMarkdownLink, resolveAbsoluteVaultHref } from './linkUtils';
 import {
   VISUALIZE_SLOT_ATTR,
   VISUALIZE_SLOT_CLASS,
@@ -568,19 +568,18 @@ export class MobileView extends ItemView {
     // click handler at all: mobile is always classic placement, and this view
     // had no equivalent of ThreadsView's plain-markdown-link wiring. Some
     // hrefs are OS-absolute paths that happen to fall under the synced vault
-    // (e.g. a fragment written from outside Obsidian) — resolve those via the
-    // same suffix-probing used for visualize markers (resolveVaultCopy)
-    // before opening.
+    // (e.g. a fragment written from outside Obsidian) — resolve those first.
+    // This uses the shared helper rather than resolveVaultCopy because marked
+    // percent-encodes hrefs and only the helper probes the decoded form; the
+    // callback preserves resolveVaultCopy's relay-client guard, where the
+    // client has no vault index at all. A non-absolute href is forwarded
+    // untouched so openLinkText keeps ownership of subpath parsing/decoding.
     el.querySelectorAll<HTMLAnchorElement>(`a:not(.internal-link):not(.${VISUALIZE_SLOT_CLASS})`).forEach((a) => {
       const href = a.getAttribute('href') ?? '';
       if (classifyRenderedMarkdownLink(href) !== 'vault') return;
-      // marked percent-encodes spaces and other special characters in the
-      // href it emits (e.g. a path segment with a space becomes `%20`), but
-      // vault paths are compared/opened as literal text. Decode before
-      // suffix-matching and before handing off to openLinkText.
-      let decodedHref = href;
-      try { decodedHref = decodeURIComponent(href); } catch { /* preserve malformed text for native resolution */ }
-      const resolvedHref = this.resolveVaultCopy(decodedHref) ?? decodedHref;
+      const resolvedHref = resolveAbsoluteVaultHref(href, (p) => {
+        try { return !!this.app.vault.getAbstractFileByPath(p); } catch { return false; }
+      }) ?? href;
       a.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();

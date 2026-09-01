@@ -2137,14 +2137,12 @@ export class ThreadsView extends ItemView {
     el.querySelectorAll<HTMLAnchorElement>('a:not(.internal-link):not(.ct-visualize-slot)').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
       if (classifyRenderedMarkdownLink(href) !== 'vault') return;
-      // marked percent-encodes spaces and other special characters in the
-      // href it emits (e.g. a path segment with a space becomes `%20`), but
-      // vault paths are compared/opened as literal text. Decode before
-      // suffix-matching and before handing off to the open calls, mirroring
-      // ContextPanelController.openLinkText's own defensive decode.
-      let decodedHref = href;
-      try { decodedHref = decodeURIComponent(href); } catch { /* preserve malformed text for native resolution */ }
-      const resolvedHref = resolveAbsoluteVaultHref(decodedHref, (p) => !!this.app.vault.getAbstractFileByPath(p)) ?? decodedHref;
+      // Only absolute paths need rewriting; marked percent-encodes the hrefs it
+      // emits, which resolveAbsoluteVaultHref accounts for when probing. An
+      // ordinary relative href is forwarded untouched — the open calls parse the
+      // `#subpath` and do their own decoding, so decoding it here would both
+      // double-decode and strip that responsibility from its rightful owner.
+      const resolvedHref = resolveAbsoluteVaultHref(href, (p) => !!this.app.vault.getAbstractFileByPath(p)) ?? href;
       a.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
