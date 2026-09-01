@@ -2,7 +2,7 @@
 
 ## Native agent workspace
 
-Background Claude and Codex agents are first-class, durable participants, and the conversation stays the conversation. While a thread has sub-agents, a compact pill in the composer footer reports how many are working. Clicking it opens a popover with the full agent tree; picking an agent replaces the message pane with that agent's activity timeline behind a breadcrumb that walks back to the main conversation. The Agent Dashboard exposes the same agents for navigation and search. Each view shows the exact activity and lifecycle information exposed by the native harness. Active runs that cannot be reconnected after reload are labeled unavailable rather than incorrectly shown as completed.
+Background Claude and Codex agents are first-class, durable participants, and the conversation stays the conversation. While a thread has sub-agents, a compact pill in the composer footer reports how many are working. Clicking it opens a popover with the full agent tree; picking an agent replaces the message pane with that agent's activity timeline behind a breadcrumb that walks back to the main conversation. The Agents List exposes the same agents for navigation and search. Each view shows the exact activity and lifecycle information exposed by the native harness. Active runs that cannot be reconnected after reload are labeled unavailable rather than incorrectly shown as completed.
 
 Direct child-agent messaging and single-agent interruption are capability-gated. They remain unavailable when the harness has no verified host-side control path; Claude Threads never silently routes those actions to the parent. See [the capability matrix and recovery behavior](docs/agent-workspace.md).
 
@@ -11,7 +11,7 @@ A native Obsidian and Geode plugin for running multiple Claude Code sessions in 
 ![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.30.3-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
-  <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agent Dashboard showing thread summaries" />
+  <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **Persistent conversations** — sessions resume where you left off after restarting the host app
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
-- **Agent dashboard** — monitor and dispatch to multiple threads from a single view; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from dashboard rows without switching threads; toggle between list view and **kanban board** to visualize agent state by column (idle, running, waiting, done), or regroup the board into **folder swimlanes** or **project columns** — one lane/column per app/project — to see every conversation for a codebase together; the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
+- **Agents List** — monitor and dispatch to multiple threads from a compact, responsive two-line list; attach images or files to dispatched tasks via the paperclip button or drag-and-drop; resolve pending permission requests directly from list rows without switching threads; open the **kanban board** to visualize agent state by column (idle, running, waiting, done), or regroup the board into **folder swimlanes** or **project columns** — one lane/column per app/project — to see every conversation for a codebase together; the Kanban has its own floating dispatch panel so you can launch new tasks without leaving the board view
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click opens the files the active Claude or Codex agent touched. Classic placement keeps its original focus behavior (closing other Markdown tabs); conversation-first opens them through the companion without detaching unrelated leaves
 - **Conversation-first workspace (prototype)** — opt in under Settings → General → Conversation placement to keep one chat in the main area and open wikilinks, edited or bridged files, Web Viewer pages, artifacts, and agent-triggered navigation in one reusable native companion beside it. Closing the companion restores the conversation's available width. Classic sidebar placement remains the default, and mobile is unchanged
@@ -53,7 +53,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **Push-to-talk voice input** — hold a configurable hotkey to dictate a message via speech-to-text (uses the Claude Code STT pipeline); transcript populates the input box ready to send or edit
 - **Projects** — group threads, choose their initial working directory, and inject shared context into every message (a context aid, not a tool or filesystem security boundary)
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
-- **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agent Dashboard, and an example thread) so the layout makes sense before you write a single message
+- **First-run onboarding** — on first install, a welcome guide walks you through setup and opens a three-panel workspace (conversation, Agents List, and an example thread) so the layout makes sense before you write a single message
 - **Context recap banner** — when you return to a thread you haven't viewed in over a minute, a floating banner shows the thread summary and how long ago you were last active; auto-dismisses after 10 seconds
 - **Keep computer awake** — prevents the computer from sleeping while Claude is active; shows a ☕ indicator in the status bar (uses Geode's native Electron power-save blocker when available, with `caffeinate -i` for Obsidian on macOS and the Web Wake Lock API as fallback)
 - **Plan Mode** — Claude and Codex can propose a written plan before making any mutations, and Codex can autonomously invoke `EnterPlanMode` when a task needs investigation first. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before execution begins
@@ -140,7 +140,7 @@ Tabs are renamed automatically once the first turn completes, using the thread s
 - **`/`** — opens slash command autocomplete
 - **Escape** — cancel the running session; the sent message is restored to the input box so you can edit and re-send
 
-**Collapsible input panels.** All three message-input panels (Threads view, Agent Dashboard sidebar, and Kanban dispatch) collapse to a minimal bar at rest — just the textarea and send button. Hover over the panel or click into the textarea to expand secondary controls (attach, mic, model picker, more menu, CWD chip) with a smooth animation. The panel border softens when collapsed so it reads as a quiet background element.
+**Collapsible input panels.** All three message-input panels (Threads view, Agents List sidebar, and Kanban dispatch) collapse to a minimal bar at rest — just the textarea and send button. Hover over the panel or click into the textarea to expand secondary controls (attach, mic, model picker, more menu, CWD chip) with a smooth animation. The panel border softens when collapsed so it reads as a quiet background element.
 
 **Message queue.** If you send a message while Claude is already processing, it goes into a queue — displayed as stacked removable rows above the composer. Each row shows a preview of the queued message and an `×` button to discard it. Click any row to pull it back into the input box for editing (an inline confirm prompt prevents you from accidentally discarding your current draft). The queue drains automatically as Claude finishes each turn. Queued messages survive thread switches and plugin reloads.
 
@@ -187,7 +187,7 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 ### Design artifacts in Geode
 
-Use `/design <brief>` from the Agent Dashboard or Kanban dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
+Use `/design <brief>` from the Agents List or Kanban dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
 
 Geode's ArtifactView previews the result with live reload, desktop/tablet/mobile viewport controls, runtime diagnostics, and PNG capture. Artifacts run in an isolated, ephemeral, Node-less guest with network, clipboard, downloads, popups, and external navigation denied. Outside Geode, Threads reveals the source instead of launching the artifact without that sandbox.
 
@@ -297,9 +297,9 @@ A command with bad or missing arguments shows a notice and keeps your draft inst
 
 When the context window fills up, Claude compacts the conversation automatically. You can also trigger it manually with `/compact`. Either way, a divider appears in the conversation showing when compaction happened and how many tokens were in context beforehand. Compaction markers are persisted and survive plugin reloads.
 
-### Agent dashboard
+### Agents List
 
-Open the **Agent Dashboard** from the ribbon or command palette to see all threads at a glance. Threads are grouped by resolved Project, with compact rows organized into **Working**, **Waiting**, **New**, **Reviewed**, **Failed**, and **Ready** sections. Permission, question, plan, waiting, and AWS reauthentication states expand inline when your attention is required. Child-agent activity is summarized by one accessible agent-count control; click it to open the team picker without losing your current agent selection.
+Open the **Agents List** from the ribbon or command palette to see all threads at a glance. Threads are grouped by resolved Project, with adaptive two-line rows organized into **Working**, **Waiting**, **New**, **Reviewed**, **Failed**, and **Ready** sections. The primary line shows status, title, and recency; activity, repository/path, and agent count share a truncation-safe secondary line. Permission, question, plan, waiting, and AWS reauthentication states expand into dedicated action rows when your attention is required. Child-agent activity is summarized by one accessible agent-count control; click it to open the team picker without losing your current agent selection.
 
 The dispatch button shows the harness that will run the new thread: **Claude** or **Codex**. Click normally to start with the shown harness. Right-click, press and hold, or use `Shift+F10` while the button is focused to open the harness menu; choosing an option changes the button without dispatching. That choice stays with the mounted dashboard while you launch more threads. **Settings → Agent harness** supplies the initial default only—the dashboard choice does not change the global setting, and existing threads remain on their original harness.
 
@@ -333,9 +333,9 @@ The block is rendered entirely from the SDK event stream (no extra API calls), s
 
 ### Kanban board
 
-Toggle the **Kanban** button in the dashboard toolbar to switch from the default list view to a board layout. Each thread is a card, bucketed into a column for its agent state: **Working** (also covers a thread whose own turn has ended but a background subagent or `Workflow` task it spawned hasn't reported back yet — see [Agent dashboard](#agent-dashboard)), **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it. List view is the default; the preference persists across reloads.
+Toggle the **Kanban** button in the Agents List toolbar to open the board layout. Each thread is a card, bucketed into a column for its agent state: **Working** (also covers a thread whose own turn has ended but a background subagent or `Workflow` task it spawned hasn't reported back yet — see [Agents List](#agents-list)), **Awaiting** (permission), **Waiting** (a `ScheduleWakeup` is pending — shows a live countdown, e.g. "Resumes in 4m — check CI status"), **New** (unreviewed), **Done**, **Failed**, and **Ready** (empty). Columns are sorted most-recently-active first. The board has its own floating dispatch panel at the bottom — type a task and press Enter to launch a new thread without leaving it.
 
-The Kanban dispatch button uses the same [Claude/Codex kickoff selector](#agent-dashboard): its icon identifies the harness, while right-click, press-and-hold, or `Shift+F10` opens the menu without taking up another permanent control.
+The Kanban dispatch button uses the same [Claude/Codex kickoff selector](#agents-list): its icon identifies the harness, while right-click, press-and-hold, or `Shift+F10` opens the menu without taking up another permanent control.
 
 **Task list on cards.** When a thread has an active Claude `TodoWrite` / `TaskCreate` checklist or Codex `update_plan` checklist, its kanban card shows a compact task list: up to 5 items with status icons (✔ completed, ■ in-progress, ○ pending), a "X / Y done" progress line, and "+N more" when there are additional tasks. The list updates live as the agent ticks items off.
 
@@ -348,7 +348,7 @@ The Kanban dispatch button uses the same [Claude/Codex kickoff selector](#agent-
 **Group by folder or project.** The group-by toggle in the board header (the icon next to search) cycles through three layouts: **status columns** (the default), **folder swimlanes**, and **project columns**. Each click advances to the next; the choice persists across reloads.
 
 - **Folder swimlanes** — one horizontal lane per app/project, so you can see every conversation for a given codebase together. Each lane is keyed by the thread's assigned **Project**. When no Project is assigned, a thread whose repository root matches a configured Project's effective cwd joins that Project; otherwise it falls back to a working-directory label (git repo name), and an **Unassigned** lane catches threads with no folder. For a thread whose cwd is a temporary `EnterWorktree` worktree, the repo name is remembered from when the worktree was created, so it still groups correctly under the origin repo even after that worktree directory is later deleted. Inside each lane the cards are still grouped into the same status columns (empty columns are hidden to keep lanes compact). Lanes are ordered alphabetically (case-insensitive), with Unassigned pinned last.
-- **Project columns** — one vertical column per app/project (same project resolution as folder swimlanes, alphabetical with Unassigned last), with each column's cards grouped under status **section headers** — Working, Waiting, New, Reviewed, Failed, Ready — matching the Agent Dashboard sidebar's grouping. Awaiting-permission threads fold into **Working**, and empty sections are omitted. This gives a compact, scannable per-project view where each column reads top-to-bottom like a mini dashboard.
+- **Project columns** — one vertical column per app/project (same project resolution as folder swimlanes, alphabetical with Unassigned last), with each column's cards grouped under status **section headers** — Working, Waiting, New, Reviewed, Failed, Ready — matching the Agents List sidebar's grouping. Awaiting-permission threads fold into **Working**, and empty sections are omitted. This gives a compact, scannable per-project view where each column reads top-to-bottom like a mini dashboard.
 
 <p align="center">
   <img src="docs/screenshot-kanban-folder.png" width="800" alt="Kanban board grouped by folder — one horizontal swimlane per app/project, each with its own nested status columns" />
@@ -362,7 +362,7 @@ Hold the configured push-to-talk key (default: none — set it in Settings → P
 
 ### Permissions
 
-When Claude or Codex needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agent Dashboard without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the shield (🛡) button in the thread footer — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
+When Claude or Codex needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agents List without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the shield (🛡) button in the thread footer — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
 
 | Mode | Behavior |
 |---|---|
@@ -520,7 +520,7 @@ Projects group related threads, choose their initial working directory, inject s
 
 **Creating a project:** Go to Settings → Vault → Projects, enter a project name and vault folder path, and click **Add**. Optionally set a filesystem cwd override for a repo outside the vault. Settings shows the resolved effective cwd; clear the override to derive it from the vault folder again. You can also add a project context prompt — a few sentences describing the project's goals, conventions, and key files that Claude should always keep in mind.
 
-**Opening a thread in a project:** The Agent Dashboard and Kanban kickoff panels have an accessible **Project** selector. Choose a Project before dispatching, or deliberately leave **Unassigned** to use the global default cwd. Model, goal, loop, attachment, image, and harness kickoff options preserve that selection. The chat view's New Thread flow and agent-created child threads keep their existing Project inheritance behavior.
+**Opening a thread in a project:** The Agents List and Kanban kickoff panels have an accessible **Project** selector. Choose a Project before dispatching, or deliberately leave **Unassigned** to use the global default cwd. Model, goal, loop, attachment, image, and harness kickoff options preserve that selection. The chat view's New Thread flow and agent-created child threads keep their existing Project inheritance behavior.
 
 **Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Create or open the Project Orchestrator from the same row; the first completed Project thread also creates it automatically without stealing focus. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Deleting a Project detaches its threads, clears pending proposals, removes its orchestrator heartbeat, and pins affected schedules to the Project's former effective cwd.
 
@@ -642,7 +642,7 @@ Control the current thread's session state.
 | Tool | Parameters | Description |
 |---|---|---|
 | `set_working_directory` | `path` | Changes the working directory for this session. Accepts an absolute path; `~` is expanded. Takes effect on the next turn. |
-| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing a loop. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agent Dashboard and the [Kanban board](#kanban-board). In the thread composer, a compact `Resumes in …` pill opens scheduled activity with the wakeup reason, exact time, and an item-specific **Cancel** control. |
+| `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing loop work. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agents List and the [Kanban board](#kanban-board). In the thread composer, a compact `Resumes in …` pill opens scheduled activity with the wakeup reason, exact time, and an item-specific **Cancel** control. |
 | `EnterWorktree` | `branch?`, `baseBranch?`, `repoPath?` | Creates a git worktree for the current repo and switches the session cwd to it. Automatically routed to the plugin's MCP implementation, which tracks the in-session cwd correctly after `set_working_directory`. |
 | `ExitWorktree` | `worktreePath?`, `force?` | Removes the worktree and restores the session cwd to the original repo root. Defaults to the current effective cwd. Pass `force: true` to remove even if there are uncommitted changes. |
 | `threads_create` | `prompt`, `title?`, `cwd?`, `projectId?` | Creates a persistent thread and immediately queues its initial prompt. Working directory and project inherit from the caller when omitted; pass `projectId: null` to clear the project. |
@@ -735,7 +735,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Setting | Description |
 |---|---|
 | Claude binary path | Path to the `claude` executable (auto-detected) |
-| Agent harness | Initial Claude or Codex default for new kickoff selectors. A selection made in the Agent Dashboard or Kanban view is local to that mounted view and does not rewrite this setting. |
+| Agent harness | Initial Claude or Codex default for new kickoff selectors. A selection made in the Agents List or Kanban view is local to that mounted view and does not rewrite this setting. |
 | Default working directory | `cwd` for new threads; defaults to vault root |
 | Worktree location | Root directory for worktrees created by `enter_worktree` (default: `~/.geode/worktrees`, laid out as `<repo>/<branch>`). Must be durable storage — a temp directory is cleared on reboot, which deletes the worktree and any uncommitted work in it. |
 | Save threads to vault | Auto-save readable Markdown notes plus versioned machine recovery snapshots |
@@ -760,7 +760,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
 | Projects | Group threads and focus their initial cwd/context. Projects do not restrict the broader vault or configured tool roster. |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
-| Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agent Dashboard's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agent dashboard](#agent-dashboard). |
+| Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agents List's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agents List](#agents-list). |
 | Scheduled work | The dedicated **Scheduled** tab shows upcoming runs/checks, recurring jobs, thread loops and wakeups, recent outcomes, and pause/resume/delete/open controls. |
 | Diagnostics | Enable the always-on, local-only telemetry layer (counters + renderer CPU/memory samples) that powers the [Diagnostics report](#diagnostics-report). Nothing leaves your machine; on by default. Desktop only. |
 | Remote access | Enable/disable mobile remote access via WebSocket relay |

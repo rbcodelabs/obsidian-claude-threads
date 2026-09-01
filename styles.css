@@ -2808,10 +2808,10 @@
 
 .ct-agents-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
-  min-height: 36px;
-  padding: 3px 8px;
+  min-height: 48px;
+  padding: 6px 8px;
   cursor: pointer;
   border-radius: 4px;
   margin: 1px 2px;
@@ -2875,13 +2875,31 @@
 .ct-agents-row-body {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(90px, 1fr) minmax(70px, .65fr) auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ct-agents-row-primary,
+.ct-agents-row-secondary {
+  display: flex;
   align-items: center;
-  gap: 4px 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.ct-agents-row-primary {
+  gap: 8px;
+}
+
+.ct-agents-row-secondary {
+  gap: 10px;
+  overflow: hidden;
 }
 
 .ct-agents-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -2902,6 +2920,8 @@
 }
 
 .ct-agents-row-activity {
+  flex: 0 1 auto;
+  min-width: 44px;
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   white-space: nowrap;
@@ -2918,21 +2938,16 @@
   color: var(--color-red);
 }
 
-.ct-agents-row-meta {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-}
-
 .ct-agents-row-time {
+  flex: 0 0 auto;
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
   white-space: nowrap;
 }
 
 .ct-agents-row-cwd {
+  flex: 1 2 auto;
+  min-width: 0;
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
   white-space: nowrap;
@@ -2941,6 +2956,7 @@
 }
 
 .ct-dashboard-agent-count {
+  flex: 0 0 auto;
   min-height: 28px;
   display: inline-flex;
   align-items: center;
@@ -2963,20 +2979,15 @@
 .ct-agents-row-question { min-height: 56px; }
 .ct-agents-row-plan { border-left: 2px solid var(--interactive-accent); }
 .ct-agents-row-question { border-left: 2px solid var(--color-yellow, #e0a030); }
-.ct-agents-row-permission .ct-agents-row-body,
-.ct-agents-row-waiting .ct-agents-row-body,
-.ct-agents-row-error:has(.ct-aws-reauth-btn) .ct-agents-row-body { grid-template-columns: minmax(0, 1fr) auto; }
-.ct-agents-row-permission .ct-agents-row-title,
-.ct-agents-row-permission .ct-agents-row-activity,
-.ct-agents-row-permission .ct-agents-row-cwd,
 .ct-agents-row-permission .ct-agents-permission-actions,
 .ct-agents-row-waiting .ct-agents-wakeup-actions,
-.ct-agents-row-error .ct-aws-reauth-btn { grid-column: 1 / -1; }
+.ct-agents-row-error .ct-aws-reauth-btn { width: fit-content; max-width: 100%; }
 
 @media (max-width: 700px) {
-  .ct-agents-row { min-height: 44px; }
-  .ct-agents-row-body { grid-template-columns: minmax(110px, 1fr) minmax(80px, 1fr) auto; }
-  .ct-agents-row-cwd { display: none; }
+  .ct-agents-row { min-height: 52px; }
+  .ct-agents-row-secondary { gap: 6px; }
+  .ct-agents-row-activity { flex-shrink: 1; }
+  .ct-agents-row-cwd { flex-shrink: 2; }
   .ct-dashboard-agent-count { min-height: 44px; }
   .ct-agents-permission-actions .ct-permission-btn,
   .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }

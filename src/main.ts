@@ -99,14 +99,14 @@ Welcome! Claude Threads turns Obsidian into a multi-agent workspace powered by t
 | Panel | Location | What it does |
 |---|---|---|
 | **Chat** | Left sidebar | Full conversation history for each thread |
-| **Agent Dashboard** | Right sidebar | Dispatch tasks, track running agents, review results |
+| **Agents List** | Right sidebar | Dispatch tasks, track running agents, review results |
 | **This guide** | Center | You're reading it — save it anywhere in your vault |
 
 Reopen the panels any time from the ribbon icons (left edge of the window) or via the command palette (\`Cmd+P\`).
 
 ## Starting your first task
 
-1. Click the **Agent Dashboard** ribbon icon or press \`Cmd+P\` → "Open Agent Dashboard"
+1. Click the **Agents List** ribbon icon or press \`Cmd+P\` → "Open Agents List"
 2. Type a task in the **dispatch box** at the top — e.g. \`Summarize the README in my project folder\`
 3. Hit **Enter** — Claude spins up a new thread and starts working
 4. Watch progress in the dashboard; click any thread row to open the full conversation in Chat
@@ -1189,7 +1189,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.addRibbonIcon('message-square', 'Claude Threads', () => {
       this.activateView();
     });
-    this.addRibbonIcon('layout-dashboard', 'Agent Dashboard', () => {
+    this.addRibbonIcon('list', 'Agents List', () => {
       this.activateAgentView();
     });
     this.addRibbonIcon('puzzle', 'Skills Manager', () => {
@@ -1205,7 +1205,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     this.addCommand({
       id: 'open-agent-dashboard',
-      name: 'Open Agent Dashboard',
+      name: 'Open Agents List',
       callback: () => this.activateAgentView(),
     });
 

@@ -63,8 +63,8 @@ export class AgentDashboard extends ItemView {
   }
 
   getViewType(): string { return AGENT_VIEW_TYPE; }
-  getDisplayText(): string { return 'Agent Dashboard'; }
-  getIcon(): string { return 'layout-dashboard'; }
+  getDisplayText(): string { return 'Agents List'; }
+  getIcon(): string { return 'list'; }
 
   async onOpen(): Promise<void> {
     this.activeThreadId = this.plugin.getActiveThreadId();
@@ -472,10 +472,13 @@ export class AgentDashboard extends ItemView {
     setIcon(iconEl, 'clock');
 
     const body = row.createDiv('ct-agents-row-body');
-    const titleRow = body.createDiv('ct-agents-stack-title-row');
+    const primary = body.createDiv('ct-agents-row-primary');
+    const titleRow = primary.createDiv('ct-agents-stack-title-row');
     titleRow.createSpan({ cls: 'ct-agents-row-title', text: stack.scheduledItemName });
     titleRow.createSpan({ cls: 'ct-agents-group-badge ct-agents-stack-count', text: `×${stack.threads.length}` });
-    body.createDiv({ cls: 'ct-agents-row-activity', text: `Last run ${relativeTime(stack.threads[0].updatedAt)}` });
+    primary.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(stack.threads[0].updatedAt) });
+    const secondary = body.createDiv('ct-agents-row-secondary');
+    secondary.createDiv({ cls: 'ct-agents-row-activity', text: `Last run ${relativeTime(stack.threads[0].updatedAt)}` });
 
     const chevron = row.createDiv('ct-expand-btn');
     setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
@@ -540,10 +543,14 @@ export class AgentDashboard extends ItemView {
     }
 
     const body = row.createDiv('ct-agents-row-body');
-    const titleEl = body.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
+    const primary = body.createDiv('ct-agents-row-primary');
+    const titleEl = primary.createDiv({ cls: 'ct-agents-row-title', text: thread.title });
     appendOrchestratorBadge(titleEl, thread.id, this.plugin.settings.orchestratorThreadId, thread.projectId ? this.manager.getProject(thread.projectId)?.orchestratorThreadId : undefined);
+    const timeEl = primary.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });
+    this.timeEls.set(thread.id, timeEl);
 
-    const activityEl = body.createDiv({ cls: 'ct-agents-row-activity' });
+    const secondary = body.createDiv('ct-agents-row-secondary');
+    const activityEl = secondary.createDiv({ cls: 'ct-agents-row-activity' });
     this.activityEls.set(thread.id, activityEl);
 
     if (hasPending) {
@@ -622,14 +629,14 @@ export class AgentDashboard extends ItemView {
     }
 
     if (thread.cwd) {
-      body.createDiv({ cls: 'ct-agents-row-cwd', text: buildCwdLabel(thread.cwd, this.plugin.manager.vaultRoot) });
+      secondary.createDiv({ cls: 'ct-agents-row-cwd', text: buildCwdLabel(thread.cwd, this.plugin.manager.vaultRoot) });
     }
 
     const agentRuns = this.manager.getAgentRuns(thread.id);
     if (agentRuns.length) {
       const flattened = flattenAgentTree(agentRuns);
       const active = flattened.find(({ run }) => ACTIVE_AGENT_STATUSES.has(run.status));
-      const button = body.createEl('button', {
+      const button = secondary.createEl('button', {
         cls: `ct-dashboard-agent-count${active ? ` ct-agent-${active.run.status}` : ''}`,
         attr: { 'aria-label': `Open ${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'} in ${thread.title}` },
       });
@@ -640,10 +647,6 @@ export class AgentDashboard extends ItemView {
         void this.plugin.openAgentTeamInChatView(thread.id);
       });
     }
-
-    const meta = row.createDiv('ct-agents-row-meta');
-    const timeEl = meta.createDiv({ cls: 'ct-agents-row-time', text: relativeTime(thread.updatedAt) });
-    this.timeEls.set(thread.id, timeEl);
 
     row.addEventListener('click', () => {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
