@@ -1806,9 +1806,14 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
   });
 
-  for (const width of [390, 760, 1240]) {
-    test(`agents list — two-line rows avoid horizontal overflow at ${width}px`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 844 });
+  for (const { width, height } of [
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 760, height: 844 },
+    { width: 1240, height: 844 },
+  ]) {
+    test(`agents list — two-line rows avoid horizontal overflow at ${width}x${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
       await page.goto(kanbanUrl + '?dashboard=1');
       await page.waitForSelector('.ct-agents-row-primary');
 
