@@ -128,6 +128,8 @@
 }
 
 .ct-root {
+  container-name: ct-conversation;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2626,6 +2628,7 @@
 }
 
 .ct-agents-root {
+  container-name: ct-dashboard;
   container-type: inline-size;
   display: flex;
   flex-direction: column;
@@ -2996,13 +2999,18 @@
   padding: 2px 7px;
   white-space: nowrap;
   font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
+  color: var(--color-green, #4caf50);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-m);
 }
 .ct-dashboard-agent-count:hover,
-.ct-dashboard-agent-count:focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ct-dashboard-agent-count:focus-visible { background: var(--background-modifier-hover); color: var(--color-green, #4caf50); }
+.ct-dashboard-agent-count-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.ct-dashboard-agent-count-icon svg { width: 11px; height: 11px; }
 
 .ct-agents-row-permission,
 .ct-agents-row-waiting,
@@ -3015,27 +3023,44 @@
 .ct-agents-row-waiting .ct-agents-wakeup-actions,
 .ct-agents-row-error .ct-aws-reauth-btn { width: fit-content; max-width: 100%; }
 
-@media (max-width: 700px) {
-  .ct-agents-row { min-height: 52px; }
-  .ct-agents-row-secondary { gap: 6px; }
-  .ct-agents-row-activity { flex-shrink: 1; }
-  .ct-agents-row-cwd { flex-shrink: 2; }
-  .ct-dashboard-agent-count { min-height: 44px; }
-  .ct-agents-permission-actions .ct-permission-btn,
-  .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }
-}
-
 /* Obsidian sidebars can be narrow inside a wide desktop window, so pane
    responsiveness must follow this view's own inline size, not the viewport. */
-@container (max-width: 700px) {
+@container ct-dashboard (max-width: 700px) {
   .ct-agents-row { min-height: 52px; }
   .ct-agents-row-secondary { gap: 6px; }
   .ct-agents-row-activity { flex-shrink: 1; }
   .ct-agents-row-cwd { flex-shrink: 2; }
-  .ct-dashboard-agent-count { min-height: 44px; }
-  .ct-agents-permission-actions .ct-permission-btn,
-  .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }
 }
+
+@container ct-dashboard (max-width: 420px) {
+  .ct-agents-row-cwd { display: none; }
+  .ct-agents-row-secondary { gap: 6px; }
+  .ct-agents-row-activity { min-width: 0; flex: 1 1 auto; }
+  .ct-dashboard-agent-count { max-width: 100%; }
+  .ct-dashboard-agent-count span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ct-agents-panel-meta {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+  .ct-agents-panel-meta > .ct-agents-count { flex: 1 1 auto; min-width: 0; }
+  .ct-dispatch-project { flex: 1 1 120px; min-width: 0; }
+  .ct-dispatch-project select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  .ct-agents-panel-actions { margin-left: auto; flex: 0 0 auto; }
+
+  .ct-dashboard-root .ct-agents-floating-panel.ct-panel-collapsible:hover .ct-agents-panel-meta,
+  .ct-dashboard-root .ct-agents-floating-panel.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
+    max-height: 112px;
+  }
+}
+
+.ct-agents-root.ct-mobile .ct-dashboard-agent-count,
+.ct-agents-root.ct-mobile .ct-agents-permission-actions .ct-permission-btn,
+.ct-agents-root.ct-mobile .ct-agents-wakeup-actions .ct-wakeup-cancel { min-height: 44px; }
 
 /* ── Scheduled Jobs section (Agent Dashboard) ───────────────────────────── */
 /* Collapsed rollup row for a cron job's quiet (unreviewed/reviewed/empty)
@@ -3095,10 +3120,8 @@
   border-radius: 6px;
 }
 
-@media (max-width: 480px) {
-  .ct-dispatch-project-label { display: none; }
-  .ct-dispatch-project select { max-width: 140px; min-height: 44px; }
-}
+.ct-agents-root.ct-mobile .ct-dispatch-project-label { display: none; }
+.ct-agents-root.ct-mobile .ct-dispatch-project select { max-width: 140px; min-height: 44px; }
 
 /* Image chip strip inside the dispatch area */
 .ct-agents-dispatch-chips {
@@ -7521,10 +7544,9 @@ body.ct-skills-resizing {
   transition: max-height 0.25s ease 0.05s, padding 0.25s ease 0.05s, border-width 0.2s ease 0.05s, opacity 0.2s ease 0.07s;
 }
 
-/* Touch-width panels cannot rely on hover to reveal the Project selector. */
-@media (max-width: 480px) {
-  .ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta,
-  .ct-agents-floating-panel.ct-panel-collapsible .ct-agents-panel-meta {
+/* True mobile panels cannot rely on hover to reveal the Project selector. */
+.ct-agents-root.ct-mobile .ct-kanban-dispatch.ct-panel-collapsible .ct-agents-panel-meta,
+.ct-agents-root.ct-mobile .ct-agents-floating-panel.ct-panel-collapsible .ct-agents-panel-meta {
     max-height: 112px;
     padding-top: 6px;
     padding-bottom: 6px;
@@ -7534,22 +7556,17 @@ body.ct-skills-resizing {
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 4px 8px;
-  }
+}
 
-  .ct-agents-panel-meta > .ct-agents-count {
-    display: block;
-  }
+.ct-agents-root.ct-mobile .ct-agents-panel-meta > .ct-agents-count { display: block; }
 
-  .ct-agents-panel-meta > .ct-agents-panel-actions {
-    display: flex;
-  }
+.ct-agents-root.ct-mobile .ct-agents-panel-meta > .ct-agents-panel-actions { display: flex; }
 
-  .ct-agents-panel-meta .ct-agents-panel-actions > button,
-  .ct-agents-panel-meta > .ct-kanban-groupby,
-  .ct-agents-panel-meta > .ct-agents-search-btn {
+.ct-agents-root.ct-mobile .ct-agents-panel-meta .ct-agents-panel-actions > button,
+.ct-agents-root.ct-mobile .ct-agents-panel-meta > .ct-kanban-groupby,
+.ct-agents-root.ct-mobile .ct-agents-panel-meta > .ct-agents-search-btn {
     min-width: 44px;
     min-height: 44px;
-  }
 }
 
 /* — Soften border + shadow when collapsed ───────────────────────────────── */
@@ -7929,6 +7946,23 @@ body.ct-skills-resizing {
   margin-right: auto; /* absorbs the free space so the action buttons stay right */
 }
 
+@container ct-conversation (max-width: 420px) {
+  .ct-footer-cwd { display: none; }
+  .ct-input-footer { min-width: 0; }
+  .ct-input-footer-meta {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+  .ct-agent-pill,
+  .ct-schedule-pill {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 auto;
+  }
+  .ct-input-footer-actions { margin-left: auto; }
+}
+
 /* — The always-visible agent pill ────────────────────────────────────────── */
 /* Mirrors .ct-footer-pill's visual language so the pill and the cwd chip read
    as one row, but does not share the class: .ct-footer-pill belongs to the
@@ -8230,19 +8264,27 @@ button.ct-agent-crumb:focus-visible {
 .ct-dashboard-agent[aria-level="3"] { margin-left: 24px; }
 .ct-kanban-agent-count { color: var(--text-muted); font-size: var(--font-ui-smaller); white-space: nowrap; }
 
-@media (max-width: 600px) {
-  /* 44px tap targets are a pr-guidelines contract, asserted by a Playwright test. */
-  .ct-agent-row-button, .ct-dashboard-agent { min-height: 44px; }
-  .ct-agent-row-button { grid-template-columns: 8px auto 1fr; }
-  .ct-agent-state { grid-column: 3; }
-  .ct-agent-pill, .ct-schedule-pill, .ct-agent-crumb, .ct-agent-view-close, .ct-agent-popover-close, .ct-schedule-popover-close, .ct-schedule-action { min-height: 44px; }
-  .ct-agent-view-close, .ct-agent-popover-close, .ct-schedule-popover-close { min-width: 44px; }
-  .ct-agent-pill, .ct-schedule-pill { border-radius: 12px; padding-inline: 9px; }
-  /* Taller footer so a 44px pill is not clipped by the collapsible max-height. */
-  .ct-panel-collapsible:hover .ct-input-footer,
-  .ct-panel-collapsible:focus-within .ct-input-footer,
-  .ct-panel-collapsible:has(.ct-agent-pill:not(.ct-hidden), .ct-schedule-pill:not(.ct-hidden)) .ct-input-footer { max-height: 58px; }
-}
+/* 44px tap targets are reserved for true mobile platforms, not narrow panes. */
+.ct-root.ct-mobile .ct-agent-row-button,
+.ct-mobile .ct-dashboard-agent { min-height: 44px; }
+.ct-root.ct-mobile .ct-agent-row-button { grid-template-columns: 8px auto 1fr; }
+.ct-root.ct-mobile .ct-agent-state { grid-column: 3; }
+.ct-root.ct-mobile .ct-agent-pill,
+.ct-root.ct-mobile .ct-schedule-pill,
+.ct-root.ct-mobile .ct-agent-crumb,
+.ct-root.ct-mobile .ct-agent-view-close,
+.ct-root.ct-mobile .ct-agent-popover-close,
+.ct-root.ct-mobile .ct-schedule-popover-close,
+.ct-root.ct-mobile .ct-schedule-action { min-height: 44px; }
+.ct-root.ct-mobile .ct-agent-view-close,
+.ct-root.ct-mobile .ct-agent-popover-close,
+.ct-root.ct-mobile .ct-schedule-popover-close { min-width: 44px; }
+.ct-root.ct-mobile .ct-agent-pill,
+.ct-root.ct-mobile .ct-schedule-pill { border-radius: 12px; padding-inline: 9px; }
+/* Taller footer so a 44px pill is not clipped by the collapsible max-height. */
+.ct-root.ct-mobile .ct-panel-collapsible:hover .ct-input-footer,
+.ct-root.ct-mobile .ct-panel-collapsible:focus-within .ct-input-footer,
+.ct-root.ct-mobile .ct-panel-collapsible:has(.ct-agent-pill:not(.ct-hidden), .ct-schedule-pill:not(.ct-hidden)) .ct-input-footer { max-height: 58px; }
 
 @media (max-width: 480px) {
   .ct-agent-popover { left: 6px; right: 6px; max-height: min(260px, 50vh); }

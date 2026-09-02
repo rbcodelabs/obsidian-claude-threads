@@ -64,9 +64,11 @@ export async function anchorFocusedComposerToBottom(
   page: Page,
   expectedMaxHeight?: string,
 ): Promise<void> {
-  const viewport = page.viewportSize();
+  const root = page.locator('.ct-root');
+  const isMobile = await root.count() > 0
+    && await root.evaluate((element) => element.classList.contains('ct-mobile'));
   const canonicalMaxHeight = expectedMaxHeight
-    ?? (viewport && viewport.width <= 600 ? '58px' : '50px');
+    ?? (isMobile ? '58px' : '50px');
   const footer = page.locator('.ct-input-footer');
 
   await expect.poll(() => footer.evaluate(

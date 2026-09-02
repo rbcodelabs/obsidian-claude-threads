@@ -328,7 +328,7 @@ test.describe('Claude Threads UI', () => {
   ]) {
     test(`native agent workspace mobile layout (${viewport.width}x${viewport.height})`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto(harnessUrl);
+      await page.goto(harnessUrl + '?mobile=1');
       await page.waitForSelector('.ct-title-row');
       await page.evaluate(seedAgentTeam);
       await page.evaluate(() => {
@@ -337,7 +337,7 @@ test.describe('Claude Threads UI', () => {
         const dashboardButton = document.createElement('button');
         dashboardButton.className = 'ct-dashboard-agent';
         dashboardButton.textContent = 'Test engineer';
-        document.body.appendChild(dashboardButton);
+        document.querySelector('.ct-root')!.appendChild(dashboardButton);
       });
 
       await expect(page.locator('.ct-agent-pill')).toBeVisible();
@@ -816,7 +816,7 @@ test.describe('Claude Threads UI', () => {
   for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
     test(`scheduled activity narrow layout (${viewport.width}x${viewport.height})`, async ({ page }) => {
       await page.setViewportSize(viewport);
-      await page.goto(harnessUrl);
+      await page.goto(harnessUrl + '?mobile=1');
       await page.waitForSelector('.ct-title-row');
       await page.evaluate(() => {
         const fireAt = new Date('2026-01-15T10:04:00Z').getTime();
@@ -1789,7 +1789,7 @@ test.describe('Claude Threads UI', () => {
   test('kanban kickoff Project selector fits a narrow mobile viewport', async ({ page }) => {
     for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
       await page.setViewportSize(viewport);
-      await page.goto(kanbanUrl);
+      await page.goto(kanbanUrl + '?mobile=1');
       const project = page.getByLabel('Dispatch Project');
       await project.selectOption('proj-threads');
       const controls = [
@@ -1971,7 +1971,7 @@ test.describe('Claude Threads UI', () => {
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-dashboard-root');
 
-    for (const width of [390, 760, 1160]) {
+    for (const width of [280, 320, 380, 760, 1160]) {
       await page.locator('#app').evaluate((host, paneWidth) => {
         host.style.width = `${paneWidth}px`;
       }, width);
@@ -1981,20 +1981,86 @@ test.describe('Claude Threads UI', () => {
       expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
 
-      if (width === 390) {
+      if (width <= 380) {
         await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');
+        await expect(page.locator('.ct-dashboard-agent-count')).toHaveCSS('min-height', '28px');
+        await expect(page.locator('.ct-agents-row-cwd').first()).toBeHidden();
+
+        await page.locator('.ct-agents-floating-panel').hover();
+        await expect(page.locator('.ct-dispatch-project')).toBeVisible();
+        expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+        await expect.poll(() => page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
+        if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');
       }
     }
   });
 
   test('agents list — narrow exceptional states remain usable', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.goto(kanbanUrl + '?dashboard=1&mobile=1');
     await page.waitForSelector('.ct-agents-row-plan');
     await expect(page.locator('.ct-agents-permission-actions .ct-permission-btn').first()).toHaveCSS('min-height', '44px');
     await expect(page.locator('.ct-dashboard-agent-count')).toHaveCSS('min-height', '44px');
     expect(await page.locator('.ct-agents-list').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await shot(page, 'agent-dashboard-exceptional-mobile.png', { fullPage: true });
+  });
+
+  test('conversation footer responds to narrow pane width inside a wide workspace', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    for (const width of [280, 320, 380]) {
+      await page.goto(harnessUrl);
+      await page.waitForSelector('.ct-input-footer');
+      await page.locator('#app').evaluate((host, paneWidth) => { host.style.width = `${paneWidth}px`; }, width);
+      await expect(page.locator('.ct-footer-cwd')).toBeHidden();
+
+      const readFooterLayout = () => page.evaluate(() => {
+        const meta = document.querySelector('.ct-input-footer-meta')!.getBoundingClientRect();
+        const actions = document.querySelector('.ct-input-footer-actions')!.getBoundingClientRect();
+        const footer = document.querySelector('.ct-input-footer')!;
+        return {
+          overlaps: meta.right > actions.left,
+          clips: footer.scrollHeight > footer.clientHeight,
+          meta: { left: meta.left, right: meta.right, width: meta.width },
+          actions: { left: actions.left, right: actions.right, width: actions.width },
+          clientHeight: footer.clientHeight,
+          scrollHeight: footer.scrollHeight,
+        };
+      });
+
+      // Resting: the optional footer remains intentionally collapsed.
+      await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.mouse.move(1200, 0);
+      await expect.poll(() => page.locator('.ct-input-footer').evaluate(el => getComputedStyle(el).maxHeight)).toBe('0px');
+      expect(await page.locator('.ct-input-footer').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+      // Focused: actions reveal without overlapping or being clipped.
+      await page.locator('.ct-input').focus();
+      await expect.poll(async () => (await readFooterLayout()).clips).toBe(false);
+      let footerLayout = await readFooterLayout();
+      expect(footerLayout, `focused footer at ${width}px: ${JSON.stringify(footerLayout)}`).toMatchObject({ overlaps: false, clips: false });
+
+      // Agent-active: the compact 22px pill pins the footer on desktop.
+      await page.evaluate(seedAgentTeam);
+      await page.locator('.ct-input').blur();
+      await expect(page.locator('.ct-agent-pill')).toHaveCSS('min-height', '22px');
+      await expect.poll(async () => (await readFooterLayout()).clips).toBe(false);
+      footerLayout = await readFooterLayout();
+      expect(footerLayout, `agent footer at ${width}px: ${JSON.stringify(footerLayout)}`).toMatchObject({ overlaps: false, clips: false });
+      if (width === 320) await shot(page.locator('#app'), 'conversation-footer-narrow-desktop.png');
+
+      // Scheduled activity independently pins the same footer without agents.
+      await page.evaluate(() => {
+        (window as any).__setWakeup('thread-brainstorm', Date.now() + 240_000, 'check CI status');
+        (window as any).__view.focusThread('thread-brainstorm');
+      });
+      await expect(page.locator('.ct-schedule-pill')).toBeVisible();
+      await expect.poll(async () => (await readFooterLayout()).clips).toBe(false);
+      footerLayout = await readFooterLayout();
+      expect(footerLayout, `scheduled footer at ${width}px: ${JSON.stringify(footerLayout)}`).toMatchObject({ overlaps: false, clips: false });
+      expect(await page.locator('.ct-input-footer').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    }
   });
 
   test('regression: kanban card moves Working → Waiting automatically on run_state_settled', async ({ page }) => {

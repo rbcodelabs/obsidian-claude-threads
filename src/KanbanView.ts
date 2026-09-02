@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, Notice, Platform } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread, TaskItem } from './types';
@@ -201,6 +201,7 @@ export class KanbanView extends ItemView {
     const root = this.containerEl.children[1] as HTMLElement;
     root.empty();
     root.addClass('ct-agents-root');
+    root.toggleClass('ct-mobile', Platform.isMobile);
 
     this.boardEl = root.createDiv('ct-agents-list');
 

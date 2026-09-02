@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, Notice, Platform } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
@@ -101,6 +101,7 @@ export class AgentDashboard extends ItemView {
     root.empty();
     root.addClass('ct-agents-root');
     root.addClass('ct-dashboard-root');
+    root.toggleClass('ct-mobile', Platform.isMobile);
 
     // Scrollable thread list — padding-bottom leaves clearance for the floating panel
     this.listEl = root.createDiv('ct-agents-list');
@@ -640,7 +641,8 @@ export class AgentDashboard extends ItemView {
         cls: `ct-dashboard-agent-count${active ? ` ct-agent-${active.run.status}` : ''}`,
         attr: { 'aria-label': `Open ${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'} in ${thread.title}` },
       });
-      button.createSpan({ cls: 'ct-agent-status-dot' });
+      const icon = button.createSpan({ cls: 'ct-dashboard-agent-count-icon' });
+      setIcon(icon, 'users');
       button.createSpan({ text: `${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'}` });
       button.addEventListener('click', e => {
         e.stopPropagation();
