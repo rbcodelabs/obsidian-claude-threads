@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 
 const css = fs.readFileSync(path.resolve('styles.css'), 'utf8');
+const dashboardSource = fs.readFileSync(path.resolve('src/AgentDashboard.ts'), 'utf8');
 
 /**
  * The agent pill is the only always-visible agent surface. It lives in
@@ -58,6 +59,18 @@ describe('agent touch targets', () => {
     expect(css).toMatch(/\.ct-agents-root\s*\{[^}]*container-name:\s*ct-dashboard/s);
     expect(css).not.toMatch(/@media \(max-width: 700px\)[\s\S]{0,800}\.ct-dashboard-agent-count\s*\{[^}]*min-height:\s*44px/);
     expect(css).not.toMatch(/@container ct-dashboard \(max-width:[^)]+\)[\s\S]{0,1200}\.ct-dashboard-agent-count\s*\{[^}]*min-height:\s*44px/);
+  });
+});
+
+describe('dashboard agent count', () => {
+  it('uses the lightweight users icon and green text treatment instead of a boxed status dot', () => {
+    expect(dashboardSource).toMatch(/setIcon\([^,]+,\s*['"]users['"]\)/);
+    expect(dashboardSource).not.toMatch(/button\.createSpan\(\{ cls: ['"]ct-agent-status-dot['"] \}\)/);
+
+    const rule = css.match(/\.ct-dashboard-agent-count\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).toMatch(/color:\s*var\(--color-green/);
+    expect(rule).toMatch(/background:\s*transparent/);
+    expect(rule).toMatch(/border:\s*(?:0|none)/);
   });
 });
 

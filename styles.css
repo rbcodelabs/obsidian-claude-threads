@@ -2999,13 +2999,18 @@
   padding: 2px 7px;
   white-space: nowrap;
   font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
-  background: var(--background-secondary);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s, 4px);
+  color: var(--color-green, #4caf50);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-m);
 }
 .ct-dashboard-agent-count:hover,
-.ct-dashboard-agent-count:focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); }
+.ct-dashboard-agent-count:focus-visible { background: var(--background-modifier-hover); color: var(--color-green, #4caf50); }
+.ct-dashboard-agent-count-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.ct-dashboard-agent-count-icon svg { width: 11px; height: 11px; }
 
 .ct-agents-row-permission,
 .ct-agents-row-waiting,

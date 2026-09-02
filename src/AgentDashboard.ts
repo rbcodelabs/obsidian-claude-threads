@@ -641,7 +641,8 @@ export class AgentDashboard extends ItemView {
         cls: `ct-dashboard-agent-count${active ? ` ct-agent-${active.run.status}` : ''}`,
         attr: { 'aria-label': `Open ${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'} in ${thread.title}` },
       });
-      button.createSpan({ cls: 'ct-agent-status-dot' });
+      const icon = button.createSpan({ cls: 'ct-dashboard-agent-count-icon' });
+      setIcon(icon, 'users');
       button.createSpan({ text: `${agentRuns.length} agent${agentRuns.length === 1 ? '' : 's'}` });
       button.addEventListener('click', e => {
         e.stopPropagation();
