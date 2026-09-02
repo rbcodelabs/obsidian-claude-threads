@@ -1789,7 +1789,7 @@ test.describe('Claude Threads UI', () => {
   test('kanban kickoff Project selector fits a narrow mobile viewport', async ({ page }) => {
     for (const viewport of [{ width: 390, height: 844 }, { width: 375, height: 667 }]) {
       await page.setViewportSize(viewport);
-      await page.goto(kanbanUrl);
+      await page.goto(kanbanUrl + '?mobile=1');
       const project = page.getByLabel('Dispatch Project');
       await project.selectOption('proj-threads');
       const controls = [
