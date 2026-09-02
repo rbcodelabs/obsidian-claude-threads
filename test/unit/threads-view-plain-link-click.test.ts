@@ -210,6 +210,39 @@ describe('ThreadsView renderMarkdown — plain markdown link clicks (conversatio
   });
 });
 
+// [[wikilink]] anchors are wired by a separate handler. It used to pass an
+// empty sourcePath in classic placement while conversation-first passed the
+// thread note, so the same wikilink could resolve to two different files
+// depending only on where the conversation was docked.
+describe('ThreadsView renderMarkdown — wikilink sourcePath parity across placements', () => {
+  it('resolves a relative wikilink against the thread note in classic placement', async () => {
+    const harness = makeView({
+      conversationFirst: false,
+      vaultFiles: ['Projects/Roadmap.md'],
+      noteFile: 'Claude/thread.md',
+    });
+    await renderAndClick(harness, 'See [[Roadmap]] for details.');
+    expect(harness.workspaceCalls).toEqual(['Roadmap']);
+    expect(harness.workspaceSourcePaths).toEqual(['Claude/thread.md']);
+  });
+
+  it('passes the same sourcePath in conversation-first placement', async () => {
+    const harness = makeView({
+      conversationFirst: true,
+      vaultFiles: ['Projects/Roadmap.md'],
+      noteFile: 'Claude/thread.md',
+    });
+    await renderAndClick(harness, 'See [[Roadmap]] for details.');
+    expect(harness.contextPanelCalls).toEqual([['Roadmap', 'Claude/thread.md']]);
+  });
+
+  it('falls back to an empty sourcePath when the thread has no note file', async () => {
+    const harness = makeView({ conversationFirst: false, vaultFiles: [] });
+    await renderAndClick(harness, 'See [[Roadmap]] for details.');
+    expect(harness.workspaceSourcePaths).toEqual(['']);
+  });
+});
+
 describe('ThreadsView renderMarkdown — external and same-page links stay inert', () => {
   it('does not attach a click listener to an external link', async () => {
     const harness = makeView({ conversationFirst: false });

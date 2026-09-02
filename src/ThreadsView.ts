@@ -2120,10 +2120,14 @@ export class ThreadsView extends ItemView {
         e.preventDefault();
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
+        // Both placements resolve against the thread's own note, so a wikilink
+        // lands on the same target regardless of where the conversation is
+        // docked — and matches the plain-markdown-link handler below.
+        const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
         if (this.plugin.isConversationFirst()) {
-          void this.plugin.contextPanel.openLinkText(href, this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '');
+          void this.plugin.contextPanel.openLinkText(href, sourcePath);
         } else {
-          void this.app.workspace.openLinkText(href, '', false);
+          void this.app.workspace.openLinkText(href, sourcePath, false);
         }
       });
     });
