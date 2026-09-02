@@ -372,6 +372,55 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'wikilink-rendering.png', { fullPage: true });
   });
 
+  test('assistant list items keep wrapped text and nested lists indented under host resets', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-messages');
+    await page.addStyleTag({
+      content: `
+        ol, ul {
+          margin: 0;
+          padding-inline-start: 0;
+          list-style-position: inside;
+        }
+      `,
+    });
+    await page.evaluate(() => {
+      const thread = (window as any).__manager.getThread('thread-wikilinks');
+      thread.messages[1].content = `1. Ordered items keep every wrapped continuation aligned with the first line of text even when the host theme removes its list spacing entirely.
+2. A second ordered item confirms the browser is rendering a real ordered list.
+
+- Unordered items keep every wrapped continuation aligned with the first line of text even when the host theme removes its list spacing entirely.
+  - Nested items remain visibly indented from their parent list item.`;
+      (window as any).__view.focusThread('thread-wikilinks');
+    });
+
+    const geometry = await page.locator('.ct-message-assistant .ct-message-content').evaluate((content) => {
+      const directTextLineLefts = (item: Element) => {
+        const text = Array.from(item.childNodes).find((node) => node.nodeType === Node.TEXT_NODE);
+        if (!text) throw new Error('Expected list item to contain a direct text node');
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        return Array.from(range.getClientRects()).map((rect) => rect.left);
+      };
+
+      const ordered = content.querySelector(':scope > ol > li')!;
+      const unordered = content.querySelector(':scope > ul > li')!;
+      const nested = unordered.querySelector(':scope > ul > li')!;
+      return {
+        ordered: directTextLineLefts(ordered),
+        unordered: directTextLineLefts(unordered),
+        nested: directTextLineLefts(nested),
+      };
+    });
+
+    expect(geometry.ordered.length).toBeGreaterThan(1);
+    expect(geometry.unordered.length).toBeGreaterThan(1);
+    expect(geometry.ordered[1]).toBeCloseTo(geometry.ordered[0], 0);
+    expect(geometry.unordered[1]).toBeCloseTo(geometry.unordered[0], 0);
+    expect(geometry.nested[0] - geometry.unordered[0]).toBeGreaterThan(12);
+  });
+
   test('conversation-first routes ordinary Markdown vault links to the companion and leaves protocols alone', async ({ page }) => {
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-messages');
