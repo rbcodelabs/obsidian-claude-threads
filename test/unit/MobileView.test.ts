@@ -1246,3 +1246,118 @@ describe('MobileView — visualize markers', () => {
     expect(el.textContent).toContain('visualize{');
   });
 });
+
+// ── Plain markdown-style links ─────────────────────────────────────────────
+//
+// Regression test: MobileView had zero click handling for ordinary
+// `[label](path)` markdown links — only `a.internal-link` (wikilinks) got a
+// listener. Mobile is always classic placement, so these must route through
+// app.workspace.openLinkText, and an OS-absolute path that happens to fall
+// under the synced vault must be resolved to its vault-relative form first
+// (via the same resolveVaultCopy suffix-probing used for visualize markers).
+//
+// The mocked `marked.parse` in this suite doesn't actually parse markdown
+// links — it just wraps content in `<p>`. So links are written here as raw
+// HTML anchors (as marked would have produced them), which survive the mock
+// unchanged and are then parsed into real DOM anchors by sanitizeHTMLToDom —
+// same technique already used for the internal-link wikilink anchors.
+
+describe('MobileView — plain markdown links', () => {
+  async function renderAssistantWithApp(content: string, vaultFiles: string[] = []) {
+    const { view, store } = await buildView();
+    const opened: string[] = [];
+    (view as never as { app: unknown }).app = {
+      vault: { getAbstractFileByPath: (p: string) => (vaultFiles.includes(p) ? { path: p } : null) },
+      workspace: { openLinkText: (p: string) => { opened.push(p); } },
+    };
+    store.applyFrame({
+      type: 'snapshot',
+      threads: [makeThread({ id: 'tid', messages: [makeMessage({ id: 'm1', role: 'assistant', content })] })],
+      activeThreadId: 'tid',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const messagesEl = (view as never)['messagesEl'] as HTMLElement;
+    return { messagesEl, opened, view };
+  }
+
+  it('attaches a click listener to a plain markdown link and opens the already vault-relative href', async () => {
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      'See <a href="Docs/note.md">the doc</a> for details.',
+    );
+    const link = messagesEl.querySelector('a[href="Docs/note.md"]') as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+    expect(opened).toEqual(['Docs/note.md']);
+  });
+
+  it('resolves an OS-absolute path under the synced vault before opening', async () => {
+    const href = '/Users/rick/Vault/Docs/note.md';
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      `See <a href="${href}">the doc</a> for details.`,
+      ['Docs/note.md'],
+    );
+    const link = messagesEl.querySelector(`a[href="${href}"]`) as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+    expect(opened).toEqual(['Docs/note.md']);
+  });
+
+  // Previously this pinned the raw absolute path being forwarded to
+  // openLinkText. Mobile is always classic placement, so that handed an
+  // unresolved linktext to the host — which can create a stray note named
+  // after a desktop path that simply isn't on this device. Withhold instead.
+  it('does NOT forward an unresolvable OS-absolute path to openLinkText', async () => {
+    const href = '/Users/rick/elsewhere/note.md';
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      `See <a href="${href}">the doc</a> for details.`,
+      [],
+    );
+    const link = messagesEl.querySelector(`a[href="${href}"]`) as HTMLAnchorElement;
+    link.click();
+    expect(opened).toEqual([]);
+  });
+
+  it('still forwards an unresolvable RELATIVE href (ordinary vault linktext)', async () => {
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      'See <a href="Notes/Missing.md">the doc</a> for details.',
+      [],
+    );
+    (messagesEl.querySelector('a[href="Notes/Missing.md"]') as HTMLAnchorElement).click();
+    expect(opened).toEqual(['Notes/Missing.md']);
+  });
+
+  it('preserves a #heading subpath when resolving an OS-absolute path', async () => {
+    const href = '/Users/rick/Vault/Docs/note.md#Section';
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      `See <a href="${href}">the doc</a> for details.`,
+      ['Docs/note.md'],
+    );
+    (messagesEl.querySelector(`a[href="${href}"]`) as HTMLAnchorElement).click();
+    expect(opened).toEqual(['Docs/note.md#Section']);
+  });
+
+  it('does not attach a click listener to an external link', async () => {
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      'See <a href="https://example.com">the site</a> for details.',
+    );
+    const link = messagesEl.querySelector('a[href="https://example.com"]') as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+    expect(opened).toEqual([]);
+  });
+
+  it('decodes percent-encoded spaces (as real marked emits) before suffix-matching a path whose vault-relative portion has a space', async () => {
+    // In production marked percent-encodes spaces in emitted hrefs; the mocked
+    // marked.parse here doesn't, so the %20 is written explicitly to exercise
+    // the same decode step MobileView applies before calling resolveVaultCopy.
+    const encodedHref = '/Users/rick/Vault/Products/Geode/Runs/My%20Report.md';
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      `See <a href="${encodedHref}">the doc</a> for details.`,
+      ['Products/Geode/Runs/My Report.md'],
+    );
+    const link = messagesEl.querySelector(`a[href="${encodedHref}"]`) as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+    expect(opened).toEqual(['Products/Geode/Runs/My Report.md']);
+  });
+});

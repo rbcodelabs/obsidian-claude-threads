@@ -23,7 +23,7 @@ import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile,
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
-import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer } from './linkUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { ConfirmModal } from './SkillsManagerView';
@@ -2120,25 +2120,58 @@ export class ThreadsView extends ItemView {
         e.preventDefault();
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
+        // Both placements resolve against the thread's own note, so a wikilink
+        // lands on the same target regardless of where the conversation is
+        // docked — and matches the plain-markdown-link handler below.
+        const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
         if (this.plugin.isConversationFirst()) {
-          void this.plugin.contextPanel.openLinkText(href, this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '');
+          void this.plugin.contextPanel.openLinkText(href, sourcePath);
         } else {
-          void this.app.workspace.openLinkText(href, '', false);
+          void this.app.workspace.openLinkText(href, sourcePath, false);
         }
       });
     });
     // marked renders ordinary `[label](path.md#heading)` links without the
-    // custom wikilink class. In conversation-first mode, intercept only
-    // relative/vault-shaped hrefs; protocols and same-page anchors retain the
-    // browser/host's standard behavior.
+    // custom wikilink class. Intercept only relative/vault-shaped hrefs;
+    // protocols and same-page anchors retain the browser/host's standard
+    // behavior. Some hrefs are OS-absolute paths that happen to fall under the
+    // vault root (e.g. a fragment written from outside Obsidian) — resolve
+    // those to a vault-relative path before handing them to the open calls,
+    // which expect vault linktext, not filesystem paths.
     el.querySelectorAll<HTMLAnchorElement>('a:not(.internal-link):not(.ct-visualize-slot)').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
-      if (!this.plugin.isConversationFirst() || classifyRenderedMarkdownLink(href) !== 'vault') return;
+      if (classifyRenderedMarkdownLink(href) !== 'vault') return;
+      const absolute = isOsAbsoluteHref(href);
       a.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        // Resolved on click, not at render: an agent frequently writes a file
+        // and links to it in the same turn, so the vault copy may only appear
+        // (or finish syncing) after this message was rendered. Probing here
+        // means the link starts working as soon as the target exists.
+        //
+        // Only absolute paths need rewriting; marked percent-encodes the hrefs
+        // it emits, which resolveAbsoluteVaultHref accounts for when probing.
+        // An ordinary relative href is forwarded untouched — the open calls
+        // parse the `#subpath` and do their own decoding, so decoding it here
+        // would both double-decode and strip that responsibility from its
+        // rightful owner.
+        const resolved = resolveAbsoluteVaultHref(href, (p) => !!this.app.vault.getAbstractFileByPath(p));
+        // An absolute filesystem path we could not map into the vault is NOT
+        // vault linktext. Forwarding it would ask the host to open an
+        // unresolved link, which can create a stray note named after the
+        // path — the same hazard linkifyBridgePaths guards against below.
+        if (absolute && !resolved) {
+          new Notice('That link points outside this vault.');
+          return;
+        }
+        const target = resolved ?? href;
         const sourcePath = this.activeThreadId ? this.manager.getThread(this.activeThreadId)?.noteFile ?? '' : '';
-        void this.plugin.contextPanel.openLinkText(href, sourcePath);
+        if (this.plugin.isConversationFirst()) {
+          void this.plugin.contextPanel.openLinkText(target, sourcePath);
+        } else {
+          void this.app.workspace.openLinkText(target, sourcePath, false);
+        }
       });
     });
     this.linkifyBridgePaths(el);

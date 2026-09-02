@@ -8,7 +8,7 @@
  * VaultPersistence — all state comes through the relay.
  */
 
-import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, sanitizeHTMLToDom, setIcon } from 'obsidian';
 import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
@@ -16,6 +16,7 @@ import type { SerializedThread, SerializedMessage, PendingPermission, PendingQue
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, resolveAbsoluteVaultHref } from './linkUtils';
 import {
   VISUALIZE_SLOT_ATTR,
   VISUALIZE_SLOT_CLASS,
@@ -560,6 +561,39 @@ export class MobileView extends ItemView {
         e.stopPropagation();
         const href = a.getAttribute('data-href') ?? a.getAttribute('href') ?? '';
         void this.app.workspace.openLinkText(href, '', false);
+      });
+    });
+    // marked renders ordinary `[label](path.md#heading)` links without the
+    // custom wikilink class, so — unlike the block above — they never got a
+    // click handler at all: mobile is always classic placement, and this view
+    // had no equivalent of ThreadsView's plain-markdown-link wiring. Some
+    // hrefs are OS-absolute paths that happen to fall under the synced vault
+    // (e.g. a fragment written from outside Obsidian) — resolve those first.
+    // This uses the shared helper rather than resolveVaultCopy because marked
+    // percent-encodes hrefs and only the helper probes the decoded form; the
+    // callback preserves resolveVaultCopy's relay-client guard, where the
+    // client has no vault index at all. A non-absolute href is forwarded
+    // untouched so openLinkText keeps ownership of subpath parsing/decoding.
+    el.querySelectorAll<HTMLAnchorElement>(`a:not(.internal-link):not(.${VISUALIZE_SLOT_CLASS})`).forEach((a) => {
+      const href = a.getAttribute('href') ?? '';
+      if (classifyRenderedMarkdownLink(href) !== 'vault') return;
+      const absolute = isOsAbsoluteHref(href);
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Resolved on click rather than at render, so a target that finishes
+        // syncing to the phone after this message rendered still opens.
+        const resolved = resolveAbsoluteVaultHref(href, (p) => {
+          try { return !!this.app.vault.getAbstractFileByPath(p); } catch { return false; }
+        });
+        // An absolute desktop path with no synced vault copy is not vault
+        // linktext; forwarding it risks creating a stray note named after the
+        // path. Say so instead — the file genuinely isn't on this device.
+        if (absolute && !resolved) {
+          new Notice('That link points to a file that is not in this vault.');
+          return;
+        }
+        void this.app.workspace.openLinkText(resolved ?? href, '', false);
       });
     });
   }

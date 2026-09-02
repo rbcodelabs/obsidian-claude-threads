@@ -34,6 +34,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 
 - **Multi-tab sessions** — open as many Claude threads as you need, switch between them instantly
 - **Streaming responses** — tokens stream in with live markdown rendering (code blocks, tables, lists, etc.)
+- **Clickable links in messages** — both `[[wikilinks]]` and ordinary `[label](path.md)` Markdown links in a response open the target note, in the sidebar and in conversation-first placement alike. Agents writing from outside Obsidian often emit an absolute filesystem path rather than a vault-relative one; when that path lands inside your vault, it still resolves to the right note — heading and block anchors included. A path that points outside the vault says so rather than opening (or creating) anything
 - **Persistent conversations** — sessions resume where you left off after restarting the host app
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
