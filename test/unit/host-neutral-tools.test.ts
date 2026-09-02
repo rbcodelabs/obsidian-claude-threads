@@ -31,8 +31,10 @@ describe('host-neutral MCP catalogs', () => {
     expect(canonical.tools.map(t => t.name)).toContain('host_list_commands');
     expect(canonical.tools.map(t => t.name)).toContain('threads_list');
     expect(canonical.tools.map(t => t.name)).toContain('threads_create');
+    expect(canonical.tools.map(t => t.name)).toContain('threads_open');
     expect(canonical.tools.map(t => t.name)).not.toContain('fork_conversation');
     expect(legacy.tools.map(t => t.name)).toContain('obsidian_search_vault');
+    expect(legacy.tools.map(t => t.name)).toContain('obsidian_open_thread');
     expect((legacy.tools as Array<{ name: string; description?: string }>).find(t => t.name === 'obsidian_search_vault')?.description)
       .toMatch(/deprecated/i);
     expect(new Set(canonical.tools.map(t => t.name)).size).toBe(canonical.tools.length);
@@ -78,6 +80,11 @@ describe('host-neutral MCP catalogs', () => {
 
     expect(canonical.inputSchema).toBe(legacy.inputSchema);
     expect(canonical.handler).toBe(legacy.handler);
+
+    const canonicalOpen = tools('claude_threads').find(t => t.name === 'threads_open')!;
+    const legacyOpen = tools('obsidian').find(t => t.name === 'obsidian_open_thread')!;
+    expect(canonicalOpen.inputSchema).toBe(legacyOpen.inputSchema);
+    expect(canonicalOpen.handler).toBe(legacyOpen.handler);
   });
 
   it('invokes canonical tools and exposes only canonical names to native harnesses', async () => {

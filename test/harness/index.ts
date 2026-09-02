@@ -62,6 +62,7 @@ const mockPlugin = {
     generateForkPrompt: async () => 'I need to fix the authentication bug in src/auth/jwt.ts. The JWT validation is rejecting valid tokens when the expiry is within 30 seconds. We decided to add a 60-second clock skew buffer to the validation logic.',
   },
   saveSettings: async () => {
+    (window as any).__saveSettingsCalls = ((window as any).__saveSettingsCalls ?? 0) + 1;
     if (nextSaveGate) {
       const gate = nextSaveGate;
       nextSaveGate = null;

@@ -73,11 +73,13 @@ describe('coordination tool scoping', () => {
     const server = createClaudeThreadsMcpServers(app, {
       threadId: 'caller', authorizeThread,
       getThreadDetail: () => ({ id: 'target', title: 'Target', messages: [] } as never),
+      openThread: vi.fn(),
       readThreadLog: vi.fn(), isThreadRunning: vi.fn(), sendMessageToThread: vi.fn(), archiveThread: vi.fn(),
       setThreadProject: vi.fn(), setThreadNotes: vi.fn(), setThreadProposedReply: vi.fn(), clearThreadProposedReply: vi.fn(),
     }).claude_threads as unknown as { tools: Array<{ name: string; handler: (args: Record<string, unknown>) => Promise<{ isError?: boolean }> }> };
     const cases = [
       ['threads_get_messages', { threadId: 'target' }], ['threads_get_log', { threadId: 'target' }],
+      ['threads_open', { threadId: 'target' }],
       ['threads_wait', { threadId: 'target' }], ['threads_send_message', { threadId: 'target', message: 'hi' }],
       ['threads_archive', { threadId: 'target' }], ['threads_set_project', { threadId: 'target', projectId: null }],
       ['threads_set_notes', { threadId: 'target', notes: 'n' }], ['threads_set_proposed_reply', { threadId: 'target', text: 'r' }],

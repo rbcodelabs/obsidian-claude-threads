@@ -51,6 +51,47 @@ test.describe('ThreadsView — initial thread selection', () => {
     await expect(titleEl).toContainText('HipTrip feature');
   });
 
+  test('exact UUID focus marks an unreviewed target reviewed and persists it', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+
+    const before = await page.evaluate(() => {
+      const target = (window as any).__manager.getThread('thread-brainstorm');
+      target.reviewed = false;
+      (window as any).__saveSettingsCalls = 0;
+      return target.reviewed;
+    });
+    expect(before).toBe(false);
+
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+
+    const state = await page.evaluate(() => ({
+      activeId: (window as any).__view.getActiveThreadId(),
+      reviewed: (window as any).__manager.getThread('thread-brainstorm').reviewed,
+      saveSettingsCalls: (window as any).__saveSettingsCalls,
+    }));
+    expect(state).toEqual({ activeId: 'thread-brainstorm', reviewed: true, saveSettingsCalls: expect.any(Number) });
+    expect(state.saveSettingsCalls).toBeGreaterThan(0);
+    await expect(page.locator('.ct-title-text')).toContainText('HipTrip feature');
+  });
+
+  test('exact UUID focus keeps an already-reviewed target reviewed', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+
+    const state = await page.evaluate(async () => {
+      const target = (window as any).__manager.getThread('thread-brainstorm');
+      target.reviewed = true;
+      await (window as any).__view.focusThread('thread-brainstorm');
+      return {
+        activeId: (window as any).__view.getActiveThreadId(),
+        reviewed: target.reviewed,
+      };
+    });
+
+    expect(state).toEqual({ activeId: 'thread-brainstorm', reviewed: true });
+  });
+
   test('composer placeholder follows the active thread harness', async ({ page }) => {
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
