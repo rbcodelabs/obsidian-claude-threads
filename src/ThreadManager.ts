@@ -374,12 +374,12 @@ export class ThreadManager {
     return project;
   }
 
-  updateProject(id: string, updates: Partial<Omit<Project, 'id' | 'createdAt'>>): void {
+  updateProject(id: string, updates: Partial<Omit<Project, 'id' | 'createdAt'>>): Project {
     const project = this.projects.get(id);
-    if (project) {
-      Object.assign(project, updates);
-      this.emit('', { type: 'projects_changed' });
-    }
+    if (!project) throw new Error(`Project not found: ${id}`);
+    Object.assign(project, updates);
+    this.emit('', { type: 'projects_changed' });
+    return project;
   }
 
   deleteProject(id: string): void {

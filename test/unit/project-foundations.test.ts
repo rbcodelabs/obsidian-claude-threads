@@ -18,10 +18,32 @@ describe('ThreadManager project foundations', () => {
     manager.subscribe((_id, event) => events.push(event.type));
 
     const project = manager.createProject('One', 'Projects/One');
-    manager.updateProject(project.id, { name: 'Renamed' });
+    expect(manager.updateProject(project.id, { name: 'Renamed' }).name).toBe('Renamed');
     manager.deleteProject(project.id);
 
     expect(events.filter((type) => type === 'projects_changed')).toHaveLength(3);
+  });
+
+  it('throws when updating an unknown project', () => {
+    const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+    expect(() => manager.updateProject('missing', { name: 'Nope' })).toThrow(/Project not found/);
+  });
+
+  it('updates a Project without relocating an assigned thread and emits once', () => {
+    const manager = new ThreadManager({ ...DEFAULT_SETTINGS });
+    const project = manager.createProject('One', 'Projects/One', undefined, '/repos/old');
+    const thread = manager.createThread('Existing', '/threads/pinned', project.id);
+    const projectEvents: string[] = [];
+    manager.subscribe((_id, event) => { if (event.type === 'projects_changed') projectEvents.push(event.type); });
+    const sessions = (manager as unknown as { sessions: Map<string, unknown> }).sessions;
+    const sessionBefore = { marker: 'live-session' };
+    sessions.set(thread.id, sessionBefore);
+
+    manager.updateProject(project.id, { cwdOverride: '/repos/new' });
+
+    expect(manager.getThread(thread.id)?.cwd).toBe('/threads/pinned');
+    expect(sessions.get(thread.id)).toBe(sessionBefore);
+    expect(projectEvents).toEqual(['projects_changed']);
   });
   it('resolves a project cwd from the vault unless an override is set', () => {
     const manager = new ThreadManager({ ...DEFAULT_SETTINGS });

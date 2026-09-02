@@ -45,6 +45,29 @@ describe('coordination tool scoping', () => {
     expect(setThreadProject).not.toHaveBeenCalled();
   });
 
+  it('denies project updates before lookup when the project is outside scope', async () => {
+    const authorizeProjectDestination = vi.fn().mockReturnValue(false);
+    const updateProject = vi.fn();
+    const server = createClaudeThreadsMcpServers(app, { authorizeProjectDestination, updateProject }).claude_threads as unknown as { tools: Array<{ name: string; handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }> }> };
+    const result = await server.tools.find(tool => tool.name === 'threads_update_project')!.handler({ projectId: 'secret-project', name: 'Renamed', elevatedProjectId: 'other-project' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain('outside coordination scope');
+    expect(updateProject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['own Project', undefined],
+    ['matching Portfolio elevation', 'project-a'],
+  ])('allows project updates for %s', async (_label, elevatedProjectId) => {
+    const authorizeProjectDestination = vi.fn().mockReturnValue(true);
+    const updateProject = vi.fn().mockResolvedValue({ id: 'project-a', name: 'Renamed', effectiveCwd: '/vault/A' });
+    const server = createClaudeThreadsMcpServers(app, { authorizeProjectDestination, updateProject }).claude_threads as unknown as { tools: Array<{ name: string; handler: (args: Record<string, unknown>) => Promise<{ isError?: boolean }> }> };
+    const result = await server.tools.find(tool => tool.name === 'threads_update_project')!.handler({ projectId: 'project-a', name: 'Renamed', elevatedProjectId });
+    expect(result.isError).toBeUndefined();
+    expect(authorizeProjectDestination).toHaveBeenCalledWith('project-a', elevatedProjectId);
+    expect(updateProject).toHaveBeenCalledOnce();
+  });
+
   it('enforces the central boundary across every direct coordination tool', async () => {
     const authorizeThread = vi.fn().mockReturnValue(false);
     const server = createClaudeThreadsMcpServers(app, {

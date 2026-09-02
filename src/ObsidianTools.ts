@@ -10,6 +10,7 @@ import type { ScheduledItem } from './types';
 import type { SchedulerItemPatch } from './Scheduler';
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
 import { tokenizeQuery, findBestExcerpt } from './searchUtils';
 import { execFileSync } from 'child_process';
 import { secretStorageKey } from './secretUtils';
@@ -70,7 +71,7 @@ const executeCommandSchema = {
 export type UiStatus = 'working' | 'new' | 'reviewed' | 'failed' | 'ready';
 
 /**
- * Returns the Agent Dashboard UI bucket label for a thread.
+ * Returns the Agents List UI bucket label for a thread.
  *
  * Mirrors the exact bucketing logic in AgentDashboard.render():
  *   - working  — thread is actively running, OR has no active foreground
@@ -104,12 +105,12 @@ export interface ThreadSnapshot {
   title: string;
   /**
    * Internal lifecycle status (waiting | active | error | archived).
-   * @deprecated Prefer `uiStatus` for display logic — it matches the Agent Dashboard UI labels.
+   * @deprecated Prefer `uiStatus` for display logic — it matches the Agents List UI labels.
    * Use `isRunning` to check whether Claude is actively processing.
    */
   status: string;
   /**
-   * The Agent Dashboard UI bucket this thread belongs to.
+   * The Agents List UI bucket this thread belongs to.
    * One of: 'working' | 'new' | 'reviewed' | 'failed' | 'ready'
    */
   uiStatus: UiStatus;
@@ -168,6 +169,12 @@ export interface ProjectSnapshot {
   cwdOverride?: string;
   effectiveCwd: string;
   orchestratorThreadId?: string;
+}
+
+export interface ProjectUpdatePatch {
+  name?: string;
+  description?: string;
+  cwdOverride?: string;
 }
 
 // ── Vault Bridge schema ───────────────────────────────────────────────────────
@@ -272,6 +279,8 @@ export interface ObsidianMcpServerOptions {
   getAllProjects?: () => ProjectSnapshot[];
   /** Creates a new project and persists it. Returns the created project snapshot. */
   createProject?: (name: string, vaultFolder: string, description?: string, cwdOverride?: string) => ProjectSnapshot;
+  /** Updates editable Project settings, persists them, and returns the durable snapshot. */
+  updateProject?: (projectId: string, patch: ProjectUpdatePatch) => Promise<ProjectSnapshot>;
   /** Assigns or clears the project on a thread. Pass null to detach. */
   setThreadProject?: (threadId: string, projectId: string | null, alignCwd?: boolean) => void;
   /** Returns true if the given thread is currently processing a request. */
@@ -1152,7 +1161,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundGetCurrentThread = tool(
     'obsidian_get_current_thread',
-    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with threads_get_log).',
+    'Returns metadata about the current thread: id, title, status, uiStatus, isRunning, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, and message count. Useful for understanding your own context before coordinating with other threads. uiStatus matches the Agents List UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in this thread, if any. scheduledItemId/scheduledItemName identify the cron item that created this thread, if it was created by one. rawLogPath is the vault-relative path to the raw JSONL conversation log (read it with threads_get_log).',
     {},
     async (_args, _extra) => {
       try {
@@ -1176,7 +1185,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundListThreads = tool(
     'obsidian_list_threads',
-    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agent Dashboard UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
+    'Returns all threads with their id, title, status, uiStatus, isRunning flag, project, cwd, prUrl, scheduledItemId, scheduledItemName, rawLogPath, updatedAt, and message count. Use this to discover other running threads before coordinating with them. uiStatus matches the Agents List UI labels (working | new | reviewed | failed | ready). prUrl is the URL of the most recent GitHub PR opened in that thread, if any — useful for matching threads to PRs without reading message history. scheduledItemId/scheduledItemName identify the cron item that created a thread, if it was created by one. rawLogPath is the vault-relative path to the thread\'s raw JSONL conversation log (read it with threads_get_log).',
     { projectId: z.string().optional().describe('Portfolio orchestrator only: explicitly elevate this call into one Project.') },
     async (args, _extra) => {
       try {
@@ -1236,6 +1245,56 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'createProject is not available in this context.' }) }], isError: true };
         }
         const project = options.createProject(args.name, args.vaultFolder, args.description, args.cwdOverride);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }] };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
+  );
+
+  const boundUpdateProject = tool(
+    'obsidian_update_project',
+    'Updates a Project name, context description, or working-directory override. Omitted fields are preserved; null clears description or cwdOverride. Existing threads keep their current cwd and live session. New Project threads and dynamic schedules use the updated effective cwd.',
+    {
+      projectId: z.string().trim().min(1).describe('ID of the Project to update'),
+      name: z.string().optional().describe('New human-readable Project name; trimmed and must not be blank'),
+      description: z.string().nullable().optional().describe('New Project context description; null clears it'),
+      cwdOverride: z.string().nullable().optional().describe('New absolute filesystem cwd; null restores the vault-derived cwd'),
+      elevatedProjectId: z.string().optional().describe('Portfolio orchestrator only: explicit matching Project elevation for this call.'),
+    },
+    async (args, _extra) => {
+      try {
+        if (!options.updateProject) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'updateProject is not available in this context.' }) }], isError: true };
+        }
+        if (options.authorizeProjectDestination && !options.authorizeProjectDestination(args.projectId, args.elevatedProjectId)) {
+          throw new Error('Target is outside coordination scope.');
+        }
+        const hasName = args.name !== undefined;
+        const hasDescription = args.description !== undefined;
+        const hasCwdOverride = args.cwdOverride !== undefined;
+        if (!hasName && !hasDescription && !hasCwdOverride) throw new Error('At least one editable field is required.');
+
+        const patch: ProjectUpdatePatch = {};
+        if (hasName) {
+          const name = args.name!.trim();
+          if (!name) throw new Error('Project name must not be blank.');
+          patch.name = name;
+        }
+        if (hasDescription) patch.description = args.description ?? undefined;
+        if (hasCwdOverride) {
+          if (args.cwdOverride === null) {
+            patch.cwdOverride = undefined;
+          } else {
+            const cwdOverride = args.cwdOverride!.trim();
+            if (!cwdOverride) throw new Error('cwdOverride must not be blank; pass null to clear it.');
+            if (!path.posix.isAbsolute(cwdOverride) && !path.win32.isAbsolute(cwdOverride)) throw new Error('cwdOverride must be an absolute filesystem path.');
+            patch.cwdOverride = cwdOverride;
+          }
+        }
+        const project = await options.updateProject(args.projectId, patch);
         return { content: [{ type: 'text' as const, text: JSON.stringify(project, null, 2) }] };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -2456,6 +2515,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundListThreads,
       boundListProjects,
       boundCreateProject,
+      boundUpdateProject,
       boundSetThreadProject,
       boundGetThreadMessages,
       boundOpenThread,
@@ -2535,6 +2595,7 @@ export const LEGACY_TO_CANONICAL_TOOL_NAMES: Readonly<Record<string, string>> = 
   obsidian_list_threads: 'threads_list',
   obsidian_list_projects: 'threads_list_projects',
   obsidian_create_project: 'threads_create_project',
+  obsidian_update_project: 'threads_update_project',
   obsidian_set_thread_project: 'threads_set_project',
   obsidian_get_thread_messages: 'threads_get_messages',
   obsidian_open_thread: 'threads_open',
