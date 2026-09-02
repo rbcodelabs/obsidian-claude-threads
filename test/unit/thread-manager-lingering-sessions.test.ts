@@ -71,11 +71,11 @@ vi.mock('../../src/ThreadSession', () => ({
       const raw = options.callbacks;
       const wrapped: SessionCallbacks = {
         ...raw,
-        onDone: (sessionId, cost, numTurns) => {
+        onDone: (sessionId, cost, numTurns, metadata) => {
           this.ownLastKnownSessionId = sessionId;
           mock.lastKnownSessionId = sessionId;
-          raw.onDone(sessionId, cost, numTurns);
-          this._turnInFlight = false;
+          raw.onDone(sessionId, cost, numTurns, metadata);
+          if ((metadata?.queuedTurnCount ?? 0) === 0) this._turnInFlight = false;
         },
         onInterrupted: (sessionId) => {
           raw.onInterrupted(sessionId);
@@ -294,5 +294,37 @@ describe('ThreadManager — onInterrupted rolls back ALL unresolved user message
       (manager as unknown as { pendingUserMessageIds: Map<string, string[]> })
         .pendingUserMessageIds.get(thread.id),
     ).toBeUndefined();
+  });
+
+  it('a queued result settles only its correlated user message and keeps the thread running', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', process.cwd());
+    const events: ThreadEvent[] = [];
+    manager.subscribe((_, event) => events.push(event));
+
+    await manager.sendMessage(thread.id, 'First');
+    await manager.sendMessage(thread.id, 'Second');
+    const [firstId, secondId] = thread.messages.map((message) => message.id);
+
+    mock.callbacks!.onDone('sess-1', 0.001, 1, {
+      queuedTurnCount: 1,
+      userMessageUuid: firstId,
+    });
+
+    expect(manager.isRunning(thread.id)).toBe(true);
+    expect(thread.status).toBe('active');
+    expect(events.some((event) => event.type === 'done')).toBe(false);
+    expect(
+      (manager as unknown as { pendingUserMessageIds: Map<string, string[]> })
+        .pendingUserMessageIds.get(thread.id),
+    ).toEqual([secondId]);
+
+    mock.callbacks!.onDone('sess-1', 0.001, 1, {
+      queuedTurnCount: 0,
+      userMessageUuid: secondId,
+    });
+    expect(manager.isRunning(thread.id)).toBe(false);
+    expect(thread.status).toBe('waiting');
+    expect(events.some((event) => event.type === 'done')).toBe(true);
   });
 });

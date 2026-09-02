@@ -120,9 +120,10 @@ async function flushMicrotasks(times = 8): Promise<void> {
 }
 
 /** Read the first message the given generation received on its input channel. */
-async function firstInput(gen: Generation): Promise<{ role: string; content: unknown }> {
+async function firstInput(gen: Generation): Promise<{ role: string; content: unknown; uuid?: string }> {
   const res = await gen.promptArg[Symbol.asyncIterator]().next();
-  return (res.value as { message: { role: string; content: unknown } }).message;
+  const value = res.value as { uuid?: string; message: { role: string; content: unknown } };
+  return { ...value.message, uuid: value.uuid };
 }
 
 describe('ThreadSession — rate-limit auto-retry', () => {
@@ -148,7 +149,7 @@ describe('ThreadSession — rate-limit auto-retry', () => {
     })));
 
     expect(sdk.generations).toHaveLength(1);
-    session.send('do the thing');
+    session.send('do the thing', undefined, '0198f7b2-aaaa-7bbb-8ccc-123456789abc');
     expect(session.turnInFlight).toBe(true);
 
     // Arm generation 1's (the retry's) output channel BEFORE the failure so
@@ -178,6 +179,7 @@ describe('ThreadSession — rate-limit auto-retry', () => {
     const replayed = await firstInput(sdk.generations[1]);
     expect(replayed.role).toBe('user');
     expect(replayed.content).toBe('do the thing');
+    expect(replayed.uuid).toBe('0198f7b2-aaaa-7bbb-8ccc-123456789abc');
 
     session.close();
   });

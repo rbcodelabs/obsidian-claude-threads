@@ -22,12 +22,31 @@ export type TaskTrackerEvent =
   | { kind: 'create'; id: string; content: string }
   | { kind: 'update'; id: string; status?: string; content?: string };
 
+export interface ModelRefusalFallback {
+  content: string;
+  originalModel: string;
+  fallbackModel: string;
+  scope: 'session' | 'local';
+  category?: string;
+  explanation?: string;
+}
+export interface ModelRefusalNoFallback {
+  content: string;
+  originalModel: string;
+  category?: string;
+  explanation?: string;
+}
+export interface ResultMetadata {
+  queuedTurnCount?: number;
+  userMessageUuid?: string;
+}
+
 export interface SessionCallbacks {
   onToken: (text: string) => void;
   onToolUse: (record: ToolCallRecord) => void;
   onMessage: (content: string, toolCalls: ToolCallRecord[]) => void;
   onRecap: (summary: string) => void;
-  onDone: (sessionId: string, cost: number, numTurns: number) => void;
+  onDone: (sessionId: string, cost: number, numTurns: number, metadata?: ResultMetadata) => void;
   onInterrupted: (sessionId: string) => void;
   onError: (err: Error) => void;
   /**
@@ -90,8 +109,10 @@ export interface SessionCallbacks {
    * before this fires — they're reconstructed in the final `assistant` message.
    */
   onRawEvent?: (event: { type?: string } & Record<string, unknown>) => void;
-  /** Fired when Claude falls back to an alternate model (e.g. primary overloaded). */
+  /** Harness-neutral reroute callback retained for Codex model/rerouted events. */
   onModelFallback?: (trigger: string, fromModel: string, toModel: string) => void;
+  onModelRefusalFallback?: (refusal: ModelRefusalFallback) => void;
+  onModelRefusalNoFallback?: (refusal: ModelRefusalNoFallback) => void;
   /** Fired when a running tool emits a progress heartbeat with elapsed time. */
   onToolProgress?: (toolUseId: string, toolName: string, elapsedSeconds: number) => void;
   /** Fired when the session surfaces memory files into the current turn. */
@@ -585,7 +606,11 @@ export class ClaudeSession {
                 const names = [...new Set(allToolCalls.map(t => formatToolName(t.name)))];
                 callbacks.onRecap(`Used ${names.join(', ')} (${allToolCalls.length} call${allToolCalls.length > 1 ? 's' : ''})`);
               }
-              callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+              const result = msg as typeof msg & { queued_turn_count?: number; user_message_uuid?: string };
+              callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns, {
+                queuedTurnCount: result.queued_turn_count,
+                userMessageUuid: result.user_message_uuid,
+              });
             } else if (this.interrupted) {
               // User-initiated stop — Claude Code reports error_during_execution when
               // interrupted; treat this as a clean cancellation, not a real error.
@@ -614,7 +639,10 @@ export class ClaudeSession {
             // own `result`, which re-checks this gate and releases
             // normally — same soundness argument used for the
             // notification-flag condition above.
-            if (pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult && pendingInteractiveCallbacks === 0) {
+            const queuedTurnCount = msg.subtype === 'success'
+              ? (msg as typeof msg & { queued_turn_count?: number }).queued_turn_count ?? 0
+              : 0;
+            if (queuedTurnCount === 0 && pendingBgTaskIds.size === 0 && !sawTaskNotificationSinceLastResult && pendingInteractiveCallbacks === 0) {
               this.releaseInput();
             }
             sawTaskNotificationSinceLastResult = false;
@@ -701,12 +729,23 @@ export class ClaudeSession {
                   sys.decision_reason_type as string | undefined,
                 );
                 break;
-              case 'model_fallback':
-                callbacks.onModelFallback?.(
-                  sys.trigger as string,
-                  sys.from_model as string,
-                  sys.to_model as string,
-                );
+              case 'model_refusal_fallback':
+                callbacks.onModelRefusalFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  fallbackModel: sys.fallback_model as string,
+                  scope: (sys.scope as 'session' | 'local' | undefined) ?? 'session',
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
+                break;
+              case 'model_refusal_no_fallback':
+                callbacks.onModelRefusalNoFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
                 break;
               case 'memory_recall': {
                 const paths = ((sys.memories as Array<{ path: string }>) ?? []).map(m => m.path);

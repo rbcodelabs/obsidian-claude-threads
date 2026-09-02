@@ -94,6 +94,8 @@ export type ThreadEvent =
   | { type: 'status_tags' }
   | { type: 'git_diff' }
   | { type: 'model_fallback'; trigger: string; fromModel: string; toModel: string }
+  | { type: 'model_refusal_fallback'; content: string; originalModel: string; fallbackModel: string; scope: 'session' | 'local'; category?: string; explanation?: string }
+  | { type: 'model_refusal_no_fallback'; content: string; originalModel: string; category?: string; explanation?: string }
   | { type: 'tool_progress'; toolUseId: string; toolName: string; elapsedSeconds: number }
   | { type: 'memory_recall'; paths: string[]; mode: 'select' | 'synthesize' }
   | { type: 'commands_changed'; commands: import('@anthropic-ai/claude-agent-sdk').SlashCommand[] }
@@ -1408,7 +1410,7 @@ export class ThreadManager {
     state.appliedRevision = revision;
     this.emit(threadId, { type: 'user_message_added', message: userMsg });
     this.emit(threadId, { type: 'streaming_start' });
-    session.send(effectivePrompt);
+    session.send(effectivePrompt, undefined, userMsg.id);
     return true;
   }
 
@@ -1577,7 +1579,7 @@ export class ThreadManager {
 
     try {
       await session.prepareForSend?.(effectivePrompt, images);
-      session.send(effectivePrompt, images);
+      session.send(effectivePrompt, images, userMsg.id);
     } catch (err) {
       // The ThreadSession's Query had already been torn down (a prior
       // generation errored out, or the channel was otherwise closed) —
@@ -1587,7 +1589,7 @@ export class ThreadManager {
       // raced against a second one (ADR-0002 §2).
       console.warn('[ClaudeThreads] sendMessage: send() on a closed ThreadSession — restarting:', err);
       await session.start(options);
-      session.send(effectivePrompt, images);
+      session.send(effectivePrompt, images, userMsg.id);
     }
   }
 
@@ -1879,7 +1881,7 @@ export class ThreadManager {
         this.externalizeMessageImages(threadId, assistantMsg);
         this.emit(threadId, { type: 'message', message: assistantMsg });
       },
-      onDone: (sessionId, cost) => {
+      onDone: (sessionId, cost, _numTurns, metadata) => {
         // Only persist this sessionId if the cwd hasn't changed since this
         // session was opened. setThreadCwd() (enter_worktree /
         // set_working_directory) clears thread.sessionId and defers the
@@ -1892,6 +1894,17 @@ export class ThreadManager {
         // the next turn starts fresh in the new cwd with a history preamble.
         if (thread.cwd === cwdAtStart) {
           thread.sessionId = sessionId;
+        }
+        if ((metadata?.queuedTurnCount ?? 0) > 0) {
+          const pendingIds = this.pendingUserMessageIds.get(threadId);
+          if (pendingIds && metadata?.userMessageUuid) {
+            const remaining = pendingIds.filter((id) => id !== metadata.userMessageUuid);
+            if (remaining.length > 0) this.pendingUserMessageIds.set(threadId, remaining);
+            else this.pendingUserMessageIds.delete(threadId);
+          }
+          thread.updatedAt = Date.now();
+          thread.status = 'active';
+          return;
         }
         thread.updatedAt = Date.now();
         thread.status = 'waiting';
@@ -2148,6 +2161,8 @@ export class ThreadManager {
         this.emit(threadId, { type: 'usage', usage });
       },
       onModelFallback: (trigger, fromModel, toModel) => this.emit(threadId, { type: 'model_fallback', trigger, fromModel, toModel }),
+      onModelRefusalFallback: (refusal) => this.emit(threadId, { type: 'model_refusal_fallback', ...refusal }),
+      onModelRefusalNoFallback: (refusal) => this.emit(threadId, { type: 'model_refusal_no_fallback', ...refusal }),
       onToolProgress: (toolUseId, toolName, elapsedSeconds) => this.emit(threadId, { type: 'tool_progress', toolUseId, toolName, elapsedSeconds }),
       onMemoryRecall: (paths, mode) => this.emit(threadId, { type: 'memory_recall', paths, mode }),
       onCommandsChanged: (commands) => this.emit(threadId, { type: 'commands_changed', commands }),

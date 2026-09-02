@@ -12,7 +12,7 @@ export interface HarnessSession {
   start(options: HarnessSessionOptions): Promise<void>;
   /** Optional harness-specific maintenance before a user turn is submitted. */
   prepareForSend?(text: string, images?: ImageAttachment[]): Promise<void>;
-  send(text: string, images?: ImageAttachment[]): void;
+  send(text: string, images?: ImageAttachment[], userMessageUuid?: string): void;
   interrupt(): Promise<void>;
   /** Native child-agent controls. Absent unless a harness exposes a directly verified route. */
   sendAgentMessage?(nativeAgentId: string, text: string): Promise<void>;

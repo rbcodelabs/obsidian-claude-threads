@@ -4596,6 +4596,16 @@ export class ThreadsView extends ItemView {
         break;
       }
 
+      case 'model_refusal_fallback': {
+        new Notice(event.content || `Claude retried with ${event.fallbackModel}.`, 5000);
+        break;
+      }
+
+      case 'model_refusal_no_fallback': {
+        new Notice(event.content || `Claude ${event.originalModel} could not answer this request.`, 5000);
+        break;
+      }
+
       case 'tool_progress': {
         // Update the elapsed-time label on the active pill for this tool_use_id.
         const pill = this.toolPillsByUseId.get(event.toolUseId);

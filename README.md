@@ -240,6 +240,8 @@ You can also switch models without typing: a **model switcher button** (CPU icon
 
 The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable, and (when escalation is enabled) the current keyword shows up alongside `/model`, `/goal`, etc. in the `/` autocomplete popup so it's discoverable without reading the docs — renaming the keyword or toggling escalation off in Settings updates the popup immediately. While an escalated turn is running, the model switcher button glows in the accent color and its tooltip names the escalated model, so you always have visible confirmation that the escalation took effect. The glow clears automatically when the turn finishes.
 
+When Claude refuses a response, Claude Threads shows the SDK-provided notice if Claude retries on a fallback model, and a clear notice when no fallback is available.
+
 ### Goals and loops
 
 **Goals** — `/goal <text>` pins a persistent goal on a thread. You can also

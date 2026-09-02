@@ -24,6 +24,7 @@ const mock = vi.hoisted(() => ({
   sentPrompts: [] as string[],
   images: null as ImageAttachment[] | undefined,
   sentImages: [] as (ImageAttachment[] | undefined)[],
+  sentUserMessageUuids: [] as (string | undefined)[],
   model: undefined as string | undefined,
   resumeSessionId: undefined as string | undefined,
   lastKnownSessionId: undefined as string | undefined,
@@ -60,12 +61,13 @@ vi.mock('../../src/ThreadSession', () => ({
         },
       };
     }
-    send(text: string, images?: ImageAttachment[]): void {
+    send(text: string, images?: ImageAttachment[], userMessageUuid?: string): void {
       mock.sendCallCount += 1;
       mock.prompt = text;
       mock.sentPrompts.push(text);
       mock.images = images;
       mock.sentImages.push(images);
+      mock.sentUserMessageUuids.push(userMessageUuid);
       this._turnInFlight = true;
     }
     async interrupt(): Promise<void> {
@@ -101,6 +103,7 @@ beforeEach(() => {
   mock.sentPrompts = [];
   mock.images = undefined;
   mock.sentImages = [];
+  mock.sentUserMessageUuids = [];
   mock.model = undefined;
   mock.resumeSessionId = undefined;
   mock.lastKnownSessionId = undefined;
@@ -138,6 +141,15 @@ describe('send message → event flow', () => {
     expect(thread.messages).toHaveLength(2);
     expect(thread.messages[0]).toMatchObject({ role: 'user', content: 'Ping' });
     expect(thread.messages[1]).toMatchObject({ role: 'assistant', content: 'Pong' });
+  });
+
+  it('forwards the created user message id to the harness', async () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', os.tmpdir());
+
+    await manager.sendMessage(thread.id, 'Correlate me');
+
+    expect(mock.sentUserMessageUuids).toEqual([thread.messages[0].id]);
   });
 
   it('stores sessionId and cost on done', async () => {

@@ -113,6 +113,10 @@ const ANTHROPIC_BLOCK = {
 };
 const MCP_BLOCK = { type: 'image', data: 'WFla', mimeType: 'image/jpeg' };
 const UNRECOGNISED_BLOCK = { type: 'image', source: { type: 'url', url: 'https://x/y.png' } };
+const PDF_DOCUMENT_BLOCK = {
+  type: 'document',
+  source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' },
+};
 
 /** Pump `blocks` through a live ThreadSession and return what the scanner emitted. */
 async function scanWithThreadSession(blocks: Array<Record<string, unknown>>) {
@@ -175,5 +179,17 @@ describe.each(scanners)('%s tool-result image scanner', (_name, scan) => {
   it('ignores non-image blocks and image blocks in neither shape', async () => {
     const onToolResultImages = await scan([{ type: 'text', text: 'no image here' }, UNRECOGNISED_BLOCK]);
     expect(onToolResultImages).not.toHaveBeenCalled();
+  });
+
+  it('tolerates a nested PDF document block and emits its page images in order', async () => {
+    const secondPage = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'REVG' },
+    };
+    const onToolResultImages = await scan([PDF_DOCUMENT_BLOCK, ANTHROPIC_BLOCK, secondPage]);
+    expect(onToolResultImages).toHaveBeenCalledWith([
+      { mediaType: 'image/png', data: 'QUJD' },
+      { mediaType: 'image/png', data: 'REVG' },
+    ]);
   });
 });

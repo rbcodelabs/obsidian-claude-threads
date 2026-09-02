@@ -78,7 +78,7 @@ export class ThreadSession {
    * rejected it before the model saw it, so no new transcript message is
    * added — see the replay in `pumpMessages()`'s catch block).
    */
-  private lastUserTurn: { text: string; images?: ImageAttachment[] } | null = null;
+  private lastUserTurn: { text: string; images?: ImageAttachment[]; userMessageUuid?: string } | null = null;
   private recapEmitted = false;
   /** Resolves the plugin-initiated /compact maintenance turn, if one is active. */
   private internalCompactionResolve: ((completed: boolean) => void) | null = null;
@@ -379,7 +379,7 @@ export class ThreadSession {
    * internal queue-and-wait: the CLI coalesces a concurrent push into the
    * generation already running.
    */
-  send(text: string, images?: ImageAttachment[]): void {
+  send(text: string, images?: ImageAttachment[], userMessageUuid?: string): void {
     if (!this.query) {
       throw new Error('[ClaudeThreads] ThreadSession.send() called before start() (or after close())');
     }
@@ -389,9 +389,10 @@ export class ThreadSession {
     // or rate-limit replay — is deliberate: whatever turn is in flight is
     // exactly what a subsequent rate-limit rejection must re-send, and
     // re-recording the same replayed turn is idempotent.
-    this.lastUserTurn = { text, images };
+    this.lastUserTurn = { text, images, userMessageUuid };
     const message: SDKUserMessage = {
       type: 'user',
+      ...(userMessageUuid ? { uuid: userMessageUuid as NonNullable<SDKUserMessage['uuid']> } : {}),
       parent_tool_use_id: null,
       message: {
         role: 'user',
@@ -667,7 +668,11 @@ export class ThreadSession {
                 this.internalCompactionResolve = null;
                 resolve(true);
               } else {
-                callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns);
+                const result = msg as typeof msg & { queued_turn_count?: number; user_message_uuid?: string };
+                callbacks.onDone(msg.session_id, msg.total_cost_usd, msg.num_turns, {
+                  queuedTurnCount: result.queued_turn_count,
+                  userMessageUuid: result.user_message_uuid,
+                });
               }
             } else if (this.interrupted) {
               callbacks.onInterrupted(this.lastKnownSessionId ?? '');
@@ -683,7 +688,10 @@ export class ThreadSession {
             // No release-gate here (ADR-0002 §2) — the channel stays open
             // regardless of this result; it only closes when close()/restart()
             // says so. A `result` just marks the turn done.
-            this._turnInFlight = false;
+            const queuedTurnCount = msg.subtype === 'success'
+              ? (msg as typeof msg & { queued_turn_count?: number }).queued_turn_count ?? 0
+              : 0;
+            if (queuedTurnCount === 0) this._turnInFlight = false;
             break;
           }
 
@@ -763,12 +771,23 @@ export class ThreadSession {
                   sys.decision_reason_type as string | undefined,
                 );
                 break;
-              case 'model_fallback':
-                callbacks.onModelFallback?.(
-                  sys.trigger as string,
-                  sys.from_model as string,
-                  sys.to_model as string,
-                );
+              case 'model_refusal_fallback':
+                callbacks.onModelRefusalFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  fallbackModel: sys.fallback_model as string,
+                  scope: (sys.scope as 'session' | 'local' | undefined) ?? 'session',
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
+                break;
+              case 'model_refusal_no_fallback':
+                callbacks.onModelRefusalNoFallback?.({
+                  content: sys.content as string,
+                  originalModel: sys.original_model as string,
+                  category: (sys.api_refusal_category as string | null | undefined) ?? undefined,
+                  explanation: (sys.api_refusal_explanation as string | null | undefined) ?? undefined,
+                });
                 break;
               case 'memory_recall': {
                 const paths = ((sys.memories as Array<{ path: string }>) ?? []).map(m => m.path);
@@ -980,7 +999,7 @@ export class ThreadSession {
               // close() was called during the backoff — nothing to restart.
             } else {
               await this.restart('rate-limit');
-              if (turn) this.send(turn.text, turn.images);
+              if (turn) this.send(turn.text, turn.images, turn.userMessageUuid);
             }
           } catch (retryErr) {
             console.error('[ClaudeThreads] ThreadSession rate-limit auto-retry failed:', retryErr);
