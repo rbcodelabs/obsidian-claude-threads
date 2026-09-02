@@ -17,6 +17,22 @@ export function classifyRenderedMarkdownLink(href: string): 'vault' | 'external'
 }
 
 /**
+ * Whether `href` looks like an OS-absolute filesystem path (unix "/..." or
+ * Windows "C:\..."). Call sites use this to tell "this was a filesystem path
+ * we failed to map into the vault" apart from "this was an ordinary relative
+ * link" — the former must not be forwarded to the host's link-opening APIs,
+ * which would treat it as an unresolved vault link.
+ *
+ * Note that `classifyRenderedMarkdownLink` already routes Windows drive
+ * letters to 'external' (the drive letter parses as a URI scheme), so in
+ * practice only the unix branch is reachable from the rendered-markdown call
+ * sites. The Windows branch is kept for direct callers and future use.
+ */
+export function isOsAbsoluteHref(href: string): boolean {
+  return /^(\/|[a-zA-Z]:[\\/])/.test(href.trim());
+}
+
+/**
  * If `href` looks like an OS-absolute path (unix "/..." or Windows "C:\..."),
  * resolve it to a vault-relative path by probing successively shorter path
  * suffixes against `exists` (typically `app.vault.getAbstractFileByPath`).
@@ -26,18 +42,35 @@ export function classifyRenderedMarkdownLink(href: string): 'vault' | 'external'
  * `.../Claude%20Threads/notes.md` while the vault index holds the literal
  * `Claude Threads/notes.md`. Each suffix is therefore probed both raw and
  * percent-decoded — raw first, so a file whose real name legitimately
- * contains a "%20" still wins over the decoded interpretation.
+ * contains a "%20" still wins over the decoded interpretation. (That
+ * precedence holds for what this function returns; a caller that decodes
+ * again downstream can still collapse the two.)
+ *
+ * A trailing `#heading` / `#^block` subpath is split off before probing —
+ * otherwise it would be glued onto the final path segment and no candidate
+ * would ever match the vault index — then reattached to the resolved path so
+ * the open call can still scroll to the target. The subpath is decoded on
+ * reattach: marked encodes `#^block` as `#%5Eblock` and `#My Heading` as
+ * `#My%20Heading`, and nothing downstream decodes the subpath (Obsidian's
+ * parseLinktext splits it off, and ContextPanelController decodes only the
+ * path half), so an encoded subpath would never match its target.
  */
 export function resolveAbsoluteVaultHref(href: string, exists: (path: string) => boolean): string | null {
   const trimmed = href.trim();
-  if (!/^(\/|[a-zA-Z]:[\\/])/.test(trimmed)) return null;
-  const segments = trimmed.replace(/\\/g, '/').split('/').filter(Boolean);
+  if (!isOsAbsoluteHref(trimmed)) return null;
+  const hash = trimmed.indexOf('#');
+  const pathPart = hash === -1 ? trimmed : trimmed.slice(0, hash);
+  let subpath = hash === -1 ? '' : trimmed.slice(hash);
+  if (subpath) {
+    try { subpath = decodeURIComponent(subpath); } catch { /* malformed escape — keep raw */ }
+  }
+  const segments = pathPart.replace(/\\/g, '/').split('/').filter(Boolean);
   for (let start = 0; start < segments.length; start++) {
     const candidate = segments.slice(start).join('/');
-    if (exists(candidate)) return candidate;
+    if (exists(candidate)) return candidate + subpath;
     let decoded: string | null = null;
     try { decoded = decodeURIComponent(candidate); } catch { /* malformed escape — raw probe stands */ }
-    if (decoded !== null && decoded !== candidate && exists(decoded)) return decoded;
+    if (decoded !== null && decoded !== candidate && exists(decoded)) return decoded + subpath;
   }
   return null;
 }

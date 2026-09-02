@@ -8,7 +8,7 @@
  * VaultPersistence — all state comes through the relay.
  */
 
-import { ItemView, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, sanitizeHTMLToDom, setIcon } from 'obsidian';
 import { marked } from 'marked';
 import type { RelayClient } from './RelayClient';
 import type { MobileThreadStore } from './MobileThreadStore';
@@ -16,7 +16,7 @@ import type { SerializedThread, SerializedMessage, PendingPermission, PendingQue
 import type { ToolCallRecord, ImageAttachment } from './types';
 import { formatToolName, getToolIcon, groupToolCalls, smoothToolGroups, ACTIVITY_LABELS, type ToolCallGroup } from './toolNameUtils';
 import { splitErrorMessage } from './dashboardUtils';
-import { classifyRenderedMarkdownLink, resolveAbsoluteVaultHref } from './linkUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, resolveAbsoluteVaultHref } from './linkUtils';
 import {
   VISUALIZE_SLOT_ATTR,
   VISUALIZE_SLOT_CLASS,
@@ -577,13 +577,23 @@ export class MobileView extends ItemView {
     el.querySelectorAll<HTMLAnchorElement>(`a:not(.internal-link):not(.${VISUALIZE_SLOT_CLASS})`).forEach((a) => {
       const href = a.getAttribute('href') ?? '';
       if (classifyRenderedMarkdownLink(href) !== 'vault') return;
-      const resolvedHref = resolveAbsoluteVaultHref(href, (p) => {
-        try { return !!this.app.vault.getAbstractFileByPath(p); } catch { return false; }
-      }) ?? href;
+      const absolute = isOsAbsoluteHref(href);
       a.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        void this.app.workspace.openLinkText(resolvedHref, '', false);
+        // Resolved on click rather than at render, so a target that finishes
+        // syncing to the phone after this message rendered still opens.
+        const resolved = resolveAbsoluteVaultHref(href, (p) => {
+          try { return !!this.app.vault.getAbstractFileByPath(p); } catch { return false; }
+        });
+        // An absolute desktop path with no synced vault copy is not vault
+        // linktext; forwarding it risks creating a stray note named after the
+        // path. Say so instead — the file genuinely isn't on this device.
+        if (absolute && !resolved) {
+          new Notice('That link points to a file that is not in this vault.');
+          return;
+        }
+        void this.app.workspace.openLinkText(resolved ?? href, '', false);
       });
     });
   }

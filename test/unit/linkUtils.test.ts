@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { classifyRenderedMarkdownLink, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from '../../src/linkUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from '../../src/linkUtils';
 import type { App } from 'obsidian';
 
 function fakeApp(opts: { existingWebviewer?: boolean } = {}) {
@@ -143,4 +143,41 @@ describe('resolveAbsoluteVaultHref', () => {
     const exists = (p: string) => p === 'Docs/100%.md';
     expect(resolveAbsoluteVaultHref('/Users/rick/Vault/Docs/100%.md', exists)).toBe('Docs/100%.md');
   });
+
+  // A trailing #subpath must be split off before probing: glued onto the final
+  // segment it makes every candidate ("Notes/Plan.md#Decision") miss the vault
+  // index, so the whole link silently fails to resolve.
+  it('splits a #heading subpath before probing and reattaches it', () => {
+    const exists = (p: string) => p === 'Notes/Plan.md';
+    expect(resolveAbsoluteVaultHref('/Users/rick/Vault/Notes/Plan.md#Decision', exists))
+      .toBe('Notes/Plan.md#Decision');
+  });
+
+  it('splits a #^block subpath before probing and reattaches it', () => {
+    const exists = (p: string) => p === 'Daily/Today.md';
+    expect(resolveAbsoluteVaultHref('/Users/rick/Vault/Daily/Today.md#^abc123', exists))
+      .toBe('Daily/Today.md#^abc123');
+  });
+
+  it('handles a subpath alongside a percent-encoded space', () => {
+    const exists = (p: string) => p === 'Products/Claude Threads/notes.md';
+    expect(resolveAbsoluteVaultHref('/Users/rick/Mobile%20Documents/Products/Claude%20Threads/notes.md#Section', exists))
+      .toBe('Products/Claude Threads/notes.md#Section');
+  });
+
+  it('returns null when the path resolves nowhere even though it carries a subpath', () => {
+    expect(resolveAbsoluteVaultHref('/Users/rick/elsewhere/gone.md#Heading', () => false)).toBeNull();
+  });
+});
+
+describe('isOsAbsoluteHref', () => {
+  it.each(['/Users/rick/note.md', '/tmp/x.md', 'C:\\Users\\rick\\note.md', 'C:/Users/rick/note.md'])(
+    'treats %s as an OS-absolute path',
+    (href) => { expect(isOsAbsoluteHref(href)).toBe(true); },
+  );
+
+  it.each(['Notes/Plan.md', '../Projects/Roadmap.md', 'Daily/Today#^block', '', '#anchor'])(
+    'treats %s as not OS-absolute',
+    (href) => { expect(isOsAbsoluteHref(href)).toBe(false); },
+  );
 });

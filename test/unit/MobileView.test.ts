@@ -1302,7 +1302,11 @@ describe('MobileView — plain markdown links', () => {
     expect(opened).toEqual(['Docs/note.md']);
   });
 
-  it('falls back to the raw href when no vault suffix resolves', async () => {
+  // Previously this pinned the raw absolute path being forwarded to
+  // openLinkText. Mobile is always classic placement, so that handed an
+  // unresolved linktext to the host — which can create a stray note named
+  // after a desktop path that simply isn't on this device. Withhold instead.
+  it('does NOT forward an unresolvable OS-absolute path to openLinkText', async () => {
     const href = '/Users/rick/elsewhere/note.md';
     const { messagesEl, opened } = await renderAssistantWithApp(
       `See <a href="${href}">the doc</a> for details.`,
@@ -1310,7 +1314,26 @@ describe('MobileView — plain markdown links', () => {
     );
     const link = messagesEl.querySelector(`a[href="${href}"]`) as HTMLAnchorElement;
     link.click();
-    expect(opened).toEqual([href]);
+    expect(opened).toEqual([]);
+  });
+
+  it('still forwards an unresolvable RELATIVE href (ordinary vault linktext)', async () => {
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      'See <a href="Notes/Missing.md">the doc</a> for details.',
+      [],
+    );
+    (messagesEl.querySelector('a[href="Notes/Missing.md"]') as HTMLAnchorElement).click();
+    expect(opened).toEqual(['Notes/Missing.md']);
+  });
+
+  it('preserves a #heading subpath when resolving an OS-absolute path', async () => {
+    const href = '/Users/rick/Vault/Docs/note.md#Section';
+    const { messagesEl, opened } = await renderAssistantWithApp(
+      `See <a href="${href}">the doc</a> for details.`,
+      ['Docs/note.md'],
+    );
+    (messagesEl.querySelector(`a[href="${href}"]`) as HTMLAnchorElement).click();
+    expect(opened).toEqual(['Docs/note.md#Section']);
   });
 
   it('does not attach a click listener to an external link', async () => {

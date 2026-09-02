@@ -33,11 +33,14 @@ interface Harness {
   view: ThreadsView;
   contextPanelCalls: Array<[string, string]>;
   workspaceCalls: string[];
+  /** Parallel to workspaceCalls: the sourcePath each classic open was given. */
+  workspaceSourcePaths: string[];
 }
 
 function makeView(opts: { conversationFirst: boolean; vaultFiles?: string[]; noteFile?: string }): Harness {
   const contextPanelCalls: Array<[string, string]> = [];
   const workspaceCalls: string[] = [];
+  const workspaceSourcePaths: string[] = [];
   const view = Object.create(ThreadsView.prototype) as ThreadsView & Record<string, unknown>;
 
   (view as unknown as { app: unknown }).app = {
@@ -45,7 +48,10 @@ function makeView(opts: { conversationFirst: boolean; vaultFiles?: string[]; not
       getAbstractFileByPath: (p: string) => ((opts.vaultFiles ?? []).includes(p) ? { path: p } : null),
     },
     workspace: {
-      openLinkText: (href: string) => { workspaceCalls.push(href); },
+      openLinkText: (href: string, sourcePath?: string) => {
+        workspaceCalls.push(href);
+        workspaceSourcePaths.push(sourcePath ?? '');
+      },
     },
   };
   (view as unknown as { plugin: unknown }).plugin = {
@@ -61,7 +67,7 @@ function makeView(opts: { conversationFirst: boolean; vaultFiles?: string[]; not
   (view as unknown as { activeThreadId: string | null }).activeThreadId = 'tid';
   (view as unknown as { visualizeManager: unknown }).visualizeManager = undefined;
 
-  return { view, contextPanelCalls, workspaceCalls };
+  return { view, contextPanelCalls, workspaceCalls, workspaceSourcePaths };
 }
 
 async function renderAndClick(harness: Harness, markdown: string): Promise<HTMLAnchorElement> {
@@ -94,11 +100,78 @@ describe('ThreadsView renderMarkdown — plain markdown link clicks (classic pla
     expect(harness.workspaceCalls).toEqual(['Products/Geode/Runs/geode-2026-09-01-architecture-review.md']);
   });
 
-  it('falls back to the raw href when no vault suffix resolves', async () => {
+  // Previously this asserted the raw absolute path was forwarded to
+  // openLinkText. That is the unsafe behavior: an unresolved linktext asks the
+  // host to open a link that doesn't exist, which can create a stray note named
+  // after the filesystem path — in the DEFAULT placement, from clicking a link
+  // the user did not author. Before the plain-link handler existed, classic
+  // placement attached no listener at all and the click was inert; staying
+  // inert (with a Notice) is the safe equivalent.
+  it('does NOT forward an unresolvable OS-absolute path to openLinkText', async () => {
     const abs = '/Users/rickbowman/elsewhere/note.md';
     const harness = makeView({ conversationFirst: false, vaultFiles: [] });
     await renderAndClick(harness, `[Note](<${abs}>)`);
-    expect(harness.workspaceCalls).toEqual([abs]);
+    expect(harness.workspaceCalls).toEqual([]);
+  });
+
+  it('does NOT forward an unresolvable OS-absolute path to the companion either', async () => {
+    const abs = '/Users/rickbowman/elsewhere/note.md';
+    const harness = makeView({ conversationFirst: true, vaultFiles: [], noteFile: 'Claude/thread.md' });
+    await renderAndClick(harness, `[Note](<${abs}>)`);
+    expect(harness.contextPanelCalls).toEqual([]);
+  });
+
+  // A relative href that doesn't resolve is still forwarded: it IS vault
+  // linktext, and "open/create this note" is the host's ordinary, expected
+  // behavior for one. Only filesystem paths are withheld.
+  it('still forwards an unresolvable RELATIVE href (ordinary vault linktext)', async () => {
+    const harness = makeView({ conversationFirst: false, vaultFiles: [] });
+    await renderAndClick(harness, '[Note](Notes/Missing.md)');
+    expect(harness.workspaceCalls).toEqual(['Notes/Missing.md']);
+  });
+
+  it('preserves a #heading subpath when resolving an OS-absolute path', async () => {
+    const abs = '/Users/rickbowman/Vault/Products/Geode/Runs/report.md#QA Report';
+    const harness = makeView({
+      conversationFirst: false,
+      vaultFiles: ['Products/Geode/Runs/report.md'],
+    });
+    await renderAndClick(harness, `[Report](<${abs}>)`);
+    expect(harness.workspaceCalls).toEqual(['Products/Geode/Runs/report.md#QA Report']);
+  });
+
+  it('preserves a #^block subpath when resolving an OS-absolute path', async () => {
+    const abs = '/Users/rickbowman/Vault/Notes/Plan.md#^abc123';
+    const harness = makeView({ conversationFirst: false, vaultFiles: ['Notes/Plan.md'] });
+    await renderAndClick(harness, `[Plan](<${abs}>)`);
+    expect(harness.workspaceCalls).toEqual(['Notes/Plan.md#^abc123']);
+  });
+
+  // The target is frequently written by the agent in the same turn that links
+  // to it, so it may only appear after this message rendered. Resolution must
+  // therefore happen on click, not at render time.
+  it('resolves at click time, so a target that appears after render still opens', async () => {
+    const abs = '/Users/rickbowman/Vault/Products/Geode/Runs/late.md';
+    const vaultFiles: string[] = [];
+    const harness = makeView({ conversationFirst: false, vaultFiles });
+    const el = document.createElement('div');
+    await (harness.view as unknown as {
+      renderMarkdown(md: string, el: HTMLElement): Promise<void>;
+    }).renderMarkdown(`[Late](<${abs}>)`, el);
+    // File lands only AFTER the message was rendered.
+    vaultFiles.push('Products/Geode/Runs/late.md');
+    el.querySelector('a')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(harness.workspaceCalls).toEqual(['Products/Geode/Runs/late.md']);
+  });
+
+  it('passes the thread note as sourcePath in classic placement, matching conversation-first', async () => {
+    const harness = makeView({
+      conversationFirst: false,
+      vaultFiles: ['Projects/Roadmap.md'],
+      noteFile: 'Claude/thread.md',
+    });
+    await renderAndClick(harness, '[Roadmap](../Projects/Roadmap.md)');
+    expect(harness.workspaceSourcePaths).toEqual(['Claude/thread.md']);
   });
 
   it('decodes percent-encoded spaces (marked encodes them) before suffix-matching a path whose vault-relative portion has a space', async () => {
