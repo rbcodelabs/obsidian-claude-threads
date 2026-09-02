@@ -4,6 +4,9 @@ import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import { fixtureThreads } from './fixtures';
 import { mockLeaf } from './obsidian-mock';
+import { Platform } from 'obsidian';
+
+if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
 
 const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
 const manager = new ThreadManager(settings);

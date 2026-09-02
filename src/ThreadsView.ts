@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter, TFile, Platform } from 'obsidian';
 import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
@@ -678,6 +678,7 @@ export class ThreadsView extends ItemView {
     this.rootEl = root;
     root.empty();
     root.addClass('ct-root');
+    root.toggleClass('ct-mobile', Platform.isMobile);
     root.setAttribute('data-density', this.plugin.settings.layoutDensity ?? 'comfortable');
 
     const titleRow = root.createDiv('ct-title-row');

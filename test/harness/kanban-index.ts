@@ -15,9 +15,11 @@ import {
   kanbanWaitingReason,
 } from './fixtures';
 import { mockLeaf } from './obsidian-mock';
+import { Platform } from 'obsidian';
 
 const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
 const dashboardMode = new URLSearchParams(window.location.search).has('dashboard');
+if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
 const manager = new ThreadManager(settings);
 manager.loadProjects(kanbanFixtureProjects);
 const agentFixtureThread = kanbanFixtureThreads.find(thread => thread.id === kanbanRunningThreadId);

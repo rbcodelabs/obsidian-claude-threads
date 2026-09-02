@@ -43,15 +43,21 @@ describe('agent pill footer pinning', () => {
 });
 
 describe('agent touch targets', () => {
-  const mobileBlock = css.match(/@media \(max-width: 600px\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
-
   it('keeps agent rows and dashboard chips at 44px on mobile', () => {
-    expect(mobileBlock).toMatch(/\.ct-agent-row-button,\s*\.ct-dashboard-agent\s*\{\s*min-height:\s*44px/);
+    expect(css).toMatch(/\.ct-mobile[^\{]*\.ct-agent-row-button[^\{]*\{[^}]*min-height:\s*44px/);
+    expect(css).toMatch(/\.ct-mobile[^\{]*\.ct-dashboard-agent(?:-count)?[^\{]*\{[^}]*min-height:\s*44px/);
   });
 
   it('keeps the pill, crumbs and close buttons at 44px on mobile', () => {
-    expect(mobileBlock).toMatch(/\.ct-agent-pill[^{]*\{[^}]*min-height:\s*44px/);
-    expect(mobileBlock).toMatch(/\.ct-agent-crumb[,\s][^{]*\{[^}]*min-height:\s*44px/);
+    expect(css).toMatch(/\.ct-mobile[^\{]*\.ct-agent-pill[^\{]*\{[^}]*min-height:\s*44px/);
+    expect(css).toMatch(/\.ct-mobile[^\{]*\.ct-agent-crumb[^\{]*\{[^}]*min-height:\s*44px/);
+  });
+
+  it('uses named pane containers and never treats width alone as mobile input', () => {
+    expect(css).toMatch(/\.ct-root\s*\{[^}]*container-name:\s*ct-conversation/s);
+    expect(css).toMatch(/\.ct-agents-root\s*\{[^}]*container-name:\s*ct-dashboard/s);
+    expect(css).not.toMatch(/@media \(max-width: 700px\)[\s\S]{0,800}\.ct-dashboard-agent-count\s*\{[^}]*min-height:\s*44px/);
+    expect(css).not.toMatch(/@container ct-dashboard \(max-width:[^)]+\)[\s\S]{0,1200}\.ct-dashboard-agent-count\s*\{[^}]*min-height:\s*44px/);
   });
 });
 
