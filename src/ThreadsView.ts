@@ -3443,6 +3443,26 @@ export class ThreadsView extends ItemView {
   }
 
   /**
+   * Makes an entire question-option row clickable, not just the tiny radio/checkbox
+   * input inside it. Native <label for> association can't be used here because the
+   * label doesn't span the full row (it only wraps its own text), so instead we
+   * listen on the row and forward the click to the input — except when the click
+   * already landed on the input itself, where the browser's native toggle behavior
+   * (and radio-group exclusivity) applies and must not be double-handled.
+   */
+  private bindQuestionRowClick(row: HTMLElement, inputEl: HTMLInputElement): void {
+    row.addEventListener('click', (e) => {
+      if (e.target === inputEl) return;
+      if (inputEl.type === 'checkbox') {
+        inputEl.checked = !inputEl.checked;
+      } else {
+        inputEl.checked = true;
+      }
+      inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  /**
    * Renders the inline question card shown when Claude calls AskUserQuestion.
    * The card is anchored to the current streaming element (or messagesEl) so it
    * sits visually inside the current response turn, mirroring renderPermissionCard
@@ -3492,6 +3512,7 @@ export class ThreadsView extends ItemView {
         if (opt.description) {
           labelEl.createSpan({ cls: 'ct-question-opt-desc', text: opt.description });
         }
+        this.bindQuestionRowClick(row, inputEl);
         optionInputs.push(inputEl);
       }
 
@@ -3502,6 +3523,7 @@ export class ThreadsView extends ItemView {
         otherInput = otherRow.createEl('input', {
           attr: { type: q.multiSelect ? 'checkbox' : 'radio', name: q.question, value: '__other__' },
         }) as HTMLInputElement;
+        this.bindQuestionRowClick(otherRow, otherInput);
         const otherLabelEl = otherRow.createEl('label', { cls: 'ct-question-option-label' });
         otherLabelEl.createSpan({ cls: 'ct-question-opt-name', text: q.options.length > 0 ? 'Other' : 'Answer' });
         otherText = otherLabelEl.createEl('input', {

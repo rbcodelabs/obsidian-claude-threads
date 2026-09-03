@@ -136,6 +136,69 @@ test.describe('AskUserQuestion — inline card (pendingQuestions)', () => {
     expect(pendingQuestions).toBeUndefined();
   });
 
+  test('clicking anywhere on an option row selects it, not just the radio button', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForTimeout(300);
+
+    await page.evaluate((questions) => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const activeId = view['activeThreadId'];
+      const thread = manager.getThread(activeId);
+      thread.pendingQuestions = questions;
+      view.focusThread(activeId);
+    }, SAMPLE_QUESTIONS);
+
+    await page.waitForSelector('.ct-question-card');
+
+    // Click the option's label text, not the radio input itself — the row
+    // should still select, and the other radio in the group should clear.
+    const secondOption = page.locator('.ct-question-option').nth(1);
+    await secondOption.locator('.ct-question-opt-name').click();
+
+    await expect(secondOption.locator('input[type="radio"]')).toBeChecked();
+    await expect(page.locator('.ct-question-option').first().locator('input[type="radio"]')).not.toBeChecked();
+  });
+
+  test('clicking a multiSelect row toggles its checkbox on and off', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForTimeout(300);
+
+    const MULTI_QUESTIONS = [
+      {
+        question: 'Which features should ship?',
+        options: [{ label: 'Dark mode' }, { label: 'Offline sync' }],
+        multiSelect: true,
+      },
+    ];
+
+    await page.evaluate((questions) => {
+      const manager = (window as any).__manager;
+      const view = (window as any).__view;
+      const activeId = view['activeThreadId'];
+      const thread = manager.getThread(activeId);
+      thread.pendingQuestions = questions;
+      view.focusThread(activeId);
+    }, MULTI_QUESTIONS);
+
+    await page.waitForSelector('.ct-question-card');
+
+    const row = page.locator('.ct-question-option').first();
+    const checkbox = row.locator('input[type="checkbox"]');
+
+    // Click the row's label text (not the checkbox) to select it.
+    await row.locator('.ct-question-opt-name').click();
+    await expect(checkbox).toBeChecked();
+
+    // Clicking it again should un-toggle it, matching native checkbox behavior.
+    await row.locator('.ct-question-opt-name').click();
+    await expect(checkbox).not.toBeChecked();
+  });
+
   test('Codex secret questions use stable IDs without exposing the ID in restored follow-up text', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
