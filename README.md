@@ -142,7 +142,9 @@ Tabs are renamed automatically once the first turn completes, using the thread s
 - **`/`** — opens slash command autocomplete
 - **Escape** — cancel the running session; the sent message is restored to the input box so you can edit and re-send
 
-**Collapsible input panels.** All three message-input panels (Threads view, Agents List sidebar, and Kanban dispatch) collapse to a minimal bar at rest — just the textarea and send button. Hover over the panel or click into the textarea to expand secondary controls (attach, mic, model picker, more menu, CWD chip) with a smooth animation. The panel border softens when collapsed so it reads as a quiet background element.
+**Collapsible input panels.** All three message-input panels (Threads view, Agents List sidebar, and Kanban dispatch) collapse to a minimal bar at rest — just the textarea and send button. Hover over the panel or click into the textarea to expand secondary controls (context pill, more menu, attach, mic) with a smooth animation. The panel border softens when collapsed so it reads as a quiet background element.
+
+**Composer context pill.** The footer carries a single control naming where the thread is working — `Project · folder`, or just the folder name when the thread has no Project (and just the Project name when the two would read the same). It shrinks and ellipsizes on a narrow pane instead of disappearing, so the working context stays visible where the old separate chips did not. Click it for the full Project name, the full path, and **Change project…** on threads that can be moved.
 
 **Message queue.** If you send a message while Claude is already processing, it goes into a queue — displayed as stacked removable rows above the composer. Each row shows a preview of the queued message and an `×` button to discard it. Click any row to pull it back into the input box for editing (an inline confirm prompt prevents you from accidentally discarding your current draft). The queue drains automatically as Claude finishes each turn. Queued messages survive thread switches and plugin reloads.
 
@@ -154,7 +156,7 @@ Tabs are renamed automatically once the first turn completes, using the thread s
 
 - **Active work** — a pulsing spinner with a short label (e.g. "Compacting context…" during automatic compaction, "Retrying API call…" on transient errors). The card disappears as soon as the operation completes.
 - **Rate limit** — if the API returns a rate limit response, a card shows in warning or error style depending on whether the request was allowed to proceed or rejected outright.
-- **Model escalation tip** — when a turn is routed to the escalation model (e.g. Fable 5 when you send `/escalate`), a brief tooltip pops up from the model button rather than reshuffling the layout. It fades in, holds for a moment, then fades out automatically — no interaction needed and zero layout shift. For the rest of the escalated turn, the model button itself stays highlighted with an accent glow, and its tooltip reads "escalated to \<model\> for this turn", so you can confirm the escalation at any point until the turn completes.
+- **Model escalation tip** — when a turn is routed to the escalation model (e.g. Fable 5 when you send `/escalate`), a brief tooltip pops up from the composer's menu button rather than reshuffling the layout. It fades in, holds for a moment, then fades out automatically — no interaction needed and zero layout shift. For the rest of the escalated turn, the menu's model row reads "Model: \<model\> (this turn)", so you can confirm the escalation at any point until the turn completes.
 
 **Idle spinners pause automatically.** A thread parked at an unanswered plan/permission prompt (or otherwise wedged) stays "running" until you answer it, but its infinite spinner animations freeze after ~45s of no progress instead of compositing forever — this keeps a stuck thread from pinning the renderer's CPU. Answering the prompt resumes progress and the spinner un-freezes. A thread waiting on an ExitPlanMode plan approval also shows the calmer **Awaiting** indicator rather than the aggressive running spinner.
 
@@ -237,9 +239,9 @@ Type `@this` (no search needed) to instantly reference the currently active file
 
 A **Default model** dropdown in settings picks the model for threads that have no `/model` override. Family aliases (Fable / Opus / Sonnet / Haiku "latest") are always listed first; pinned model IDs are sourced from the SDK's `capabilities_discovered` event, which fires the first time a thread starts in the current host session. Before any thread has run, the dropdown falls back to a hardcoded list of current models — start a thread and reopen Settings to see the full CLI-sourced list, so no plugin update is needed when Anthropic adds a new model. The Escalation model dropdown is populated the same way.
 
-You can also switch models without typing: a **model switcher button** (CPU icon) sits in the conversation footer, left of the menu button. Hover it to see the active model; click it to pick Default / Opus / Sonnet / Haiku / Fable from a dropdown. The icon turns accent-colored whenever a per-thread override is active, and it stays in sync with the `/model` command.
+You can also switch models without typing: open the **menu button** in the conversation footer and pick the **Model** row, which names the model currently in effect. Choosing it opens the Default / Opus / Sonnet / Haiku / Fable list, and it stays in sync with the `/model` command.
 
-The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable, and (when escalation is enabled) the current keyword shows up alongside `/model`, `/goal`, etc. in the `/` autocomplete popup so it's discoverable without reading the docs — renaming the keyword or toggling escalation off in Settings updates the popup immediately. While an escalated turn is running, the model switcher button glows in the accent color and its tooltip names the escalated model, so you always have visible confirmation that the escalation took effect. The glow clears automatically when the turn finishes.
+The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable, and (when escalation is enabled) the current keyword shows up alongside `/model`, `/goal`, etc. in the `/` autocomplete popup so it's discoverable without reading the docs — renaming the keyword or toggling escalation off in Settings updates the popup immediately. While an escalated turn is running, the footer menu's model row names the escalated model and marks it "(this turn)", so you always have visible confirmation that the escalation took effect. The label reverts automatically when the turn finishes.
 
 When Claude refuses a response, Claude Threads shows the SDK-provided notice if Claude retries on a fallback model, and a clear notice when no fallback is available.
 
@@ -366,7 +368,7 @@ Hold the configured push-to-talk key (default: none — set it in Settings → P
 
 ### Permissions
 
-When Claude or Codex needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agents List without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the shield (🛡) button in the thread footer — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
+When Claude or Codex needs to write a file or run a command, a permission card appears inline in the conversation asking you to **Allow**, **Deny**, or **Always Allow**. Always Allow adds the tool to a per-vault allowlist so you're never asked again for that tool. You can also resolve permissions directly from the Agents List without switching threads. The default behavior can be changed globally in **Settings → Tools → Permission Mode**, or **per-thread** via the **Permissions** row in the thread footer's menu — a thread-level override takes precedence over the global setting and is useful when you want plan mode for one specific task without affecting other threads:
 
 | Mode | Behavior |
 |---|---|
@@ -387,7 +389,7 @@ When Claude or Codex needs to write a file or run a command, a permission card a
 
 ### Plan Mode
 
-Set **Permission Mode → `plan`** globally in settings, or use the **shield button** in the thread footer to set it for a single thread, to enable Plan Mode. In this mode Claude or Codex reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it. Codex can also invoke its built-in `EnterPlanMode` control when it recognizes that a task needs investigation first; Claude Threads finishes the current handoff, switches Codex to a read-only Plan turn at the safe turn boundary, and shows the same approval card.
+Set **Permission Mode → `plan`** globally in settings, or use the **Permissions** row in the thread footer's menu to set it for a single thread, to enable Plan Mode. In this mode Claude or Codex reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it. Codex can also invoke its built-in `EnterPlanMode` control when it recognizes that a task needs investigation first; Claude Threads finishes the current handoff, switches Codex to a read-only Plan turn at the safe turn boundary, and shows the same approval card.
 
 **The flow:**
 
@@ -465,7 +467,7 @@ Opening this URL on any device with Obsidian Mobile + Claude Threads installed w
 - Switch between threads and search the thread list by title or summary
 - See each thread's **status rail** — spinner cards for active tool calls, error cards for failed threads
 - Copy any assistant message to clipboard with the ⎘ button
-- View the thread's **cwd chip**, **model**, and **message timestamps**
+- View the thread's **context pill** (Project + working directory), **model**, and **message timestamps**
 - See **queue rows** for pending messages (tap to pull back into the composer, × to cancel)
 - View **tool pill icons** matching the desktop view
 

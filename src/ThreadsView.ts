@@ -19,7 +19,7 @@ import { formatToolName, getToolIcon } from './ClaudeSession';
 import { isTrustedBuiltInTool } from './toolNameUtils';
 import { groupToolCalls, liveToolGroupKey, mergeAdjacentToolOnlyMessages, ACTIVITY_LABELS, smoothToolGroups, pickCurrentTool, shouldWrapOuter, type ToolCallGroup } from './toolNameUtils';
 import { DispatchInput, type ExtraSkillDir } from './DispatchInput';
-import { buildCwdLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
+import { buildComposerContextLabel, formatWakeupCountdown, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, splitErrorMessage } from './dashboardUtils';
 import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUtils';
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
@@ -108,8 +108,6 @@ export class ThreadsView extends ItemView {
   /** One-shot scroll target consumed by the next main-conversation render. */
   private pendingMainScroll: number | null = null;
   private moreBtn!: HTMLButtonElement;
-  private modelBtn!: HTMLButtonElement;
-  private permissionModeBtn!: HTMLButtonElement;
   private statusRailEl!: HTMLElement;
   private queueRowsEl!: HTMLElement;
   private activeWorkCardEl: HTMLElement | null = null;
@@ -193,9 +191,6 @@ export class ThreadsView extends ItemView {
   private staleInterval: ReturnType<typeof setInterval> | null = null;
 
   // (status rail state tracked via activeWorkCardEl / rateLimitCardEl / toastEl fields above)
-
-  // Project indicator pill (near input)
-  private projectIndicatorEl!: HTMLElement;
 
   // Project filtering
   private activeProjectId: string | null = null;
@@ -517,7 +512,6 @@ export class ThreadsView extends ItemView {
       // even when the turn ends on a non-active thread.
       if (event.type === 'escalated') {
         this.escalatedTurnModels.set(threadId, event.model);
-        if (threadId === this.activeThreadId) this.updateModelIndicator();
       } else if (event.type === 'done' || event.type === 'error' || event.type === 'interrupted') {
         this.clearEscalatedTurn(threadId);
       }
@@ -629,7 +623,7 @@ export class ThreadsView extends ItemView {
   private handleThreadListEvent(event: ThreadEvent): void {
     if (event.type === 'threads_loaded' || event.type === 'projects_changed') {
       this.renderProjectBar();
-      if (event.type === 'projects_changed') this.updateProjectIndicator();
+      if (event.type === 'projects_changed') this.renderComposerContext();
     }
   }
 
@@ -775,7 +769,8 @@ export class ThreadsView extends ItemView {
       showStopBtn: true,
       onStop: () => this.stopMessage(),
       showThisMention: true,
-      showCwdChip: true,
+      showContextChip: true,
+      onContextClick: (event) => this.toggleComposerContextMenu(event),
       captureLongPaste: true,
       builtinCommands: () => {
         const esc = escalationCommand(this.plugin.settings);
@@ -824,20 +819,6 @@ export class ThreadsView extends ItemView {
         this.renderAgentPill();
       },
       appendFooterActions: (container) => {
-        this.permissionModeBtn = container.createEl('button', {
-          cls: 'ct-more-btn ct-permission-mode-btn',
-        });
-        setIcon(this.permissionModeBtn, 'shield');
-        this.permissionModeBtn.addEventListener('click', (e) => this.togglePermissionModeMenu(e));
-        this.updatePermissionModeIndicator();
-
-        this.modelBtn = container.createEl('button', {
-          cls: 'ct-more-btn ct-model-btn',
-        });
-        setIcon(this.modelBtn, 'cpu');
-        this.modelBtn.addEventListener('click', (e) => this.toggleModelMenu(e));
-        this.updateModelIndicator();
-
         this.moreBtn = container.createEl('button', {
           cls: 'ct-more-btn ct-thread-more-btn',
           attr: { title: 'More actions' },
@@ -851,8 +832,6 @@ export class ThreadsView extends ItemView {
       getPttKey: () => this.plugin.settings.pttKey ?? '',
     });
     this.dispatchInput.mount(this.inputRowEl);
-
-    this.projectIndicatorEl = this.inputRowEl.createDiv('ct-project-indicator ct-hidden');
 
     this.contextFooterEl = panelContext.createDiv('ct-context-footer ct-hidden');
 
@@ -1051,9 +1030,7 @@ export class ThreadsView extends ItemView {
     this.renderThreadInfo();
     await this.renderMessages();
     this.setRunningState(this.manager.isRunning(id));
-    this.updateProjectIndicator();
-    this.updateModelIndicator();
-    this.updatePermissionModeIndicator();
+    this.renderComposerContext();
     this.applyComposerPlaceholder();
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
@@ -1692,23 +1669,15 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  private updateProjectIndicator(): void {
-    this.projectIndicatorEl.empty();
+  private renderComposerContext(): void {
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const project = thread?.projectId ? this.manager.getProject(thread.projectId) : null;
-    if (project) {
-      this.projectIndicatorEl.removeClass('ct-hidden');
-      this.projectIndicatorEl.createSpan({ cls: 'ct-project-indicator-icon', text: '📁' });
-      this.projectIndicatorEl.createSpan({ cls: 'ct-project-indicator-name', text: project.name });
-    } else {
-      this.projectIndicatorEl.addClass('ct-hidden');
-    }
-  }
-
-  private renderCwdChip(): void {
-    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
     const cwd = thread?.cwd || this.plugin.getEffectiveCwd() || os.homedir();
-    this.dispatchInput?.setCwd(buildCwdLabel(cwd), cwd);
+    const label = buildComposerContextLabel(project?.name, cwd);
+    const tooltip = project
+      ? `Project: ${project.name}. Working directory: ${cwd}`
+      : `Working directory: ${cwd}`;
+    this.dispatchInput?.setContext(label, tooltip);
   }
 
   private renderThreadInfo(): void {
@@ -1716,7 +1685,7 @@ export class ThreadsView extends ItemView {
     const thread = this.manager.getThread(this.activeThreadId);
     if (!thread) return;
 
-    this.renderCwdChip();
+    this.renderComposerContext();
     this.renderTaskCard();
 
     // Re-render queue rows in case the thread changed.
@@ -1945,6 +1914,17 @@ export class ThreadsView extends ItemView {
     if (!thread) return;
 
     const menu = new Menu();
+    menu.addItem(item => item
+      .setTitle(`Model: ${this.currentModelLabel()}`)
+      .setIcon('cpu')
+      .onClick(() => this.toggleModelMenu(event))
+    );
+    menu.addItem(item => item
+      .setTitle(`Permissions: ${this.currentPermissionLabel()}`)
+      .setIcon('shield')
+      .onClick(() => this.togglePermissionModeMenu(event))
+    );
+    menu.addSeparator();
     menu.addItem(item =>
       item
         .setTitle(this.compressedView ? 'Expand view' : 'Compress view')
@@ -1973,6 +1953,25 @@ export class ThreadsView extends ItemView {
           .setTitle('Move to Project…')
           .setIcon('folder')
           .onClick(() => this.openMoveToProjectMenu(event, thread.id))
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private toggleComposerContextMenu(event: MouseEvent): void {
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    if (!thread) return;
+    const project = thread.projectId ? this.manager.getProject(thread.projectId) : null;
+    const cwd = thread.cwd || this.plugin.getEffectiveCwd() || os.homedir();
+    const menu = new Menu();
+    menu.addItem(item => item.setTitle(`Project: ${project?.name ?? 'No project'}`).setIcon('folder'));
+    menu.addItem(item => item.setTitle(`Working directory: ${cwd}`).setIcon('folder-open'));
+    if (this.canMoveToProject(thread.id)) {
+      menu.addSeparator();
+      menu.addItem(item => item
+        .setTitle('Change project…')
+        .setIcon('folder-cog')
+        .onClick(() => this.openMoveToProjectMenu(event, thread.id))
       );
     }
     menu.showAtMouseEvent(event);
@@ -2024,8 +2023,7 @@ export class ThreadsView extends ItemView {
       this.manager.setThreadProject(threadId, projectId, true);
       await this.plugin.saveSettings();
       if (threadId === this.activeThreadId) {
-        this.updateProjectIndicator();
-        this.renderCwdChip();
+        this.renderComposerContext();
       }
       const project = projectId ? this.manager.getProject(projectId) : null;
       new Notice(
@@ -2044,21 +2042,18 @@ export class ThreadsView extends ItemView {
     return thread?.model ?? undefined;
   }
 
-  /** Refreshes the footer model button's tooltip/state to match the active thread. */
-  private updateModelIndicator(): void {
-    if (!this.modelBtn) return;
+  private currentModelLabel(): string {
     const escalated = this.activeThreadId
       ? this.escalatedTurnModels.get(this.activeThreadId)
       : undefined;
-    this.modelBtn.toggleClass('ct-model-btn-escalated', !!escalated);
-    if (escalated) {
-      setTooltip(this.modelBtn, `Model: escalated to ${escalated} for this turn`);
-      return;
-    }
+    if (escalated) return `${escalated} (this turn)`;
     const model = this.currentModel();
-    const label = model ?? 'default';
-    setTooltip(this.modelBtn, `Model: ${label} — click to switch`);
-    this.modelBtn.toggleClass('ct-model-btn-active', !!model);
+    if (!model) return 'Default';
+    const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    const options = thread?.agentHarness === 'codex'
+      ? this.plugin.discoveredModelsByHarness.codex.map((m) => ({ label: m.displayName, value: m.value }))
+      : ThreadsView.CLAUDE_MODEL_OPTIONS;
+    return options.find(option => option.value === model)?.label ?? model;
   }
 
   /**
@@ -2067,7 +2062,7 @@ export class ThreadsView extends ItemView {
    */
   private clearEscalatedTurn(threadId: string): void {
     if (!this.escalatedTurnModels.delete(threadId)) return;
-    if (threadId === this.activeThreadId) this.updateModelIndicator();
+    // The value is read when the actions menu next opens.
   }
 
   private toggleModelMenu(event: MouseEvent): void {
@@ -2087,7 +2082,6 @@ export class ThreadsView extends ItemView {
             if (!this.activeThreadId) return;
             this.manager.setThreadModel(this.activeThreadId, opt.value);
             await this.plugin.saveSettings();
-            this.updateModelIndicator();
             this.renderThreadInfo();
           });
       });
@@ -2100,13 +2094,10 @@ export class ThreadsView extends ItemView {
     return thread?.permissionMode ?? undefined;
   }
 
-  private updatePermissionModeIndicator(): void {
-    if (!this.permissionModeBtn) return;
+  private currentPermissionLabel(): string {
     const mode = this.currentPermissionMode();
     const opt = ThreadsView.PERMISSION_MODE_OPTIONS.find(o => o.value === mode);
-    const label = opt?.label ?? 'Global default';
-    setTooltip(this.permissionModeBtn, `Permission: ${label} — click to change`);
-    this.permissionModeBtn.toggleClass('ct-permission-mode-btn-active', mode !== undefined);
+    return opt?.label ?? 'Global default';
   }
 
   private togglePermissionModeMenu(event: MouseEvent): void {
@@ -2122,7 +2113,6 @@ export class ThreadsView extends ItemView {
             if (!this.activeThreadId) return;
             this.manager.setThreadPermissionMode(this.activeThreadId, opt.value);
             await this.plugin.saveSettings();
-            this.updatePermissionModeIndicator();
             this.renderThreadInfo();
           });
       });
@@ -4444,13 +4434,12 @@ export class ThreadsView extends ItemView {
 
       case 'project_changed': {
         this.renderProjectBar();
-        this.updateProjectIndicator();
+        this.renderComposerContext();
         this.renderThreadInfo();
         break;
       }
 
       case 'permission_mode_changed': {
-        this.updatePermissionModeIndicator();
         this.renderThreadInfo();
         break;
       }
@@ -5050,10 +5039,10 @@ export class ThreadsView extends ItemView {
    * animation finishes (~3 s total).
    */
   private showModelEscalationTip(text: string): void {
-    if (!this.modelBtn) return;
+    if (!this.moreBtn) return;
     // Remove any in-flight tip before showing a new one.
-    this.modelBtn.querySelector('.ct-escalation-tip')?.remove();
-    const tip = this.modelBtn.createDiv('ct-escalation-tip');
+    this.moreBtn.querySelector('.ct-escalation-tip')?.remove();
+    const tip = this.moreBtn.createDiv('ct-escalation-tip');
     tip.setText(text);
     tip.addEventListener('animationend', () => tip.remove(), { once: true });
   }
@@ -5783,7 +5772,6 @@ export class ThreadsView extends ItemView {
       const label = resolved ? `Model set to ${resolved}` : 'Model reset to default';
       const divider = this.messagesEl.createDiv('ct-compact-divider');
       divider.createSpan({ cls: 'ct-compact-label', text: label });
-      this.updateModelIndicator();
       this.renderThreadInfo();
       this.scrollToBottom();
       return;

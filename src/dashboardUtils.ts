@@ -60,6 +60,16 @@ export function buildCwdLabel(cwd: string, vaultRoot?: string): string {
   return shortenPath(cwd, vaultRoot);
 }
 
+/** Compact project + directory label used by the desktop composer context pill. */
+export function buildComposerContextLabel(projectName: string | undefined, cwd: string): string {
+  const basename = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  if (!projectName) return basename;
+  if (!basename || projectName.trim().toLocaleLowerCase() === basename.toLocaleLowerCase()) {
+    return projectName;
+  }
+  return `${projectName} · ${basename}`;
+}
+
 /**
  * Returns true when the error message looks like an AWS SSO token expiry that
  * requires running `aws sso login` to refresh credentials.

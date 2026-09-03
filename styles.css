@@ -2111,7 +2111,7 @@
   padding-left: 6px;
 }
 
-/* Secondary actions row: cwd chip left, mic+menu right */
+/* Single composer context row: context, live status, then fixed actions. */
 .ct-input-footer {
   display: flex;
   align-items: center;
@@ -2120,12 +2120,45 @@
   padding-top: 2px;
 }
 
-/* CWD chip in the footer — same chip style but interactive (can hover) */
-.ct-footer-cwd {
+/* Unified Project + working-directory control. */
+.ct-footer-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  max-width: min(48%, 300px);
+  padding: 2px 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
   pointer-events: auto;
-  cursor: default;
-  flex-shrink: 1;
+  cursor: pointer;
+  flex: 0 1 auto;
   min-width: 0;
+}
+
+.ct-footer-context:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ct-footer-context-icon,
+.ct-footer-context-chevron {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.ct-footer-context-icon svg { width: 15px; height: 15px; }
+.ct-footer-context-chevron svg { width: 12px; height: 12px; }
+
+.ct-footer-context-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* Right-side button group (menu + mic) stays together */
@@ -3106,26 +3139,6 @@
 .ct-agents-dispatch-input:focus {
   outline: none;
   border-color: var(--color-accent);
-}
-
-/* ── Project indicator pill (below input) ────────────────────────────────── */
-
-.ct-project-indicator {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-
-.ct-project-indicator.ct-hidden {
-  display: none;
-}
-
-.ct-project-indicator-icon {
-  font-size: 10px;
-  line-height: 1;
 }
 
 /* ── Project bar ─────────────────────────────────────────────────────────── */
@@ -7357,7 +7370,7 @@ body.ct-skills-resizing {
    hidden) and reveal their full capability set on hover or :focus-within.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* — Footer row (ThreadsView: attach, mic, model, more, CWD chip) ─────────── */
+/* — Footer row (ThreadsView: context, live status, more, attach, mic) ────── */
 .ct-panel-collapsible .ct-input-footer {
   max-height: 0;
   overflow: hidden;
@@ -7969,21 +7982,19 @@ body.ct-skills-resizing {
    timeline takes over the message pane behind a breadcrumb back.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* — Composer footer metadata group (cwd chip + agent pill) ───────────────── */
+/* — Composer footer metadata group (scheduled activity + agent pill) ────── */
 .ct-input-footer-meta {
   display: flex;
   align-items: center;
   gap: 4px;
-  /* Sized to its content. Without this the group shrinks while the pill inside
-     does not, and the pill spills out over .ct-input-footer-actions. The cwd
-     chip (flex-shrink: 1, min-width: 0) is what gives way on a narrow screen. */
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 0 1 auto;
   margin-right: auto; /* absorbs the free space so the action buttons stay right */
 }
 
 @container ct-conversation (max-width: 420px) {
-  .ct-footer-cwd { display: none; }
   .ct-input-footer { min-width: 0; }
+  .ct-footer-context { max-width: 42%; }
   .ct-input-footer-meta {
     min-width: 0;
     flex: 1 1 auto;
@@ -8009,8 +8020,7 @@ body.ct-skills-resizing {
   padding: 1px 7px 1px 5px;
   min-height: 22px;
   max-width: 240px;
-  /* Agent status outranks the cwd label for the narrow space in this row, so
-     the pill holds its width and .ct-footer-cwd (flex-shrink: 1) gives way. */
+  /* Live agent state remains compact enough to share the context row. */
   flex-shrink: 0;
   border: 0;
   border-radius: 10px;

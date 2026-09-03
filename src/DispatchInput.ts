@@ -41,10 +41,10 @@ export interface DispatchInputOptions {
   onStop?: () => void;
   /** Include "@this (currently open file)" as the first option in the file dropdown */
   showThisMention?: boolean;
-  /** Show a CWD folder chip in the footer row; updated via setCwd() */
-  showCwdChip?: boolean;
-  /** Called when the CWD chip is clicked */
-  onCwdClick?: (e: MouseEvent) => void;
+  /** Show the thread context pill in the footer row; updated via setContext() */
+  showContextChip?: boolean;
+  /** Called when the thread context pill is clicked */
+  onContextClick?: (e: MouseEvent) => void;
   /** Intercept pastes ≥500 chars as an attachment chip instead of inline text */
   captureLongPaste?: boolean;
   /** Called on every textarea keystroke */
@@ -119,8 +119,8 @@ export class DispatchInput {
 
   private sendBtn!: HTMLButtonElement;
   private stopBtn: HTMLButtonElement | null = null;
-  private cwdChipNameEl: HTMLElement | null = null;
-  private cwdChipEl: HTMLElement | null = null;
+  private contextChipNameEl: HTMLElement | null = null;
+  private contextChipEl: HTMLElement | null = null;
 
   private pendingImages: ImageAttachment[] = [];
   private pendingAttachment: string | null = null;
@@ -254,28 +254,33 @@ export class DispatchInput {
 
     if (isInline) {
       // ── Inline layout: attach + mic sit LEFT of the textarea ─────────────
-      this.cwdChipNameEl = null;
-      this.cwdChipEl = null;
+      this.contextChipNameEl = null;
+      this.contextChipEl = null;
       leftActionsEl!.appendChild(attachBtn);
       leftActionsEl!.appendChild(micBtn);
     } else {
       // ── Column layout: footer row or fallback to input-actions column ────
-      const needsFooter = !!(this.options.showCwdChip || this.options.appendFooterActions || this.options.appendFooterMetadata);
+      const needsFooter = !!(this.options.showContextChip || this.options.appendFooterActions || this.options.appendFooterMetadata);
       if (needsFooter) {
         const inputFooter = this.rootEl.createDiv('ct-input-footer');
 
-        if (this.options.showCwdChip) {
-          const cwdChipEl = inputFooter.createDiv({ cls: 'ct-edited-file-chip ct-edited-files-cwd ct-footer-cwd' });
-          const cwdIcon = cwdChipEl.createSpan('ct-edited-file-chip-icon');
-          setIcon(cwdIcon, 'folder');
-          this.cwdChipNameEl = cwdChipEl.createSpan({ cls: 'ct-edited-file-chip-name' });
-          this.cwdChipEl = cwdChipEl;
-          if (this.options.onCwdClick) {
-            cwdChipEl.addEventListener('click', (e) => this.options.onCwdClick!(e));
+        if (this.options.showContextChip) {
+          const contextChipEl = inputFooter.createEl('button', {
+            cls: 'ct-footer-context',
+            attr: { type: 'button', 'aria-haspopup': 'menu' },
+          });
+          const contextIcon = contextChipEl.createSpan('ct-footer-context-icon');
+          setIcon(contextIcon, 'folder');
+          this.contextChipNameEl = contextChipEl.createSpan({ cls: 'ct-footer-context-name' });
+          const contextChevron = contextChipEl.createSpan('ct-footer-context-chevron');
+          setIcon(contextChevron, 'chevron-up');
+          this.contextChipEl = contextChipEl;
+          if (this.options.onContextClick) {
+            contextChipEl.addEventListener('click', (e) => this.options.onContextClick!(e));
           }
         } else {
-          this.cwdChipNameEl = null;
-          this.cwdChipEl = null;
+          this.contextChipNameEl = null;
+          this.contextChipEl = null;
         }
 
         if (this.options.appendFooterMetadata) {
@@ -289,8 +294,8 @@ export class DispatchInput {
         footerActionsEl.appendChild(attachBtn);
         footerActionsEl.appendChild(micBtn);
       } else {
-        this.cwdChipNameEl = null;
-        this.cwdChipEl = null;
+        this.contextChipNameEl = null;
+        this.contextChipEl = null;
         // No footer — fall back to putting attach + mic in the input actions column
         inputActions.appendChild(attachBtn);
         inputActions.appendChild(micBtn);
@@ -411,10 +416,10 @@ export class DispatchInput {
     }
   }
 
-  setCwd(displayText: string, tooltip: string): void {
-    if (!this.cwdChipNameEl || !this.cwdChipEl) return;
-    this.cwdChipNameEl.textContent = displayText;
-    setTooltip(this.cwdChipEl, tooltip);
+  setContext(displayText: string, tooltip: string): void {
+    if (!this.contextChipNameEl || !this.contextChipEl) return;
+    this.contextChipNameEl.textContent = displayText;
+    setTooltip(this.contextChipEl, tooltip);
   }
 
   getPendingAttachment(): string | null { return this.pendingAttachment; }
