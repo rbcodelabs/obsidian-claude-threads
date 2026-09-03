@@ -14,6 +14,8 @@ import { appendOrchestratorBadge } from './orchestrator-badge';
 import { partitionThreads, classifyThreadRow, type ThreadRowState } from './threadRowState';
 import { telemetry } from './telemetry';
 import { handleDesignDispatch } from './designDispatchRouting';
+import { attachStackArchiveMenu, attachThreadArchiveMenu, type ArchiveMenuDeps } from './threadArchiveMenu';
+import { promptConfirm } from './confirmModal';
 
 export const KANBAN_VIEW_TYPE = 'claude-threads:kanban';
 
@@ -118,6 +120,9 @@ export class KanbanView extends ItemView {
    * folder/swimlane mode — this keeps keys from colliding across lanes.
    */
   private expandedScheduledStacks = new Set<string>();
+
+  /** Built once; every card's archive menu shares it (all fields read live state). */
+  private archiveDeps: ArchiveMenuDeps | null = null;
 
   /** Tracks which sidebars were collapsed by this view on open, so we can restore them on close. */
   private _didCollapseLeft = false;
@@ -863,6 +868,12 @@ export class KanbanView extends ItemView {
       this.scheduleRender();
     });
 
+    // Attached to the HEADER, not the card: expanded child cards are nested
+    // INSIDE this card (unlike the dashboard, which puts them in a sibling
+    // div), so a card-level listener would open a second menu on every
+    // right-click of a nested card.
+    attachStackArchiveMenu(cardHeader, stack.scheduledItemId, stack.threads.map(t => t.id), this.archiveMenuDeps());
+
     const footer = card.createDiv('ct-kanban-card-footer');
     footer.createDiv({ cls: 'ct-kanban-chip ct-kanban-chip-time', text: relativeTime(stack.threads[0].updatedAt) });
 
@@ -997,6 +1008,8 @@ export class KanbanView extends ItemView {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
       this.plugin.openThreadInChatView(thread.id);
     });
+
+    attachThreadArchiveMenu(card, thread.id, this.archiveMenuDeps());
   }
 
   /**
@@ -1211,6 +1224,23 @@ export class KanbanView extends ItemView {
     thread.reviewed = true;
     this.plugin.saveSettings();
     this.scheduleRender();
+  }
+
+  /** Adapter for the shared archive context menu (see threadArchiveMenu.ts). */
+  private archiveMenuDeps(): ArchiveMenuDeps {
+    return this.archiveDeps ??= {
+      getThreads: () => this.manager.getThreads(),
+      isRunning: (id) => this.manager.isRunning(id),
+      getProjects: () => this.manager.getProjects(),
+      getPortfolioOrchestratorThreadId: () => this.plugin.settings.orchestratorThreadId,
+      // onlyIfHasMessages: bulk-archiving quiet scheduled runs must not litter
+      // the vault with empty notes (same flag ThreadsView.closeThread passes).
+      archiveThread: (id) => this.plugin.archiveThreadById(id, true),
+      cancelWakeups: (id) => this.plugin.cancelWakeups(id),
+      saveSettings: () => this.plugin.saveSettings(),
+      confirm: (spec) => promptConfirm(this.app, spec),
+      notify: (message) => { new Notice(message); },
+    };
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {

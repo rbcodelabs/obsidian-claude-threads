@@ -82,6 +82,8 @@ const pendingWakeups = new Map<string, { timerId: number; fireAt: number; reason
 pendingWakeups.set(kanbanWaitingThreadId, [{ timerId: 0, fireAt: kanbanWaitingFireAt, reason: kanbanWaitingReason }]);
 const dispatchCalls: unknown[][] = [];
 const openedAgentTeams: string[] = [];
+/** Threads archived via the right-click menu, in order — asserted by ui.spec.ts. */
+const archivedThreadIds: string[] = [];
 
 const mockPlugin = {
   app: (mockLeaf as any).app,
@@ -99,6 +101,14 @@ const mockPlugin = {
   getPendingWakeups: (threadId: string) =>
     [...(pendingWakeups.get(threadId) ?? [])].sort((a, b) => a.fireAt - b.fireAt),
   hasPendingWakeup: (threadId: string) => (pendingWakeups.get(threadId)?.length ?? 0) > 0,
+  // Without these two the archive context menu throws the moment an item is
+  // clicked. deleteThread emits `thread_deleted`, which both views already map
+  // to scheduleRender(), so the card really does disappear in the harness.
+  archiveThreadById: async (threadId: string) => {
+    archivedThreadIds.push(threadId);
+    manager.deleteThread(threadId);
+  },
+  cancelWakeups: (threadId: string) => { pendingWakeups.delete(threadId); },
 };
 
 const container = document.getElementById('app')!;
@@ -114,6 +124,7 @@ void view.onOpen();
 (window as any).__manager = manager;
 (window as any).__dispatchCalls = dispatchCalls;
 (window as any).__openedAgentTeams = openedAgentTeams;
+(window as any).__archivedThreadIds = archivedThreadIds;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   if (dashboardMode) return;
   settings.kanbanGroupBy = mode;

@@ -2137,6 +2137,48 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
   });
 
+  // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
+  // to snapshot. This drives the real listener end to end instead — right-click,
+  // read the rendered menu, click the item, and confirm the thread is gone.
+  test('agents list — right-click archives a thread', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-agents-project');
+
+    const before = await page.evaluate(() => (window as any).__manager.getThreads().length);
+
+    await page.locator('.ct-agents-row-idle').first().click({ button: 'right' });
+    const menu = page.locator('.menu');
+    await expect(menu).toHaveCount(1);
+    expect(await menu.locator('.menu-item').allInnerTexts()).toEqual(['Archive thread']);
+
+    await menu.locator('.menu-item').first().click();
+
+    // One idle, non-orchestrator thread archives outright — no dialog.
+    await expect(page.locator('.modal-container')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__archivedThreadIds)).toHaveLength(1);
+
+    const [archivedId] = await page.evaluate(() => (window as any).__archivedThreadIds);
+    // deleteThread emits `thread_deleted`, which the dashboard already maps to
+    // scheduleRender() — so no re-render call is needed in the menu code itself.
+    expect(await page.evaluate((id) => (window as any).__manager.getThread(id), archivedId)).toBeFalsy();
+    await expect.poll(() => page.evaluate(() => (window as any).__manager.getThreads().length)).toBe(before - 1);
+  });
+
+  test('agents list — right-click a scheduled-job rollup offers a bulk archive', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.ct-agents-row-scheduled-stack');
+
+    const rollup = page.locator('.ct-agents-row-scheduled-stack').first();
+    await expect(rollup.locator('.ct-agents-stack-count')).toHaveText('×3');
+    await rollup.click({ button: 'right' });
+
+    // All three runs of Hourly Triage sit in this one rollup (M === N), so there
+    // is no "all M runs of this job" item to offer.
+    expect(await page.locator('.menu .menu-item').allInnerTexts()).toEqual(['Archive these 3 runs']);
+  });
+
   for (const { width, height } of [
     { width: 375, height: 667 },
     { width: 390, height: 844 },

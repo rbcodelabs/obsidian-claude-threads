@@ -10,7 +10,6 @@ vi.mock('../../src/ClaudeSession', () => ({
 }));
 vi.mock('../../src/DispatchInput', () => ({ DispatchInput: class {} }));
 vi.mock('../../src/SettingsTab', () => ({ isWebViewerEnabled: () => false }));
-vi.mock('../../src/SkillsManagerView', () => ({ ConfirmModal: class {} }));
 
 import { Notice } from 'obsidian';
 import { ThreadsView } from '../../src/ThreadsView';

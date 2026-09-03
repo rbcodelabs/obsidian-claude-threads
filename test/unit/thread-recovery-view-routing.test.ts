@@ -12,7 +12,6 @@ vi.mock('../../src/ClaudeSession', () => ({
 }));
 vi.mock('../../src/DispatchInput', () => ({ DispatchInput: class {} }));
 vi.mock('../../src/SettingsTab', () => ({ isWebViewerEnabled: () => false }));
-vi.mock('../../src/SkillsManagerView', () => ({ ConfirmModal: class {} }));
 
 import { AgentDashboard } from '../../src/AgentDashboard';
 import { ThreadsView } from '../../src/ThreadsView';
@@ -47,12 +46,14 @@ describe('recovered-thread view routing', () => {
 
   it('ThreadsView refreshes project-bar thread counts for threads_loaded', () => {
     const view = new ThreadsView({} as never, { manager: {} } as never) as unknown as {
-      handleThreadListEvent: (event: { type: string }) => void;
+      handleThreadListEvent: (threadId: string, event: { type: string }) => void;
       renderProjectBar: () => void;
     };
     const renderProjectBar = vi.spyOn(view as never, 'renderProjectBar').mockImplementation(() => {});
 
-    view.handleThreadListEvent({ type: 'threads_loaded' });
+    // The emitting thread's id is the first argument — the handler needs it to
+    // repair the selection on `thread_deleted` (see threads-view-delete-selection).
+    view.handleThreadListEvent('t1', { type: 'threads_loaded' });
 
     expect(renderProjectBar).toHaveBeenCalledOnce();
   });

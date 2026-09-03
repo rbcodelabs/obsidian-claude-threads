@@ -15,6 +15,8 @@ import { handleDesignDispatch } from './designDispatchRouting';
 import { resolveGitRepoRoot, resolveThreadProjectName } from './pathUtils';
 import { parsePrUrlRepo } from './gitDiffUtils';
 import { groupDashboardThreads } from './dashboardProjectGroups';
+import { attachStackArchiveMenu, attachThreadArchiveMenu, type ArchiveMenuDeps } from './threadArchiveMenu';
+import { promptConfirm } from './confirmModal';
 
 export const AGENT_VIEW_TYPE = 'claude-threads:agents';
 
@@ -55,6 +57,9 @@ export class AgentDashboard extends ItemView {
 
   /** IDs (Thread.scheduledItemId) of currently-expanded rows in the "Scheduled Jobs" section. */
   private expandedScheduledStacks = new Set<string>();
+
+  /** Built once; every row's archive menu shares it (all fields read live state). */
+  private archiveDeps: ArchiveMenuDeps | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
@@ -271,6 +276,23 @@ export class AgentDashboard extends ItemView {
     const selectionStillExists = !this.selectedProjectId || this.manager.getProject(this.selectedProjectId);
     if (!selectionStillExists) this.selectedProjectId = '';
     select.value = this.selectedProjectId;
+  }
+
+  /** Adapter for the shared archive context menu (see threadArchiveMenu.ts). */
+  private archiveMenuDeps(): ArchiveMenuDeps {
+    return this.archiveDeps ??= {
+      getThreads: () => this.manager.getThreads(),
+      isRunning: (id) => this.manager.isRunning(id),
+      getProjects: () => this.manager.getProjects(),
+      getPortfolioOrchestratorThreadId: () => this.plugin.settings.orchestratorThreadId,
+      // onlyIfHasMessages: bulk-archiving quiet scheduled runs must not litter
+      // the vault with empty notes (same flag ThreadsView.closeThread passes).
+      archiveThread: (id) => this.plugin.archiveThreadById(id, true),
+      cancelWakeups: (id) => this.plugin.cancelWakeups(id),
+      saveSettings: () => this.plugin.saveSettings(),
+      confirm: (spec) => promptConfirm(this.app, spec),
+      notify: (message) => { new Notice(message); },
+    };
   }
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
@@ -490,6 +512,10 @@ export class AgentDashboard extends ItemView {
       this.scheduleRender();
     });
 
+    // Safe to attach to the row itself: expanded children go into a SIBLING
+    // div below, never inside `row` (unlike Kanban's nested stack card).
+    attachStackArchiveMenu(row, stack.scheduledItemId, stack.threads.map(t => t.id), this.archiveMenuDeps());
+
     if (expanded) {
       const nested = parent.createDiv('ct-agents-stack-body');
       for (const thread of stack.threads) {
@@ -653,6 +679,8 @@ export class AgentDashboard extends ItemView {
       if (state === 'idle' && !thread.reviewed) this.markReviewed(thread.id);
       this.plugin.openThreadInChatView(thread.id);
     });
+
+    attachThreadArchiveMenu(row, thread.id, this.archiveMenuDeps());
   }
 
   private normalizedRepoOrCwd(cwd: string): string {
