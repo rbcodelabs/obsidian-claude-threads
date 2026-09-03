@@ -526,6 +526,8 @@ Projects group related threads, choose their initial working directory, inject s
 
 **Opening a thread in a project:** The Agents List and Kanban kickoff panels have an accessible **Project** selector. Choose a Project before dispatching, or deliberately leave **No Project** in the Agents List (**Unassigned** in Kanban) to use the global default cwd. Model, goal, loop, attachment, image, and harness kickoff options preserve that selection. The chat view's New Thread flow and agent-created child threads keep their existing Project inheritance behavior.
 
+**Moving an existing thread:** Open the **⋯** menu in the chat view and choose **Move to Project…**, then pick a Project or **(No project)**. This works regardless of coordination scope, so a thread started outside any Project — including one that just created the Project — is never stranded. Moving into a Project switches the thread to that Project's working directory, which starts a fresh session on the next message; detaching leaves the cwd alone. The item is hidden for the Portfolio Orchestrator and for any thread that owns a Project, since neither can be reassigned.
+
 **Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Create or open the Project Orchestrator from the same row; the first completed Project thread also creates it automatically without stealing focus. Intentionally archiving a Project Orchestrator disables that automatic recreation (including after a synced-settings reload) until you deliberately choose Create/Open again. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Deleting a Project detaches its threads, clears pending proposals, removes its orchestrator heartbeat, and pins affected schedules to the Project's former effective cwd.
 
 **Scheduled work:** Cron items resolve their effective cwd at fire time in this order: explicit scheduled-item cwd, current Project cwd, then the global default. The same resolved path is used for a gate command and its spawned thread. Cron create/update rejects unknown Projects, and a deleted Project reference fails the run rather than dispatching in an unrelated fallback directory.
@@ -656,7 +658,7 @@ Control the current thread's session state.
 
 ### Thread coordination tools
 
-Discover, read, and message other running threads. Project threads coordinate only within their Project; unassigned threads coordinate with unassigned threads. The Portfolio Orchestrator sees unassigned work by default and uses explicit per-call Project elevation for raw Project access.
+Discover, read, and message other running threads. Project threads coordinate only within their Project; unassigned threads coordinate with unassigned threads. The Portfolio Orchestrator sees unassigned work by default and uses explicit per-call Project elevation for raw Project access. One narrow exception: an unassigned thread may place **itself** into any Project via `threads_set_project`, because nothing else can — that is an escape hatch out of statelessness, not a scope hop, and it does not extend to moving other threads or to a Project thread hopping to a different Project.
 
 | Tool | Parameters | Description |
 |---|---|---|
@@ -665,7 +667,7 @@ Discover, read, and message other running threads. Project threads coordinate on
 | `threads_list_projects` | — | Returns configured projects with `cwdOverride` and resolved `effectiveCwd`. |
 | `threads_create_project` | `name`, `vaultFolder`, `description?`, `cwdOverride?` | Creates and persists a project. |
 | `threads_update_project` | `projectId`, `name?`, `description?`, `cwdOverride?`, `elevatedProjectId?` | Updates the caller's Project name, context, or cwd override and waits for persistence. Pass `null` for description or cwd override to clear it. Existing threads retain their cwd and live session; future Project threads and dynamic schedules use the updated cwd. Portfolio callers must explicitly elevate to the matching Project. |
-| `threads_set_project` | `threadId`, `projectId`, `alignCwd?` | Assigns a thread to a project, or detaches it with `null`. Association-only by default; `alignCwd: true` also switches to a non-null Project's cwd on the next safe turn. Detaching never relocates the thread. |
+| `threads_set_project` | `threadId`, `projectId`, `alignCwd?` | Assigns a thread to a project, or detaches it with `null`. Association-only by default; `alignCwd: true` also switches to a non-null Project's cwd on the next safe turn. Detaching never relocates the thread. An unassigned thread may target **itself** with any Project id; every other caller is still held to normal coordination scope, so a Project thread cannot move itself or anyone else into a different Project. |
 | `threads_get_messages` | `threadId`, `limit?` | Returns recent user and assistant messages. |
 | `threads_open` | `threadId`, `elevatedProjectId?` | Opens and focuses the exact thread UUID. A successful open marks it reviewed and persists the active selection. |
 | `threads_get_log` | `threadId?`, `limit?`, `type?` | Returns parsed raw JSONL event-log entries. |

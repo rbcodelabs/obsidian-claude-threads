@@ -1923,7 +1923,78 @@ export class ThreadsView extends ItemView {
         .setIcon('git-branch')
         .onClick(() => this.forkThread(thread.id))
     );
+    // Orchestrator threads are pinned to their scope by ThreadManager.setThreadProject,
+    // so offering the move would only ever produce an error notice.
+    if (this.canMoveToProject(thread.id)) {
+      menu.addSeparator();
+      menu.addItem(item =>
+        item
+          .setTitle('Move to Project…')
+          .setIcon('folder')
+          .onClick(() => this.openMoveToProjectMenu(event, thread.id))
+      );
+    }
     menu.showAtMouseEvent(event);
+  }
+
+  /**
+   * False for the Portfolio orchestrator and for any thread that owns a Project —
+   * `ThreadManager.setThreadProject` always throws for those.
+   */
+  private canMoveToProject(threadId: string): boolean {
+    if (threadId === this.plugin.settings.orchestratorThreadId) return false;
+    return !this.manager.getProjects().some(project => project.orchestratorThreadId === threadId);
+  }
+
+  /**
+   * Second-level Project picker for `Move to Project…`. Opened as a separate Menu at the
+   * same mouse event rather than `MenuItem.setSubmenu()`, which is absent from the pinned
+   * obsidian typings and from the 1.0.0 minAppVersion this plugin supports.
+   */
+  private openMoveToProjectMenu(event: MouseEvent, threadId: string): void {
+    const thread = this.manager.getThread(threadId);
+    if (!thread) return;
+    const menu = new Menu();
+    menu.addItem(item =>
+      item
+        .setTitle('(No project)')
+        .setChecked(!thread.projectId)
+        .onClick(() => this.moveThreadToProject(threadId, null))
+    );
+    for (const project of this.manager.getProjects()) {
+      menu.addItem(item =>
+        item
+          .setTitle(project.name)
+          .setIcon('folder')
+          .setChecked(thread.projectId === project.id)
+          .onClick(() => this.moveThreadToProject(threadId, project.id))
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  /**
+   * Applies a Project move from the ⋯ menu. Uses alignCwd so the thread lands in the
+   * Project's working directory, which also starts a fresh session — announced in the
+   * Notice rather than happening silently. Detach ignores alignCwd by design.
+   */
+  private async moveThreadToProject(threadId: string, projectId: string | null): Promise<void> {
+    try {
+      this.manager.setThreadProject(threadId, projectId, true);
+      await this.plugin.saveSettings();
+      if (threadId === this.activeThreadId) {
+        this.updateProjectIndicator();
+        this.renderCwdChip();
+      }
+      const project = projectId ? this.manager.getProject(projectId) : null;
+      new Notice(
+        project
+          ? `Moved to ${project.name}. Working directory switched to the Project folder; the next message starts a new session.`
+          : 'Removed from Project. Working directory is unchanged.',
+      );
+    } catch (err: unknown) {
+      new Notice(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /** Returns the model active for the current thread, or undefined for the global default. */

@@ -40,7 +40,9 @@ describe('coordination tool scoping', () => {
     const denied = await tool.handler({ threadId: 'worker-a', projectId: 'project-b', elevatedProjectId: 'project-a' });
 
     expect(authorizeThread).toHaveBeenCalledWith('worker-a', 'project-a', 'write');
-    expect(authorizeProjectDestination).toHaveBeenCalledWith('project-b', 'project-a');
+    // The target thread id is the third argument so the authorizer can tell
+    // self-assignment (allowed for an unassigned caller) from moving someone else.
+    expect(authorizeProjectDestination).toHaveBeenCalledWith('project-b', 'project-a', 'worker-a');
     expect(denied.isError).toBe(true);
     expect(setThreadProject).not.toHaveBeenCalled();
   });
@@ -66,6 +68,26 @@ describe('coordination tool scoping', () => {
     expect(result.isError).toBeUndefined();
     expect(authorizeProjectDestination).toHaveBeenCalledWith('project-a', elevatedProjectId);
     expect(updateProject).toHaveBeenCalledOnce();
+  });
+
+  it('forwards the target thread id so an unassigned thread can assign itself', async () => {
+    const authorizeThread = vi.fn().mockReturnValue(true);
+    const setThreadProject = vi.fn();
+    // Stands in for main.ts's authorizeProjectAssignment wiring: self only.
+    const authorizeProjectDestination = vi.fn((_projectId, _elevated, targetThreadId) => targetThreadId === 'self');
+    const server = createClaudeThreadsMcpServers(app, { authorizeThread, authorizeProjectDestination, setThreadProject }).claude_threads as unknown as { tools: Array<{ name: string; handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }> }> };
+    const tool = server.tools.find(candidate => candidate.name === 'threads_set_project')!;
+
+    const allowed = await tool.handler({ threadId: 'self', projectId: 'project-a', alignCwd: true });
+
+    expect(authorizeProjectDestination).toHaveBeenCalledWith('project-a', undefined, 'self');
+    expect(allowed.isError).toBeUndefined();
+    expect(setThreadProject).toHaveBeenCalledWith('self', 'project-a', true);
+
+    const denied = await tool.handler({ threadId: 'other', projectId: 'project-a' });
+    expect(denied.isError).toBe(true);
+    expect(denied.content[0]!.text).toContain('Destination Project is outside coordination scope');
+    expect(setThreadProject).toHaveBeenCalledTimes(1);
   });
 
   it('enforces the central boundary across every direct coordination tool', async () => {
