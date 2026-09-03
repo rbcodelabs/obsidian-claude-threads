@@ -405,7 +405,12 @@ export interface DesignArtifact {
 /**
  * A Project groups related threads and chooses their initial working context.
  * It is not a security or filesystem-isolation boundary: vault tools, MCP
- * servers, skills, and secrets may still have a broader configured scope.
+ * server/skill *registration*, and unscoped secrets remain global regardless
+ * of Project. The one exception is secret *values* — see
+ * `PluginSettings.secretEnvScopes` — which can optionally be restricted to a
+ * set of Project ids. Absent that opt-in, a secret is still resolved for
+ * every Project (and for project-less threads/scheduled items) exactly as
+ * before.
  */
 export interface Project {
   id: string;
@@ -751,6 +756,25 @@ export interface PluginSettings {
    * names are persisted here — values never appear in data.json.
    */
   secretEnvKeys: string[];
+  /**
+   * Optional per-secret Project scoping, keyed by env var name (matching
+   * `secretEnvKeys` entries). The value is the list of Project ids the secret
+   * is allowed to be injected into.
+   *
+   * An absent key, or an empty array, means global — identical to the
+   * pre-scoping behavior, and the default for every existing secret so no
+   * data.json migration is needed. A non-empty list restricts the secret's
+   * *value* to threads/scheduled items whose `projectId` is in that list. A
+   * thread or scheduled item with no `projectId` at all only ever receives
+   * global secrets, never a project-scoped one — see
+   * `secretUtils.isSecretVisibleToProject`.
+   *
+   * MCP servers and skills are unaffected by this: they stay registered
+   * globally regardless of Project. Only whether a scoped secret's value
+   * resolves (e.g. to fill an MCP server's `${VAR}` placeholder, or to
+   * populate session/gate env) is gated by this map.
+   */
+  secretEnvScopes?: Record<string, string[]>;
   /**
    * External MCP servers injected into every new thread, on both the Claude and
    * Codex harnesses. Keyed by server name.

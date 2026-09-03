@@ -222,8 +222,12 @@ export class ThreadManager {
    * When set, called before each session run to resolve secret env var values from
    * the OS keychain. Returns a plain key-value map that is merged into the session
    * environment. Only ever called at session start — values are not cached or stored.
+   *
+   * Takes the resolving thread's `projectId` (undefined for project-less
+   * threads) so the resolver can apply `PluginSettings.secretEnvScopes` —
+   * see `secretUtils.isSecretVisibleToProject`.
    */
-  secretEnvResolver: (() => Record<string, string>) | undefined = undefined;
+  secretEnvResolver: ((projectId?: string) => Record<string, string>) | undefined = undefined;
   permissionHandler: (threadId: string, toolName: string, detail: string) => Promise<boolean> = async () => false;
   questionHandler: (threadId: string, questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
@@ -1701,7 +1705,7 @@ export class ThreadManager {
     const codexMcpServers = Object.fromEntries(
       Object.entries(sessionMcpServers ?? {}).filter(([, server]) => (server as { type?: string }).type !== 'sdk'),
     );
-    const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver() : {};
+    const resolvedSecretEnv = this.secretEnvResolver ? this.secretEnvResolver(project?.id) : {};
     const agentProfiles = loadAgentProfiles(this.settings.skillSources ?? []);
 
     return {

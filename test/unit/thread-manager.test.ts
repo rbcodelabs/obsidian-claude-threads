@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -231,6 +231,41 @@ describe('ThreadManager — mcpServerFactory', () => {
     const b = manager.mcpServerFactory();
     expect(a).not.toBe(b);
     expect(a.obsidian).not.toBe(b.obsidian);
+  });
+});
+
+describe('ThreadManager — secretEnvResolver projectId threading', () => {
+  // buildThreadSessionOptions is private; reach through as elsewhere in this
+  // file (see buildSessionCallbacks usage above) to verify it forwards the
+  // thread's resolved project id into secretEnvResolver — the wiring that
+  // lets project-scoped secrets (PluginSettings.secretEnvScopes) resolve
+  // correctly at session start.
+  const build = (manager: ThreadManager, threadId: string, thread: ReturnType<ThreadManager['createThread']>) =>
+    (manager as unknown as {
+      buildThreadSessionOptions(id: string, t: typeof thread): unknown;
+    }).buildThreadSessionOptions(threadId, thread);
+
+  it("passes the thread's resolved project id to secretEnvResolver", () => {
+    const manager = makeManager();
+    const project = manager.createProject('Proj', 'Projects/Proj');
+    const thread = manager.createThread('T', '', project.id);
+    const resolver = vi.fn().mockReturnValue({});
+    manager.secretEnvResolver = resolver;
+
+    build(manager, thread.id, thread);
+
+    expect(resolver).toHaveBeenCalledWith(project.id);
+  });
+
+  it('passes undefined for a project-less thread', () => {
+    const manager = makeManager();
+    const thread = manager.createThread('T', '');
+    const resolver = vi.fn().mockReturnValue({});
+    manager.secretEnvResolver = resolver;
+
+    build(manager, thread.id, thread);
+
+    expect(resolver).toHaveBeenCalledWith(undefined);
   });
 });
 
