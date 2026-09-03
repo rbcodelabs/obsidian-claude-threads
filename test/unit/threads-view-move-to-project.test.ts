@@ -36,8 +36,7 @@ interface Ctx {
   view: ThreadsView;
   setThreadProject: ReturnType<typeof vi.fn>;
   saveSettings: ReturnType<typeof vi.fn>;
-  updateProjectIndicator: ReturnType<typeof vi.fn>;
-  renderCwdChip: ReturnType<typeof vi.fn>;
+  renderComposerContext: ReturnType<typeof vi.fn>;
 }
 
 function makeView(opts: {
@@ -50,14 +49,14 @@ function makeView(opts: {
   const projects = opts.projects ?? [];
   const setThreadProject = vi.fn(opts.setThreadProjectImpl);
   const saveSettings = vi.fn().mockResolvedValue(undefined);
-  const updateProjectIndicator = vi.fn();
-  const renderCwdChip = vi.fn();
+  const renderComposerContext = vi.fn();
 
   // Built on the real prototype so the methods under test call each other for real —
   // only collaborators and DOM-bound repaint helpers are stubbed.
   const view = Object.assign(Object.create(ThreadsView.prototype), {
     activeThreadId: opts.activeThreadId,
     compressedView: false,
+    escalatedTurnModels: new Map(),
     manager: {
       getThread: (id: string) => opts.threads.find(t => t.id === id) ?? null,
       getProjects: () => projects,
@@ -66,17 +65,17 @@ function makeView(opts: {
     },
     plugin: {
       settings: { orchestratorThreadId: opts.portfolioOrchestratorThreadId },
+      discoveredModelsByHarness: { codex: [] },
       saveSettings,
     },
-    updateProjectIndicator,
-    renderCwdChip,
+    renderComposerContext,
     // Referenced by the other ⋯ items; never invoked in these tests.
     toggleCompressView: vi.fn(),
     summarizeThread: vi.fn(),
     forkThread: vi.fn(),
   }) as ThreadsView;
 
-  return { view, setThreadProject, saveSettings, updateProjectIndicator, renderCwdChip };
+  return { view, setThreadProject, saveSettings, renderComposerContext };
 }
 
 /** Private-by-convention methods; reached through the prototype for testing. */
@@ -180,8 +179,7 @@ describe('ThreadsView — Move to Project…', () => {
 
     expect(ctx.setThreadProject).toHaveBeenCalledWith('t1', 'p1', true);
     expect(ctx.saveSettings).toHaveBeenCalled();
-    expect(ctx.updateProjectIndicator).toHaveBeenCalled();
-    expect(ctx.renderCwdChip).toHaveBeenCalled();
+    expect(ctx.renderComposerContext).toHaveBeenCalledOnce();
   });
 
   it('selecting (No project) detaches by passing null', async () => {
@@ -203,8 +201,7 @@ describe('ThreadsView — Move to Project…', () => {
     await proto.moveThreadToProject.call(ctx.view, 't1', 'p1');
 
     expect(ctx.setThreadProject).toHaveBeenCalledWith('t1', 'p1', true);
-    expect(ctx.updateProjectIndicator).not.toHaveBeenCalled();
-    expect(ctx.renderCwdChip).not.toHaveBeenCalled();
+    expect(ctx.renderComposerContext).not.toHaveBeenCalled();
   });
 
   it('surfaces a ThreadManager rejection instead of throwing out of the click handler', async () => {
