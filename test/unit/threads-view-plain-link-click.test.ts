@@ -35,13 +35,22 @@ interface Harness {
   workspaceCalls: string[];
   /** Parallel to workspaceCalls: the sourcePath each classic open was given. */
   workspaceSourcePaths: string[];
+  /** Calls to the private openLink() helper used for http(s) links — [url, forceExternal]. */
+  openLinkCalls: Array<[string, boolean]>;
 }
 
 function makeView(opts: { conversationFirst: boolean; vaultFiles?: string[]; noteFile?: string }): Harness {
   const contextPanelCalls: Array<[string, string]> = [];
   const workspaceCalls: string[] = [];
   const workspaceSourcePaths: string[] = [];
+  const openLinkCalls: Array<[string, boolean]> = [];
   const view = Object.create(ThreadsView.prototype) as ThreadsView & Record<string, unknown>;
+  // openLink() itself (Web Viewer leaf routing, electron fallback) is covered
+  // by linkUtils.test.ts against openUrlPreferringWebViewer directly. Here we
+  // only need to verify renderMarkdown's http(s) handler calls it with the
+  // right arguments, so it's stubbed rather than exercised end-to-end.
+  (view as unknown as { openLink: (url: string, forceExternal?: boolean) => void }).openLink =
+    (url: string, forceExternal = false) => { openLinkCalls.push([url, forceExternal]); };
 
   (view as unknown as { app: unknown }).app = {
     vault: {
@@ -67,7 +76,7 @@ function makeView(opts: { conversationFirst: boolean; vaultFiles?: string[]; not
   (view as unknown as { activeThreadId: string | null }).activeThreadId = 'tid';
   (view as unknown as { visualizeManager: unknown }).visualizeManager = undefined;
 
-  return { view, contextPanelCalls, workspaceCalls, workspaceSourcePaths };
+  return { view, contextPanelCalls, workspaceCalls, workspaceSourcePaths, openLinkCalls };
 }
 
 async function renderAndClick(harness: Harness, markdown: string): Promise<HTMLAnchorElement> {
@@ -243,8 +252,29 @@ describe('ThreadsView renderMarkdown — wikilink sourcePath parity across place
   });
 });
 
-describe('ThreadsView renderMarkdown — external and same-page links stay inert', () => {
-  it('does not attach a click listener to an external link', async () => {
+// Regression coverage for "clicking a URL in the conversation doesn't open in
+// the right tab" in conversation-first placement: an http(s) link previously
+// got NO click listener at all (classifyRenderedMarkdownLink calls it
+// 'external' and the vault-link handler bails out), so it fell through to the
+// host's default anchor behavior — which has no idea about conversation-first
+// placement or the Web Viewer's destination-leaf routing. Fixed by wiring
+// these through the same openLink() the footer pills already use.
+describe('ThreadsView renderMarkdown — external http(s) links route through openLink()', () => {
+  it('attaches a click listener that calls openLink with the href', async () => {
+    const harness = makeView({ conversationFirst: false });
+    await renderAndClick(harness, '[Example](https://example.com)');
+    expect(harness.openLinkCalls).toEqual([['https://example.com', false]]);
+    expect(harness.workspaceCalls).toEqual([]);
+    expect(harness.contextPanelCalls).toEqual([]);
+  });
+
+  it('routes the same way in conversation-first placement — openLink owns the destination-leaf branch', async () => {
+    const harness = makeView({ conversationFirst: true, noteFile: 'Threads/my-thread.md' });
+    await renderAndClick(harness, '[Example](https://example.com/path?x=1)');
+    expect(harness.openLinkCalls).toEqual([['https://example.com/path?x=1', false]]);
+  });
+
+  it('forces the system browser on Cmd/Ctrl-click, matching the footer pill convention', async () => {
     const harness = makeView({ conversationFirst: false });
     const el = document.createElement('div');
     const render = (harness.view as unknown as {
@@ -252,9 +282,32 @@ describe('ThreadsView renderMarkdown — external and same-page links stay inert
     }).renderMarkdown.bind(harness.view);
     await render('[Example](https://example.com)', el);
     const link = el.querySelector('a') as HTMLAnchorElement;
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, metaKey: true }));
+    expect(harness.openLinkCalls).toEqual([['https://example.com', true]]);
+  });
+
+  it('leaves a mailto: link inert — only http(s) is intercepted', async () => {
+    const harness = makeView({ conversationFirst: false });
+    await renderAndClick(harness, '[Email](mailto:rick@example.com)');
+    expect(harness.openLinkCalls).toEqual([]);
+    expect(harness.workspaceCalls).toEqual([]);
+    expect(harness.contextPanelCalls).toEqual([]);
+  });
+});
+
+describe('ThreadsView renderMarkdown — same-page links stay inert', () => {
+  it('does not attach a click listener to a same-page anchor', async () => {
+    const harness = makeView({ conversationFirst: false });
+    const el = document.createElement('div');
+    const render = (harness.view as unknown as {
+      renderMarkdown(markdown: string, el: HTMLElement): Promise<void>;
+    }).renderMarkdown.bind(harness.view);
+    await render('[Jump](#section)', el);
+    const link = el.querySelector('a') as HTMLAnchorElement;
     expect(link).not.toBeNull();
     link.click();
     expect(harness.workspaceCalls).toEqual([]);
     expect(harness.contextPanelCalls).toEqual([]);
+    expect(harness.openLinkCalls).toEqual([]);
   });
 });
