@@ -2250,6 +2250,28 @@ export class ThreadsView extends ItemView {
         }
       });
     });
+    // http(s) links get no listener above (classifyRenderedMarkdownLink calls
+    // them 'external'), so they fall through to the host's default anchor
+    // click behavior. That default does not know about conversation-first
+    // placement: it does not route through the Web Viewer's destination-leaf
+    // logic, so the page can open in the wrong tab (or the system browser)
+    // instead of the adjacent context panel. Wire these through the same
+    // openLink() the footer pills use, which already branches correctly.
+    // Only http(s) is intercepted — mailto:, obsidian:, and other
+    // custom-protocol links keep the host/OS's own handler.
+    el.querySelectorAll<HTMLAnchorElement>('a:not(.internal-link):not(.ct-visualize-slot)').forEach((a) => {
+      const href = a.getAttribute('href') ?? '';
+      if (classifyRenderedMarkdownLink(href) !== 'external') return;
+      if (!/^https?:\/\//i.test(href.trim())) return;
+      a.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        // Cmd-click (Mac) / Ctrl-click (other) forces the system browser even
+        // when the Web Viewer is enabled — matching the footer pill and
+        // Obsidian's own "open in default app" modifier convention.
+        this.openLink(href, event.metaKey || event.ctrlKey);
+      });
+    });
     this.linkifyBridgePaths(el);
   }
 
