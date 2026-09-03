@@ -971,23 +971,70 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
     // Open the more menu
+    await page.hover('.ct-floating-panel');
     await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
     await shot(page, 'fork-menu.png', { fullPage: true });
   });
 
-  test('model switcher menu', async ({ page }) => {
+  test('composer menu exposes model and permission choices', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
     await page.waitForSelector('.ct-messages');
     await page.waitForTimeout(500);
-    // Open the footer model switcher (cpu icon, left of the more button)
-    await page.click('.ct-model-btn');
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
     await page.waitForSelector('.menu');
+    await expect(page.locator('.menu')).toContainText('Model: Default');
+    await expect(page.locator('.menu')).toContainText('Permissions: Global default');
+    await expect(page.locator('.ct-model-btn')).toHaveCount(0);
+    await expect(page.locator('.ct-permission-mode-btn')).toHaveCount(0);
     // Move mouse away so no menu item is in hover state
     await page.mouse.move(0, 0);
     await shot(page, 'model-switcher-menu.png', { fullPage: true });
+  });
+
+  test('composer menu changes model and permission using existing selectors', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
+    await page.getByText('Model: Default').click();
+    await page.getByText('Sonnet', { exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__manager.getThread('thread-fix-auth').model)).toBe('sonnet');
+
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
+    await expect(page.locator('.menu')).toContainText('Model: Sonnet');
+    await page.getByText('Permissions: Global default').click();
+    await page.getByText('Plan only (read & propose, no execute)', { exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__manager.getThread('thread-fix-auth').permissionMode)).toBe('plan');
+  });
+
+  test('composer menu shows a temporary model escalation', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__view['escalatedTurnModels'].set('thread-fix-auth', 'opus'));
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
+    await expect(page.locator('.menu')).toContainText('Model: opus (this turn)');
+  });
+
+  test('unified context truncates without overlapping footer actions', async ({ page }) => {
+    await page.setViewportSize({ width: 300, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.hover('.ct-floating-panel');
+    await page.waitForTimeout(300);
+    const bounds = await page.evaluate(() => {
+      const context = document.querySelector('.ct-footer-context')!.getBoundingClientRect();
+      const actions = document.querySelector('.ct-input-footer-actions')!.getBoundingClientRect();
+      return { contextRight: context.right, actionsLeft: actions.left, footerWidth: document.querySelector('.ct-input-footer')!.scrollWidth };
+    });
+    expect(bounds.contextRight).toBeLessThanOrEqual(bounds.actionsLeft);
+    expect(bounds.footerWidth).toBeLessThanOrEqual(280);
   });
 
   // Modal IS mocked in obsidian-mock.ts and renders .modal-container into document.body on open()
@@ -1098,19 +1145,32 @@ test.describe('Claude Threads UI', () => {
       manager.setThreadProject('thread-fix-auth', project.id);
       return project.id;
     });
-    await expect(page.locator('.ct-project-indicator')).toBeVisible();
-    await expect(page.locator('.ct-project-indicator-name')).toHaveText('Live Project');
-    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/hip-trip');
+    await expect(page.locator('.ct-project-indicator')).toHaveCount(0);
+    await expect(page.locator('.ct-footer-context-name')).toHaveText('Live Project · hip-trip');
+    await expect(page.locator('.ct-footer-context')).toHaveAttribute('aria-label', 'Project: Live Project. Working directory: /Users/mock/projects/hip-trip');
 
     await page.evaluate((id) => (window as any).__manager.updateProject(id, { name: 'Renamed Live Project' }), projectId);
-    await expect(page.locator('.ct-project-indicator-name')).toHaveText('Renamed Live Project');
+    await expect(page.locator('.ct-footer-context-name')).toHaveText('Renamed Live Project · hip-trip');
 
     await page.evaluate((id) => (window as any).__manager.setThreadProject('thread-fix-auth', id, true), projectId);
-    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/live');
+    await expect(page.locator('.ct-footer-context-name')).toHaveText('Renamed Live Project · live');
+    await expect(page.locator('.ct-footer-context')).toHaveAttribute('aria-label', 'Project: Renamed Live Project. Working directory: /Users/mock/projects/live');
 
     await page.evaluate((id) => (window as any).__manager.deleteProject(id), projectId);
-    await expect(page.locator('.ct-project-indicator')).toBeHidden();
-    await expect(page.locator('.ct-footer-cwd')).toHaveAttribute('aria-label', '/Users/mock/projects/live');
+    await expect(page.locator('.ct-footer-context-name')).toHaveText('live');
+    await expect(page.locator('.ct-footer-context')).toHaveAttribute('aria-label', 'Working directory: /Users/mock/projects/live');
+  });
+
+  test('unified composer context opens project and working-directory details', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__view.focusThread('thread-fix-auth'));
+
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-footer-context');
+    await expect(page.locator('.menu')).toContainText('Working directory: /Users/mock/projects/hip-trip');
+    await expect(page.locator('.menu')).toContainText('Project: No project');
+    await expect(page.locator('.menu')).toContainText('Change project…');
   });
 
   // Agent Dashboard is not instantiated or exposed in the test harness (index.ts only
