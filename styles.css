@@ -1753,76 +1753,6 @@
   color: var(--text-normal);
 }
 
-/* Proposed-reply banner (above the compose box) */
-.ct-proposed-reply-banner {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  margin: 2px 6px 4px;
-  flex-shrink: 0;
-  font-size: var(--font-ui-smaller);
-  color: var(--text-normal);
-  background: color-mix(in srgb, var(--color-green, #4caf50) 10%, var(--background-secondary));
-  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 35%, transparent);
-  border-radius: 6px;
-}
-
-.ct-proposed-reply-header {
-  display: flex;
-  align-items: center;
-}
-
-.ct-proposed-reply-label {
-  font-weight: 600;
-  color: var(--color-green, #4caf50);
-}
-
-.ct-proposed-reply-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-normal);
-}
-
-.ct-proposed-reply-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.ct-root .ct-proposed-reply-approve,
-.ct-root .ct-proposed-reply-edit,
-.ct-root .ct-proposed-reply-discard {
-  font-size: var(--font-ui-smaller);
-  padding: 3px 10px;
-  border-radius: 5px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-  color: var(--text-normal);
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s, border-color 0.1s;
-}
-
-.ct-proposed-reply-approve {
-  border-color: color-mix(in srgb, var(--color-green, #4caf50) 45%, transparent);
-  color: var(--color-green, #4caf50);
-}
-
-.ct-proposed-reply-approve:hover {
-  background: color-mix(in srgb, var(--color-green, #4caf50) 15%, var(--background-secondary));
-}
-
-.ct-proposed-reply-edit:hover {
-  background: var(--background-modifier-hover);
-}
-
-.ct-proposed-reply-discard:hover {
-  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
-  border-color: var(--color-red, #e05252);
-  color: var(--color-red, #e05252);
-}
-
 /* Design artifact card */
 .ct-artifact-card {
   display: grid;
@@ -3729,8 +3659,11 @@
   flex-direction: column;
 }
 
-/* Rendered markdown view */
-.ct-plan-md {
+/* Rendered markdown view — shared by the plan card and the proposed-reply
+   card (.ct-proposed-reply-md), which needs the same scroll cap and markdown
+   child-element rules for long AI-generated text. */
+.ct-plan-md,
+.ct-proposed-reply-md {
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   max-height: 52vh;
@@ -3738,17 +3671,17 @@
   line-height: 1.6;
 }
 
-.ct-plan-md > *:first-child { margin-top: 0; }
-.ct-plan-md > *:last-child  { margin-bottom: 0; }
-.ct-plan-md p   { margin: 0 0 0.5em; }
-.ct-plan-md ol,
-.ct-plan-md ul  { margin: 0 0 0.5em; padding-left: 1.5em; }
-.ct-plan-md li  { margin-bottom: 0.2em; }
-.ct-plan-md h1,
-.ct-plan-md h2,
-.ct-plan-md h3  { margin: 0.6em 0 0.2em; font-size: inherit; font-weight: 600; }
+.ct-plan-md > *:first-child, .ct-proposed-reply-md > *:first-child { margin-top: 0; }
+.ct-plan-md > *:last-child,  .ct-proposed-reply-md > *:last-child  { margin-bottom: 0; }
+.ct-plan-md p, .ct-proposed-reply-md p   { margin: 0 0 0.5em; }
+.ct-plan-md ol, .ct-proposed-reply-md ol,
+.ct-plan-md ul, .ct-proposed-reply-md ul  { margin: 0 0 0.5em; padding-left: 1.5em; }
+.ct-plan-md li, .ct-proposed-reply-md li  { margin-bottom: 0.2em; }
+.ct-plan-md h1, .ct-proposed-reply-md h1,
+.ct-plan-md h2, .ct-proposed-reply-md h2,
+.ct-plan-md h3, .ct-proposed-reply-md h3  { margin: 0.6em 0 0.2em; font-size: inherit; font-weight: 600; }
 /* Fenced code blocks — horizontally scrollable, not clipped */
-.ct-plan-md pre {
+.ct-plan-md pre, .ct-proposed-reply-md pre {
   overflow-x: auto;
   white-space: pre;
   background: var(--background-secondary);
@@ -3759,7 +3692,7 @@
   line-height: 1.5;
 }
 
-.ct-plan-md pre code {
+.ct-plan-md pre code, .ct-proposed-reply-md pre code {
   font-family: var(--font-monospace);
   font-size: 0.85em;
   background: none;
@@ -3768,7 +3701,7 @@
 }
 
 /* Inline code */
-.ct-plan-md code {
+.ct-plan-md code, .ct-proposed-reply-md code {
   font-family: var(--font-monospace);
   font-size: 0.88em;
   background: var(--background-modifier-border);
@@ -3913,6 +3846,92 @@
 
 .ct-question-card-submit:hover {
   opacity: 0.88;
+}
+
+/* -- Inline proposed-reply card (thread-orchestrator approval) ------ */
+/* Green accent (vs. the plan card's blue) so a proposed reply reads as a
+   distinct "approve" affordance at a glance, matching the color semantics
+   already established for .ct-proposed-reply-approve. */
+.ct-proposed-reply-card {
+  background: color-mix(in srgb, var(--color-green, #4caf50) 8%, var(--background-primary));
+  border: 1px solid color-mix(in srgb, var(--color-green, #4caf50) 28%, transparent);
+  border-left: 3px solid var(--color-green, #4caf50);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: ct-fade-in 0.15s ease;
+}
+
+.ct-proposed-reply-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-green, #4caf50);
+}
+
+.ct-proposed-reply-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ct-proposed-reply-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ct-proposed-reply-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ct-proposed-reply-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ct-proposed-reply-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ct-root .ct-proposed-reply-approve,
+.ct-root .ct-proposed-reply-edit,
+.ct-root .ct-proposed-reply-discard {
+  font-size: var(--font-ui-smaller);
+  padding: 4px 14px;
+  border-radius: 5px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.ct-root .ct-proposed-reply-approve {
+  border-color: color-mix(in srgb, var(--color-green, #4caf50) 45%, transparent);
+  color: var(--color-green, #4caf50);
+  margin-left: auto;
+}
+
+.ct-proposed-reply-approve:hover {
+  background: color-mix(in srgb, var(--color-green, #4caf50) 15%, var(--background-secondary));
+}
+
+.ct-proposed-reply-edit:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-proposed-reply-discard:hover {
+  background: color-mix(in srgb, var(--color-red, #e05252) 15%, var(--background-secondary));
+  border-color: var(--color-red, #e05252);
+  color: var(--color-red, #e05252);
 }
 
 /* -- Agent dashboard: permission-waiting row ------------------------- */

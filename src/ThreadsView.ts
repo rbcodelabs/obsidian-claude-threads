@@ -288,9 +288,9 @@ export class ThreadsView extends ItemView {
   /** Thread IDs whose task card has been auto-dismissed after all tasks completed. */
   private taskCardDismissed = new Set<string>();
 
-  // Thread-orchestrator UI: proposed-reply banner above the compose box, and a
-  // collapsible Manager Notes panel in the thread header.
-  private proposedReplyBannerEl: HTMLElement | null = null;
+  // Thread-orchestrator UI: proposed replies render inline in the conversation
+  // flow (see renderProposedReplyCard) rather than via a dedicated element
+  // reference, plus a collapsible Manager Notes panel in the thread header.
   private managerNotesToggleEl: HTMLElement | null = null;
   private managerNotesPanelEl: HTMLElement | null = null;
   private managerNotesCollapsed = true;
@@ -727,7 +727,6 @@ export class ThreadsView extends ItemView {
     const panelContext = floatingPanel.createDiv('ct-panel-context');
 
     this.managerNotesPanelEl = panelContext.createDiv('ct-manager-notes-panel ct-hidden');
-    this.proposedReplyBannerEl = panelContext.createDiv('ct-proposed-reply-banner ct-hidden');
     this.statusRailEl = panelContext.createDiv('ct-status-rail');
     this.queueRowsEl = panelContext.createDiv('ct-queue-rows ct-hidden');
     this.taskCardEl = panelContext.createDiv('ct-task-card ct-hidden');
@@ -1058,6 +1057,9 @@ export class ThreadsView extends ItemView {
     this.applyComposerPlaceholder();
     this.restorePendingPlanCard();
     this.restorePendingQuestionCard();
+    // renderMessages() just wiped messagesEl, so re-anchor a proposed reply
+    // that was set on this thread while it was in the background.
+    this.renderProposedReplyCard();
     this.syncEditedFiles();
     this.refreshLeafHeader();
     // Restore draft for the thread we just switched to
@@ -1725,7 +1727,11 @@ export class ThreadsView extends ItemView {
 
     // Thread-orchestrator UI depends on the active thread — refresh on every switch.
     this.renderManagerNotesPanel();
-    this.renderProposedReplyBanner();
+    // Runs before renderMessages() in setActiveThread()'s call path, so its
+    // work gets wiped by messagesEl.empty() there — harmless given the
+    // idempotency guard in renderProposedReplyCard, and still needed for the
+    // other call sites of renderThreadInfo() that aren't preceded by a wipe.
+    this.renderProposedReplyCard();
   }
 
   /**
@@ -1831,34 +1837,65 @@ export class ThreadsView extends ItemView {
   }
 
   /**
-   * Renders the proposed-reply banner above the compose box when the active
-   * thread has an AI-proposed reply awaiting approval (thread.proposedReply,
-   * set by the thread-orchestrator skill via obsidian_set_thread_proposed_reply).
-   * Approve & Send is the ONLY path that ever sends it — nothing in this file
-   * (or anywhere else) sends a proposed reply automatically. The proposedReply
-   * is cleared as soon as the user acts (approve/edit/discard) rather than
-   * waiting for the send to complete, so a long-running turn can't leave a
-   * stale banner where a second click would trigger a duplicate send.
+   * Renders the proposed-reply card inline in the conversation flow — a direct
+   * child of `messagesEl`, mirroring renderPlanCard/renderQuestionCard — when
+   * the active thread has an AI-proposed reply awaiting approval
+   * (thread.proposedReply, set by the thread-orchestrator skill via
+   * obsidian_set_thread_proposed_reply). Approve & Send is the ONLY path that
+   * ever sends it — nothing in this file (or anywhere else) sends a proposed
+   * reply automatically. The proposedReply is cleared as soon as the user acts
+   * (approve/edit/discard) rather than waiting for the send to complete, so a
+   * long-running turn can't leave a stale card where a second click would
+   * trigger a duplicate send.
+   *
+   * This used to render into a small `<div class="ct-proposed-reply-banner">`
+   * inside the docked floating panel, which collapses to a sliver whenever the
+   * mouse isn't over it — unusable for anything but the shortest replies.
+   * Unlike a plan or question card, a proposed reply isn't scoped to "this
+   * turn" (another thread's orchestrator can stage one at any time), so it's
+   * anchored straight to `this.messagesEl` rather than via `cardContainer()`.
+   *
+   * Idempotency guard: this method is called both on real proposal changes
+   * (the 'proposed_reply_changed' event) and from renderThreadInfo(), which
+   * itself fires on lots of unrelated refreshes (cwd/project/permission-mode
+   * changes, etc). Each card is tagged with the proposal's `generatedAt`
+   * timestamp; if a card already showing that exact proposal exists, this is
+   * a no-op — otherwise every one of those unrelated refreshes would rebuild
+   * the card and yank the scroll position.
    */
-  private renderProposedReplyBanner(): void {
-    if (!this.proposedReplyBannerEl) return;
+  private renderProposedReplyCard(): void {
     const threadId = this.activeThreadId;
     const thread = threadId ? this.manager.getThread(threadId) : null;
     const proposed = thread?.proposedReply;
 
-    this.proposedReplyBannerEl.empty();
+    const existing = this.messagesEl.querySelector<HTMLElement>('.ct-proposed-reply-card');
     if (!threadId || !thread || !proposed) {
-      this.proposedReplyBannerEl.addClass('ct-hidden');
+      existing?.remove();
       return;
     }
-    this.proposedReplyBannerEl.removeClass('ct-hidden');
 
-    const header = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-header');
+    if (existing && existing.dataset.generatedAt === String(proposed.generatedAt)) {
+      // Already showing this exact proposal — nothing to do.
+      return;
+    }
+    existing?.remove();
+
+    const card = this.messagesEl.createDiv('ct-proposed-reply-card');
+    card.dataset.generatedAt = String(proposed.generatedAt);
+
+    const header = card.createDiv('ct-proposed-reply-header');
+    const iconEl = header.createSpan('ct-proposed-reply-icon');
+    setIcon(iconEl, 'reply');
     header.createSpan({ cls: 'ct-proposed-reply-label', text: 'Proposed reply' });
 
-    this.proposedReplyBannerEl.createEl('p', { cls: 'ct-proposed-reply-text', text: proposed.text });
+    const bodyEl = card.createDiv('ct-proposed-reply-body');
+    const mdEl = bodyEl.createDiv('ct-proposed-reply-md');
+    // renderMarkdown is async — fire-and-forget; content fills in immediately
+    this.renderMarkdown(proposed.text, mdEl).catch(() => {
+      mdEl.setText(proposed.text);
+    });
 
-    const actions = this.proposedReplyBannerEl.createDiv('ct-proposed-reply-actions');
+    const actions = card.createDiv('ct-proposed-reply-actions');
 
     const clearProposedReply = (id: string) => {
       const t = this.manager.getThread(id);
@@ -1867,20 +1904,6 @@ export class ThreadsView extends ItemView {
       this.manager.notifyProposedReplyChanged(id);
       void this.plugin.saveSettings();
     };
-
-    const approveBtn = actions.createEl('button', { cls: 'ct-proposed-reply-approve', text: 'Approve & Send' });
-    approveBtn.addEventListener('click', async () => {
-      const t = this.manager.getThread(threadId);
-      const text = t?.proposedReply?.text;
-      if (!text) return;
-      clearProposedReply(threadId);
-      try {
-        await this.manager.sendMessage(threadId, text);
-      } catch (err) {
-        console.error('[claude-threads] failed to send approved proposed reply:', err);
-        new Notice('Failed to send the approved reply — see console for details.');
-      }
-    });
 
     const editBtn = actions.createEl('button', { cls: 'ct-proposed-reply-edit', text: 'Edit' });
     editBtn.addEventListener('click', () => {
@@ -1897,6 +1920,24 @@ export class ThreadsView extends ItemView {
     discardBtn.addEventListener('click', () => {
       clearProposedReply(threadId);
     });
+
+    // Last, with margin-left: auto in CSS, so Edit/Discard sit left and
+    // Approve is pushed right — matching the plan card's action-bar convention.
+    const approveBtn = actions.createEl('button', { cls: 'ct-proposed-reply-approve', text: 'Approve & Send' });
+    approveBtn.addEventListener('click', async () => {
+      const t = this.manager.getThread(threadId);
+      const text = t?.proposedReply?.text;
+      if (!text) return;
+      clearProposedReply(threadId);
+      try {
+        await this.manager.sendMessage(threadId, text);
+      } catch (err) {
+        console.error('[claude-threads] failed to send approved proposed reply:', err);
+        new Notice('Failed to send the approved reply — see console for details.');
+      }
+    });
+
+    this.scrollToBottom();
   }
 
   private toggleMoreMenu(event: MouseEvent): void {
@@ -4131,7 +4172,7 @@ export class ThreadsView extends ItemView {
       }
 
       case 'proposed_reply_changed': {
-        this.renderProposedReplyBanner();
+        this.renderProposedReplyCard();
         break;
       }
 

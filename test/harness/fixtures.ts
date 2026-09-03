@@ -697,6 +697,51 @@ export const fixtureThreads: Thread[] = [
     createdAt: T3 - 60000,
     updatedAt: T3 + 30000,
   },
+  {
+    // Exercises the inline proposed-reply card (test/screenshots/ui.spec.ts,
+    // 'proposed reply — inline card'). A moderately long, multi-paragraph
+    // markdown reply so the screenshot actually demonstrates the scrollable,
+    // full-width card — the whole point of moving it out of the old
+    // collapsible floating-panel banner.
+    id: 'thread-proposed-reply',
+    title: 'Support escalation — billing webhook',
+    cwd: '/Users/mock/projects/hip-trip',
+    messages: thread2Messages,
+    createdAt: T3 - 40000,
+    updatedAt: T3 + 20000,
+    proposedReply: {
+      text: [
+        '## Summary',
+        '',
+        'I dug through the Stripe webhook logs for the last 48 hours and found the root cause of the duplicate-charge reports.',
+        '',
+        '### What happened',
+        '',
+        '- The `checkout.session.completed` handler was retried by Stripe after a 5xx from our endpoint (a transient DB connection timeout).',
+        '- Our handler was **not idempotent** — it created a new `Order` row on every delivery instead of upserting on `stripe_session_id`.',
+        '- Three customers ended up with two orders each for the same checkout session, and were billed twice by our downstream fulfillment job.',
+        '',
+        '### Fix I\'m proposing',
+        '',
+        '1. Add a unique constraint on `orders.stripe_session_id`.',
+        '2. Wrap the handler in an upsert (`ON CONFLICT DO NOTHING`) so retried deliveries are no-ops.',
+        '3. Backfill: refund the three duplicate charges and merge the duplicate `Order` rows.',
+        '',
+        '```sql',
+        'ALTER TABLE orders',
+        '  ADD CONSTRAINT orders_stripe_session_id_key UNIQUE (stripe_session_id);',
+        '```',
+        '',
+        '### Next steps',
+        '',
+        "I'll open a PR with the migration and handler fix today, and file a follow-up ticket for the refunds since those need finance sign-off before we touch Stripe.",
+        '',
+        'Let me know if you want me to loop in support so they can proactively reach out to the three affected customers before we process the refunds.',
+      ].join('\n'),
+      generatedAt: T3 + 25000,
+      sourceThreadId: 'thread-brainstorm',
+    },
+  },
 ];
 
 // ─── Kanban board fixtures ────────────────────────────────────────────────────

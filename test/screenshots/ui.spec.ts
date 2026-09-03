@@ -2418,6 +2418,27 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'plan-mode-approve-reject.png', { fullPage: true });
   });
 
+  test('proposed reply — inline card', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    // thread-proposed-reply's fixture has thread.proposedReply pre-seeded, so
+    // switching to it exercises the real restore path (setActiveThread ->
+    // renderProposedReplyCard after renderMessages wipes messagesEl) rather
+    // than calling the render method directly.
+    await page.evaluate(() => (window as any).__view.focusThread('thread-proposed-reply'));
+    await page.waitForSelector('.ct-proposed-reply-card');
+    // Wait for async markdown rendering to finish
+    await page.waitForSelector('.ct-proposed-reply-md', { state: 'visible' });
+    await page.waitForTimeout(200);
+    await expect(page.locator('.ct-proposed-reply-card')).toBeVisible();
+    await expect(page.locator('.ct-proposed-reply-approve')).toBeVisible();
+    await expect(page.locator('.ct-proposed-reply-edit')).toBeVisible();
+    await expect(page.locator('.ct-proposed-reply-discard')).toBeVisible();
+    await expect(page.locator('.ct-proposed-reply-label')).toHaveText('Proposed reply');
+    await shot(page, 'proposed-reply-card.png', { fullPage: true });
+  });
+
   test('context usage panel', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
