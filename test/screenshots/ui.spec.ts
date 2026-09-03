@@ -14,6 +14,27 @@ test.describe('Claude Threads UI', () => {
     await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
   });
 
+  // Guards the harness icon map on every state this spec renders, not just the
+  // one the dedicated test below drives. setIcon() in
+  // test/harness/obsidian-mock.ts records any name it cannot resolve on
+  // window.__ctMissingIcons and draws a magenta marker, so an unmapped icon
+  // fails the run instead of silently baking a placeholder into a baseline the
+  // way the old grey-circle fallback did. Checking here rather than in a single
+  // test matters: `cloud-off` on the AWS status tag was missing from the map
+  // while a main-view-only assertion passed clean.
+  test.afterEach(async ({ page }) => {
+    const missing = await page
+      .evaluate(() => (window as any).__ctMissingIcons as string[] | undefined)
+      // The page is already gone when a test closes it itself; nothing to check.
+      .catch(() => undefined);
+    expect(
+      missing ?? [],
+      `Harness has no Lucide glyph for: ${(missing ?? []).join(', ')}. ` +
+        'If the name is referenced dynamically, add it to EXTRA_ICONS in ' +
+        'scripts/gen-harness-icons.mts; otherwise fix the caller in src/.',
+    ).toEqual([]);
+  });
+
   test('main view', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
@@ -24,6 +45,36 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
     await page.waitForTimeout(200);
     await shot(page, 'main-view.png', { fullPage: true });
+  });
+
+  // Guards the harness icon map. setIcon() in test/harness/obsidian-mock.ts
+  // records any name it cannot resolve on window.__ctMissingIcons and draws a
+  // magenta marker, so an unmapped icon fails here instead of silently baking
+  // a placeholder into a baseline the way the old grey-circle fallback did.
+  test('every icon the UI renders resolves to a real Lucide glyph', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 740 });
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.waitForSelector('.ct-messages');
+    await page.waitForTimeout(500);
+    // Cycle the fixture threads so the tool cards, task cards and status
+    // footers that own most of the icon surface all get rendered at least once.
+    const threadIds: string[] = await page.evaluate(
+      () => (window as any).__manager.getThreads().map((t: { id: string }) => t.id),
+    );
+    expect(threadIds.length).toBeGreaterThan(0);
+    for (const id of threadIds) {
+      await page.evaluate((threadId) => (window as any).__view.focusThread(threadId), id);
+      await page.waitForTimeout(100);
+    }
+
+    const missing = await page.evaluate(() => (window as any).__ctMissingIcons as string[] | undefined);
+    expect(
+      missing ?? [],
+      `Harness has no Lucide glyph for: ${(missing ?? []).join(', ')}. ` +
+        'If the name is referenced dynamically, add it to EXTRA_ICONS in ' +
+        'scripts/gen-harness-icons.mts; otherwise fix the caller in src/.',
+    ).toEqual([]);
   });
 
   test('wide conversation pane centers the complete readable timeline', async ({ page }) => {

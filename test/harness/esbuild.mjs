@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -6,6 +7,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const resolve = (...parts) => path.resolve(__dirname, ...parts);
+
+// Regenerate the Lucide icon map before bundling so it can never drift from
+// src/. The generator hard-fails on an icon name it cannot resolve, which is
+// deliberate: a silent fallback is what let 46 icons render as placeholder
+// circles in the baselines for months.
+execFileSync(
+  process.execPath,
+  [resolve('../../scripts/gen-harness-icons.mts')],
+  { stdio: 'inherit' },
+);
 
 const sharedConfig = {
   format: 'iife',

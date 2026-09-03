@@ -1,0 +1,41 @@
+/*
+ * Base icon styling extracted from the real Obsidian app.css
+ * (/Applications/Obsidian.app/Contents/Resources/obsidian.asar).
+ *
+ * These values must mirror the real app. Without them the harness renders
+ * every Lucide glyph at its intrinsic 24x24 with stroke-width 2, instead of
+ * Obsidian's 18px / 1.75px — visibly wrong anywhere the plugin's own CSS does
+ * not set an explicit size.
+ *
+ * Load order is load-bearing: link this file immediately BEFORE
+ * ../../styles.css. `svg.svg-icon` and the plugin's `.ct-x svg` rules have
+ * equal specificity, so the plugin's must come second to win. That mirrors
+ * real Obsidian, where app.css loads before a plugin's styles.css.
+ *
+ * This is a small hand-maintained subset of app.css, not the whole thing —
+ * the harness approximates Obsidian, it does not reproduce it.
+ */
+
+:root {
+  --icon-size: var(--icon-m);
+  --icon-stroke: var(--icon-m-stroke-width);
+  --icon-xs: 14px;
+  --icon-s: 16px;
+  --icon-m: 18px;
+  --icon-l: 18px;
+  --icon-xl: 32px;
+  --icon-xs-stroke-width: 2px;
+  --icon-s-stroke-width: 2px;
+  --icon-m-stroke-width: 1.75px;
+  --icon-l-stroke-width: 1.75px;
+  --icon-xl-stroke-width: 1.25px;
+  --icon-color: var(--text-muted);
+  --icon-color-hover: var(--text-muted);
+  --icon-color-active: var(--text-accent);
+}
+
+svg.svg-icon {
+  height: var(--icon-size);
+  width: var(--icon-size);
+  stroke-width: var(--icon-stroke);
+}

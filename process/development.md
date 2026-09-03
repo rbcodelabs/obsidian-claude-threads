@@ -140,6 +140,42 @@ The harness renders the plugin against mock data in `test/harness/fixtures.ts` �
 
 New UI states need both a fixture entry and a new test case in `test/screenshots/ui.spec.ts`.
 
+### Harness icons
+
+Harness icons are generated, not hand-written. `scripts/gen-harness-icons.mts`
+scans `src/` for icon names, pulls each glyph from the exactly-pinned
+`lucide-static` dependency, and writes `test/harness/lucide-icons.generated.ts`
+(committed, so `tsc` and editors stay happy). The generator runs automatically
+at the top of `test/harness/esbuild.mjs`, so it fires on `npm run build:harness`
+and therefore on both `pretest:screenshots` hooks — the map cannot drift from
+`src/`. Run it directly with `npm run gen:harness-icons`.
+
+A new icon name in `src/` is picked up on the next harness build with no manual
+step. Names the scan genuinely cannot see — built by string concatenation, say —
+go in the `EXTRA_ICONS` array at the top of the generator.
+
+Unknown names fail loudly rather than degrading quietly. `setIcon()` in
+`test/harness/obsidian-mock.ts` draws a magenta crossed square, logs a warning,
+and records the name on `window.__ctMissingIcons`; an `afterEach` hook in
+`test/screenshots/ui.spec.ts` fails the run and names the offender. This
+replaces a grey-circle fallback that read as a legitimate glyph and let 46
+unmapped icons sit in the baselines unnoticed.
+
+`test/harness/obsidian-base.css` carries the `--icon-*` variables and the
+`svg.svg-icon` sizing rule extracted from the real Obsidian `app.css`. It must
+be linked immediately *before* `styles.css` in every harness HTML page: the two
+rulesets have equal specificity, so the plugin's has to come second to win, the
+same way app.css loads before a plugin's styles.css in the real app.
+
+**Known limitations.** The harness approximates Obsidian, it does not reproduce
+it. The pinned `lucide-static` version is not guaranteed to match the Lucide
+version Obsidian bundles — Obsidian still ships older names such as
+`lucide-alert-circle` — so a glyph can differ in detail from what users see.
+`obsidian-base.css` is a small hand-maintained subset of app.css, not the whole
+stylesheet. And icons the plugin registers through `addIcon()` in `src/main.ts`
+are resolved from Lucide here, because the harness mounts views directly and
+never runs the plugin's `onload()`.
+
 ### Harness entry points
 
 Each top-level view that doesn't fit the main conversation harness gets its own
