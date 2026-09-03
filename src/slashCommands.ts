@@ -5,6 +5,7 @@
  */
 
 import { parseLoopArgs } from './loopUtils';
+import type { PluginSettings } from './types';
 
 export interface SlashCommand {
   name: string;
@@ -22,7 +23,7 @@ export const THREAD_BUILTIN_COMMANDS: SlashCommand[] = [
   { name: 'ephemeral', description: 'Mark this thread as ephemeral: sessions will not be persisted to disk' },
   { name: 'context', description: 'Show current context window usage breakdown' },
   { name: 'usage', description: 'Show token usage, quota windows, and account activity' },
-  { name: 'create-pr', description: 'Create a pull request for this branch (add --draft for a draft PR)' },
+  { name: 'create-pr', description: 'Send the configured Create PR message (add --draft for the draft message)' },
   { name: 'design', description: 'Create or revise a live static UI artifact: /design <brief>' },
 ];
 
@@ -139,17 +140,17 @@ export function goalKickoffMessage(goal: string): string {
 }
 
 /**
- * The kickoff message sent when the "Create PR" / "Create draft PR" bar
- * button (or the /create-pr slash command) is used — used by ThreadsView so
- * clicking the button and typing the command behave identically.
+ * Resolves the message sent by the "Create PR" / "Create draft PR" bar
+ * button (or the matching slash command). Blank settings use the built-in
+ * defaults so existing and new installations remain usable.
  */
-export function createPrKickoffMessage(draft: boolean): string {
-  return (
-    `Create a ${draft ? 'draft ' : ''}pull request for the current branch. ` +
-    'Push the branch to its remote if it has not been pushed yet, then run ' +
-    `\`gh pr create${draft ? ' --draft' : ''}\` with a title and description summarizing ` +
-    'the changes made in this session. Report back the PR URL when done.'
-  );
+export function resolveCreatePrMessage(
+  settings: Pick<PluginSettings, 'createPrMessage' | 'createDraftPrMessage'>,
+  draft: boolean,
+): string {
+  const configured = draft ? settings.createDraftPrMessage : settings.createPrMessage;
+  const fallback = draft ? '/create-pr --draft' : '/create-pr';
+  return configured?.trim() || fallback;
 }
 
 /** A dispatch-box command directive parsed from typed text. */

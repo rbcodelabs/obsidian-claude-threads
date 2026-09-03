@@ -181,6 +181,7 @@ tab.display();
 
 // Expose for Playwright
 (window as any).__settingsTab = tab;
+(window as any).__settings = settings;
 (window as any).__scheduledCreateCalls = scheduledCreateCalls;
 
 /**

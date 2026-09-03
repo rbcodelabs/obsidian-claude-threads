@@ -3,7 +3,7 @@ import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
 import { parseLoopArgs, formatLoopInterval } from './loopUtils';
-import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, createPrKickoffMessage, escalationCommand } from './slashCommands';
+import { THREAD_BUILTIN_COMMANDS, THREAD_ARG_COMPLETIONS, MODEL_ALIASES, goalKickoffMessage, resolveCreatePrMessage, escalationCommand } from './slashCommands';
 import { isSetAsGoalEligible } from './goalContext';
 import { buildComparePrUrl, gitDiffBarVisible, prButtonLabel, prUrlMatchesRepo } from './gitDiffUtils';
 import type { Thread, ChatMessage, ToolCallRecord, AskQuestion, ImageAttachment } from './types';
@@ -5285,7 +5285,7 @@ export class ThreadsView extends ItemView {
 
     const sendThreadId = this.activeThreadId;
     this.manager
-      .sendMessage(sendThreadId, createPrKickoffMessage(draft))
+      .sendMessage(sendThreadId, resolveCreatePrMessage(this.plugin.settings, draft))
       .catch((err) => {
         this.showCommandDivider(`Failed to send: ${(err as Error).message}`, true);
         if (this.activeThreadId === sendThreadId) this.setRunningState(false);

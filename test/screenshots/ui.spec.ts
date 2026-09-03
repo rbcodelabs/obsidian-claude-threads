@@ -1301,6 +1301,24 @@ test.describe('Claude Threads UI', () => {
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
     await page.waitForTimeout(200);
+
+    const createPr = page.locator('.setting-item', { hasText: 'Create PR message' }).locator('textarea');
+    const createDraftPr = page.locator('.setting-item', { hasText: 'Create draft PR message' }).locator('textarea');
+    await expect(createPr).toHaveValue('/create-pr');
+    await expect(createDraftPr).toHaveValue('/create-pr --draft');
+
+    await createPr.fill('Open the finished pull request');
+    await createPr.blur();
+    await expect.poll(() => page.evaluate(() => (window as any).__settings.createPrMessage)).toBe('Open the finished pull request');
+    await expect.poll(() => page.evaluate(() => (window as any).__settings.createDraftPrMessage)).toBe('/create-pr --draft');
+
+    await createDraftPr.fill('Open a draft pull request');
+    await createDraftPr.blur();
+    await expect.poll(() => page.evaluate(() => (window as any).__settings.createDraftPrMessage)).toBe('Open a draft pull request');
+
+    await createPr.fill('/create-pr');
+    await createDraftPr.fill('/create-pr --draft');
+    await createDraftPr.blur();
     await shot(page, 'settings-general.png', { fullPage: true });
   });
 

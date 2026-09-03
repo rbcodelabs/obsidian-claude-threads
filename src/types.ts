@@ -716,6 +716,10 @@ export interface PluginSettings {
   statusLineCommand: string;
   /** How often (ms) StatusLineService polls the statusLineCommand per thread cwd. Default 30000. */
   statusLineIntervalMs?: number;
+  /** Message sent directly to the active agent by the Create PR action. */
+  createPrMessage: string;
+  /** Message sent directly to the active agent by the Create draft PR action. */
+  createDraftPrMessage: string;
   remoteAccess: RemoteAccessSettings;
   /** When true, verbose operational logs (stream events, session lifecycle, relay connections) are emitted to the console. Off by default to keep long sessions clean. */
   debugLogging: boolean;
@@ -871,6 +875,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   layoutDensity: 'comfortable',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   statusLineIntervalMs: 30_000,
+  createPrMessage: '/create-pr',
+  createDraftPrMessage: '/create-pr --draft',
   debugLogging: false,
   telemetryEnabled: true,
   threadViewPlacement: 'classic',

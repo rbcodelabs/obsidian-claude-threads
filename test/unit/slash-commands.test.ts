@@ -3,8 +3,10 @@ import {
   DISPATCH_BUILTIN_COMMANDS,
   DISPATCH_ARG_COMPLETIONS,
   THREAD_BUILTIN_COMMANDS,
+  resolveCreatePrMessage,
   escalationCommand,
 } from '../../src/slashCommands';
+import { DEFAULT_SETTINGS } from '../../src/types';
 
 describe('DISPATCH_BUILTIN_COMMANDS', () => {
   it('advertises exactly the commands the dispatch flow intercepts', () => {
@@ -38,6 +40,44 @@ describe('THREAD_BUILTIN_COMMANDS', () => {
     const names = THREAD_BUILTIN_COMMANDS.map((c) => c.name);
     expect(names).toContain('usage');
     expect(names).toContain('cost');
+  });
+});
+
+describe('resolveCreatePrMessage', () => {
+  it('uses independent defaults for regular and draft pull requests', () => {
+    expect(resolveCreatePrMessage(DEFAULT_SETTINGS, false)).toBe('/create-pr');
+    expect(resolveCreatePrMessage(DEFAULT_SETTINGS, true)).toBe('/create-pr --draft');
+  });
+
+  it('uses the independently configured message for each action', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      createPrMessage: 'Please open the finished PR',
+      createDraftPrMessage: 'Please open a draft for review',
+    };
+
+    expect(resolveCreatePrMessage(settings, false)).toBe('Please open the finished PR');
+    expect(resolveCreatePrMessage(settings, true)).toBe('Please open a draft for review');
+  });
+
+  it('trims outer whitespace while preserving internal newlines', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      createPrMessage: '  First line\n\nSecond line  ',
+    };
+
+    expect(resolveCreatePrMessage(settings, false)).toBe('First line\n\nSecond line');
+  });
+
+  it('falls back independently when a configured message is blank', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      createPrMessage: '  \n ',
+      createDraftPrMessage: 'Custom draft message',
+    };
+
+    expect(resolveCreatePrMessage(settings, false)).toBe('/create-pr');
+    expect(resolveCreatePrMessage(settings, true)).toBe('Custom draft message');
   });
 });
 

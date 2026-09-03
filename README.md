@@ -182,8 +182,8 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/cost` | Show token usage and cost for the current session |
 | `/usage` | Show provider token totals, quota windows/resets, and account activity where available. For Claude subscription sessions the 5-hour and 7-day windows show a live utilization % pulled from the SDK's structured usage API; API-key/Bedrock/Vertex sessions show `—` because plan limits do not apply there. |
 | `/context` | Show a per-category token usage breakdown for the active session (tools, system prompt, skills, MCP tools, conversation, etc.) |
-| `/create-pr` | Ask Claude to push the branch and open a PR (`gh pr create`) — same action as the [git diff bar](#git-diff-bar-create-pr)'s Create PR button |
-| `/create-pr --draft` | Same, but opens a draft PR — same as the git diff bar's Create draft PR button |
+| `/create-pr` | Send the configured **Create PR message** to the active agent — same action as the [git diff bar](#git-diff-bar-create-pr)'s Create PR button |
+| `/create-pr --draft` | Send the configured **Create draft PR message** — same as the git diff bar's Create draft PR button |
 | `/design <brief>` | Start a new design thread from Dashboard/Kanban, or create or revise a secure static UI artifact in the current thread, and open it in Geode's ArtifactView |
 | `/escalate <prompt>` | Route just this turn to the [escalation model](#model-switching) (default `/escalate`, keyword and target model configurable in Settings; only shown when escalation is enabled) |
 
@@ -579,8 +579,10 @@ Whenever a thread's working directory is a git repo on a feature branch, a bar a
 
 A **Create PR** split button sits on the right:
 
-- **Create PR** — sends `/create-pr`, which asks Claude to push the branch if needed, run `gh pr create` with a title/description summarizing the session, and report back the PR URL.
-- **Create draft PR** (dropdown) — same, but `gh pr create --draft`. Also available directly as `/create-pr --draft`.
+- **Create PR** — sends the configured **Create PR message** directly to the active agent. The default is `/create-pr`.
+- **Create draft PR** (dropdown) — sends its independently configured draft message. The default is `/create-pr --draft`, and the action is also available by typing that command.
+
+Configure both messages under **Settings → General → Pull requests**. They may be plain-language prompts or commands backed by skills in your agent system. If a slash command is not defined there, it is still delivered as an ordinary message and the receiving agent decides how to handle it. Leaving either setting blank restores its default when the action runs.
 - **Manually create PR** (dropdown) — skips Claude entirely and opens GitHub's compare page (`/compare/<base>...<branch>`) in your browser (Web Viewer or system browser, same convention as status-line pill links), so you can review the diff and open the PR yourself. Only enabled when the repo's `origin` remote points at GitHub.
 
 The bar is hidden when the cwd isn't a git repo, when the branch can't be resolved (e.g. detached HEAD), or when you're already sitting on the base/default branch (nothing to open a PR against).
@@ -764,6 +766,8 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Escalation model | Model the escalation keyword targets (default: Opus) |
 | Keep computer awake | Prevent the computer from sleeping while Claude is processing; shows ☕ in the status bar |
 | Context footer command | Shell command that produces the status-line pills (JSON tags or plaintext). Run per-thread against its cwd; receives `{cwd, workspace, provider}` on stdin. Desktop only. See [Status line](#status-line-context-footer). |
+| Create PR message | Message sent directly to the active agent by the Create PR button or `/create-pr`. Defaults to `/create-pr`; blank also uses that default. |
+| Create draft PR message | Independent message sent by the draft action or `/create-pr --draft`. Defaults to `/create-pr --draft`; blank also uses that default. |
 | Projects | Group threads and focus their initial cwd/context. Projects do not restrict the broader vault or configured tool roster. |
 | Auto-collapse side panel | Collapse the left, right, or both sidebars when the Kanban board opens, restoring them when it closes (default: `None`). See [Kanban board](#kanban-board). |
 | Stack scheduled job threads | Collapse repeat runs of the same scheduled/cron job into an expandable rollup in the Kanban board's quiet columns and the Agents List's Scheduled Jobs section (default: on). See [Kanban board](#kanban-board) and [Agents List](#agents-list). |
