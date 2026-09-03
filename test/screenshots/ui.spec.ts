@@ -1988,6 +1988,8 @@ test.describe('Claude Threads UI', () => {
 
         await page.locator('.ct-agents-floating-panel').hover();
         await expect(page.locator('.ct-dispatch-project')).toBeVisible();
+        await expect(page.locator('.ct-dispatch-project-label')).toHaveCount(0);
+        await expect(page.getByLabel('Dispatch Project').locator('option').first()).toHaveText('No Project');
         expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
         await expect.poll(() => page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
         if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');

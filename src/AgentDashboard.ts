@@ -256,7 +256,6 @@ export class AgentDashboard extends ItemView {
 
   private addProjectSelector(container: HTMLElement): void {
     const label = container.createEl('label', { cls: 'ct-dispatch-project' });
-    label.createSpan({ text: 'Project', cls: 'ct-dispatch-project-label' });
     this.projectSelectEl = label.createEl('select', { attr: { 'aria-label': 'Dispatch Project' } });
     this.projectSelectEl.addEventListener('change', () => { this.selectedProjectId = this.projectSelectEl.value; });
     this.refreshProjectSelector();
@@ -265,7 +264,7 @@ export class AgentDashboard extends ItemView {
   private refreshProjectSelector(): void {
     const select = this.projectSelectEl;
     select.empty();
-    select.createEl('option', { text: 'Unassigned', attr: { value: '' } });
+    select.createEl('option', { text: 'No Project', attr: { value: '' } });
     for (const project of this.manager.getProjects()) {
       select.createEl('option', { text: project.name, attr: { value: project.id } });
     }
