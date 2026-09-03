@@ -48,7 +48,10 @@ describe('design artifact contract', () => {
     expect(artifact.root).toBe(path.join('/vault', '.geode', 'artifacts', 'design-thread-1'));
     expect(thread.artifacts).toEqual([artifact]);
     expect([...writes.keys()].map((target) => path.basename(target)).sort()).toEqual(['app.js', 'artifact.json', 'index.html', 'styles.css']);
-    expect(writes.get(path.join(artifact.root, 'index.html'))).toContain('<script src="app.js"></script>');
+    const scaffold = writes.get(path.join(artifact.root, 'index.html')) ?? '';
+    expect(scaffold).toContain('<script src="app.js"></script>');
+    expect(scaffold).toContain('Preparing your design');
+    expect(scaffold).not.toContain('Checkout concept');
     expect(writes.get(path.join(artifact.root, 'artifact.json'))).toContain('"network": "none"');
   });
 
@@ -73,6 +76,12 @@ describe('design artifact contract', () => {
     expect(message).toContain('Make a dashboard');
     expect(message).toContain('Do not install packages');
     expect(message).toContain('Inline JavaScript is blocked');
+    expect(message).toContain('requirements and context, not literal page copy');
+    expect(message).toContain('Replace the preparation scaffold promptly');
+    expect(message).toContain('information architecture');
+    expect(message).toContain('realistic content');
+    expect(message).toContain('distinctive visual direction');
+    expect(message).toContain('desktop and mobile');
     expect(message).not.toContain('Claude Code');
   });
 });
