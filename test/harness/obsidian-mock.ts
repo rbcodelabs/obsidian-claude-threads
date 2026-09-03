@@ -2,6 +2,7 @@
  * Obsidian API mock for the Playwright harness.
  * Must be imported first — sets up HTMLElement.prototype extensions.
  */
+import { LUCIDE_ICONS } from './lucide-icons.generated';
 
 // ─── HTMLElement.prototype extensions ────────────────────────────────────────
 
@@ -122,17 +123,44 @@ HTMLElement.prototype.appendText = function (text: string): void {
 
 // ─── Lucide SVG strings ───────────────────────────────────────────────────────
 
-const ICONS: Record<string, string> = {
-  'terminal': `<svg class="lucide-terminal" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>`,
-  'brain-circuit': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
-  'copy': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
-  'check': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
-  'loader': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>`,
-  'bot': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>`,
-  'users': `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
-};
+// Generated from the pinned lucide-static package by
+// scripts/gen-harness-icons.mts, which runs at the top of the harness build.
+// Copied into a mutable object because addIcon() writes new entries at runtime.
+const ICONS: Record<string, string> = { ...LUCIDE_ICONS };
 
-const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>`;
+/**
+ * Rendered when an icon name has no entry in the map. Deliberately hideous —
+ * a magenta box with a diagonal cross — so a miss is impossible to overlook in
+ * a screenshot diff. The old fallback was a plain grey circle, which read as a
+ * legitimate glyph and let 46 unmapped icons hide in the baselines.
+ */
+function missingIconSvg(name: string): string {
+  return (
+    `<svg class="svg-icon ct-missing-icon" data-missing-icon="${name}" ` +
+    `xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ` +
+    `fill="none" stroke="#ff00ff" stroke-width="2">` +
+    `<rect x="2" y="2" width="20" height="20"/><path d="M2 2 22 22"/><path d="M22 2 2 22"/>` +
+    `</svg>`
+  );
+}
+
+/**
+ * Record a miss on the window so test/screenshots/ui.spec.ts can fail the run
+ * instead of quietly baking a placeholder into a baseline. De-duplicated, and
+ * created lazily so a run with no misses leaves the global undefined.
+ */
+function recordMissingIcon(name: string): void {
+  const w = window as unknown as { __ctMissingIcons?: string[] };
+  if (!w.__ctMissingIcons) w.__ctMissingIcons = [];
+  if (!w.__ctMissingIcons.includes(name)) {
+    w.__ctMissingIcons.push(name);
+    console.warn(
+      `[harness] no Lucide icon mapped for "${name}" — rendering the missing-icon ` +
+        `marker. If it is referenced dynamically, add it to EXTRA_ICONS in ` +
+        `scripts/gen-harness-icons.mts.`,
+    );
+  }
+}
 
 // ─── Mock exports ─────────────────────────────────────────────────────────────
 
@@ -250,7 +278,12 @@ export function addIcon(name: string, svgContent: string): void {
 }
 
 export function setIcon(el: HTMLElement, name: string): void {
-  const svg = ICONS[name] ?? FALLBACK_SVG;
+  const svg = ICONS[name];
+  if (svg === undefined) {
+    recordMissingIcon(name);
+    el.innerHTML = missingIconSvg(name);
+    return;
+  }
   el.innerHTML = svg;
 }
 
