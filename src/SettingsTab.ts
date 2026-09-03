@@ -1134,6 +1134,36 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         text.inputEl.addClass('ct-settings-wide-input');
       });
 
+    new Setting(containerEl).setName('Pull requests').setHeading();
+
+    new Setting(containerEl)
+      .setName('Create PR message')
+      .setDesc('Sent directly to the active agent. This may call a skill defined by your agent system. Blank uses /create-pr.')
+      .addTextArea((area) => {
+        area
+          .setPlaceholder('/create-pr')
+          .setValue(this.plugin.settings.createPrMessage)
+          .onChange(async (value) => {
+            this.plugin.settings.createPrMessage = value;
+            await this.plugin.saveSettings();
+          });
+        area.inputEl.addClass('ct-settings-wide-input');
+      });
+
+    new Setting(containerEl)
+      .setName('Create draft PR message')
+      .setDesc('Sent directly to the active agent for draft PRs. This may call a skill defined by your agent system. Blank uses /create-pr --draft.')
+      .addTextArea((area) => {
+        area
+          .setPlaceholder('/create-pr --draft')
+          .setValue(this.plugin.settings.createDraftPrMessage)
+          .onChange(async (value) => {
+            this.plugin.settings.createDraftPrMessage = value;
+            await this.plugin.saveSettings();
+          });
+        area.inputEl.addClass('ct-settings-wide-input');
+      });
+
     new Setting(containerEl)
       .setName('Keep computer awake')
       .setDesc('Prevent sleep while Claude is responding. Shows ☕ in the status bar when active.')
