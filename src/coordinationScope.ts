@@ -37,6 +37,29 @@ export function authorizeThreadAccess(
   return targetProjectId === caller.projectId;
 }
 
+/**
+ * Authorizes the destination Project of a reassignment, which is a narrower question
+ * than `authorizeThreadAccess` answers on its own.
+ *
+ * A thread with no Project is otherwise stranded: `authorizeThreadAccess` denies every
+ * non-undefined destination for the `unassigned` role, `elevatedProjectId` is
+ * portfolio-only, and the portfolio orchestrator cannot reach a projectId-bearing thread
+ * either — so nothing can move an unassigned thread into a Project. Self-assignment is
+ * not a cross-project read: the caller *is* the target, so it discloses nothing.
+ *
+ * Deliberately not extended to `project-member`/`project-orchestrator`: letting those
+ * move themselves to another Project would be a real scope hop (move to B, then read B's
+ * threads), and the stranding bug does not require it.
+ */
+export function authorizeProjectAssignment(
+  caller: CoordinationRole,
+  targetProjectId: string | undefined,
+  options: { isSelf: boolean; elevatedProjectId?: string },
+): boolean {
+  if (caller.kind === 'unassigned' && options.isSelf) return true;
+  return authorizeThreadAccess(caller, targetProjectId, options.elevatedProjectId);
+}
+
 export function canWriteManagerNotes(caller: CoordinationRole, targetProjectId: string | undefined): boolean {
   if (caller.kind === 'portfolio') return targetProjectId === undefined;
   return caller.kind === 'project-orchestrator' && targetProjectId === caller.projectId;

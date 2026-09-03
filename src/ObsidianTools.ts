@@ -264,8 +264,18 @@ export interface ObsidianMcpServerOptions {
   getAllThreads?: () => ThreadSnapshot[];
   /** Central coordination boundary. False must be reported without target disclosure. */
   authorizeThread?: (threadId: string, elevatedProjectId: string | undefined, operation: 'read' | 'write' | 'notes') => boolean;
-  /** Authorizes the requested destination Project for reassignment. */
-  authorizeProjectDestination?: (projectId: string | undefined, elevatedProjectId: string | undefined) => boolean;
+  /**
+   * Authorizes the requested destination Project for reassignment. `targetThreadId` lets
+   * the implementation detect self-assignment, which an unassigned thread is allowed to do
+   * even though it may not move any other thread into a Project. Omitted for call sites
+   * (like updating a Project's own settings) where the self-assignment carve-out must
+   * never apply.
+   */
+  authorizeProjectDestination?: (
+    projectId: string | undefined,
+    elevatedProjectId: string | undefined,
+    targetThreadId?: string,
+  ) => boolean;
   /**
    * Reads parsed entries from a thread's raw JSONL conversation log, filtered
    * by `type` and tailed to the most recent `limit` entries. Resolves null if
@@ -1322,7 +1332,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'setThreadProject is not available in this context.' }) }], isError: true };
         }
         if (options.authorizeThread && !options.authorizeThread(args.threadId, args.elevatedProjectId, 'write')) throw new Error('Target is outside coordination scope.');
-        if (options.authorizeProjectDestination && !options.authorizeProjectDestination(args.projectId ?? undefined, args.elevatedProjectId)) throw new Error('Destination Project is outside coordination scope.');
+        if (options.authorizeProjectDestination && !options.authorizeProjectDestination(args.projectId ?? undefined, args.elevatedProjectId, args.threadId)) throw new Error('Destination Project is outside coordination scope.');
         options.setThreadProject(args.threadId, args.projectId, args.alignCwd ?? false);
         return {
           content: [

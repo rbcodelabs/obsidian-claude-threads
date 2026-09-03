@@ -40,7 +40,7 @@ import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './tele
 import { secretStorageKey } from './secretUtils';
 import { scheduleVaultThreadRecovery } from './vaultThreadRecovery';
 import { resolveProjectVaultRoot } from './projectPaths';
-import { assertProposalOwnership, authorizeThreadAccess, canWriteManagerNotes, repairStaleProjectOrchestrators, resolveCoordinationRole } from './coordinationScope';
+import { assertProposalOwnership, authorizeProjectAssignment, authorizeThreadAccess, canWriteManagerNotes, repairStaleProjectOrchestrators, resolveCoordinationRole } from './coordinationScope';
 import {
   sharedPersistenceWriterFence,
   type PersistenceWriterToken,
@@ -497,11 +497,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
             if (operation === 'notes') return canWriteManagerNotes(role, target.projectId);
             return authorizeThreadAccess(role, target.projectId, elevatedProjectId);
           },
-          authorizeProjectDestination: (projectId, elevatedProjectId) => {
+          authorizeProjectDestination: (projectId, elevatedProjectId, targetThreadId) => {
             const caller = this.manager.getThread(threadId);
             if (!caller) return false;
             const role = resolveCoordinationRole(threadId, this.settings.orchestratorThreadId, caller.projectId, this.manager.getProjects());
-            return authorizeThreadAccess(role, projectId, elevatedProjectId);
+            return authorizeProjectAssignment(role, projectId, { isSelf: targetThreadId === threadId, elevatedProjectId });
           },
           getThreadDetail: (id: string) => {
             const t = this.manager.getThread(id);

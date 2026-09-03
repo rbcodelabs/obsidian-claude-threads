@@ -66,6 +66,46 @@ export class Notice {
   }
 }
 
+/**
+ * Records what was added to a menu so tests can assert on titles and invoke
+ * handlers. Chainable, matching the real MenuItem builder API.
+ */
+export class MenuItem {
+  title = '';
+  icon: string | undefined;
+  checked = false;
+  disabled = false;
+  clickHandler: ((evt?: unknown) => unknown) | undefined;
+  setTitle(title: string): this { this.title = title; return this; }
+  setIcon(icon: string): this { this.icon = icon; return this; }
+  setChecked(checked: boolean): this { this.checked = checked; return this; }
+  setDisabled(disabled: boolean): this { this.disabled = disabled; return this; }
+  setSection(_section: string): this { return this; }
+  onClick(handler: (evt?: unknown) => unknown): this { this.clickHandler = handler; return this; }
+}
+
+export class Menu {
+  /** Items in the order they were added. Separators are recorded as null. */
+  items: Array<MenuItem | null> = [];
+  shown = false;
+  addItem(cb: (item: MenuItem) => void): this {
+    const item = new MenuItem();
+    cb(item);
+    this.items.push(item);
+    return this;
+  }
+  addSeparator(): this { this.items.push(null); return this; }
+  showAtMouseEvent(_evt: unknown): this { this.shown = true; return this; }
+  showAtPosition(_pos: unknown): this { this.shown = true; return this; }
+  hide(): this { return this; }
+  /** Test helper: the titles of all non-separator items. */
+  titles(): string[] { return this.items.filter((i): i is MenuItem => i !== null).map(i => i.title); }
+  /** Test helper: find an item by its exact title. */
+  item(title: string): MenuItem | undefined {
+    return this.items.find((i): i is MenuItem => i !== null && i.title === title);
+  }
+}
+
 export class Modal {
   app: unknown;
   containerEl: HTMLElement = document.createElement('div');

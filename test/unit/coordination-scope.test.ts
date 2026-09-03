@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertProposalOwnership, authorizeThreadAccess, repairStaleProjectOrchestrators, resolveCoordinationRole } from '../../src/coordinationScope';
+import { assertProposalOwnership, authorizeProjectAssignment, authorizeThreadAccess, repairStaleProjectOrchestrators, resolveCoordinationRole } from '../../src/coordinationScope';
 
 const projects = [
   { id: 'project-a', orchestratorThreadId: 'orch-a' },
@@ -33,6 +33,45 @@ describe('coordination scope', () => {
     const caller = { kind: 'unassigned' as const };
     expect(authorizeThreadAccess(caller, undefined)).toBe(true);
     expect(authorizeThreadAccess(caller, 'project-a')).toBe(false);
+  });
+
+  it('lets an unassigned thread place itself into any Project', () => {
+    // Without this, a thread created outside a Project is stranded forever: no role can
+    // move it in, so `threads_set_project` always answered "outside coordination scope".
+    const caller = { kind: 'unassigned' as const };
+    expect(authorizeProjectAssignment(caller, 'project-a', { isSelf: true })).toBe(true);
+    expect(authorizeProjectAssignment(caller, 'project-b', { isSelf: true })).toBe(true);
+  });
+
+  it('still blocks an unassigned thread from moving a different thread into a Project', () => {
+    const caller = { kind: 'unassigned' as const };
+    expect(authorizeProjectAssignment(caller, 'project-a', { isSelf: false })).toBe(false);
+  });
+
+  it('lets an unassigned thread detach itself or another unassigned thread', () => {
+    const caller = { kind: 'unassigned' as const };
+    expect(authorizeProjectAssignment(caller, undefined, { isSelf: true })).toBe(true);
+    expect(authorizeProjectAssignment(caller, undefined, { isSelf: false })).toBe(true);
+  });
+
+  it('refuses to let a Project thread hop itself into another Project', () => {
+    // Self-assignment is only an escape hatch out of statelessness, not a scope hop:
+    // moving to project-b would grant read access to every project-b thread.
+    const member = { kind: 'project-member' as const, projectId: 'project-a' };
+    const orchestrator = { kind: 'project-orchestrator' as const, projectId: 'project-a' };
+    expect(authorizeProjectAssignment(member, 'project-b', { isSelf: true })).toBe(false);
+    expect(authorizeProjectAssignment(orchestrator, 'project-b', { isSelf: true })).toBe(false);
+    // Staying put, and detaching, keep their existing authorizeThreadAccess answers.
+    expect(authorizeProjectAssignment(member, 'project-a', { isSelf: true })).toBe(true);
+    expect(authorizeProjectAssignment(member, undefined, { isSelf: true })).toBe(false);
+  });
+
+  it('still requires matching elevation for a portfolio caller assigning itself', () => {
+    const caller = { kind: 'portfolio' as const };
+    expect(authorizeProjectAssignment(caller, 'project-a', { isSelf: true })).toBe(false);
+    expect(authorizeProjectAssignment(caller, 'project-a', { isSelf: true, elevatedProjectId: 'project-a' })).toBe(true);
+    expect(authorizeProjectAssignment(caller, 'project-a', { isSelf: true, elevatedProjectId: 'project-b' })).toBe(false);
+    expect(authorizeProjectAssignment(caller, undefined, { isSelf: true })).toBe(true);
   });
 
   it('treats legacy proposals without provenance as owned collisions', () => {
