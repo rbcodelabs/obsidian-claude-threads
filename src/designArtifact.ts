@@ -67,21 +67,21 @@ export function buildDesignManifest(threadId: string, brief: string): DesignArti
   };
 }
 
-function scaffoldHtml(title: string): string {
-  const escaped = title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function scaffoldHtml(): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escaped}</title>
+  <title>Preparing your design</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="design-shell">
+  <main class="design-shell" aria-live="polite">
+    <div class="design-mark" aria-hidden="true"><span></span><span></span><span></span></div>
     <p class="eyebrow">Claude Threads · Design</p>
-    <h1>${escaped}</h1>
-    <p>The design agent is preparing this artifact.</p>
+    <h1>Preparing your design</h1>
+    <p class="status">Turning your brief into a responsive interface.</p>
   </main>
   <script src="app.js"></script>
 </body>
@@ -92,15 +92,21 @@ function scaffoldHtml(title: string): string {
 const SCAFFOLD_CSS = `:root {
   color-scheme: light dark;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  background: #0f1115;
-  color: #f5f7fb;
+  background: #101217;
+  color: #f1f3f8;
 }
 * { box-sizing: border-box; }
-body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: radial-gradient(circle at top, #25304a, #0f1115 55%); }
-.design-shell { width: min(680px, calc(100% - 48px)); padding: 48px; border: 1px solid #ffffff24; border-radius: 24px; background: #171a22e6; box-shadow: 0 24px 80px #0008; }
-.eyebrow { color: #9eb7ff; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-h1 { margin: 12px 0; font-size: clamp(36px, 6vw, 72px); line-height: .98; }
-p { color: #bdc5d6; line-height: 1.6; }
+body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 15%, #242a3a 0, #151820 42%, #101217 75%); }
+.design-shell { width: min(520px, 100%); padding: clamp(28px, 7vw, 48px); border: 1px solid #ffffff1f; border-radius: 24px; background: #181b23e8; box-shadow: 0 24px 80px #0007; text-align: center; }
+.design-mark { width: 48px; height: 48px; margin: 0 auto 26px; display: grid; grid-template-columns: repeat(3, 1fr); align-items: end; gap: 5px; padding: 11px; border: 1px solid #9f8cff55; border-radius: 14px; background: #9f8cff12; }
+.design-mark span { height: 45%; border-radius: 4px; background: #ad9cff; animation: prepare 1.25s ease-in-out infinite alternate; }
+.design-mark span:nth-child(2) { height: 75%; animation-delay: .18s; }
+.design-mark span:nth-child(3) { height: 100%; animation-delay: .36s; }
+.eyebrow { margin: 0; color: #ad9cff; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+h1 { margin: 12px 0 8px; font-size: clamp(28px, 6vw, 42px); line-height: 1.1; letter-spacing: -.035em; }
+.status { margin: 0; color: #adb5c6; font-size: clamp(14px, 2.5vw, 16px); line-height: 1.6; }
+@keyframes prepare { to { opacity: .35; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .design-mark span { animation: none; } }
 `;
 
 const SCAFFOLD_JS = `document.documentElement.dataset.artifactReady = 'true';\n`;
@@ -130,7 +136,7 @@ export async function ensureDesignArtifact(
   const manifest = buildDesignManifest(thread.id, brief);
   await fileFs.mkdir(root, { recursive: true });
   await writeIfMissing(fileFs, path.join(root, 'artifact.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeIfMissing(fileFs, path.join(root, 'index.html'), scaffoldHtml(manifest.title));
+  await writeIfMissing(fileFs, path.join(root, 'index.html'), scaffoldHtml());
   await writeIfMissing(fileFs, path.join(root, 'styles.css'), SCAFFOLD_CSS);
   await writeIfMissing(fileFs, path.join(root, 'app.js'), SCAFFOLD_JS);
 
@@ -158,6 +164,12 @@ ${artifact.root}
 User brief:
 ${brief.trim()}
 
+Design intent:
+- Treat the user brief as requirements and context, not literal page copy. Do not echo the brief as a headline or paste it into the interface.
+- Replace the preparation scaffold promptly; it is a temporary loading state, not a design direction.
+- Establish appropriate information architecture, realistic content, clear visual hierarchy, and a distinctive visual direction suited to the brief.
+- Review and refine both desktop and mobile layouts before finishing.
+
 Artifact rules:
 - Treat artifact.json as the host contract; do not change its schemaVersion, id, runtime, thread id, or permissions.
 - Build a polished responsive interface using index.html, styles.css, app.js, and local assets only.
@@ -165,7 +177,6 @@ Artifact rules:
 - Do not install packages, start a server, load remote fonts, call network APIs, submit forms, or request clipboard access.
 - Keep every asset beneath the artifact root and use relative paths.
 - Preserve accessibility: semantic landmarks, keyboard operation, labels, focus states, and sufficient contrast.
-- Review desktop and mobile layouts before finishing.
 
 Start now. Edit the artifact files directly, verify the static result, and report what you changed.`;
 }

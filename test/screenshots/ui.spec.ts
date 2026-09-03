@@ -564,8 +564,11 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'slash-commands.png', { fullPage: true });
   });
 
-  test('design artifact card actions', async ({ page }) => {
-    await page.setViewportSize({ width: 420, height: 740 });
+  for (const viewport of [
+    { name: 'narrow', width: 420, height: 740 },
+    { name: 'wide', width: 1000, height: 800 },
+  ]) test(`design artifact toolbar actions (${viewport.name})`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
     await page.evaluate(() => {
@@ -585,7 +588,17 @@ test.describe('Claude Threads UI', () => {
     // small browser/font layout shifts and capture an incidental hover ring.
     await page.locator('.ct-input').focus();
     await page.waitForSelector('.ct-artifact-card:not(.ct-hidden)');
-    await shot(page, 'design-artifact-card.png', { fullPage: true });
+    await expect(page.getByRole('button', { name: 'Preview design' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Capture design screenshot' })).toHaveAttribute('title', 'Capture design screenshot');
+    await expect(page.getByRole('button', { name: 'Reveal design source' })).toHaveAttribute('title', 'Reveal design source');
+    await expect(page.locator('.ct-artifact-action-secondary')).toHaveCount(2);
+    const layout = await page.locator('.ct-artifact-card').evaluate((toolbar) => ({
+      toolbarOverflow: toolbar.scrollWidth > toolbar.clientWidth,
+      documentOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    }));
+    expect(layout.toolbarOverflow).toBe(false);
+    expect(layout.documentOverflow).toBe(false);
+    await shot(page, `design-artifact-toolbar-${viewport.name}.png`, { fullPage: true });
   });
 
   test('permission card', async ({ page }) => {

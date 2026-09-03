@@ -1456,17 +1456,21 @@ export class ThreadsView extends ItemView {
     copy.createDiv({ cls: 'ct-artifact-card-meta', text: 'Static design artifact' });
 
     const actions = this.artifactCardEl.createDiv('ct-artifact-card-actions');
-    const action = (label: string, iconName: string, handler: () => void | Promise<void>) => {
-      const button = actions.createEl('button', { cls: 'ct-artifact-action', text: label });
+    const action = (label: string, iconName: string, handler: () => void | Promise<void>, primary = false) => {
+      const button = actions.createEl('button', {
+        cls: `ct-artifact-action ${primary ? 'ct-artifact-action-primary' : 'ct-artifact-action-secondary'}`,
+      });
       const iconEl = button.createSpan('ct-artifact-action-icon');
       setIcon(iconEl, iconName);
-      button.prepend(iconEl);
+      if (primary) button.createSpan({ cls: 'ct-artifact-action-label', text: 'Preview' });
+      button.setAttribute('aria-label', label);
+      button.setAttribute('title', label);
       button.addEventListener('click', () => { void handler(); });
       return button;
     };
-    action('Open preview', 'play', () => this.openArtifactPreview(artifact));
-    action('Capture', 'camera', () => this.captureArtifact(artifact));
-    action('Reveal source', 'folder-open', () => this.revealArtifactSource(artifact));
+    action('Preview design', 'play', () => this.openArtifactPreview(artifact), true);
+    action('Capture design screenshot', 'camera', () => this.captureArtifact(artifact));
+    action('Reveal design source', 'folder-open', () => this.revealArtifactSource(artifact));
   }
 
   async openArtifactPreview(artifact: DesignArtifact): Promise<void> {

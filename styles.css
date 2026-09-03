@@ -1822,9 +1822,9 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin: 4px 8px;
-  padding: 9px 10px;
+  padding: 7px 8px;
   border: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
   border-radius: 10px;
   background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-secondary));
@@ -1844,14 +1844,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ct-artifact-card-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
-.ct-artifact-card-actions { display: flex; gap: 4px; }
+.ct-artifact-card-meta { color: var(--text-muted); font-size: 10px; }
+.ct-artifact-card-actions { display: flex; flex: 0 0 auto; gap: 4px; }
 .ct-root .ct-artifact-action {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 30px;
   min-height: 30px;
-  padding: 3px 8px;
+  padding: 3px 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   background: var(--background-primary);
@@ -1859,7 +1860,15 @@
   font-size: var(--font-ui-smaller);
   cursor: pointer;
 }
+.ct-root .ct-artifact-action-primary {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+.ct-root .ct-artifact-action-secondary { padding: 3px; justify-content: center; }
 .ct-artifact-action:hover { border-color: var(--interactive-accent); color: var(--text-accent); }
+.ct-artifact-action-primary:hover { color: var(--text-on-accent); filter: brightness(1.08); }
 .ct-artifact-action-icon { display: inline-flex; }
 .ct-artifact-action-icon svg { width: 14px; height: 14px; }
 
@@ -7462,9 +7471,10 @@ body.ct-skills-resizing {
 }
 
 @media (max-width: 520px) {
-  .ct-artifact-card { grid-template-columns: auto minmax(0, 1fr); }
-  .ct-artifact-card-actions { grid-column: 1 / -1; }
-  .ct-artifact-action { flex: 1; justify-content: center; min-height: 36px; }
+  .ct-artifact-card { grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; }
+  .ct-artifact-card-icon { display: none; }
+  .ct-artifact-card-meta { display: none; }
+  .ct-root .ct-artifact-action { min-height: 32px; }
 }
 
 /* — Task list card (ThreadsView: TodoWrite / TaskCreate checklist) ──────────── */
