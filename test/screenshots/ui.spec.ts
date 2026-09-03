@@ -2392,7 +2392,7 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'model-escalation-tip.png', { fullPage: true });
   });
 
-  test('model escalation — button stays highlighted for the whole turn', async ({ page }) => {
+  test('model escalation — menu reflects the temporary model for the whole turn', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
@@ -2404,21 +2404,22 @@ test.describe('Claude Threads UI', () => {
       const manager = (window as any).__manager;
       manager['emit'](view['activeThreadId'], { type: 'escalated', model: 'opus' });
     });
-    await page.waitForSelector('.ct-model-btn.ct-model-btn-escalated');
-    // Hide the transient tip and freeze the pulse so the snapshot is deterministic.
-    await page.addStyleTag({
-      content:
-        '.ct-escalation-tip { display: none !important; } .ct-model-btn-escalated { animation: none !important; }',
-    });
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
+    await expect(page.locator('.menu')).toContainText('Model: opus (this turn)');
     await page.waitForTimeout(100);
     await shot(page, 'model-escalation-turn-button.png', { fullPage: true });
-    // Turn end clears the indicator.
+    await page.mouse.click(0, 0);
+    // Turn end clears the temporary menu label.
     await page.evaluate(() => {
       const view = (window as any).__view;
       const manager = (window as any).__manager;
       manager['emit'](view['activeThreadId'], { type: 'done' });
     });
-    await expect(page.locator('.ct-model-btn')).not.toHaveClass(/ct-model-btn-escalated/);
+    await page.hover('.ct-floating-panel');
+    await page.click('.ct-thread-more-btn');
+    await expect(page.locator('.menu')).toContainText('Model: Default');
+    await expect(page.locator('.menu')).not.toContainText('(this turn)');
   });
 
   // ─── SDK alignment gap features (Group 4 + 5) ────────────────────────────
