@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.31.1-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.31.2-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -189,7 +189,7 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 
 ### Design artifacts in Geode
 
-Use `/design <brief>` from the Agents List or Kanban dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps **Open preview**, **Capture**, and **Reveal source** actions available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
+Use `/design <brief>` from the Agents List or Kanban dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps a primary **Preview** button plus icon-only **Capture design screenshot** and **Reveal design source** buttons (hover either for its label) available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
 
 Geode's ArtifactView previews the result with live reload, desktop/tablet/mobile viewport controls, runtime diagnostics, and PNG capture. Artifacts run in an isolated, ephemeral, Node-less guest with network, clipboard, downloads, popups, and external navigation denied. Outside Geode, Threads reveals the source instead of launching the artifact without that sandbox.
 
@@ -628,6 +628,8 @@ Read and search your vault from within any thread.
 | `vault_get_note_metadata` | `path` | Returns the full metadata cache entry for a note: frontmatter, tags, wikilinks, and headings. |
 | `vault_get_backlinks` | `path` | Returns all notes that link to the specified file, with source path and original link text. |
 | `vault_get_outgoing_links` | `path` | Returns all wikilinks and Markdown links a note makes to other files, with display text and resolved vault paths. |
+| `vault_get_file_history` | `path` | Returns the Obsidian Sync version history for a file. Each entry includes a `uid` (for `vault_restore_file_version`), ISO timestamp, size in bytes, and the device that saved it. Requires Obsidian Sync to be active and the file synced. |
+| `vault_restore_file_version` | `path`, `uid` | Restores a version from Obsidian Sync history, overwriting the current content — the current content is preserved in sync history first. Use `vault_get_file_history` to find the `uid`. Requires Obsidian Sync to be active. |
 
 ### Workspace and host tools
 
