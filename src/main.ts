@@ -37,7 +37,7 @@ import { MobileThreadStore } from './MobileThreadStore';
 import { MobileView, MOBILE_VIEW_TYPE } from './MobileView';
 import { setDebugLogging, debugLog, getLogRing } from './logger';
 import { telemetry, buildDiagnosticsReport, type DiagnosticsInput } from './telemetry';
-import { secretStorageKey } from './secretUtils';
+import { secretStorageKey, isSecretVisibleToProject, pruneSecretEnvScopesForProject } from './secretUtils';
 import { scheduleVaultThreadRecovery } from './vaultThreadRecovery';
 import { resolveProjectVaultRoot } from './projectPaths';
 import { assertProposalOwnership, authorizeProjectAssignment, authorizeThreadAccess, canWriteManagerNotes, repairStaleProjectOrchestrators, resolveCoordinationRole } from './coordinationScope';
@@ -711,7 +711,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
         // Secrets from the OS keychain expand the ${VAR_NAME} placeholders in
         // those configs. A server whose placeholders don't resolve is dropped
         // rather than injected with blanks — see resolveMcpServers.
-        const resolvedSecrets = this.manager.secretEnvResolver?.() ?? {};
+        const projectId = this.manager.getThread(threadId)?.projectId;
+        const resolvedSecrets = this.manager.secretEnvResolver?.(projectId) ?? {};
         const { servers: externalMcps, warnings } = resolveMcpServers(
           this.settings.mcpServers,
           { ...(process.env as Record<string, string>), ...resolvedSecrets },
@@ -744,9 +745,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
     // Resolve secret env vars from the OS keychain at session start. Values are
     // never stored in settings — only the key names live in data.json.
-    this.manager.secretEnvResolver = () => {
+    this.manager.secretEnvResolver = (projectId?: string) => {
       const result: Record<string, string> = {};
       for (const varName of this.settings.secretEnvKeys ?? []) {
+        if (!isSecretVisibleToProject(this.settings.secretEnvScopes, varName, projectId)) continue;
         const val = this.app.secretStorage.getSecret(secretStorageKey(varName));
         if (val) result[varName] = val;
       }
@@ -955,7 +957,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       // redactor; Scheduler never stores it on a scheduled item.
       getGateBaseEnv: Platform.isMobile
         ? undefined
-        : () => makeGateEnvironment(execEnv(), this.manager.secretEnvResolver?.() ?? {}),
+        : (projectId?: string) => makeGateEnvironment(execEnv(), this.manager.secretEnvResolver?.(projectId) ?? {}),
       // Deterministic gate runner (desktop only). Resolves — never rejects —
       // classifying the outcome so fire()'s fail-open logic can distinguish a
       // deliberate skip from exit 75, a timeout, or a spawn failure
@@ -2205,6 +2207,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const effectiveCwd = this.manager.getProjectCwd(project);
     await this.scheduler.detachProject(projectId, effectiveCwd);
     this.manager.deleteProject(projectId);
+    this.settings.secretEnvScopes = pruneSecretEnvScopesForProject(this.settings.secretEnvScopes, projectId);
     await this.saveSettings();
   }
 

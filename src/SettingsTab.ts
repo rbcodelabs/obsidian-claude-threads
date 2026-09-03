@@ -1453,6 +1453,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
                 renderSecrets();
               }),
             );
+          this.renderSecretScopeRow(secretsList, varName, renderSecrets);
         }
       }
     };
@@ -1758,6 +1759,43 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           renderProjects();
         }),
       );
+  }
+
+  /**
+   * Renders the per-secret Project scope control below a secret's row in
+   * `renderSecrets()`. Absent or empty `secretEnvScopes[varName]` is Global —
+   * the default, matching pre-scoping behavior. Checking a project restricts
+   * that secret's value to threads/scheduled items whose projectId is
+   * checked here; a project-less thread never receives a scoped secret.
+   */
+  private renderSecretScopeRow(container: HTMLElement, varName: string, refresh: () => void): void {
+    const projects = this.plugin.settings.projects ?? [];
+    const scopedIds = this.plugin.settings.secretEnvScopes?.[varName] ?? [];
+    const scopeEl = container.createDiv({ cls: 'ct-secret-scope' });
+    scopeEl.createEl('div', {
+      cls: 'ct-settings-empty',
+      text: scopedIds.length === 0
+        ? 'Scope: Global (every project, and project-less threads)'
+        : `Scope: restricted to ${scopedIds.length} project${scopedIds.length === 1 ? '' : 's'}`,
+    });
+    if (projects.length === 0) return;
+    for (const project of projects) {
+      new Setting(scopeEl)
+        .setName(project.name)
+        .setClass('ct-secret-scope-project')
+        .addToggle((toggle) =>
+          toggle.setValue(scopedIds.includes(project.id)).onChange(async (checked) => {
+            const scopes = this.plugin.settings.secretEnvScopes ?? (this.plugin.settings.secretEnvScopes = {});
+            const nextIds = new Set(scopes[varName] ?? []);
+            if (checked) nextIds.add(project.id);
+            else nextIds.delete(project.id);
+            if (nextIds.size === 0) delete scopes[varName];
+            else scopes[varName] = [...nextIds];
+            await this.plugin.saveSettings();
+            refresh();
+          }),
+        );
+    }
   }
 
   private renderProjectRow(container: HTMLElement, project: Project, refresh: () => void): void {

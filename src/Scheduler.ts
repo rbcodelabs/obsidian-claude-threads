@@ -100,8 +100,12 @@ export interface SchedulerOptions {
    * redaction. fire() layers CRON_LAST_RUN_MS / CRON_ITEM_ID / CRON_ITEM_NAME
    * on top. Keeping host environment resolution in the caller keeps this module
    * node-free and prevents secrets from entering scheduled-item persistence.
+   *
+   * Called with the firing item's `projectId` (undefined for project-less
+   * items) so the caller can apply per-secret Project scoping
+   * (`PluginSettings.secretEnvScopes`) before handing back keychain values.
    */
-  getGateBaseEnv?: () => GateEnvironment;
+  getGateBaseEnv?: (projectId?: string) => GateEnvironment;
 }
 
 /** Default gate timeout when an item doesn't specify one. */
@@ -622,7 +626,7 @@ export class Scheduler {
                 Math.max(gate.timeoutSeconds ?? GATE_DEFAULT_TIMEOUT_SECONDS, 1),
                 GATE_MAX_TIMEOUT_SECONDS,
               ) * 1000;
-            const gateEnvironment = this.options.getGateBaseEnv?.() ?? { env: {}, sensitiveValues: [] };
+            const gateEnvironment = this.options.getGateBaseEnv?.(current.projectId) ?? { env: {}, sensitiveValues: [] };
             const env: Record<string, string | undefined> = {
               ...gateEnvironment.env,
               CRON_LAST_RUN_MS: current.lastRun !== undefined ? String(current.lastRun) : '',

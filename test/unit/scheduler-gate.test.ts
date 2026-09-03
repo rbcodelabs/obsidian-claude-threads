@@ -527,6 +527,36 @@ describe('Scheduler gate gating in fire()', () => {
 
     scheduler.destroy();
   });
+
+  it("passes the firing item's projectId to getGateBaseEnv, so the caller can apply project-scoped secrets", async () => {
+    const item = gatedItem({ projectId: 'project-a' });
+    const runGate = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', timedOut: false });
+    const getGateBaseEnv = vi.fn().mockReturnValue({ env: {}, sensitiveValues: [] });
+    const { options } = makeOptions({ runGate, getGateBaseEnv });
+    const scheduler = new Scheduler(options);
+    scheduler.start([item]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(getGateBaseEnv).toHaveBeenCalledWith('project-a');
+
+    scheduler.destroy();
+  });
+
+  it('passes undefined to getGateBaseEnv for a project-less item', async () => {
+    const item = gatedItem({ projectId: undefined });
+    const runGate = vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', timedOut: false });
+    const getGateBaseEnv = vi.fn().mockReturnValue({ env: {}, sensitiveValues: [] });
+    const { options } = makeOptions({ runGate, getGateBaseEnv });
+    const scheduler = new Scheduler(options);
+    scheduler.start([item]);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    expect(getGateBaseEnv).toHaveBeenCalledWith(undefined);
+
+    scheduler.destroy();
+  });
 });
 
 // ── createItem / updateItem: gate round-trips and clears ────────────────────
