@@ -587,12 +587,16 @@ class AddSkillSourceModal extends Modal {
       showProgress('Cloning repository…');
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { execSync } = require('child_process') as typeof import('child_process');
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fsNode = require('fs') as typeof import('fs');
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const pathNode = require('path') as typeof import('path');
+      // Required lazily (not imported at the top of this file) because
+      // skillManager pulls in Node built-ins, and SettingsTab loads on mobile too.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { cloneGithubSource } = require('./skillManager') as typeof import('./skillManager');
 
+      // A source the user adds by hand gets a random id; only *declared* sources
+      // arriving without one need the deterministic, repo-derived id.
       const id = crypto.randomUUID();
       // Store clones inside the vault's plugin folder so they are vault-local
       // and don't bleed across vaults. FileSystemAdapter.getBasePath() gives the
@@ -613,9 +617,9 @@ class AddSkillSourceModal extends Modal {
       try {
         fsNode.mkdirSync(cloneBase, { recursive: true });
 
-        // Normalize URL (strip .git suffix for display, but clone with .git)
-        const cloneUrl = rawUrl.endsWith('.git') ? rawUrl : `${rawUrl}.git`;
-        execSync(`git clone --depth 1 "${cloneUrl}" "${clonePath}"`, { stdio: 'pipe', timeout: 60_000 });
+        // Clone via the shared helper (normalizes the URL to .git, runs git
+        // non-interactively, and cleans up a partial clone on failure).
+        await cloneGithubSource(rawUrl, clonePath);
 
         showProgress('Reading plugin manifest…');
 

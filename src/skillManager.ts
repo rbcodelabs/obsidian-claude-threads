@@ -18,7 +18,8 @@ import fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
+import { execFile, execSync } from 'child_process';
+import { createHash } from 'crypto';
 import type { SkillSource } from './types';
 import { getSkillsDirForSource } from './claudeSettings';
 import {
@@ -30,6 +31,7 @@ import {
   enumerateSkillDirs,
   ensureVaultSkillsPluginManifest,
   expandHome,
+  isInsideRoot,
 } from './skillPaths';
 
 /** Resolve configured sources to roots containing Codex skill directories. */
@@ -565,6 +567,210 @@ export function listSkillSources(skillSources: SkillSource[] = []): SkillSourceL
   ];
 }
 
+// ── Cloning GitHub sources ────────────────────────────────────────────────────
+
+/** Wall-clock ceiling for a single `git clone`, after which the child is killed. */
+export const SKILL_SOURCE_CLONE_TIMEOUT_MS = 60_000;
+
+/** Best-effort human-readable message from a failed child_process call (git writes the useful part to stderr). */
+function execErrorMessage(err: unknown): string {
+  const stderr = (err as { stderr?: Buffer | string } | undefined)?.stderr;
+  if (stderr && String(stderr).trim()) return String(stderr).trim();
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Canonical form of a repo URL, used as the hash input for deterministic source
+ * ids. Collapses everything that does not change *which repo is meant*: scheme,
+ * `git@host:` scp form, a `user@` prefix, a trailing `.git`, trailing slashes,
+ * and case. So `https://github.com/O/R`, `github.com/o/r.git` and
+ * `git@github.com:o/r` all hash to the same id.
+ */
+export function normalizeRepoUrlForId(repoUrl: string): string {
+  return repoUrl
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .replace(/^git@([^:/]+):/, '$1/')
+    .replace(/^[^/@]+@/, '')
+    .replace(/\.git$/, '')
+    .replace(/\/+$/, '');
+}
+
+/**
+ * Deterministic source id derived from the repo URL.
+ *
+ * Deliberately NOT `crypto.randomUUID()`: a vault can declare its skill sources
+ * in a committed config (`data.json` checked into a dotfiles/config repo) with
+ * no id at all, and every machine that loads it must resolve the same id — and
+ * therefore the same clone directory — so the reconciliation pass below is a
+ * no-op on the second launch instead of re-cloning under a fresh UUID.
+ * `randomUUID()` is still correct for a brand-new source the user adds by hand.
+ */
+export function deriveSourceIdFromRepoUrl(repoUrl: string): string {
+  const digest = createHash('sha256').update(normalizeRepoUrlForId(repoUrl)).digest('hex');
+  return `gh-${digest.slice(0, 16)}`;
+}
+
+/** `git clone` needs the `.git` suffix even though we display and store the bare URL. */
+export function githubCloneUrl(repoUrl: string): string {
+  const trimmed = repoUrl.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('.git') ? trimmed : `${trimmed}.git`;
+}
+
+/** True when `dirPath` looks like a git working copy (`.git` dir, or a `.git` file for worktrees/submodules). */
+export function isGitWorkingCopy(dirPath: string): boolean {
+  if (!dirPath) return false;
+  try {
+    return fs.existsSync(path.join(dirPath, '.git'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Shallow-clones a GitHub source into `clonePath`. The single implementation of
+ * this — `SettingsTab` (add-source) and `SkillsManagerView` (reinstall) both
+ * call here, as does the startup reconciliation pass below.
+ *
+ * Three deliberate choices:
+ * - **`execFile`, not `execSync`.** The startup pass must never block Obsidian's
+ *   main thread; a synchronous clone would freeze the UI for up to the timeout.
+ *   Both interactive callers are already `async`, so they just `await`.
+ * - **Argument array, not a shell string.** `repoUrl` can come from a config
+ *   file, so it never reaches a shell for interpolation. `--` terminates options.
+ * - **Non-interactive git.** `GIT_TERMINAL_PROMPT=0` + `GIT_ASKPASS=echo` make a
+ *   private or nonexistent repo fail immediately instead of blocking on a
+ *   credential prompt until the timeout. Configured credential helpers (macOS
+ *   keychain, gh) still work, so private repos the user can already clone do.
+ *
+ * Removes a partial clone before rethrowing, so a failure never leaves a
+ * half-populated directory that later looks "already cloned".
+ */
+export async function cloneGithubSource(
+  repoUrl: string,
+  clonePath: string,
+  options: { timeoutMs?: number } = {},
+): Promise<void> {
+  await fsp.mkdir(path.dirname(clonePath), { recursive: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'git',
+        ['clone', '--depth', '1', '--', githubCloneUrl(repoUrl), clonePath],
+        {
+          timeout: options.timeoutMs ?? SKILL_SOURCE_CLONE_TIMEOUT_MS,
+          windowsHide: true,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
+        },
+        (err, _stdout, stderr) => {
+          if (!err) return resolve();
+          const detail = stderr ? String(stderr).trim() : '';
+          reject(new Error(detail || err.message));
+        },
+      );
+    });
+  } catch (err) {
+    try { fs.rmSync(clonePath, { recursive: true, force: true }); } catch { /* ignore */ }
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+export interface EnsureGithubSourcesResult {
+  /** True when any source object was mutated and the caller must persist settings. */
+  changed: boolean;
+  /** Sources cloned on this pass. */
+  cloned: { id: string; name: string }[];
+  /** Ids of sources whose clone was already on disk — left completely untouched. */
+  present: string[];
+  /** Sources that could not be materialized. Logged and skipped, never thrown. */
+  failed: { id: string; name: string; error: string }[];
+}
+
+/**
+ * Materializes every declared GitHub-type skill source that has no clone on
+ * disk. Safe to call on every load: idempotent, and a pass where everything is
+ * already present mutates nothing (`changed: false`, zero writes).
+ *
+ * Fills in the two machine-specific fields a *declared* source is allowed to
+ * omit — `id` (derived deterministically from `repoUrl`) and `clonePath`
+ * (`<cloneBase>/<id>`) — so a committed config needs neither a UUID nor an
+ * absolute path.
+ *
+ * **Clone-if-missing only.** Existing clones are never fetched, pulled, or
+ * touched: pulling on launch would put network latency in every startup and
+ * mutate skills underneath a running session. Updating stays an explicit action
+ * (`checkAllSourcesForUpdates` / `pullGithubSourceUpdates`).
+ *
+ * **Never throws.** Every source is attempted inside its own try/catch, so an
+ * unreachable host, a private repo, a rate limit, a missing `git` binary or a
+ * timeout is recorded in `failed` and the remaining sources still run. Callers
+ * are expected to log `failed` and carry on.
+ *
+ * `type: 'local'` sources are ignored outright — those paths belong to the user.
+ */
+export async function ensureGithubSourcesCloned(
+  skillSources: SkillSource[] | undefined,
+  cloneBase: string,
+  options: { timeoutMs?: number } = {},
+): Promise<EnsureGithubSourcesResult> {
+  const result: EnsureGithubSourcesResult = { changed: false, cloned: [], present: [], failed: [] };
+  if (!skillSources?.length || !cloneBase) return result;
+
+  for (const source of skillSources) {
+    // Local sources point at directories the user maintains — not ours to create.
+    if (source.type !== 'github') continue;
+    const label = source.name || source.repoUrl || source.id || '(unnamed source)';
+    try {
+      if (!source.repoUrl) {
+        result.failed.push({ id: source.id ?? '', name: label, error: 'GitHub source has no repoUrl, so there is nothing to clone' });
+        continue;
+      }
+      if (!source.id) {
+        source.id = deriveSourceIdFromRepoUrl(source.repoUrl);
+        result.changed = true;
+      }
+      if (!source.clonePath) {
+        source.clonePath = path.join(cloneBase, source.id);
+        result.changed = true;
+      }
+
+      if (isGitWorkingCopy(source.clonePath)) {
+        result.present.push(source.id);
+        continue;
+      }
+
+      if (fs.existsSync(source.clonePath)) {
+        // Something is there but it is not a git working copy — an interrupted
+        // clone, or a directory someone created by hand. Only ever clear it when
+        // it sits inside the clone base we manage; a clonePath pointing outside
+        // that (a hand-edited setting) is left alone rather than deleted, since
+        // silently removing a user directory at startup is far worse than
+        // skipping one source.
+        if (!isInsideRoot(source.clonePath, cloneBase)) {
+          result.failed.push({
+            id: source.id,
+            name: label,
+            error: `clonePath "${source.clonePath}" exists but is not a git repo, and is outside the managed skill-sources folder — refusing to replace it`,
+          });
+          continue;
+        }
+        fs.rmSync(source.clonePath, { recursive: true, force: true });
+      }
+
+      await cloneGithubSource(source.repoUrl, source.clonePath, options);
+      source.lastFetched = Date.now();
+      source.behindCount = 0;
+      result.changed = true;
+      result.cloned.push({ id: source.id, name: label });
+    } catch (err) {
+      result.failed.push({ id: source.id ?? '', name: label, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return result;
+}
+
 // ── Update checks / pulls (GitHub sources) ────────────────────────────────────
 
 export interface SourceUpdateCheckResult {
@@ -601,9 +807,7 @@ export async function checkSourceForUpdates(source: SkillSource): Promise<Source
       lastFetched: Date.now(),
     };
   } catch (err) {
-    const stderr = (err as { stderr?: Buffer | string } | undefined)?.stderr;
-    const message = stderr && String(stderr).trim() ? String(stderr).trim() : (err instanceof Error ? err.message : String(err));
-    return { id: source.id, name: source.name, error: message };
+    return { id: source.id, name: source.name, error: execErrorMessage(err) };
   }
 }
 

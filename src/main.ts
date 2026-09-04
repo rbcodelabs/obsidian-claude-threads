@@ -390,6 +390,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.detectClaudeBinary();
     this.detectCodexBinary();
     this.migrateGithubSourcesIntoVault();
+    this.scheduleGithubSourceClonePass();
 
     this.manager = new ThreadManager(this.settings);
     this.contextPanel = new ContextPanelController(this.app, () =>
@@ -1645,6 +1646,68 @@ export default class ClaudeThreadsPlugin extends Plugin {
         console.error('[ClaudeThreads] failed to save settings after skill-source migration', err),
       );
     }
+  }
+
+  /**
+   * Materialize declared GitHub skill sources that have no clone on disk yet.
+   *
+   * Until now a source was only ever cloned as a side effect of the "add source"
+   * UI action, and nothing checked whether `clonePath` still existed — so a
+   * source *declared* in `data.json` (e.g. a vault whose settings are committed
+   * to a config repo) was silently dead: its skills never appeared, with no
+   * error. This pass closes that gap, and lets a declared source omit both `id`
+   * and `clonePath`, which `ensureGithubSourcesCloned` derives.
+   *
+   * **Call site: `onLayoutReady`, not awaited.** Everything else here runs
+   * inline in `onloadDesktop`, but this is the one startup step that touches the
+   * network. Awaiting it in the load path would let a slow or unreachable remote
+   * hold up plugin load — the plane-mode failure mode — so it is scheduled after
+   * layout and deliberately not awaited. `git clone` itself runs via async
+   * `execFile`, so it never blocks the main thread either. Scheduling it here
+   * (rather than earlier) also guarantees it observes the results of
+   * `migrateGithubSourcesIntoVault()` above, which runs synchronously first.
+   *
+   * Consequence worth knowing: a thread started in the first moments of a
+   * first-ever launch may not see a source that is still cloning. The next
+   * session picks it up, since skill plugins are rebuilt per session.
+   */
+  private scheduleGithubSourceClonePass(): void {
+    const sources = this.settings.skillSources ?? [];
+    if (!sources.some(s => s.type === 'github')) return;
+
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter) || !this.manifest?.dir) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathNode = require('path') as typeof import('path');
+    const cloneBase = pathNode.join(adapter.getBasePath(), this.manifest.dir, 'skill-sources');
+
+    this.app.workspace.onLayoutReady(() => {
+      void (async () => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { ensureGithubSourcesCloned } = require('./skillManager') as typeof import('./skillManager');
+          const result = await ensureGithubSourcesCloned(sources, cloneBase);
+          for (const failure of result.failed) {
+            console.warn(
+              `[ClaudeThreads] skill source "${failure.name}" could not be cloned — skipping it: ${failure.error}`,
+            );
+          }
+          if (result.cloned.length > 0) {
+            const names = result.cloned.map(c => c.name).join(', ');
+            new Notice(
+              `Cloned ${result.cloned.length} declared skill source${result.cloned.length === 1 ? '' : 's'}: ${names}`,
+              8000,
+            );
+          }
+          if (result.changed) await this.saveSettings();
+        } catch (err) {
+          // Defensive: ensureGithubSourcesCloned isolates per-source failures
+          // itself, so reaching here means something unexpected. Still swallowed —
+          // no skill-source problem should ever surface as a broken plugin load.
+          console.error('[ClaudeThreads] skill-source auto-clone pass failed', err);
+        }
+      })();
+    });
   }
 
   getEffectiveCwd(): string {

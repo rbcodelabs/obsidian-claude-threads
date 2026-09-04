@@ -63,3 +63,20 @@ function stubProcess(): StubChildProcess {
 export const execSync = (_cmd: string, _opts?: unknown): Buffer => Buffer.from('');
 
 export const execFileSync = (_cmd: string, _args?: string[], _opts?: unknown): Buffer => Buffer.from('');
+
+/**
+ * Stub for the async `git clone` in `cloneGithubSource`. Same reasoning as
+ * `execSync` above: no screenshot test clicks through to a clone, so reporting
+ * immediate success with empty output is enough to satisfy the static
+ * `import { execFile } from 'child_process'` binding.
+ */
+export const execFile = (
+  _cmd: string,
+  _args?: string[] | Record<string, unknown> | ExecCallback,
+  _optsOrCb?: Record<string, unknown> | ExecCallback,
+  _cb?: ExecCallback,
+): StubChildProcess => {
+  const callback = [_args, _optsOrCb, _cb].find((arg): arg is ExecCallback => typeof arg === 'function');
+  if (callback) setTimeout(() => callback(null, '', ''), 0);
+  return stubProcess();
+};
