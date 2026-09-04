@@ -2616,41 +2616,14 @@
   font-size: var(--font-ui-small);
 }
 
-.ct-agents-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
-}
-
-.ct-agents-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: var(--font-ui-medium);
-}
-
-.ct-agents-title-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-accent);
-}
-
 .ct-agents-count {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.ct-agents-header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
+/* Kanban still owns its floating-panel search control. AgentDashboard uses
+   the host ItemView action and SearchComponent instead. */
 .ct-agents-search-btn {
   display: flex;
   align-items: center;
@@ -2672,15 +2645,21 @@
 }
 
 .ct-agents-search-bar {
+  display: flex;
   padding: 6px 10px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ct-agents-search-bar .search-input-container {
+  width: 100%;
 }
 
 .ct-agents-search-field {
   position: relative;
   display: flex;
   align-items: center;
+  width: 100%;
 }
 
 .ct-agents-search-input {
@@ -2913,11 +2892,17 @@
 .ct-agents-row-title {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
   font-weight: 500;
+  color: var(--text-normal);
+}
+
+.ct-agents-row-title-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-normal);
 }
 
 .ct-agents-row-summary {
@@ -2958,7 +2943,8 @@
   white-space: nowrap;
 }
 
-.ct-agents-row-cwd {
+.ct-agents-row-cwd,
+.ct-agents-row-project {
   flex: 1 2 auto;
   min-width: 0;
   font-size: var(--font-ui-smaller);
@@ -3011,7 +2997,8 @@
 }
 
 @container ct-dashboard (max-width: 420px) {
-  .ct-agents-row-cwd { display: none; }
+  .ct-agents-row-cwd,
+  .ct-agents-row-project { display: none; }
   .ct-agents-row-secondary { gap: 6px; }
   .ct-agents-row-activity { min-width: 0; flex: 1 1 auto; }
   .ct-dashboard-agent-count { max-width: 100%; }

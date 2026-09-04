@@ -186,7 +186,21 @@ export const mockApp = {
   },
 };
 
-export const mockLeaf = { app: mockApp, view: null, updateHeader: () => {} };
+let headerUpdateCalls = 0;
+export const getHeaderUpdateCalls = (): number => headerUpdateCalls;
+
+export const mockLeaf: {
+  app: typeof mockApp;
+  view: ItemView | null;
+  updateHeader: () => void;
+} = {
+  app: mockApp,
+  view: null,
+  updateHeader: () => {
+    headerUpdateCalls += 1;
+    mockLeaf.view?.refreshHeaderTitle();
+  },
+};
 
 export class ItemView {
   containerEl: HTMLElement;
@@ -196,14 +210,45 @@ export class ItemView {
   constructor(_leaf: unknown) {
     this.leaf = _leaf;
     this.containerEl = document.createElement('div');
-    // Obsidian ItemView has containerEl.children[0] (nav header) and children[1] (view-content)
+    // Mirror Obsidian/Geode's generic ItemView header closely enough that
+    // plugin tests exercise the supported host surface instead of custom chrome.
     const header = document.createElement('div');
+    header.className = 'view-header';
+    const left = document.createElement('div');
+    left.className = 'view-header-left';
+    const titleContainer = document.createElement('div');
+    titleContainer.className = 'view-header-title-container mod-at-start mod-fade mod-at-end';
+    const title = document.createElement('div');
+    title.className = 'view-header-title';
+    titleContainer.appendChild(title);
+    const actions = document.createElement('div');
+    actions.className = 'view-actions';
+    header.append(left, titleContainer, actions);
     const content = document.createElement('div');
     this.containerEl.appendChild(header);
     this.containerEl.appendChild(content);
+    if (_leaf === mockLeaf) mockLeaf.view = this;
+    queueMicrotask(() => this.refreshHeaderTitle());
   }
 
   register(_cb: () => void): void {}
+
+  getDisplayText(): string { return ''; }
+
+  refreshHeaderTitle(): void {
+    this.containerEl.querySelector('.view-header-title')?.setText(this.getDisplayText());
+  }
+
+  addAction(icon: string, title: string, callback: (evt: MouseEvent) => unknown): HTMLElement {
+    const action = document.createElement('button');
+    action.className = 'clickable-icon view-action';
+    action.setAttribute('aria-label', title);
+    action.title = title;
+    setIcon(action, icon);
+    action.addEventListener('click', callback);
+    this.containerEl.querySelector('.view-actions')?.appendChild(action);
+    return action;
+  }
 }
 
 export class WorkspaceLeaf {}
@@ -346,6 +391,25 @@ export class TextComponent {
     cb(this);
     return this;
   }
+}
+
+export class SearchComponent extends TextComponent {
+  clearButtonEl: HTMLElement;
+
+  constructor(containerEl: HTMLElement) {
+    const searchContainer = containerEl.createDiv({ cls: 'search-input-container' });
+    super(searchContainer);
+    this.inputEl.type = 'search';
+    this.clearButtonEl = searchContainer.createDiv({ cls: 'search-input-clear-button' });
+    this.clearButtonEl.setAttribute('aria-label', 'Clear search');
+    this.clearButtonEl.addEventListener('click', () => {
+      this.setValue('');
+      this.inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      this.inputEl.focus();
+    });
+  }
+
+  onChanged(): void {}
 }
 
 export class TextAreaComponent {
@@ -619,10 +683,14 @@ export class Menu {
 
     for (const item of this.items) {
       const itemEl = document.createElement('div');
-      itemEl.className = 'menu-item';
+      itemEl.className = `menu-item${item.checked ? ' is-checked' : ''}${item.disabled ? ' is-disabled' : ''}`;
+      itemEl.setAttribute('role', 'menuitemcheckbox');
+      itemEl.setAttribute('aria-checked', String(item.checked));
+      itemEl.setAttribute('aria-disabled', String(item.disabled));
       itemEl.style.cssText = 'padding:6px 12px;cursor:pointer;color:var(--text-normal,#dcddde);font-size:14px;';
       itemEl.textContent = item.checked ? `\u2713 ${item.title}` : item.title;
       itemEl.addEventListener('click', () => {
+        if (item.disabled) return;
         item.triggerClick();
         if (menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
       });
@@ -653,11 +721,13 @@ export class Menu {
 class MenuItem {
   title = '';
   checked = false;
+  disabled = false;
   private _cb?: () => void;
 
   setTitle(title: string): this { this.title = title; return this; }
   setIcon(_icon: string): this { return this; }
   setChecked(checked: boolean): this { this.checked = checked; return this; }
+  setDisabled(disabled: boolean): this { this.disabled = disabled; return this; }
   onClick(cb: () => void): this { this._cb = cb; return this; }
   triggerClick(): void { this._cb?.(); }
 }

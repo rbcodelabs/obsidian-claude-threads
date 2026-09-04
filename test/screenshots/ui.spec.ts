@@ -2091,8 +2091,14 @@ test.describe('Claude Threads UI', () => {
     await page.setViewportSize({ width: 760, height: 820 });
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-agents-project');
-    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents List');
+    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents · 14 threads');
     expect(await page.evaluate(() => (window as any).__dashboard.getIcon())).toBe('list');
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await expect(page.locator('.ct-agents-header')).toHaveCount(0);
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
+    await expect(page.locator('.ct-agents-floating-panel .ct-agents-count')).toHaveCount(0);
+    await expect(page.locator('.ct-agents-floating-panel .ct-agents-search-btn')).toHaveCount(0);
 
     const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
     expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
@@ -2135,6 +2141,80 @@ test.describe('Claude Threads UI', () => {
     expect((await questionRow.boundingBox())?.height).toBeGreaterThan(44);
 
     await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
+  });
+
+  test('agents list — grouping toggles and sibling search panel', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.view-header');
+
+    const root = page.locator('.ct-dashboard-root');
+    const header = page.locator('.view-header');
+    const searchButton = page.getByRole('button', { name: 'Search threads' });
+    const headerUpdatesAfterInitialRender = await page.evaluate(() => (window as any).__getHeaderUpdateCalls());
+    await page.evaluate(() => (window as any).__dashboard.render());
+    expect(await page.evaluate(() => (window as any).__getHeaderUpdateCalls())).toBe(headerUpdatesAfterInitialRender);
+    const headerHeight = await header.evaluate(el => el.getBoundingClientRect().height);
+    await searchButton.click();
+    const searchPanel = page.locator('.ct-agents-search-bar');
+    await expect(searchPanel).toBeVisible();
+    expect(await root.evaluate(el => Array.from(el.children).map(child => child.className))).toEqual(
+      expect.arrayContaining([expect.stringContaining('ct-agents-search-bar')]),
+    );
+    expect(await header.evaluate(el => el.getBoundingClientRect().height)).toBe(headerHeight);
+    const search = page.getByPlaceholder('Search threads…');
+    await expect(search).toBeFocused();
+    await search.fill('Mobile layout polish');
+    await expect(page.locator('.ct-agents-row')).toHaveCount(1);
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 1 thread');
+    await page.locator('.search-input-clear-button').click();
+    await expect(search).toHaveValue('');
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await search.fill('Mobile layout polish');
+    await search.press('Escape');
+    await expect(searchPanel).toBeHidden();
+    await expect(page.locator('.ct-agents-row')).not.toHaveCount(1);
+    await searchButton.click();
+    await search.fill('Kanban');
+    await searchButton.click();
+    await expect(searchPanel).toBeHidden();
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+
+    const groupingButton = page.getByRole('button', { name: 'Group agents' });
+    await groupingButton.click();
+    const menu = page.locator('.menu');
+    const projectItem = menu.getByRole('menuitemcheckbox', { name: 'Project' });
+    const statusItem = menu.getByRole('menuitemcheckbox', { name: 'Status' });
+    await expect(projectItem).toHaveAttribute('aria-checked', 'true');
+    await expect(statusItem).toHaveAttribute('aria-checked', 'true');
+
+    const savesBefore = await page.evaluate(() => (window as any).__getSaveSettingsCalls());
+    await statusItem.click();
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator('.ct-agents-project')).not.toHaveCount(0);
+    await expect(page.locator('.ct-agents-project .ct-agents-group-label')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('project');
+
+    await groupingButton.click();
+    const projectOnlyMenu = page.locator('.menu');
+    await expect(projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Project' })).toHaveAttribute('aria-disabled', 'true');
+    await projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Status' }).click();
+    await groupingButton.click();
+    await page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Project' }).click();
+    await groupingButton.click();
+    await expect(page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Status' })).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.locator('.ct-agents-project')).toHaveCount(0);
+    await expect(page.locator('.ct-agents-status-section')).not.toHaveCount(0);
+    await expect(page.locator('.ct-agents-row-project').first()).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('status');
+    expect(await page.evaluate(() => (window as any).__getSaveSettingsCalls())).toBe(savesBefore + 3);
+
+    await page.evaluate(async () => {
+      const dashboard = (window as any).__dashboard;
+      await dashboard.onClose();
+      await dashboard.onOpen();
+    });
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
   });
 
   // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
@@ -2213,6 +2293,8 @@ test.describe('Claude Threads UI', () => {
       await expect(list).toHaveCSS('width', `${width}px`);
       expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+      expect(await page.locator('.view-header').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
 
       if (width <= 380) {
         await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');
@@ -2228,6 +2310,24 @@ test.describe('Claude Threads UI', () => {
         if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');
       }
     }
+  });
+
+  test('agents list — orchestrator badge remains visible beside a truncated title', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 844 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.evaluate(() => (window as any).__setOrchestrator('k-hiptrip-running'));
+    await page.locator('#app').evaluate(host => { host.style.width = '280px'; });
+    const row = page.locator('.ct-agents-row').filter({ has: page.locator('.ct-portfolio-orchestrator-badge') });
+    const badge = row.locator('.ct-portfolio-orchestrator-badge');
+    await expect(badge).toBeVisible();
+    const bounds = await row.evaluate((rowEl) => {
+      const badgeEl = rowEl.querySelector('.ct-orchestrator-badge')!;
+      const rowRect = rowEl.getBoundingClientRect();
+      const badgeRect = badgeEl.getBoundingClientRect();
+      return { left: badgeRect.left >= rowRect.left, right: badgeRect.right <= rowRect.right };
+    });
+    expect(bounds).toEqual({ left: true, right: true });
+    await expect(row.locator('.ct-agents-row-title-text')).toHaveCSS('text-overflow', 'ellipsis');
   });
 
   test('agents list — narrow exceptional states remain usable', async ({ page }) => {

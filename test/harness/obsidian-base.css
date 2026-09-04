@@ -39,3 +39,91 @@ svg.svg-icon {
   width: var(--icon-size);
   stroke-width: var(--icon-stroke);
 }
+
+/* Generic ItemView header — mirrors the host-owned structure exercised by
+   AgentDashboard. Plugin styles intentionally do not restyle this surface. */
+.view-header {
+  display: none;
+}
+
+.mod-show-generic-header > .view-header {
+  height: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.mod-show-generic-header > .view-header .view-header-left,
+.mod-show-generic-header > .view-header .view-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.mod-show-generic-header > .view-header .view-header-title-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.mod-show-generic-header > .view-header .view-header-title {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.mod-show-generic-header > .view-header .view-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.ct-agents-search-bar .search-input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.ct-agents-search-bar .search-input-container input {
+  width: 100%;
+  padding-right: 28px;
+}
+
+.ct-agents-search-bar .search-input-clear-button {
+  position: absolute;
+  right: 8px;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.ct-agents-search-bar .search-input-clear-button::before,
+.ct-agents-search-bar .search-input-clear-button::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 1px;
+  width: 12px;
+  border-top: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+}
+
+.ct-agents-search-bar .search-input-clear-button::after {
+  transform: rotate(-45deg);
+}
