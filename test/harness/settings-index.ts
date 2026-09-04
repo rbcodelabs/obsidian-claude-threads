@@ -126,9 +126,13 @@ const settings: PluginSettings = {
 const scheduledCreateCalls: {
   dispatches: Array<{ prompt: string; title: string | undefined }>;
   openedThreadIds: string[];
+  updatedItemIds: string[];
+  deletedItemIds: string[];
 } = {
   dispatches: [],
   openedThreadIds: [],
+  updatedItemIds: [],
+  deletedItemIds: [],
 };
 
 const mockPlugin = {
@@ -149,11 +153,22 @@ const mockPlugin = {
     deleteProject: () => {},
     createProject: () => {},
     updateSettings: () => {},
-    getThread: (id: string) => id === 'thread-morning' ? { id, title: 'Morning inbox triage run' } : undefined,
+    getThread: (id: string) => {
+      if (id === 'thread-morning') return { id, title: 'Morning inbox triage run' };
+      if (id === 'thread-ci') return { id, title: 'CI watcher', agentHarness: 'codex', model: 'gpt-5.6-codex' };
+      return undefined;
+    },
   },
   scheduler: {
-    updateItem: () => {},
-    deleteItem: () => {},
+    updateItem: async (id: string, patch: Partial<ScheduledItem>) => {
+      scheduledCreateCalls.updatedItemIds.push(id);
+      const item = settings.scheduledItems.find((candidate) => candidate.id === id);
+      if (item) Object.assign(item, patch);
+    },
+    deleteItem: async (id: string) => {
+      scheduledCreateCalls.deletedItemIds.push(id);
+      settings.scheduledItems = settings.scheduledItems.filter((candidate) => candidate.id !== id);
+    },
     getEffectiveCwd: (item: ScheduledItem) => item.cwd ?? (item.projectId
       ? (settings.projects.find((project) => project.id === item.projectId)?.cwdOverride ?? `/Users/mock/vault/${settings.projects.find((project) => project.id === item.projectId)?.vaultFolder}`)
       : '/Users/mock/vault'),

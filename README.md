@@ -546,6 +546,8 @@ Projects group related threads, choose their initial working directory, inject s
 
 **Scheduled work:** Cron items resolve their effective cwd at fire time in this order: explicit scheduled-item cwd, current Project cwd, then the global default. The same resolved path is used for a gate command and its spawned thread. Cron create/update rejects unknown Projects, and a deleted Project reference fails the run rather than dispatching in an unrelated fallback directory.
 
+**Schedule Manager:** Settings → Scheduled presents every non-system item once in two compact groups: recurring jobs, and thread loops/wakeups. Rows are collapsed by default and sorted by next occurrence, with paused work last. The summary shows status, cadence, next run or check, Project, and execution environment; expand a row to inspect its prompt, active hours, effective working directory, gate, run history, and controls. New-thread jobs show the global harness and model they will inherit at fire time (a blank model means the CLI default). Loops and wakeups show the target thread's harness/model; a missing target is called out along with its new-thread fallback.
+
 ### Status line (context footer)
 
 A row of pills below the input area shows live context for each thread — git branch, an open PR, a running dev server URL, AWS session status, or anything else you want. It's powered by a shell command (Settings → **Context footer command**) that the plugin runs **per thread, in the background**, against that thread's working directory. Desktop only.

@@ -1493,13 +1493,32 @@ test.describe('Claude Threads UI', () => {
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("Scheduled")');
-    await expect(page.getByRole('heading', { name: 'Next up' })).toBeVisible();
-    await expect(page.getByText('Overdue — catching up', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Next up' })).toHaveCount(0);
+    await expect(page.locator('.ct-scheduled-card')).toHaveCount(5);
+    const expectedNames = [
+      'Morning inbox triage',
+      'Project pulse',
+      'Weekly PR sweep',
+      'Loop: watch CI',
+      'Wakeup: deployment check',
+    ];
+    for (const name of expectedNames) {
+      await expect(page.locator('.ct-scheduled-name', { hasText: name })).toHaveCount(1);
+    }
+    const initialSections = page.locator('.ct-scheduled-section');
+    await expect(initialSections.nth(0).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(0, 3));
+    await expect(initialSections.nth(1).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(3));
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Loop: watch CI' }))
+      .toContainText('Existing thread · Codex · gpt-5.6-codex');
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Wakeup: deployment check' }))
+      .toContainText('Target thread missing · falls back to new thread');
+    await expect(page.locator('.ct-scheduled-card[open]')).toHaveCount(0);
+    await expect(page.getByText('Overdue — catching up', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Next check').first()).toBeVisible();
     await expect(page.getByText('Thread loops & wakeups')).toBeVisible();
     await expect(page.getByText('Thread Orchestrator heartbeat')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Create with Claude' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open last run' })).toHaveCount(0);
     await page.evaluate(() => {
       const app = document.getElementById('app');
       const content = app?.querySelector<HTMLElement>('.vertical-tab-content');
@@ -1512,14 +1531,46 @@ test.describe('Claude Threads UI', () => {
     await page.waitForTimeout(200);
     await shot(page, 'settings-scheduled.png', { fullPage: true });
 
+    const morning = page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' });
+    await morning.locator(':scope > summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(morning).toHaveAttribute('open', '');
+    await expect(morning.getByText('Prompt', { exact: true })).toBeVisible();
+    await expect(morning.getByText('test -s inbox/pending.txt', { exact: false })).toBeVisible();
+    await expect(morning.getByText('Creates a new thread', { exact: false })).toBeVisible();
+    await expect(morning.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await morning.locator('.ct-run-history-summary').click();
+    await expect(morning.getByText('Fired', { exact: true })).toBeVisible();
+    await shot(page, 'settings-scheduled-expanded.png', { fullPage: true });
+
+    await page.setViewportSize({ width: 360, height: 760 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await shot(page, 'settings-scheduled-narrow.png', { fullPage: true });
+
+    await morning.getByRole('button', { name: 'Open last run' }).click();
+
     await page.getByRole('button', { name: 'Create with Claude' }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls)).toEqual({
       dispatches: [{
         prompt: 'Help me create scheduled work. Ask me what should happen, when it should run, and whether it needs active hours or a deterministic gate. Then use CronCreate once the schedule is clear.',
         title: 'Create scheduled work',
       }],
-      openedThreadIds: ['thread-created'],
+      openedThreadIds: ['thread-morning', 'thread-created'],
+      updatedItemIds: [],
+      deletedItemIds: [],
     });
+
+    await morning.getByRole('button', { name: 'Pause' }).click();
+    const recurringNames = page.locator('.ct-scheduled-section').filter({ hasText: 'Recurring jobs' }).locator('.ct-scheduled-name');
+    await expect(recurringNames).toHaveText(['Project pulse', 'Morning inbox triage', 'Weekly PR sweep']);
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' }).getByText('Paused', { exact: true }).first()).toBeVisible();
+
+    const weekly = page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' });
+    await weekly.locator(':scope > summary').click();
+    await weekly.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.updatedItemIds)).toEqual(['sched-1']);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.deletedItemIds)).toEqual(['sched-2']);
   });
 
   test('settings — mcp tab', async ({ page }) => {
