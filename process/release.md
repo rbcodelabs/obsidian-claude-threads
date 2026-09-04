@@ -134,7 +134,7 @@ Skip version-bump PRs (`chore: bump version`) and release PRs (`release: vX.Y.Z`
 
 ## Step 10 — Thread Hygiene
 
-Archive any Claude Threads session used to build PRs included in this release.
+Archive any Agent Threads session used to build PRs included in this release.
 
 To find which thread opened a given PR, call `obsidian_list_threads` — each thread includes `prUrl` if a PR was opened during it. Match `prUrl` to the PR URL and archive:
 
