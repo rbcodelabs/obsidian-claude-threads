@@ -583,8 +583,24 @@ export interface RunEvent {
   note?: string;
 }
 
+/**
+ * A configured skill source.
+ *
+ * Two ways one comes into existence, and the difference matters for `id` and
+ * `clonePath`:
+ * - **Added through the UI** — `id` is a `crypto.randomUUID()` and `clonePath` is
+ *   filled in at clone time.
+ * - **Declared** in a committed `data.json` — `type` + `repoUrl` are enough. Both
+ *   `id` (derived deterministically from `repoUrl`) and `clonePath` (machine
+ *   specific, so never committable) are resolved and cloned on load by
+ *   `ensureGithubSourcesCloned`, then persisted back.
+ */
 export interface SkillSource {
-  /** Stable ID, generated as `crypto.randomUUID()` at creation time */
+  /**
+   * Stable ID. `crypto.randomUUID()` for a source added through the UI; for a
+   * declared source arriving without one, derived deterministically from
+   * `repoUrl` so the same config resolves to the same id on every machine.
+   */
   id: string;
   /** Human-readable label, e.g. "Agentic PM Playbook" */
   name: string;
@@ -593,7 +609,11 @@ export interface SkillSource {
   // ── github type fields ──────────────────────────────────────────────────────
   /** GitHub repo URL, e.g. "https://github.com/owner/repo" */
   repoUrl?: string;
-  /** Absolute path to the managed clone, e.g. "/Users/foo/MyVault/.obsidian/plugins/claude-threads/skill-sources/<id>" */
+  /**
+   * Absolute path to the managed clone, e.g.
+   * "/Users/foo/MyVault/.obsidian/plugins/claude-threads/skill-sources/<id>".
+   * Omit it in a declared source — it is computed from the plugin dir and `id`.
+   */
   clonePath?: string;
   /** ms epoch of the last git fetch (for staleness display) */
   lastFetched?: number;

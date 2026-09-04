@@ -32,6 +32,9 @@ const sharedConfig = {
     // child_process is statically imported by ThreadsView — stub it so the
     // IIFE bundle doesn't crash at load time in the browser harness.
     'child_process':                    resolve('./mocks/child-process.ts'),
+    // crypto is statically imported by skillManager (createHash, for the
+    // deterministic skill-source id) — stub it for the same reason.
+    'crypto':                           resolve('./mocks/crypto.ts'),
     // electron is used in dynamic require() calls inside click handlers;
     // inject a no-op so those code paths don't crash when reached in tests.
     'electron':                         resolve('./mocks/electron.ts'),

@@ -40,6 +40,12 @@ import {
   getMarketplaceSkillDescription,
   getSkillDetail,
   listSkillSources,
+  normalizeRepoUrlForId,
+  deriveSourceIdFromRepoUrl,
+  githubCloneUrl,
+  isGitWorkingCopy,
+  cloneGithubSource,
+  ensureGithubSourcesCloned,
   checkSourceForUpdates,
   checkAllSourcesForUpdates,
   pullGithubSourceUpdates,
@@ -518,6 +524,203 @@ describe('checkSourceForUpdates / checkAllSourcesForUpdates / pullGithubSourceUp
   it('pullGithubSourceUpdates throws when clonePath is missing', async () => {
     const source: SkillSource = { id: 's1', name: 'Test Source', type: 'github' };
     await expect(pullGithubSourceUpdates(source)).rejects.toThrow(/no clone path configured/);
+  });
+});
+
+// ── Deterministic source ids ─────────────────────────────────────────────────
+
+describe('normalizeRepoUrlForId / deriveSourceIdFromRepoUrl / githubCloneUrl', () => {
+  it('collapses scheme, case, .git suffix, trailing slash and scp form to one canonical form', () => {
+    const canonical = 'github.com/owner/repo';
+    expect(normalizeRepoUrlForId('https://github.com/owner/repo')).toBe(canonical);
+    expect(normalizeRepoUrlForId('http://github.com/Owner/Repo/')).toBe(canonical);
+    expect(normalizeRepoUrlForId('https://github.com/owner/repo.git')).toBe(canonical);
+    expect(normalizeRepoUrlForId('  https://github.com/owner/repo//  ')).toBe(canonical);
+    expect(normalizeRepoUrlForId('git@github.com:owner/repo.git')).toBe(canonical);
+  });
+
+  it('derives the same id every time for the same repo, and different ids for different repos', () => {
+    const a1 = deriveSourceIdFromRepoUrl('https://github.com/owner/repo');
+    const a2 = deriveSourceIdFromRepoUrl('https://github.com/owner/repo.git');
+    const b = deriveSourceIdFromRepoUrl('https://github.com/owner/other');
+
+    expect(a1).toBe(a2);
+    expect(a1).toBe(deriveSourceIdFromRepoUrl('https://github.com/Owner/Repo/'));
+    expect(a1).not.toBe(b);
+    // Filesystem-safe: the id becomes a directory name.
+    expect(a1).toMatch(/^gh-[0-9a-f]{16}$/);
+  });
+
+  it('githubCloneUrl appends .git exactly once', () => {
+    expect(githubCloneUrl('https://github.com/o/r')).toBe('https://github.com/o/r.git');
+    expect(githubCloneUrl('https://github.com/o/r.git')).toBe('https://github.com/o/r.git');
+    expect(githubCloneUrl('https://github.com/o/r/')).toBe('https://github.com/o/r.git');
+  });
+});
+
+// ── cloneGithubSource / ensureGithubSourcesCloned (real local repos, no network) ──
+
+describe('cloneGithubSource', () => {
+  let origin: string;
+  let cloneBase: string;
+
+  beforeEach(() => {
+    // Named with a .git suffix so githubCloneUrl's normalization leaves the
+    // local fixture path untouched.
+    origin = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-decl-')), 'fixture.git');
+    initGitRepo(origin);
+    cloneBase = path.join(tmpVault, MANIFEST_DIR, 'skill-sources');
+  });
+
+  afterEach(() => {
+    fs.rmSync(path.dirname(origin), { recursive: true, force: true });
+  });
+
+  it('clones into a path whose parent does not exist yet', async () => {
+    const dest = path.join(cloneBase, 'gh-abc');
+    await cloneGithubSource(origin, dest);
+    expect(fs.existsSync(path.join(dest, 'file.txt'))).toBe(true);
+    expect(isGitWorkingCopy(dest)).toBe(true);
+  });
+
+  it('throws and leaves no directory behind when the remote does not exist', async () => {
+    const dest = path.join(cloneBase, 'gh-missing');
+    await expect(
+      cloneGithubSource(path.join(tmpHome, 'does-not-exist'), dest),
+    ).rejects.toThrow();
+    expect(fs.existsSync(dest)).toBe(false);
+  });
+});
+
+describe('ensureGithubSourcesCloned', () => {
+  let originA: string;
+  let originB: string;
+  let fixtureRoot: string;
+  let cloneBase: string;
+
+  beforeEach(() => {
+    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'skillmanager-declared-'));
+    originA = path.join(fixtureRoot, 'source-a.git');
+    originB = path.join(fixtureRoot, 'source-b.git');
+    initGitRepo(originA);
+    initGitRepo(originB);
+    cloneBase = path.join(tmpVault, MANIFEST_DIR, 'skill-sources');
+  });
+
+  afterEach(() => {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('clones a declared source that has neither an id nor a clonePath, and persists both', async () => {
+    const sources: SkillSource[] = [{ id: '', name: 'Declared A', type: 'github', repoUrl: originA }];
+
+    const result = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(result.failed).toEqual([]);
+    expect(result.cloned.map((c) => c.name)).toEqual(['Declared A']);
+    expect(result.changed).toBe(true);
+    // id derived deterministically, clonePath computed under the managed base
+    expect(sources[0].id).toBe(deriveSourceIdFromRepoUrl(originA));
+    expect(sources[0].clonePath).toBe(path.join(cloneBase, sources[0].id));
+    expect(fs.existsSync(path.join(sources[0].clonePath!, 'file.txt'))).toBe(true);
+  });
+
+  it('is a no-op on a second pass: nothing cloned, nothing changed, clone untouched', async () => {
+    const sources: SkillSource[] = [{ id: '', name: 'Declared A', type: 'github', repoUrl: originA }];
+    await ensureGithubSourcesCloned(sources, cloneBase);
+    const clonePath = sources[0].clonePath!;
+    // Sentinel proves the existing clone was not deleted and re-cloned.
+    fs.writeFileSync(path.join(clonePath, 'sentinel.txt'), 'do not delete me', 'utf-8');
+    const snapshot = JSON.parse(JSON.stringify(sources)) as SkillSource[];
+
+    const second = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(second.changed).toBe(false); // caller therefore writes no settings
+    expect(second.cloned).toEqual([]);
+    expect(second.present).toEqual([sources[0].id]);
+    expect(second.failed).toEqual([]);
+    expect(fs.existsSync(path.join(clonePath, 'sentinel.txt'))).toBe(true);
+    expect(sources).toEqual(snapshot);
+  });
+
+  it('leaves an existing clone completely alone even when it is behind the remote (no auto-pull)', async () => {
+    const sources: SkillSource[] = [{ id: '', name: 'Declared A', type: 'github', repoUrl: originA }];
+    await ensureGithubSourcesCloned(sources, cloneBase);
+    const clonePath = sources[0].clonePath!;
+
+    fs.writeFileSync(path.join(originA, 'file2.txt'), 'v2', 'utf-8');
+    execSync('git add . && git commit --quiet -m "second commit"', { cwd: originA });
+
+    const second = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(second.present).toEqual([sources[0].id]);
+    // The new upstream commit was NOT pulled in — updating stays explicit.
+    expect(fs.existsSync(path.join(clonePath, 'file2.txt'))).toBe(false);
+  });
+
+  it('skips a source that fails to clone without throwing, and still clones the rest', async () => {
+    const sources: SkillSource[] = [
+      // Ordered first on purpose: a failure must not abort the sources after it.
+      { id: '', name: 'Broken', type: 'github', repoUrl: path.join(fixtureRoot, 'nope.git') },
+      { id: '', name: 'Missing URL', type: 'github' },
+      { id: '', name: 'Good B', type: 'github', repoUrl: originB },
+    ];
+
+    const result = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(result.failed.map((f) => f.name).sort()).toEqual(['Broken', 'Missing URL']);
+    expect(result.failed[0].error).toBeTruthy();
+    expect(result.cloned.map((c) => c.name)).toEqual(['Good B']);
+    expect(fs.existsSync(path.join(sources[2].clonePath!, 'file.txt'))).toBe(true);
+    // The failed clone leaves nothing half-written behind.
+    expect(fs.existsSync(path.join(cloneBase, sources[0].id))).toBe(false);
+  });
+
+  it('ignores local-type sources entirely', async () => {
+    const sources: SkillSource[] = [
+      { id: 'local-1', name: 'Local', type: 'local', skillsPath: path.join(fixtureRoot, 'not-created') },
+    ];
+
+    const result = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(result).toEqual({ changed: false, cloned: [], present: [], failed: [] });
+    expect(fs.existsSync(cloneBase)).toBe(false);
+    expect(sources[0].clonePath).toBeUndefined();
+  });
+
+  it('re-clones over a stale non-git directory inside the managed clone base', async () => {
+    const id = deriveSourceIdFromRepoUrl(originA);
+    const clonePath = path.join(cloneBase, id);
+    fs.mkdirSync(clonePath, { recursive: true });
+    fs.writeFileSync(path.join(clonePath, 'junk.txt'), 'interrupted clone', 'utf-8');
+
+    const sources: SkillSource[] = [{ id, name: 'Declared A', type: 'github', repoUrl: originA, clonePath }];
+    const result = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(result.cloned).toHaveLength(1);
+    expect(fs.existsSync(path.join(clonePath, 'junk.txt'))).toBe(false);
+    expect(isGitWorkingCopy(clonePath)).toBe(true);
+  });
+
+  it('refuses to delete a non-git clonePath that lives outside the managed clone base', async () => {
+    const outside = path.join(fixtureRoot, 'user-owned');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'precious.txt'), 'user data', 'utf-8');
+
+    const sources: SkillSource[] = [{ id: 'gh-1', name: 'Hand-edited', type: 'github', repoUrl: originA, clonePath: outside }];
+    const result = await ensureGithubSourcesCloned(sources, cloneBase);
+
+    expect(result.cloned).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].error).toMatch(/refusing to replace/);
+    expect(fs.existsSync(path.join(outside, 'precious.txt'))).toBe(true);
+  });
+
+  it('returns an empty result for no sources or no clone base', async () => {
+    const empty = { changed: false, cloned: [], present: [], failed: [] };
+    expect(await ensureGithubSourcesCloned([], cloneBase)).toEqual(empty);
+    expect(await ensureGithubSourcesCloned(undefined, cloneBase)).toEqual(empty);
+    expect(await ensureGithubSourcesCloned([{ id: '', name: 'A', type: 'github', repoUrl: originA }], '')).toEqual(empty);
   });
 });
 

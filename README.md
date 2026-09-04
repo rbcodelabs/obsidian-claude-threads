@@ -211,6 +211,30 @@ Open the **Skills Manager** panel from the ribbon (puzzle icon) or command palet
 
 > **Where installs go.** Everything the Skills Manager installs or imports lands in `<vault>/.obsidian/plugins/claude-threads/skills/`, beside the plugin's `skill-sources/` clones — never in `~/.claude/`. That folder shares the plugin folder's fate: community-plugin *updates* leave unknown subdirectories alone, but manually uninstalling and reinstalling the plugin will delete your installed skills along with it.
 
+#### Declaring skill sources in config
+
+GitHub skill sources don't have to be added through the UI. A vault whose `data.json` is committed to a config repo can **declare** them, and the plugin materializes each one on load:
+
+```jsonc
+"skillSources": [
+  { "id": "", "name": "Agentic PM Playbook", "type": "github",
+    "repoUrl": "https://github.com/owner/repo" }
+]
+```
+
+`repoUrl` is the only field that matters. Both machine-specific fields are filled in for you and written back to `data.json` on first load:
+
+- **`id`** — derived deterministically from `repoUrl` (a `gh-<hex>` digest prefix), so the same declared config resolves to the same id, and therefore the same clone directory, on every machine. Sources you add through the UI keep their random UUID.
+- **`clonePath`** — computed as `<vault>/<plugin-dir>/skill-sources/<id>`, so an absolute path never has to be committed.
+
+Three things to know about the pass:
+
+- **Clone-if-missing only.** An existing clone is never fetched or pulled on launch — that would add network latency to every startup and swap skills out from under a running session. Updating stays explicit: the **Check for updates** button, **Update** in a source's detail panel, or the `skills_check_updates` / `skills_update` tools.
+- **It cannot delay or break startup.** It runs after the workspace is laid out, is never awaited by plugin load, and shells out to `git` asynchronously. Each source is attempted independently: a private repo, an unreachable host, a rate limit, a missing `git` binary or a 60-second timeout is logged to the console and skipped, leaving every other source unaffected. A source still cloning when a thread starts is picked up by the next session.
+- **It only creates what it owns.** `type: "local"` sources are left alone, as are hand-edited `clonePath`s pointing outside the managed `skill-sources/` folder.
+
+This also repairs a source whose clone has gone missing — previously a source listed in settings with no directory on disk was silently inert, contributing no skills and no error. Use **Reinstall** in the source's detail panel to force a re-clone of one that is present but broken.
+
 **Browse tab** — search the [skills.sh](https://skills.sh) registry. Results show the skill name, GitHub source, and install count. Click a result to see details and an **Install** button that clones the skill from GitHub into `<vault>/.obsidian/plugins/claude-threads/skills/`. Installed skills are invoked as `/vault:<name>`.
 
 ### @ file mentions
