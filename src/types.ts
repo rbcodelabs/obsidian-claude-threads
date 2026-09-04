@@ -1,3 +1,8 @@
+// Type-only: sandboxVm.ts has no module-scope side effects and no top-level
+// Node requires, and `import type` is erased at build time, so this stays safe
+// for the mobile bundle.
+import type { VmNetworkMode } from './sandboxVm';
+
 export type MessageRole = 'user' | 'assistant' | 'compact' | 'notice';
 
 export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived' | 'reconnecting';
@@ -659,6 +664,21 @@ export interface PluginSettings {
    * on reboot — silently destroying any uncommitted work inside them.
    */
   worktreeRoot: string;
+  /**
+   * Container image `enter_vm` starts. Built from `sandbox/Dockerfile`
+   * (`container build --tag claude-threads-coding:1 sandbox/`).
+   *
+   * Blank falls back to `claude-threads-coding:1`.
+   */
+  vmImage: string;
+  /**
+   * Network isolation `enter_vm` uses when the call does not specify one.
+   *
+   * Defaults to `'default'` — FULL EGRESS — by explicit product decision: a
+   * sandbox where `npm install` and git remotes fail is one nobody uses.
+   * `'internal'` (host-only) and `'none'` (no route) remain first-class.
+   */
+  vmDefaultNetwork: VmNetworkMode;
   defaultCwd: string;
   saveThreadsToVault: boolean;
   /**
@@ -847,6 +867,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   agentHarness: 'claude',
   codexBinaryPath: 'codex',
   worktreeRoot: '',
+  vmImage: 'claude-threads-coding:1',
+  vmDefaultNetwork: 'default',
   defaultCwd: '',
   saveThreadsToVault: true,
   saveRawLogs: true,
