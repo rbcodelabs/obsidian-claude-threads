@@ -30,7 +30,7 @@ const CW_SUCCESS       = '#9ab889'   // --interactive-success
 const CW_FORM_FIELD    = '#3d3d3a'   // --background-modifier-form-field
 const CW_TAB_ACTIVE    = '#2d2e2d'   // --tab-background-active (same as primary)
 
-// Claude Threads panel uses GitHub Dark (hardcoded in plugin)
+// Agent Threads panel uses GitHub Dark (hardcoded in plugin)
 const CT_BG     = '#0d1117'
 const CT_CARD   = '#161b22'
 const CT_BORDER = '#21262d'
@@ -55,7 +55,7 @@ const FILETAB_H   = 27   // Obsidian file tab bar (above editor)
 const STATUSBAR_H = 18   // bottom status bar
 const CONTENT_H = H - TITLEBAR_H - STATUSBAR_H
 // Panel widths — sum exactly to W
-const CT_W      = 340   // Claude Threads left panel
+const CT_W      = 340   // Agent Threads left panel
 const EDITOR_W  = 745   // center editor
 const DASH_W    = W - CT_W - EDITOR_W  // 406 Agent Dashboard
 
@@ -196,7 +196,7 @@ function StatusIcon({ children }: { children: React.ReactNode }) {
   )
 }
 
-// ─── Claude Threads panel (left) ─────────────────────────────────────────────
+// ─── Agent Threads panel (left) ─────────────────────────────────────────────
 const CT_TABS = [
   'claude-threads-spec',
   'this morning — HipTrip',
@@ -504,7 +504,7 @@ function CTPanel_Stream() {
         <span>Marketing plan for Reddit launch</span>
       </div>
       <div style={{ flex: 1, padding: '14px 12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 0 }}>
-        <CTMessage role="user" content="/brainstorm Claude Threads Reddit marketing — r/ObsidianMD, what angle and post structure?" />
+        <CTMessage role="user" content="/brainstorm Agent Threads Reddit marketing — r/ObsidianMD, what angle and post structure?" />
         {/* Active streaming response */}
         <div style={{ marginBottom: 0 }}>
           {/* Tool calls */}
@@ -607,7 +607,7 @@ function SpecContent() {
       </div>
 
       {h2('Overview')}
-      {p('Claude Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is an independent Claude Code session — not a wrapper with its own LLM calls, but the actual CLI running as a subprocess. Everything you\'ve already configured comes along.')}
+      {p('Agent Threads embeds Claude Code directly in your Obsidian sidebar. Each tab is an independent Claude Code session — not a wrapper with its own LLM calls, but the actual CLI running as a subprocess. Everything you\'ve already configured comes along.')}
 
       {h2('Prerequisites')}
       <ul style={{ paddingLeft: 20, margin: '0 0 16px' }}>
@@ -620,7 +620,7 @@ function SpecContent() {
       <ol style={{ paddingLeft: 20, margin: '0 0 16px' }}>
         {li('Install BRAT from the Community Plugins directory')}
         {li(<>BRAT settings → Add Beta Plugin → {code('richardbowman/obsidian-claude-threads')}</>)}
-        {li('Enable Claude Threads in Settings → Community Plugins')}
+        {li('Enable Agent Threads in Settings → Community Plugins')}
       </ol>
 
       {h2('Key Features')}
@@ -772,7 +772,7 @@ function AgentDashboard({ scene }: { scene: number }) {
 
         <DashThreadItem
           title="Reddit marketing plan"
-          summary="Drafted a full r/ObsidianMD post for the Claude Threads launch. Covers the subprocess approach, slash command skills integration, and agent dashboard. Includes BRAT install steps and honest beta caveat."
+          summary="Drafted a full r/ObsidianMD post for the Agent Threads launch. Covers the subprocess approach, slash command skills integration, and agent dashboard. Includes BRAT install steps and honest beta caveat."
           timestamp="2m ago"
           cwd="~/projects/obsidian-claude-threads"
         />
@@ -1082,7 +1082,7 @@ function MobilePhoneOverlay() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={M_ACCENT} strokeWidth="1.8" strokeLinecap="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: M_TEXT, flex: 1 }}>Claude Threads</span>
+            <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: M_TEXT, flex: 1 }}>Agent Threads</span>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 4,
               background: 'rgba(63,185,80,0.15)', border: `1px solid rgba(63,185,80,0.3)`,

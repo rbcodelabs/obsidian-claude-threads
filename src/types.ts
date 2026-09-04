@@ -1,3 +1,5 @@
+import { DEFAULT_VAULT_FOLDER } from './productIdentity';
+
 export type MessageRole = 'user' | 'assistant' | 'compact' | 'notice';
 
 export type ThreadStatus = 'waiting' | 'active' | 'error' | 'archived' | 'reconnecting';
@@ -837,7 +839,7 @@ export interface PluginSettings {
   scheduledItems: ScheduledItem[];
   /**
    * ID of the persistent thread running the bundled thread-orchestrator skill,
-   * created by the "Claude Threads: Open Thread Orchestrator" command. Used
+   * created by the "Agent Threads: Open Thread Orchestrator" command. Used
    * both to reopen the same thread on repeat invocations and so the
    * event-driven wake-up subscriber can skip pinging the orchestrator about
    * its own completions. Undefined until the command is run once.
@@ -896,7 +898,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   defaultCwd: '',
   saveThreadsToVault: true,
   saveRawLogs: true,
-  vaultFolder: 'Claude',
+  vaultFolder: DEFAULT_VAULT_FOLDER,
   permissionMode: 'acceptEdits',
   thinkingMode: 'disabled',
   thinkingBudgetTokens: 8000,

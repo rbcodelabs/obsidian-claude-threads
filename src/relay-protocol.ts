@@ -1,7 +1,7 @@
 /**
  * relay-protocol.ts
  *
- * All TypeScript types for the Claude Threads remote-access wire protocol.
+ * All TypeScript types for the Agent Threads remote-access wire protocol.
  * Both RelayClient and MobileThreadStore import from here. Never duplicate
  * these types elsewhere.
  */

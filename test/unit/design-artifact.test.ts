@@ -135,7 +135,7 @@ describe('new-thread design dispatch', () => {
     expect([...writes.keys()].map((target) => path.basename(target)).sort()).toEqual([
       'app.js', 'artifact.json', 'index.html', 'styles.css',
     ]);
-    expect(sentMessage).toContain('You are working in Claude Threads Design mode.');
+    expect(sentMessage).toContain('You are working in Agent Threads Design mode.');
     expect(sentMessage).toContain('Responsive settings card');
     expect(sentMessage).not.toContain('/design Responsive settings card');
     expect(events).toEqual(['create', 'scaffold', 'save', 'open-thread', 'open-preview', 'send']);

@@ -5,7 +5,7 @@ describe('host-aware environment prompt', () => {
   for (const host of ['Geode', 'Obsidian'] as const) {
     it(`identifies ${host} and teaches only canonical tools`, () => {
       const prompt = buildEnvironmentSystemPrompt('/vault', '/work', 'Claude', true, host);
-      expect(prompt).toContain(`inside the ${host} Claude Threads plugin`);
+      expect(prompt).toContain(`inside the ${host} Agent Threads plugin`);
       expect(prompt).toContain('vault_search');
       expect(prompt).toContain('host_list_commands');
       expect(prompt).not.toContain('obsidian_search_vault');

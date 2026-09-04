@@ -78,7 +78,7 @@ export async function activateChatPlacement(
   const destination = createDestination();
   if (!destination) {
     const location = placement === 'classic' ? 'sidebar' : 'main-area';
-    throw new Error(`Unable to create a ${location} leaf for Claude Threads.`);
+    throw new Error(`Unable to create a ${location} leaf for Agent Threads.`);
   }
   await destination.setViewState({
     type: viewType,

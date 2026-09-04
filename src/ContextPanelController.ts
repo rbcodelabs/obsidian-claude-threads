@@ -25,7 +25,7 @@ export class ContextPanelController {
 
   getLeaf(): WorkspaceLeaf {
     const chatLeaf = this.getChatLeaf();
-    if (!chatLeaf) throw new Error('Claude Threads chat must be open before contextual content can be shown.');
+    if (!chatLeaf) throw new Error('Agent Threads chat must be open before contextual content can be shown.');
     const restored = this.findOwnedCompanion(chatLeaf);
     if (restored) { this.companionLeaf = restored; return restored; }
 

@@ -753,7 +753,7 @@ export const fixtureThreads: Thread[] = [
 // Folder grouping resolves to: assigned Project name → working-directory label
 // → "Unassigned". These fixtures cover all three:
 //   • HipTrip       (project)   — Working, Awaiting, New, Done
-//   • Claude Threads (project)  — New, Failed, Ready
+//   • Agent Threads (project)  — New, Failed, Ready
 //   • acme-api      (cwd only)  — Done
 //   • Unassigned    (no cwd)    — New
 //
@@ -771,7 +771,7 @@ const asstMsg = (id: string, content: string, ts: number, summary?: string): Cha
 
 export const kanbanFixtureProjects: Project[] = [
   { id: 'proj-hiptrip', name: 'HipTrip', vaultFolder: 'Projects/HipTrip', createdAt: KT - 7 * 24 * 60 * 60 * 1000 },
-  { id: 'proj-threads', name: 'Claude Threads', vaultFolder: 'Projects/ClaudeThreads', createdAt: KT - 5 * 24 * 60 * 60 * 1000 },
+  { id: 'proj-threads', name: 'Agent Threads', vaultFolder: 'Projects/AgentThreads', createdAt: KT - 5 * 24 * 60 * 60 * 1000 },
 ];
 
 // Thread ids whose running / pending-permission state the harness must seed.
@@ -903,7 +903,7 @@ export const kanbanFixtureThreads: Thread[] = [
     scheduledItemName: kanbanScheduledJobName,
   },
 
-  // ── Claude Threads lane ─────────────────────────────────────────────────────
+  // ── Agent Threads lane ─────────────────────────────────────────────────────
   {
     id: 'k-threads-new',
     title: 'Kanban folder swimlanes',

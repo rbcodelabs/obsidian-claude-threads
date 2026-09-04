@@ -1,5 +1,5 @@
 /**
- * Cloudflare Worker entrypoint for the Claude Threads relay.
+ * Cloudflare Worker entrypoint for the Agent Threads relay.
  *
  * Routes WebSocket upgrade requests to the appropriate RoomDO instance.
  * URL pattern: /room/:roomId?role=desktop|mobile

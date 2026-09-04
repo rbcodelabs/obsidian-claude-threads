@@ -1,6 +1,6 @@
 ---
 name: thread-orchestrator
-description: Scoped orchestrator for Claude Threads. A Project orchestrator reviews its own Project; the Portfolio Orchestrator reviews unassigned work and Project-level summaries. Establishes goals, tracks progress, and stages replies for human approval without sending them itself.
+description: Scoped orchestrator for Agent Threads. A Project orchestrator reviews its own Project; the Portfolio Orchestrator reviews unassigned work and Project-level summaries. Establishes goals, tracks progress, and stages replies for human approval without sending them itself.
 ---
 
 # Thread Orchestrator

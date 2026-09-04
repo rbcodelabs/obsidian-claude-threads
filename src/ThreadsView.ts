@@ -338,7 +338,7 @@ export class ThreadsView extends ItemView {
       const thread = this.manager.getThread(this.activeThreadId);
       if (thread) return thread.title;
     }
-    return 'Claude Threads';
+    return 'Agent Threads';
   }
 
   /** Force Obsidian to re-read getDisplayText() and repaint the workspace tab header. */
@@ -731,7 +731,7 @@ export class ThreadsView extends ItemView {
     this.titleEl = titleRow.createEl('button', { cls: 'ct-title-btn', attr: { title: 'Switch thread' } });
     const titleIcon = this.titleEl.createSpan('ct-title-icon');
     setIcon(titleIcon, 'message-square');
-    this.titleTextEl = this.titleEl.createSpan({ cls: 'ct-title-text', text: 'Claude Threads' });
+    this.titleTextEl = this.titleEl.createSpan({ cls: 'ct-title-text', text: 'Agent Threads' });
     const chevronEl = this.titleEl.createSpan('ct-title-chevron');
     setIcon(chevronEl, 'chevron-down');
     this.titleEl.addEventListener('click', (e) => this.openThreadSwitcher(e));
@@ -947,7 +947,7 @@ export class ThreadsView extends ItemView {
   private renderTitleBar(): void {
     if (!this.titleTextEl) return;
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-    this.titleTextEl.textContent = thread?.title ?? 'Claude Threads';
+    this.titleTextEl.textContent = thread?.title ?? 'Agent Threads';
 
     // Show the ephemeral badge when the active thread is marked ephemeral
     if (this.ephemeralBadgeEl) {
@@ -2275,7 +2275,7 @@ export class ThreadsView extends ItemView {
         if (el) el.textContent = summary;
       } catch (err) {
         if (gen !== this.summaryGeneration) return;
-        console.error('[Claude Threads] message summary error:', err);
+        console.error('[Agent Threads] message summary error:', err);
         const el = this.summaryTextEls.get(msg.id);
         if (el) el.textContent = msg.content.slice(0, 120) + '…';
       }
@@ -2564,7 +2564,7 @@ export class ThreadsView extends ItemView {
         el.textContent = summary;
       } catch (err) {
         if (gen !== this.summaryGeneration) return;
-        console.error('[Claude Threads] group summary error:', err);
+        console.error('[Agent Threads] group summary error:', err);
         // Fall back to last message's content truncated
         el.textContent = group[group.length - 1].content.slice(0, 120) + '…';
       }
@@ -2612,7 +2612,7 @@ export class ThreadsView extends ItemView {
       // Refresh the Agent Dashboard so the new summary appears there immediately
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
-      console.error('[Claude Threads] summarize error:', err);
+      console.error('[Agent Threads] summarize error:', err);
       this.clearStatusCard('active');
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');

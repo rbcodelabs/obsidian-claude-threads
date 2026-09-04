@@ -23,6 +23,7 @@ import type {
   SourceUpdateCheckResult,
   InstallSkillParams,
 } from './skillManager';
+import { LEGACY_MCP_SERVER_NAME } from './productIdentity';
 
 // Reusable Zod schemas for tools that take a file path
 const pathSchema = { path: z.string().describe('Vault-relative path of the file') };
@@ -2562,7 +2563,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
   });
   const canonicalTools = tools.map(toCanonicalToolDefinition);
   const canonicalServer = createSdkMcpServer({
-    name: 'claude_threads',
+    name: LEGACY_MCP_SERVER_NAME,
     tools: canonicalTools,
     alwaysLoad: true,
   });

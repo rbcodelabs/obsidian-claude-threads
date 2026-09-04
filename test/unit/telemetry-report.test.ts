@@ -104,7 +104,7 @@ describe('buildDiagnosticsReport — redaction guarantees', () => {
   it('renders the core sections in the markdown', () => {
     const { markdown } = buildDiagnosticsReport(makeInput(secretLogs));
     for (const heading of [
-      '# Claude Threads — Diagnostics Report',
+      '# Agent Threads — Diagnostics Report',
       '## Environment',
       '## Vault & threads',
       '## Counters',

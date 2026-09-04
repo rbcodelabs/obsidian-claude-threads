@@ -110,7 +110,7 @@ describe('MobileView — getViewType', () => {
 
   it('returns correct display text', async () => {
     const { view } = await buildView();
-    expect(view.getDisplayText()).toBe('Claude Threads (Mobile)');
+    expect(view.getDisplayText()).toBe('Agent Threads (Mobile)');
     await view.onClose();
   });
 });

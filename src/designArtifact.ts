@@ -79,7 +79,7 @@ function scaffoldHtml(): string {
 <body>
   <main class="design-shell" aria-live="polite">
     <div class="design-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-    <p class="eyebrow">Claude Threads · Design</p>
+    <p class="eyebrow">Agent Threads · Design</p>
     <h1>Preparing your design</h1>
     <p class="status">Turning your brief into a responsive interface.</p>
   </main>
@@ -156,7 +156,7 @@ export async function ensureDesignArtifact(
 }
 
 export function designKickoffMessage(artifact: DesignArtifact, brief: string): string {
-  return `You are working in Claude Threads Design mode.
+  return `You are working in Agent Threads Design mode.
 
 Create or revise the static UI artifact at:
 ${artifact.root}

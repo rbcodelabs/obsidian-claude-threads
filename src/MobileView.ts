@@ -116,7 +116,7 @@ export class MobileView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Claude Threads (Mobile)';
+    return 'Agent Threads (Mobile)';
   }
 
   getIcon(): string {
@@ -175,7 +175,7 @@ export class MobileView extends ItemView {
     this.listPanelEl = root.createDiv('ct-mobile-list-panel');
     const listPanel = this.listPanelEl;
     const listHeader = listPanel.createDiv('ct-mobile-list-header');
-    listHeader.createEl('span', { cls: 'ct-mobile-list-title', text: 'Claude Threads' });
+    listHeader.createEl('span', { cls: 'ct-mobile-list-title', text: 'Agent Threads' });
     const newBtn = listHeader.createEl('button', { cls: 'ct-mobile-new-btn', attr: { title: 'New thread' } });
     newBtn.createSpan({ text: '+' });
     newBtn.addEventListener('click', () => {
@@ -344,7 +344,7 @@ export class MobileView extends ItemView {
     el.createEl('div', { cls: 'ct-mobile-pairing-icon', text: '⟳' });
     el.createEl('h3', { text: 'Not connected' });
     el.createEl('p', {
-      text: 'On desktop: Settings > Claude Threads > Remote Access > enable > Show QR code.',
+      text: 'On desktop: Settings > Agent Threads > Remote Access > enable > Show QR code.',
       cls: 'ct-mobile-pairing-text',
     });
     el.createEl('p', {

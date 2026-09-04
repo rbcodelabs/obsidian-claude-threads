@@ -1,7 +1,7 @@
 {
   "name": "claude-threads-relay",
   "version": "1.0.0",
-  "description": "Cloudflare Worker relay for Claude Threads remote access",
+  "description": "Cloudflare Worker relay for Agent Threads remote access",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",

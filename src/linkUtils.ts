@@ -40,7 +40,7 @@ export function isOsAbsoluteHref(href: string): boolean {
  *
  * marked percent-encodes hrefs, so a path containing a space arrives as
  * `.../Claude%20Threads/notes.md` while the vault index holds the literal
- * `Claude Threads/notes.md`. Each suffix is therefore probed both raw and
+ * `Agent Threads/notes.md`. Each suffix is therefore probed both raw and
  * percent-decoded — raw first, so a file whose real name legitimately
  * contains a "%20" still wins over the decoded interpretation. (That
  * precedence holds for what this function returns; a caller that decodes

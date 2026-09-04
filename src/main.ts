@@ -48,6 +48,7 @@ import {
   sharedPersistenceWriterFence,
   type PersistenceWriterToken,
 } from './PersistenceWriterFence';
+import { DIAGNOSTICS_FOLDER, mergePersistedSettings, selectWelcomeGuidePath } from './productIdentity';
 
 // View-type string constants. Must match the values exported by each view module.
 // Defined here as literals so both desktop and mobile code can reference them without
@@ -143,9 +144,9 @@ export function createAgentProjectUpdateCallback(deps: {
 }
 
 // Welcome guide content — written to vault on first install
-const WELCOME_GUIDE = `# Getting Started with Claude Threads
+const WELCOME_GUIDE = `# Getting Started with Agent Threads
 
-Welcome! Claude Threads turns Obsidian into a multi-agent workspace powered by the Claude CLI.
+Welcome! Agent Threads turns Obsidian into a multi-agent workspace powered by Claude Code and OpenAI Codex.
 
 ## The three panels
 
@@ -161,20 +162,20 @@ Reopen the panels any time from the ribbon icons (left edge of the window) or vi
 
 1. Click the **Agents List** ribbon icon or press \`Cmd+P\` → "Open Agents List"
 2. Type a task in the **dispatch box** at the top — e.g. \`Summarize the README in my project folder\`
-3. Hit **Enter** — Claude spins up a new thread and starts working
+3. Hit **Enter** — your selected agent starts a new thread and begins working
 4. Watch progress in the Agents List; click any thread row to open the full conversation in Chat
 
 ## Tips
 
 - **Projects**: Group threads by folder. Create a project in the Agents List to scope Claude's working directory.
-- **Permission mode**: Set to "Accept Edits" in Settings → Claude Threads to let Claude edit files without prompting.
+- **Permission mode**: Set to "Accept Edits" in Settings → Agent Threads to let your agent edit files without prompting.
 - **Multiple threads**: Run several agents in parallel — each gets its own row in the Agents List.
 - **Keyboard shortcuts**: \`Cmd+]\` / \`Cmd+[\` to cycle threads in Chat; \`Cmd+1–9\` to jump to a specific thread.
 - **Interrupt**: Use "Interrupt active thread" from the command palette to stop a running agent mid-task.
 
 ## Settings
 
-Open **Settings → Claude Threads** to configure:
+Open **Settings → Agent Threads** to configure:
 - Claude binary path (auto-detected from Homebrew/PATH)
 - Default working directory
 - Vault folder for saving thread notes
@@ -321,7 +322,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         await this.onloadMobile();
       } catch (err) {
         console.error('[ClaudeThreads] Mobile initialization failed:', err);
-        new Notice('Claude Threads failed to load on mobile. Check the developer console for details.');
+        new Notice('Agent Threads failed to load on mobile. Check the developer console for details.');
       }
     } else {
       await this.onloadDesktop();
@@ -769,7 +770,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const statusBarItem = this.addStatusBarItem();
     statusBarItem.style.display = 'none';
     statusBarItem.setText('☕');
-    statusBarItem.title = 'Claude Threads: keeping computer awake during active sessions';
+    statusBarItem.title = 'Agent Threads: keeping computer awake during active sessions';
     this.wakeLock.onChange((isActive) => {
       statusBarItem.style.display = isActive ? 'inline-block' : 'none';
     });
@@ -876,7 +877,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       try {
         bridges = api.getBridges();
       } catch (err) {
-        console.error('[Claude Threads] could not read vault bridges:', err);
+        console.error('[Agent Threads] could not read vault bridges:', err);
         return;
       }
       for (const bridge of findBridgesForFiles(files, bridges)) {
@@ -886,7 +887,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
           .syncBridge(bridge.id)
           .then(() => new Notice(`Vault bridge pulled: ${bridge.name}`))
           .catch((err: unknown) => {
-            console.error('[Claude Threads] bridge sync failed:', err);
+            console.error('[Agent Threads] bridge sync failed:', err);
             const msg = err instanceof Error ? err.message : String(err);
             new Notice(`Vault bridge sync failed: ${bridge.name}: ${msg}`, 8000);
           })
@@ -1260,7 +1261,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     handleVisibilityChange(); // set initial state on load
 
     // Ribbon icons
-    this.addRibbonIcon('message-square', 'Claude Threads', () => {
+    this.addRibbonIcon('message-square', 'Agent Threads', () => {
       this.activateView();
     });
     this.addRibbonIcon('list', 'Agents List', () => {
@@ -1273,7 +1274,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Commands
     this.addCommand({
       id: 'open-claude-threads',
-      name: 'Open Claude Threads',
+      name: 'Open Agent Threads',
       callback: () => this.activateView(),
     });
 
@@ -1373,7 +1374,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         if (view && threadId && this.settings.summarizationEnabled) {
           await view.summarizeThread(threadId);
         } else if (!this.settings.summarizationEnabled) {
-          new Notice('Thread summarization is disabled. Enable it in Settings > Claude Threads > Summarization.');
+          new Notice('Thread summarization is disabled. Enable it in Settings > Agent Threads > Summarization.');
         }
       },
     });
@@ -1441,9 +1442,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { workspace, vault } = this.app;
 
     // 1. Write welcome guide to vault
-    const guidePath = normalizePath(`${this.settings.vaultFolder}/Getting Started with Claude Threads.md`);
+    const selectedGuide = selectWelcomeGuidePath(
+      this.settings.vaultFolder,
+      path => Boolean(vault.getAbstractFileByPath(normalizePath(path))),
+    );
+    const guidePath = normalizePath(selectedGuide.path);
     try {
-      if (!vault.getAbstractFileByPath(guidePath)) {
+      if (selectedGuide.shouldCreate) {
         const folderPath = normalizePath(this.settings.vaultFolder);
         if (!vault.getAbstractFileByPath(folderPath)) {
           await vault.createFolder(folderPath);
@@ -1497,7 +1502,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     }
 
     // 5. Welcome notice
-    new Notice('Welcome to Claude Threads! Check the guide to get started.');
+    new Notice('Welcome to Agent Threads! Check the guide to get started.');
 
     // 6. Persist the flag so this never fires again
     this.settings.hasSeenWelcome = true;
@@ -1512,7 +1517,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       (leaf) => new MobileView(leaf, this.relayClient, this.mobileStore),
     );
 
-    this.addRibbonIcon('smartphone', 'Claude Threads (Mobile)', () => {
+    this.addRibbonIcon('smartphone', 'Agent Threads (Mobile)', () => {
       this.activateMobileView();
     });
 
@@ -1840,14 +1845,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
         const names = runningThreads.map((t) => `"${t.title}"`).join(', ');
         const s = runningThreads.length === 1 ? '' : 's';
         new Notice(
-          `Claude Threads: interrupting ${runningThreads.length} active thread${s} (${names}). Waiting up to 10 s for clean shutdown…`,
+          `Agent Threads: interrupting ${runningThreads.length} active thread${s} (${names}). Waiting up to 10 s for clean shutdown…`,
           12_000,
         );
         console.warn(`[ClaudeThreads] Plugin unloading with ${runningThreads.length} active thread${s}: ${names}`);
         const { timedOut } = await this.manager.gracefulShutdown(10_000);
         if (timedOut) {
           console.warn('[ClaudeThreads] Graceful shutdown timed out — forcing session close.');
-          new Notice('Claude Threads: some threads did not stop in time and were force-closed.', 6_000);
+          new Notice('Agent Threads: some threads did not stop in time and were force-closed.', 6_000);
         }
       }
     }
@@ -2144,7 +2149,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         return;
       }
     }
-    console.warn('[Claude Threads] claude binary not found, using "claude" from PATH');
+    console.warn('[Agent Threads] claude binary not found, using "claude" from PATH');
     this.settings.claudeBinaryPath = 'claude';
   }
 
@@ -2424,7 +2429,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
         openThread: (threadId) => this.openThreadInChatView(threadId),
         openPreview: async (artifact) => {
           const view = this.getView();
-          if (!view) throw new Error('Claude Threads view is unavailable.');
+          if (!view) throw new Error('Agent Threads view is unavailable.');
           await view.openArtifactPreview(artifact);
         },
         onSendError: (error) => {
@@ -2457,7 +2462,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   /**
    * Assemble the local-only, redacted diagnostics bundle, copy the markdown to the
-   * clipboard, and save both .md + .json into `claude-threads-diagnostics/` in the
+   * clipboard, and save both .md + .json into `agent-threads-diagnostics/` in the
    * vault root. Desktop-only; on mobile it shows a "desktop only" Notice and returns.
    * All host/OS access is behind the desktop guard + lazy require (mobile-safe).
    */
@@ -2526,8 +2531,8 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
       const { markdown, json } = buildDiagnosticsReport(input);
 
-      // Save .md + .json to claude-threads-diagnostics/ in the vault root.
-      const folder = 'claude-threads-diagnostics';
+      // Save .md + .json to agent-threads-diagnostics/ in the vault root.
+      const folder = DIAGNOSTICS_FOLDER;
       if (!this.app.vault.getAbstractFileByPath(folder)) {
         await this.app.vault.createFolder(folder).catch(() => {});
       }
@@ -2553,7 +2558,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings = mergePersistedSettings(DEFAULT_SETTINGS, data);
     const { sanitizeConversationCompanionSettings } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
     sanitizeConversationCompanionSettings(this.settings as unknown as Record<string, unknown>);
     // Migrate old WebLLM model IDs to claude alias

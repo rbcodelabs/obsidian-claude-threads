@@ -1,4 +1,4 @@
-# Claude Threads: Vision
+# Agent Threads: Vision
 
 ## The Problem
 
@@ -20,7 +20,7 @@ Not for: casual users who want a chatbot UI. Claude.ai already does that well.
 
 Your thinking environment and your agent fleet shouldn't be in different applications.
 
-When your specs, architecture notes, and daily scratchpad live in Obsidian, and your agents are running in a separate terminal window, you're context-switching constantly. Claude Threads collapses that gap. Write a spec, then dispatch a thread to implement it — right there, without switching windows, losing focus, or breaking flow.
+When your specs, architecture notes, and daily scratchpad live in Obsidian, and your agents are running in a separate terminal window, you're context-switching constantly. Agent Threads collapses that gap. Write a spec, then dispatch a thread to implement it — right there, without switching windows, losing focus, or breaking flow.
 
 ## What Makes It Different
 
@@ -31,17 +31,17 @@ Every design decision assumes the primary use case is a long-running task, not a
 No other Obsidian plugin — and very few Claude UIs — let you monitor multiple independent sessions at once. See what every agent is doing, dispatch new ones, resolve permission dialogs, all without switching threads. This is the capability that doesn't exist anywhere else.
 
 **3. Full Claude Code fidelity**
-Claude Threads wraps the actual CLI subprocess. Skills, CLAUDE.md files, worktrees, MCP servers, Bedrock routing: all of it just works. We don't rebuild the agent experience; we surface it inside Obsidian.
+Agent Threads wraps the actual CLI subprocess. Skills, CLAUDE.md files, worktrees, MCP servers, Bedrock routing: all of it just works. We don't rebuild the agent experience; we surface it inside Obsidian.
 
 **4. Vault-native context**
 `@file` mentions, Projects with shared context prompts, thread notes saved back to the vault, session history browsable as Obsidian notes. The vault is the connective tissue between your thinking and your agents, not a separate silo.
 
 **5. Ambient, not interruptive**
-The design principle: you should be able to glance at Claude Threads the way you glance at a progress bar. Not be forced to focus on it. Context recap banners, thread summaries, the status rail — these all reduce the cognitive overhead of running a parallel workload so you can stay in flow on your own work.
+The design principle: you should be able to glance at Agent Threads the way you glance at a progress bar. Not be forced to focus on it. Context recap banners, thread summaries, the status rail — these all reduce the cognitive overhead of running a parallel workload so you can stay in flow on your own work.
 
 ## North Star
 
-**Claude Threads should be the best place to run and manage an agentic AI workload, for people whose thinking lives in Obsidian.**
+**Agent Threads should be the best place to run and manage an agentic AI workload, for people whose thinking lives in Obsidian.**
 
 A user should be able to:
 - Kick off 3-5 parallel tasks in under 30 seconds
@@ -55,7 +55,7 @@ A user should be able to:
 The biggest leverage point right now is discoverability. We're BRAT-only, which means only early adopters find us. Getting into the official plugin directory is the top near-term goal. Pre-requisites: pass Obsidian's review criteria, complete user documentation, polished onboarding.
 
 ### 2. Onboarding and Activation
-The first-run guide exists but the onboarding arc isn't complete. A new user needs to understand: (a) what Claude Threads is for, (b) how to install Claude Code if they haven't, (c) how to run their first agentic task. The gap between "plugin installed" and "first successful agentic task" is still too wide.
+The first-run guide exists but the onboarding arc isn't complete. A new user needs to understand: (a) what Agent Threads is for, (b) how to install Claude Code if they haven't, (c) how to run their first agentic task. The gap between "plugin installed" and "first successful agentic task" is still too wide.
 
 ### 3. Public Roadmap
 Move feature requests and planned work into Compass so users can see what's coming and vote on priorities.

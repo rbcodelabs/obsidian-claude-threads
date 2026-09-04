@@ -70,9 +70,9 @@ describe('buildAttachmentPath', () => {
     );
   });
 
-  it('defaults to the Claude folder when none is given', () => {
+  it('defaults to the Agent Threads folder when none is given', () => {
     expect(buildAttachmentPath('', 'tid', 'mid', 1, 'image/gif')).toBe(
-      'Claude/attachments/tid/mid-1.gif',
+      'Agent Threads/attachments/tid/mid-1.gif',
     );
   });
 });

@@ -142,7 +142,7 @@ export class SttController {
   private async beginRecording(entry: MicButtonEntry): Promise<void> {
     const apiKey = this.getApiKey();
     if (!apiKey) {
-      new Notice('No OpenAI API key set — add one in Settings > Claude Threads > Speech to Text');
+      new Notice('No OpenAI API key set — add one in Settings > Agent Threads > Speech to Text');
       return;
     }
 
@@ -190,7 +190,7 @@ export class SttController {
       try {
         const key = this.getApiKey();
         if (!key) {
-          new Notice('No OpenAI API key set — add one in Settings > Claude Threads > Speech to Text');
+          new Notice('No OpenAI API key set — add one in Settings > Agent Threads > Speech to Text');
           target.setState('idle');
           this.activeEntry = null;
           return;

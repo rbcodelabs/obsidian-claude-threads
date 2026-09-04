@@ -55,7 +55,7 @@ export function buildAttachmentPath(
   index: number,
   mediaType: string,
 ): string {
-  const folder = vaultFolder || 'Claude';
+  const folder = vaultFolder || 'Agent Threads';
   return `${folder}/attachments/${threadId}/${messageId}-${index}.${extForMediaType(mediaType)}`;
 }
 
