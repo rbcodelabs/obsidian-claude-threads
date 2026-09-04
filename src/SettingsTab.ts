@@ -2148,13 +2148,13 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       const projectName = item.projectId ? (projectNames.get(item.projectId) ?? 'Unknown project') : 'No project';
       const card = section.createEl('details', { cls: 'ct-scheduled-card' });
       const summary = card.createEl('summary', { cls: 'ct-scheduled-summary' });
-      const titleRow = summary.createDiv({ cls: 'ct-scheduled-card-title-row' });
+      const titleRow = summary.createSpan({ cls: 'ct-scheduled-card-title-row' });
       titleRow.createEl('span', { text: item.name, cls: 'ct-scheduled-name' });
       titleRow.createEl('span', {
         text: item.enabled ? (occurrence?.overdue ? 'Catching up' : 'Enabled') : 'Paused',
         cls: `ct-scheduled-status ${item.enabled ? (occurrence?.overdue ? 'is-overdue' : 'is-enabled') : 'is-paused'}`,
       });
-      const summaryMeta = summary.createDiv({ cls: 'ct-scheduled-summary-meta' });
+      const summaryMeta = summary.createSpan({ cls: 'ct-scheduled-summary-meta' });
       summaryMeta.createEl('span', { text: formatScheduleDescription(item.schedule, !!item.gate?.command) });
       summaryMeta.createEl('span', {
         text: occurrence

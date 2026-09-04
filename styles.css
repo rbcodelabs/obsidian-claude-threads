@@ -6365,6 +6365,29 @@
   color: var(--text-error);
 }
 
+@media (max-width: 520px) {
+  .ct-run-history-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .ct-run-history-entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    line-height: 1.45;
+  }
+
+  .ct-run-outcome {
+    min-width: 0;
+  }
+
+  .ct-run-when,
+  .ct-run-detail {
+    overflow-wrap: anywhere;
+  }
+}
+
 /* Full-width text inputs / textareas in settings rows */
 input.ct-settings-wide-input,
 textarea.ct-settings-wide-input {

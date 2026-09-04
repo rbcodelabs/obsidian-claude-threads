@@ -1495,7 +1495,23 @@ test.describe('Claude Threads UI', () => {
     await page.click('.ct-settings-tab-btn:has-text("Scheduled")');
     await expect(page.getByRole('heading', { name: 'Next up' })).toHaveCount(0);
     await expect(page.locator('.ct-scheduled-card')).toHaveCount(5);
-    await expect(page.locator('.ct-scheduled-name', { hasText: 'Morning inbox triage' })).toHaveCount(1);
+    const expectedNames = [
+      'Morning inbox triage',
+      'Project pulse',
+      'Weekly PR sweep',
+      'Loop: watch CI',
+      'Wakeup: deployment check',
+    ];
+    for (const name of expectedNames) {
+      await expect(page.locator('.ct-scheduled-name', { hasText: name })).toHaveCount(1);
+    }
+    const initialSections = page.locator('.ct-scheduled-section');
+    await expect(initialSections.nth(0).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(0, 3));
+    await expect(initialSections.nth(1).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(3));
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Loop: watch CI' }))
+      .toContainText('Existing thread · Codex · gpt-5.6-codex');
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Wakeup: deployment check' }))
+      .toContainText('Target thread missing · falls back to new thread');
     await expect(page.locator('.ct-scheduled-card[open]')).toHaveCount(0);
     await expect(page.getByText('Overdue — catching up', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Next check').first()).toBeVisible();
