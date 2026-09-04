@@ -2645,41 +2645,14 @@
   font-size: var(--font-ui-small);
 }
 
-.ct-agents-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
-}
-
-.ct-agents-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: var(--font-ui-medium);
-}
-
-.ct-agents-title-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-accent);
-}
-
 .ct-agents-count {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.ct-agents-header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
+/* Kanban still owns its floating-panel search control. AgentDashboard uses
+   the host ItemView action and SearchComponent instead. */
 .ct-agents-search-btn {
   display: flex;
   align-items: center;
@@ -2701,15 +2674,21 @@
 }
 
 .ct-agents-search-bar {
+  display: flex;
   padding: 6px 10px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ct-agents-search-bar .search-input-container {
+  width: 100%;
 }
 
 .ct-agents-search-field {
   position: relative;
   display: flex;
   align-items: center;
+  width: 100%;
 }
 
 .ct-agents-search-input {
@@ -2942,11 +2921,17 @@
 .ct-agents-row-title {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
   font-weight: 500;
+  color: var(--text-normal);
+}
+
+.ct-agents-row-title-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-normal);
 }
 
 .ct-agents-row-summary {
@@ -2987,7 +2972,8 @@
   white-space: nowrap;
 }
 
-.ct-agents-row-cwd {
+.ct-agents-row-cwd,
+.ct-agents-row-project {
   flex: 1 2 auto;
   min-width: 0;
   font-size: var(--font-ui-smaller);
@@ -3040,7 +3026,8 @@
 }
 
 @container ct-dashboard (max-width: 420px) {
-  .ct-agents-row-cwd { display: none; }
+  .ct-agents-row-cwd,
+  .ct-agents-row-project { display: none; }
   .ct-agents-row-secondary { gap: 6px; }
   .ct-agents-row-activity { min-width: 0; flex: 1 1 auto; }
   .ct-dashboard-agent-count { max-width: 100%; }
@@ -6163,71 +6150,64 @@
   font-size: var(--font-ui-small);
 }
 
-.ct-scheduled-next-list {
-  display: grid;
-  gap: 8px;
-}
-
-.ct-scheduled-next-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 12px;
+.ct-scheduled-card {
+  margin-bottom: 12px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  background: var(--background-secondary);
+  background: var(--background-secondary-alt);
+  overflow: clip;
 }
 
-.ct-scheduled-next-row.is-overdue {
-  border-color: var(--color-orange);
+.ct-scheduled-summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
 }
 
-.ct-scheduled-next-name {
+.ct-scheduled-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ct-scheduled-summary::before {
+  content: '›';
+  display: inline-block;
+  width: 16px;
+  margin-right: 6px;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.ct-scheduled-card[open] > .ct-scheduled-summary::before {
+  transform: rotate(90deg);
+}
+
+.ct-scheduled-summary:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ct-scheduled-summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.ct-scheduled-card-title-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: calc(100% - 24px);
+  vertical-align: middle;
+}
+
+.ct-scheduled-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-}
-
-.ct-scheduled-next-timing {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-end;
-  gap: 7px;
-  text-align: right;
-  font-size: var(--font-ui-small);
-}
-
-.ct-scheduled-next-label,
-.ct-scheduled-exact {
-  color: var(--text-muted);
-}
-
-.ct-scheduled-exact {
-  font-size: var(--font-ui-smaller);
-  font-variant-numeric: tabular-nums;
-}
-
-.ct-scheduled-card {
-  margin-bottom: 12px;
-  padding: 14px 16px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  background: var(--background-secondary-alt);
-}
-
-.ct-scheduled-card-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ct-scheduled-card-title-row h3 {
-  margin: 0;
-  font-size: var(--font-ui-medium);
 }
 
 .ct-scheduled-status {
@@ -6248,10 +6228,40 @@
   color: var(--color-orange);
 }
 
-.ct-scheduled-card-schedule {
-  margin: 5px 0 12px;
+.ct-scheduled-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 7px 0 0 22px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ct-scheduled-summary-meta > span:not(:last-child)::after {
+  content: '·';
+  margin-left: 14px;
+  color: var(--text-faint);
+}
+
+.ct-scheduled-summary-meta .is-overdue,
+.ct-scheduled-execution.is-missing {
+  color: var(--color-orange);
+}
+
+.ct-scheduled-content {
+  padding: 13px 16px 8px 36px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ct-scheduled-prompt {
+  margin-bottom: 12px;
+}
+
+.ct-scheduled-prompt p {
+  margin: 4px 0 0;
   color: var(--text-normal);
   font-size: var(--font-ui-small);
+  white-space: pre-wrap;
 }
 
 .ct-scheduled-metadata {
@@ -6288,6 +6298,35 @@
 
 .ct-scheduled-card .ct-run-history {
   margin: 0 0 8px;
+}
+
+@media (max-width: 520px) {
+  .ct-scheduled-summary-meta {
+    display: grid;
+    gap: 3px;
+  }
+
+  .ct-scheduled-summary-meta > span::after {
+    display: none;
+  }
+
+  .ct-scheduled-content {
+    padding-left: 16px;
+  }
+
+  .ct-scheduled-metadata {
+    display: block;
+  }
+
+  .ct-scheduled-meta-row {
+    display: grid;
+    gap: 2px;
+    margin-bottom: 8px;
+  }
+
+  .ct-scheduled-actions .setting-item-control {
+    flex-wrap: wrap;
+  }
 }
 
 /* Per-scheduled-item run history (collapsible under each item's settings row) */
@@ -6340,6 +6379,29 @@
 }
 .ct-run-outcome-error {
   color: var(--text-error);
+}
+
+@media (max-width: 520px) {
+  .ct-run-history-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .ct-run-history-entry {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    line-height: 1.45;
+  }
+
+  .ct-run-outcome {
+    min-width: 0;
+  }
+
+  .ct-run-when,
+  .ct-run-detail {
+    overflow-wrap: anywhere;
+  }
 }
 
 /* Full-width text inputs / textareas in settings rows */

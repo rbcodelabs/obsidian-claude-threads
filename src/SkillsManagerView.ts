@@ -13,6 +13,7 @@ import {
   getPopularMarketplaceSkills,
   getMarketplaceSkillDescription,
   checkAllSourcesForUpdates,
+  cloneGithubSource,
   pullGithubSourceUpdates,
   listGithubSourceSkills,
   installSkillFromMarketplace,
@@ -1463,15 +1464,12 @@ export class SkillsManagerView extends ItemView {
     if (!source.clonePath || !source.repoUrl) return;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process');
 
     try {
       // Remove existing clone
       fs.rmSync(source.clonePath, { recursive: true, force: true });
-      // Re-clone
-      const cloneUrl = source.repoUrl.endsWith('.git') ? source.repoUrl : `${source.repoUrl}.git`;
-      execSync(`git clone --depth 1 "${cloneUrl}" "${source.clonePath}"`, { stdio: 'pipe', timeout: 60_000 });
+      // Re-clone via the shared helper
+      await cloneGithubSource(source.repoUrl, source.clonePath);
       // Reset staleness state
       source.behindCount = 0;
       source.lastFetched = Date.now();

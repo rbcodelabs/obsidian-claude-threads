@@ -36,7 +36,7 @@ import { renderAgentActivity } from './agentRuns/renderAgentActivity';
 import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
 import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
-import { VisualizeMountManager, resolveVisualizeTokens, type VisualizeFs } from './visualizeRenderer';
+import { VisualizeMountManager, resolveVisualizeTokens, toFileUrl, type VisualizeFs } from './visualizeRenderer';
 import { deleteScheduledActivity, scheduledActivityForThread, scheduledActivitySummary, type ScheduledActivity } from './scheduledActivity';
 import { ConversationViewPlacementState, resolveHostRestoredActiveThread } from './conversationFirstPlacement';
 
@@ -1716,22 +1716,20 @@ export class ThreadsView extends ItemView {
     new Notice(`Focused ${relPaths.length} file${relPaths.length === 1 ? '' : 's'}`);
   }
 
-  /** Open a file path — vault files open inside Obsidian, others via the OS. */
+  /** Open HTML in the Web Viewer when available; otherwise use vault or OS routing. */
   private async openEditedFile(filePath: string): Promise<void> {
     try {
+      if (/\.html?$/i.test(filePath) && isWebViewerEnabled(this.app)) {
+        this.openLink(toFileUrl(filePath));
+        return;
+      }
+
       const adapter = this.app.vault.adapter as { basePath?: string };
       const vaultBase = adapter.basePath ?? '';
       if (vaultBase && filePath.startsWith(vaultBase + path.sep)) {
         const rel = filePath.slice(vaultBase.length + 1);
         const file = this.app.vault.getAbstractFileByPath(rel);
         if (file) {
-          // For HTML files, prefer the Web Viewer if it is enabled. Shares the
-          // single leaf-reuse implementation with every other in-app link.
-          const ext = rel.split('.').pop()?.toLowerCase();
-          if ((ext === 'html' || ext === 'htm') && isWebViewerEnabled(this.app)) {
-            this.openLink('file://' + filePath.split(path.sep).join('/'));
-            return;
-          }
           if (this.plugin.isConversationFirst()) {
             await this.plugin.contextPanel.openFile(file as import('obsidian').TFile);
           } else {

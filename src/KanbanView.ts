@@ -135,8 +135,8 @@ export class KanbanView extends ItemView {
   }
 
   getViewType(): string { return KANBAN_VIEW_TYPE; }
-  getDisplayText(): string { return 'Kanban Board'; }
-  getIcon(): string { return 'layout-grid'; }
+  getDisplayText(): string { return 'Agent Board'; }
+  getIcon(): string { return 'kanban'; }
 
   async onOpen(): Promise<void> {
     this.activeThreadId = this.plugin.getActiveThreadId();

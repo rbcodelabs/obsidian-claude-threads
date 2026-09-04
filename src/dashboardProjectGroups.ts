@@ -1,5 +1,28 @@
 import type { Thread } from './types';
 
+export type AgentsGroupBy = 'project' | 'status' | 'project-status';
+export type AgentsGroupingDimension = 'project' | 'status';
+
+export function normalizeAgentsGroupBy(value: unknown): AgentsGroupBy {
+  return value === 'project' || value === 'status' || value === 'project-status'
+    ? value
+    : 'project-status';
+}
+
+export function toggleAgentsGrouping(
+  currentValue: unknown,
+  dimension: AgentsGroupingDimension,
+): AgentsGroupBy {
+  const current = normalizeAgentsGroupBy(currentValue);
+  const project = current !== 'status';
+  const status = current !== 'project';
+  const nextProject = dimension === 'project' ? !project : project;
+  const nextStatus = dimension === 'status' ? !status : status;
+  if (!nextProject && !nextStatus) return current;
+  if (nextProject && nextStatus) return 'project-status';
+  return nextProject ? 'project' : 'status';
+}
+
 export interface DashboardProjectGroup {
   key: string;
   label: string;
@@ -17,7 +40,10 @@ export function groupDashboardThreads(
     if (current) current.threads.push(thread);
     else groups.set(identity.key, { ...identity, threads: [thread] });
   }
-  return Array.from(groups.values()).sort((a, b) => {
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    threads: group.threads.sort((a, b) => b.updatedAt - a.updatedAt),
+  })).sort((a, b) => {
     if (a.key === 'unassigned') return 1;
     if (b.key === 'unassigned') return -1;
     return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.key.localeCompare(b.key);

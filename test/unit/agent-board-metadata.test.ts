@@ -1,0 +1,83 @@
+/** @vitest-environment jsdom */
+import '../setup/obsidian-dom';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { describe, expect, it, vi } from 'vitest';
+import * as obsidian from 'obsidian';
+
+vi.mock('../../src/ClaudeSession', () => ({ formatToolName: (name: string) => name }));
+vi.mock('../../src/DispatchInput', () => ({
+  DispatchInput: class {
+    mount(): void {}
+  },
+}));
+
+import { AgentDashboard } from '../../src/AgentDashboard';
+import { KANBAN_VIEW_TYPE, KanbanView } from '../../src/KanbanView';
+import { buildDiagnosticsReport, type DiagnosticsInput } from '../../src/telemetry';
+
+describe('Agent Board product metadata', () => {
+  it('uses the Agent Board name and dedicated kanban icon without changing its view type', () => {
+    const view = Object.create(KanbanView.prototype) as KanbanView;
+
+    expect(view.getDisplayText()).toBe('Agent Board');
+    expect(view.getIcon()).toBe('kanban');
+    expect(view.getViewType()).toBe(KANBAN_VIEW_TYPE);
+    expect(KANBAN_VIEW_TYPE).toBe('claude-threads:kanban');
+  });
+
+  it('labels and icons the Agents List toolbar button as Agent Board', () => {
+    const setIcon = vi.spyOn(obsidian, 'setIcon');
+    const root = document.createElement('div');
+    const containerEl = document.createElement('div');
+    containerEl.append(document.createElement('div'), root);
+    const view = Object.assign(Object.create(AgentDashboard.prototype), {
+      containerEl,
+      plugin: {
+        settings: {},
+        manager: { getThreads: () => [] },
+        activateKanbanView: vi.fn(),
+      },
+      manager: { getThreads: () => [] },
+      addProjectSelector: vi.fn(),
+    }) as AgentDashboard;
+
+    (view as unknown as { buildUI(): void }).buildUI();
+
+    const button = root.querySelector<HTMLButtonElement>('.ct-kanban-toggle');
+    expect(button?.title).toBe('Open Agent Board');
+    expect(button?.getAttribute('aria-label')).toBe('Open Agent Board');
+    expect(setIcon).toHaveBeenCalledWith(button, 'kanban');
+  });
+
+  it('uses the product name in user-visible diagnostics without renaming the internal counter', () => {
+    const input: DiagnosticsInput = {
+      pluginVersion: '0.0.0',
+      host: { app: 'obsidian', version: '1.0.0', platform: 'darwin', arch: 'arm64' },
+      system: { cpuCount: 8, totalMemMb: 16384, loadAvg: [0, 0, 0] },
+      vault: { fileCount: 0, dataJsonSizeBytes: 0 },
+      threads: { total: 0, running: 0 },
+      counters: {
+        rendersScheduled: 0,
+        kanbanFullRebuilds: 3,
+        spawns: { statusline: 0, gitdiff: 0, other: 0 },
+        savesRequested: 0,
+        savesWritten: 0,
+      },
+      perfSamples: [],
+      longtask: { count: 0, worstMs: [] },
+      logEntries: [],
+      homedir: '/Users/test',
+      generatedAt: 0,
+    };
+
+    const { markdown, json } = buildDiagnosticsReport(input);
+    expect(markdown).toContain('- Agent Board full rebuilds: 3');
+    expect(JSON.parse(json).counters.kanbanFullRebuilds).toBe(3);
+  });
+
+  it('renames the command palette entry while retaining its compatibility ID', () => {
+    const mainSource = readFileSync(resolve(__dirname, '../../src/main.ts'), 'utf8');
+    expect(mainSource).toMatch(/id: 'open-kanban-board',\s+name: 'Open Agent Board'/);
+  });
+});

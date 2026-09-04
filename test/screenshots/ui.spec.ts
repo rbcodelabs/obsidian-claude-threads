@@ -1602,13 +1602,32 @@ test.describe('Claude Threads UI', () => {
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("Scheduled")');
-    await expect(page.getByRole('heading', { name: 'Next up' })).toBeVisible();
-    await expect(page.getByText('Overdue — catching up', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Next up' })).toHaveCount(0);
+    await expect(page.locator('.ct-scheduled-card')).toHaveCount(5);
+    const expectedNames = [
+      'Morning inbox triage',
+      'Project pulse',
+      'Weekly PR sweep',
+      'Loop: watch CI',
+      'Wakeup: deployment check',
+    ];
+    for (const name of expectedNames) {
+      await expect(page.locator('.ct-scheduled-name', { hasText: name })).toHaveCount(1);
+    }
+    const initialSections = page.locator('.ct-scheduled-section');
+    await expect(initialSections.nth(0).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(0, 3));
+    await expect(initialSections.nth(1).locator('.ct-scheduled-name')).toHaveText(expectedNames.slice(3));
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Loop: watch CI' }))
+      .toContainText('Existing thread · Codex · gpt-5.6-codex');
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Wakeup: deployment check' }))
+      .toContainText('Target thread missing · falls back to new thread');
+    await expect(page.locator('.ct-scheduled-card[open]')).toHaveCount(0);
+    await expect(page.getByText('Overdue — catching up', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Next check').first()).toBeVisible();
     await expect(page.getByText('Thread loops & wakeups')).toBeVisible();
     await expect(page.getByText('Thread Orchestrator heartbeat')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Create with Claude' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open last run' })).toHaveCount(0);
     await page.evaluate(() => {
       const app = document.getElementById('app');
       const content = app?.querySelector<HTMLElement>('.vertical-tab-content');
@@ -1621,14 +1640,46 @@ test.describe('Claude Threads UI', () => {
     await page.waitForTimeout(200);
     await shot(page, 'settings-scheduled.png', { fullPage: true });
 
+    const morning = page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' });
+    await morning.locator(':scope > summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(morning).toHaveAttribute('open', '');
+    await expect(morning.getByText('Prompt', { exact: true })).toBeVisible();
+    await expect(morning.getByText('test -s inbox/pending.txt', { exact: false })).toBeVisible();
+    await expect(morning.getByText('Creates a new thread', { exact: false })).toBeVisible();
+    await expect(morning.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await morning.locator('.ct-run-history-summary').click();
+    await expect(morning.getByText('Fired', { exact: true })).toBeVisible();
+    await shot(page, 'settings-scheduled-expanded.png', { fullPage: true });
+
+    await page.setViewportSize({ width: 360, height: 760 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await shot(page, 'settings-scheduled-narrow.png', { fullPage: true });
+
+    await morning.getByRole('button', { name: 'Open last run' }).click();
+
     await page.getByRole('button', { name: 'Create with Claude' }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls)).toEqual({
       dispatches: [{
         prompt: 'Help me create scheduled work. Ask me what should happen, when it should run, and whether it needs active hours or a deterministic gate. Then use CronCreate once the schedule is clear.',
         title: 'Create scheduled work',
       }],
-      openedThreadIds: ['thread-created'],
+      openedThreadIds: ['thread-morning', 'thread-created'],
+      updatedItemIds: [],
+      deletedItemIds: [],
     });
+
+    await morning.getByRole('button', { name: 'Pause' }).click();
+    const recurringNames = page.locator('.ct-scheduled-section').filter({ hasText: 'Recurring jobs' }).locator('.ct-scheduled-name');
+    await expect(recurringNames).toHaveText(['Project pulse', 'Morning inbox triage', 'Weekly PR sweep']);
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' }).getByText('Paused', { exact: true }).first()).toBeVisible();
+
+    const weekly = page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' });
+    await weekly.locator(':scope > summary').click();
+    await weekly.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.updatedItemIds)).toEqual(['sched-1']);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.deletedItemIds)).toEqual(['sched-2']);
   });
 
   test('settings — mcp tab', async ({ page }) => {
@@ -2200,8 +2251,14 @@ test.describe('Claude Threads UI', () => {
     await page.setViewportSize({ width: 760, height: 820 });
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-agents-project');
-    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents List');
+    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents · 14 threads');
     expect(await page.evaluate(() => (window as any).__dashboard.getIcon())).toBe('list');
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await expect(page.locator('.ct-agents-header')).toHaveCount(0);
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
+    await expect(page.locator('.ct-agents-floating-panel .ct-agents-count')).toHaveCount(0);
+    await expect(page.locator('.ct-agents-floating-panel .ct-agents-search-btn')).toHaveCount(0);
 
     const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
     expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
@@ -2244,6 +2301,80 @@ test.describe('Claude Threads UI', () => {
     expect((await questionRow.boundingBox())?.height).toBeGreaterThan(44);
 
     await shot(page, 'agent-dashboard-project-first.png', { fullPage: true });
+  });
+
+  test('agents list — grouping toggles and sibling search panel', async ({ page }) => {
+    await page.setViewportSize({ width: 760, height: 820 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.waitForSelector('.view-header');
+
+    const root = page.locator('.ct-dashboard-root');
+    const header = page.locator('.view-header');
+    const searchButton = page.getByRole('button', { name: 'Search threads' });
+    const headerUpdatesAfterInitialRender = await page.evaluate(() => (window as any).__getHeaderUpdateCalls());
+    await page.evaluate(() => (window as any).__dashboard.render());
+    expect(await page.evaluate(() => (window as any).__getHeaderUpdateCalls())).toBe(headerUpdatesAfterInitialRender);
+    const headerHeight = await header.evaluate(el => el.getBoundingClientRect().height);
+    await searchButton.click();
+    const searchPanel = page.locator('.ct-agents-search-bar');
+    await expect(searchPanel).toBeVisible();
+    expect(await root.evaluate(el => Array.from(el.children).map(child => child.className))).toEqual(
+      expect.arrayContaining([expect.stringContaining('ct-agents-search-bar')]),
+    );
+    expect(await header.evaluate(el => el.getBoundingClientRect().height)).toBe(headerHeight);
+    const search = page.getByPlaceholder('Search threads…');
+    await expect(search).toBeFocused();
+    await search.fill('Mobile layout polish');
+    await expect(page.locator('.ct-agents-row')).toHaveCount(1);
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 1 thread');
+    await page.locator('.search-input-clear-button').click();
+    await expect(search).toHaveValue('');
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await search.fill('Mobile layout polish');
+    await search.press('Escape');
+    await expect(searchPanel).toBeHidden();
+    await expect(page.locator('.ct-agents-row')).not.toHaveCount(1);
+    await searchButton.click();
+    await search.fill('Kanban');
+    await searchButton.click();
+    await expect(searchPanel).toBeHidden();
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+
+    const groupingButton = page.getByRole('button', { name: 'Group agents' });
+    await groupingButton.click();
+    const menu = page.locator('.menu');
+    const projectItem = menu.getByRole('menuitemcheckbox', { name: 'Project' });
+    const statusItem = menu.getByRole('menuitemcheckbox', { name: 'Status' });
+    await expect(projectItem).toHaveAttribute('aria-checked', 'true');
+    await expect(statusItem).toHaveAttribute('aria-checked', 'true');
+
+    const savesBefore = await page.evaluate(() => (window as any).__getSaveSettingsCalls());
+    await statusItem.click();
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator('.ct-agents-project')).not.toHaveCount(0);
+    await expect(page.locator('.ct-agents-project .ct-agents-group-label')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('project');
+
+    await groupingButton.click();
+    const projectOnlyMenu = page.locator('.menu');
+    await expect(projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Project' })).toHaveAttribute('aria-disabled', 'true');
+    await projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Status' }).click();
+    await groupingButton.click();
+    await page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Project' }).click();
+    await groupingButton.click();
+    await expect(page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Status' })).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.locator('.ct-agents-project')).toHaveCount(0);
+    await expect(page.locator('.ct-agents-status-section')).not.toHaveCount(0);
+    await expect(page.locator('.ct-agents-row-project').first()).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('status');
+    expect(await page.evaluate(() => (window as any).__getSaveSettingsCalls())).toBe(savesBefore + 3);
+
+    await page.evaluate(async () => {
+      const dashboard = (window as any).__dashboard;
+      await dashboard.onClose();
+      await dashboard.onOpen();
+    });
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
   });
 
   // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
@@ -2322,6 +2453,8 @@ test.describe('Claude Threads UI', () => {
       await expect(list).toHaveCSS('width', `${width}px`);
       expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
+      expect(await page.locator('.view-header').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
 
       if (width <= 380) {
         await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');
@@ -2337,6 +2470,24 @@ test.describe('Claude Threads UI', () => {
         if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');
       }
     }
+  });
+
+  test('agents list — orchestrator badge remains visible beside a truncated title', async ({ page }) => {
+    await page.setViewportSize({ width: 1240, height: 844 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+    await page.evaluate(() => (window as any).__setOrchestrator('k-hiptrip-running'));
+    await page.locator('#app').evaluate(host => { host.style.width = '280px'; });
+    const row = page.locator('.ct-agents-row').filter({ has: page.locator('.ct-portfolio-orchestrator-badge') });
+    const badge = row.locator('.ct-portfolio-orchestrator-badge');
+    await expect(badge).toBeVisible();
+    const bounds = await row.evaluate((rowEl) => {
+      const badgeEl = rowEl.querySelector('.ct-orchestrator-badge')!;
+      const rowRect = rowEl.getBoundingClientRect();
+      const badgeRect = badgeEl.getBoundingClientRect();
+      return { left: badgeRect.left >= rowRect.left, right: badgeRect.right <= rowRect.right };
+    });
+    expect(bounds).toEqual({ left: true, right: true });
+    await expect(row.locator('.ct-agents-row-title-text')).toHaveCSS('text-overflow', 'ellipsis');
   });
 
   test('agents list — narrow exceptional states remain usable', async ({ page }) => {
