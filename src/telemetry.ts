@@ -457,7 +457,7 @@ export function buildDiagnosticsReport(input: DiagnosticsInput): { markdown: str
   lines.push('## Counters');
   lines.push('');
   lines.push(`- Renders scheduled: ${c.rendersScheduled}`);
-  lines.push(`- Kanban full rebuilds: ${c.kanbanFullRebuilds}`);
+  lines.push(`- Agent Board full rebuilds: ${c.kanbanFullRebuilds}`);
   lines.push(`- Spawns — statusline: ${c.spawns.statusline}, gitdiff: ${c.spawns.gitdiff}, other: ${c.spawns.other}`);
   lines.push(`- Saves requested: ${c.savesRequested}`);
   lines.push(`- Saves written: ${c.savesWritten}`);

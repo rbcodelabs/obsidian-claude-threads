@@ -2008,11 +2008,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       });
 
     // — Kanban board —
-    new Setting(containerEl).setName('Kanban board').setHeading();
+    new Setting(containerEl).setName('Agent Board').setHeading();
 
     new Setting(containerEl)
       .setName('Auto-collapse side panel')
-      .setDesc('Collapse a sidebar when the Kanban board opens to give it more horizontal room. The panel is restored when you close the Kanban tab.')
+      .setDesc('Collapse a sidebar when the Agent Board opens to give it more horizontal room. The panel is restored when you close the Agent Board tab.')
       .addDropdown((drop) =>
         drop
           .addOption('none', 'None (default)')
@@ -2028,7 +2028,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Stack scheduled job threads')
-          .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack within each project\'s quiet status sections on the Agents List and Kanban board. A run that\'s running, waiting on input, or errored is never stacked.')
+          .setDesc('Collapse repeat runs of the same scheduled/cron job into a single expandable stack within each project\'s quiet status sections on the Agents List and Agent Board. A run that\'s running, waiting on input, or errored is never stacked.')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.stackScheduledThreads ?? true)
@@ -2056,7 +2056,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       } else if (orchestratorThread) {
         new Setting(containerEl)
           .setName(orchestratorThread.title)
-          .setDesc('This is your Portfolio Orchestrator thread. It is marked with a bot badge in the Agents List, Kanban board, and thread switcher.')
+          .setDesc('This is your Portfolio Orchestrator thread. It is marked with a bot badge in the Agents List, Agent Board, and thread switcher.')
           .addButton((btn) =>
             btn.setButtonText('Open').setCta().onClick(() => {
               void this.plugin.openThreadInChatView(orchestratorId);

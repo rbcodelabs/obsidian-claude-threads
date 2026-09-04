@@ -1278,7 +1278,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     this.addCommand({
       id: 'open-kanban-board',
-      name: 'Open Kanban Board',
+      name: 'Open Agent Board',
       callback: () => this.activateKanbanView(),
     });
 
