@@ -1,4 +1,4 @@
-# Claude Threads Relay
+# Agent Threads Relay
 
 A Cloudflare Worker with Durable Objects that acts as a stateless WebSocket relay between Obsidian Desktop and Obsidian Mobile instances.
 

@@ -1195,7 +1195,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setDesc(
         'Collect local-only performance counters and renderer CPU/memory samples so a slowdown can be diagnosed. ' +
         'Nothing ever leaves your machine. Use "Copy diagnostics" (or the "Generate diagnostics report" command) to ' +
-        'save a redacted report to claude-threads-diagnostics/ and copy it to your clipboard for a GitHub issue.',
+        'save a redacted report to agent-threads-diagnostics/ and copy it to your clipboard for a GitHub issue.',
       )
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.telemetryEnabled ?? true).onChange(async (value) => {
@@ -1704,7 +1704,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           .setPlaceholder('Claude')
           .setValue(this.plugin.settings.vaultFolder)
           .onChange(async (value) => {
-            this.plugin.settings.vaultFolder = value || 'Claude';
+            this.plugin.settings.vaultFolder = value || 'Agent Threads';
             await this.plugin.saveSettings();
           }),
       );
@@ -2565,7 +2565,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Pair with desktop').setHeading();
     containerEl.createEl('p', {
-      text: 'On your desktop, open Settings > Claude Threads > Remote, enable remote access, then tap "Show pairing QR code". Scan that QR code with your phone camera — your phone will ask to open Obsidian, which will connect automatically.',
+      text: 'On your desktop, open Settings > Agent Threads > Remote, enable remote access, then tap "Show pairing QR code". Scan that QR code with your phone camera — your phone will ask to open Obsidian, which will connect automatically.',
       cls: 'ct-settings-desc',
     });
 
@@ -2621,7 +2621,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Reload plugin')
       .setDesc(
-        'Reload Claude Threads. If any threads are currently running you will be warned before the plugin restarts.',
+        'Reload Agent Threads. If any threads are currently running you will be warned before the plugin restarts.',
       )
       .addButton((btn) =>
         btn

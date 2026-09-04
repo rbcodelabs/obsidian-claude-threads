@@ -1,6 +1,6 @@
 # Native agent workspace
 
-Claude Threads preserves harness-native child agents as durable `AgentRun` records. Agent status never crowds out the conversation.
+Agent Threads preserves harness-native child agents as durable `AgentRun` records. Agent status never crowds out the conversation.
 
 When Claude or Codex reports an agent, a compact pill appears in the composer footer showing how many agents are working (or how many failed, or a plain count once everything has finished). The pill is always visible while agents exist; it disappears, and the footer returns to its normal hover-only behavior, once the thread has no agent runs at all.
 
@@ -18,7 +18,7 @@ The Agents List groups conversations by resolved Project and orders adaptive two
 
 ## Codex proactive agents and questions
 
-Codex native agents remain available when the model explicitly delegates work. To let Codex decide proactively when parallel agents help, select **Codex effort level → Ultra** in Agent settings. Claude Threads passes `effort: "ultra"` only when the selected model advertises it; unsupported combinations stop before the turn with a clear error. The deprecated Codex `multiAgentMode` setting is never sent.
+Codex native agents remain available when the model explicitly delegates work. To let Codex decide proactively when parallel agents help, select **Codex effort level → Ultra** in Agent settings. Agent Threads passes `effort: "ultra"` only when the selected model advertises it; unsupported combinations stop before the turn with a clear error. The deprecated Codex `multiAgentMode` setting is never sent.
 
 Codex can also pause for structured input through its native `request_user_input` protocol. These prompts use the same persisted desktop/mobile card and relay/reload path as Claude questions, while preserving Codex question IDs, option descriptions, free-form behavior, and secret-field masking. Default-mode input is enabled through app-server feature discovery, so older Codex binaries continue to work without receiving unsupported flags.
 
@@ -29,7 +29,7 @@ Codex can also pause for structured input through its native `request_user_input
 | Claude Agent SDK 0.3.233 | Yes (`task_id`) | Yes (`task_started`, `task_updated`, `task_progress`, notifications) | Used when `parent_task_id` is present | No verified public `Query` method | No verified public `Query` method |
 | Codex app-server | Yes (`receiverThreadIds`, `agentThreadId`) | Yes (`collabAgentToolCall`, `agentsStates`, `subAgentActivity`) | Used when the event provides `senderThreadId`/`parentThreadId` | No verified host-callable path | No verified host-callable path |
 
-The Claude SDK defines model-invoked `SendMessage` and `TaskStop` tool inputs, but its public host-side `Query` surface exposes only whole-query interruption. Claude Threads does not pretend those model tools are direct UI controls. Codex collaboration events similarly prove observation, not a callable host control. Consequently, the agent activity view explains that direct message and single-agent interrupt are unavailable, and never redirects an attempted child action to `main`.
+The Claude SDK defines model-invoked `SendMessage` and `TaskStop` tool inputs, but its public host-side `Query` surface exposes only whole-query interruption. Agent Threads does not pretend those model tools are direct UI controls. Codex collaboration events similarly prove observation, not a callable host control. Consequently, the agent activity view explains that direct message and single-agent interrupt are unavailable, and never redirects an attempted child action to `main`.
 
 ## Persistence and recovery
 

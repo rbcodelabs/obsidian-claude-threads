@@ -1,7 +1,7 @@
 /**
  * RelayClient.ts
  *
- * Manages the WebSocket connection to the Claude Threads relay server.
+ * Manages the WebSocket connection to the Agent Threads relay server.
  * Operates in two modes determined at construction:
  *
  * - desktop: forwards ThreadManager events to mobile; handles RemoteCommands

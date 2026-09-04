@@ -190,7 +190,7 @@ export class CodexSession {
     });
 
     await this.request('initialize', {
-      clientInfo: { name: 'obsidian-claude-threads', title: 'Claude Threads', version: '0.24.0' },
+      clientInfo: { name: 'obsidian-claude-threads', title: 'Agent Threads', version: '0.24.0' },
       // runtimeWorkspaceRoots and dynamicTools are currently gated by the
       // app-server's experimental protocol capability.
       capabilities: { experimentalApi: true },
@@ -850,7 +850,7 @@ export class CodexSession {
     if (message.method === 'item/tool/call') {
       const dynamicTool = this.options?.codex?.dynamicTools?.find((tool) => tool.name === params.tool);
       if (!dynamicTool) {
-        this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Unknown built-in Claude Threads tool: ${params.tool}` }] });
+        this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Unknown built-in Agent Threads tool: ${params.tool}` }] });
         return;
       }
       const args = (params.arguments ?? {}) as Record<string, unknown>;
@@ -877,7 +877,7 @@ export class CodexSession {
           this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });
           return;
         }
-        callbacks.onPermissionRequest(`Claude Threads: ${dynamicTool.name}`, detail)
+        callbacks.onPermissionRequest(`Agent Threads: ${dynamicTool.name}`, detail)
           .then((allow) => {
             if (allow) invoke();
             else this.respond(message.id, { success: false, contentItems: [{ type: 'inputText', text: `Permission denied for ${dynamicTool.name}.` }] });

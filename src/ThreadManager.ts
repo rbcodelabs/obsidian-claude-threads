@@ -1698,7 +1698,7 @@ export class ThreadManager {
       .filter(Boolean)
       .join('\n\n');
     const sessionMcpServers = this.mcpServerFactory ? this.mcpServerFactory(threadId, thread.cwd) : this.mcpServers;
-    // The Claude Threads MCP server exposes the same canonical tool definitions to
+    // The Agent Threads MCP server exposes the same canonical tool definitions to
     // Codex through its app-server dynamic-tool adapter. Serializable external
     // stdio/HTTP/SSE servers are mirrored into Codex's per-thread config.
     const codexDynamicTools = selectCanonicalHarnessTools<import('./HarnessSession').HarnessDynamicTool>(sessionMcpServers);
@@ -2647,7 +2647,7 @@ export function buildEnvironmentSystemPrompt(
   hostName: 'Geode' | 'Obsidian' = 'Obsidian',
 ): string {
   const lines = [
-    `You are running inside the ${hostName} Claude Threads plugin.`,
+    `You are running inside the ${hostName} Agent Threads plugin.`,
     '',
     `Vault root (filesystem path): ${vaultRoot}`,
     `Working directory: ${cwd}`,

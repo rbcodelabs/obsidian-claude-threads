@@ -338,7 +338,7 @@ export class ThreadsView extends ItemView {
       const thread = this.manager.getThread(this.activeThreadId);
       if (thread) return thread.title;
     }
-    return 'Claude Threads';
+    return 'Agent Threads';
   }
 
   /** Force Obsidian to re-read getDisplayText() and repaint the workspace tab header. */
@@ -731,7 +731,7 @@ export class ThreadsView extends ItemView {
     this.titleEl = titleRow.createEl('button', { cls: 'ct-title-btn', attr: { title: 'Switch thread' } });
     const titleIcon = this.titleEl.createSpan('ct-title-icon');
     setIcon(titleIcon, 'message-square');
-    this.titleTextEl = this.titleEl.createSpan({ cls: 'ct-title-text', text: 'Claude Threads' });
+    this.titleTextEl = this.titleEl.createSpan({ cls: 'ct-title-text', text: 'Agent Threads' });
     const chevronEl = this.titleEl.createSpan('ct-title-chevron');
     setIcon(chevronEl, 'chevron-down');
     this.titleEl.addEventListener('click', (e) => this.openThreadSwitcher(e));
@@ -947,7 +947,7 @@ export class ThreadsView extends ItemView {
   private renderTitleBar(): void {
     if (!this.titleTextEl) return;
     const thread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
-    this.titleTextEl.textContent = thread?.title ?? 'Claude Threads';
+    this.titleTextEl.textContent = thread?.title ?? 'Agent Threads';
 
     // Show the ephemeral badge when the active thread is marked ephemeral
     if (this.ephemeralBadgeEl) {

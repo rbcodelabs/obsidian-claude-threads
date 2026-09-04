@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Reference status-line script for the Claude Threads "Context footer command".
+# Reference status-line script for the Agent Threads "Context footer command".
 #
 # Emits a JSON array of status tags (see the StatusTag type / ADR-0001), so the
 # plugin can render typed pills and derive the thread's PR url from a kind:"pr"

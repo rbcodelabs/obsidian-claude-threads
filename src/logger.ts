@@ -1,5 +1,5 @@
 /**
- * Leveled logger for Claude Threads.
+ * Leveled logger for Agent Threads.
  *
  * High-frequency operational logs (stream events, per-message, per-connection) are
  * gated behind debug mode so they don't accumulate in long-running sessions.

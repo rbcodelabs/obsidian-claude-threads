@@ -1,14 +1,14 @@
-# Claude Threads
+# Agent Threads
 
 ## Native agent workspace
 
 Background Claude and Codex agents are first-class, durable participants, and the conversation stays the conversation. While a thread has sub-agents, a compact pill in the composer footer reports how many are working. Clicking it opens a popover with the full agent tree; picking an agent replaces the message pane with that agent's activity timeline behind a breadcrumb that walks back to the main conversation. The Agents List exposes the same agents for navigation and search. Each view shows the exact activity and lifecycle information exposed by the native harness. Active runs that cannot be reconnected after reload are labeled unavailable rather than incorrectly shown as completed.
 
-Direct child-agent messaging and single-agent interruption are capability-gated. They remain unavailable when the harness has no verified host-side control path; Claude Threads never silently routes those actions to the parent. See [the capability matrix and recovery behavior](docs/agent-workspace.md).
+Direct child-agent messaging and single-agent interruption are capability-gated. They remain unavailable when the harness has no verified host-side control path; Agent Threads never silently routes those actions to the parent. See [the capability matrix and recovery behavior](docs/agent-workspace.md).
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Claude Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.32.4-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.32.4-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -28,7 +28,7 @@ A native Obsidian and Geode plugin for running multiple Claude Code sessions in 
 
 ## What it does
 
-Claude Threads embeds Claude Code directly in your host workspace. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
+Agent Threads embeds Claude Code directly in your host workspace. Each tab is an independent Claude Code session with its own working directory and conversation history. You can run multiple sessions in parallel — one debugging a bug, another drafting docs, another answering questions about your vault.
 
 **Key features:**
 
@@ -62,7 +62,7 @@ Claude Threads embeds Claude Code directly in your host workspace. Each tab is a
 - **Plan Mode** — Claude and Codex can propose a written plan before making any mutations, and Codex can autonomously invoke `EnterPlanMode` when a task needs investigation first. An inline card lets you **Approve**, **Edit**, or **Reject** the plan before execution begins
 - **Thinking mode** — enable extended thinking for harder problems, with a configurable token budget for how long Claude reasons before responding
 - **Provider-aware effort** — Claude keeps its `low` through `max` effort controls; Codex has a separate setting through `ultra`, where Ultra enables proactive native agents on models that advertise support
-- **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Claude Threads
+- **MCP Elicitation** — when an MCP server needs OAuth or a form filled mid-session, a card appears inline in the conversation (URL auth or structured form fields) so you can respond without leaving Agent Threads
 - **Tool call visibility** — see exactly which files the active Claude or Codex agent is reading/writing during each response; tool pills show elapsed time once complete, REPL calls get a dedicated icon and summary, and git operations render as structured pills; files the agent edited that you subsequently modified show a "Modified by user" badge; a tool call that's auto-denied without a prompt (in `auto` or `dontAsk` mode, or by a deny rule) shows a distinct "Auto-denied" annotation so the denial is visible instead of silently swallowed
 - **Tool call grouping** — consecutive calls of the same kind (e.g. a run of file reads, or a string of edits) collapse into a single expandable group instead of a long scroll of individual pills, live as the turn runs (not just after it settles) — so a long agentic run never grows an unbounded wall of pills while Claude is still working; the in-progress group shows a "still running" pulse, the group you expand mid-turn stays expanded as more calls arrive, and a group containing a failed call auto-expands and stays flagged so errors are never hidden. Short off-kind interruptions (e.g. a single `TaskUpdate` between two runs of file reads) are folded back into their surrounding group instead of breaking it into extra short entries, and if the list is still long after that smoothing, it collapses one level further into a second "N tool calls, M steps" wrapper — which itself shows a live-updating "currently running" tool name and icon while the turn is in progress, and auto-expands through both levels if a call anywhere inside it fails. Works on both desktop and mobile (mobile gets the smoothing pass only — the second collapsible tier and live header are desktop-only).
 - **Inline visualizations** — when Codex's `visualize` skill emits its wrapped `visualize{"path":…}` content reference, the chart renders live and interactive right where it belongs in the message instead of leaking as raw text. Legacy bare `visualize{"path":…}` references in existing conversations remain supported. The HTML fragment is wrapped in a themed document that maps the skill's design tokens onto your theme's colours, so it looks native in both light and dark, and runs in a locked-down sandbox (`allow-scripts` only, no same-origin, no network beyond the skill's documented CDN allowlist). The card sizes itself to its content, and a pop-out button opens it full size in the Web Viewer. Desktop only; on mobile the marker renders as a card with an "Open visualization" button when the file is in your synced vault. Toggle under Settings → Tools → Inline visualizations
@@ -89,17 +89,17 @@ Vote on upcoming features and see what's in progress at the [public roadmap](htt
 1. Install the [BRAT plugin](https://github.com/TfTHacker/obsidian42-brat) from Obsidian's Community Plugins
 2. Open BRAT settings → **Add Beta Plugin**
 3. Enter: `rbcodelabs/obsidian-claude-threads`
-4. Enable **Claude Threads** in Settings → Community Plugins
+4. Enable **Agent Threads** in Settings → Community Plugins
 
 ### Manual install
 
 1. Download the latest release from [GitHub Releases](https://github.com/rbcodelabs/obsidian-claude-threads/releases)
 2. Extract into your vault's plugin folder: `<vault>/.obsidian/plugins/claude-threads/`
-3. Enable **Claude Threads** in Settings → Community Plugins
+3. Enable **Agent Threads** in Settings → Community Plugins
 
 ## Usage
 
-Click the **message-square** icon in the left ribbon, or run **Open Claude Threads** from the command palette.
+Click the **message-square** icon in the left ribbon, or run **Open Agent Threads** from the command palette.
 
 ### Agent harnesses
 
@@ -120,7 +120,7 @@ Harness-native skills and sub-agents use their respective CLI's definitions and 
 
 Codex `request_user_input` prompts use the same persisted question card as Claude: option labels and descriptions are preserved, free-form answers use stable Codex question IDs, and secret fields are masked on desktop and mobile. Default-mode questions are enabled only when the installed app-server advertises the required runtime feature; older Codex installations continue normally without that Default-mode capability.
 
-Codex reasoning effort is configured separately from Claude effort. Selecting **Ultra** enables Codex's proactive native-agent behavior on models that advertise Ultra support. Unsupported model/effort combinations fail before a turn starts with a clear error, and Claude Threads never sends Codex's deprecated `multiAgentMode` field.
+Codex reasoning effort is configured separately from Claude effort. Selecting **Ultra** enables Codex's proactive native-agent behavior on models that advertise Ultra support. Unsupported model/effort combinations fail before a turn starts with a clear error, and Agent Threads never sends Codex's deprecated `multiAgentMode` field.
 
 Agent profiles supplied by installed GitHub plugin sources remain native agent definitions in Claude and are available to Codex as role instructions for delegation.
 
@@ -268,7 +268,7 @@ You can also switch models without typing: open the **menu button** in the conve
 
 The active model is shown as a badge in the thread info bar. You can also use `/escalate` as a one-turn override — it routes just that message to the Escalation model chosen in settings (Fable 5, Opus, Sonnet, or Haiku), then the thread model resumes. Both the keyword and the target model are configurable, and (when escalation is enabled) the current keyword shows up alongside `/model`, `/goal`, etc. in the `/` autocomplete popup so it's discoverable without reading the docs — renaming the keyword or toggling escalation off in Settings updates the popup immediately. While an escalated turn is running, the footer menu's model row names the escalated model and marks it "(this turn)", so you always have visible confirmation that the escalation took effect. The label reverts automatically when the turn finishes.
 
-When Claude refuses a response, Claude Threads shows the SDK-provided notice if Claude retries on a fallback model, and a clear notice when no fallback is available.
+When Claude refuses a response, Agent Threads shows the SDK-provided notice if Claude retries on a fallback model, and a clear notice when no fallback is available.
 
 ### Goals and loops
 
@@ -426,7 +426,7 @@ When Claude or Codex needs to write a file or run a command, a permission card a
 
 ### Plan Mode
 
-Set **Permission Mode → `plan`** globally in settings, or use the **Permissions** row in the thread footer's menu to set it for a single thread, to enable Plan Mode. In this mode Claude or Codex reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it. Codex can also invoke its built-in `EnterPlanMode` control when it recognizes that a task needs investigation first; Claude Threads finishes the current handoff, switches Codex to a read-only Plan turn at the safe turn boundary, and shows the same approval card.
+Set **Permission Mode → `plan`** globally in settings, or use the **Permissions** row in the thread footer's menu to set it for a single thread, to enable Plan Mode. In this mode Claude or Codex reads, researches, and thinks — but doesn't write files or run commands — until it has produced a written plan and you've approved it. Codex can also invoke its built-in `EnterPlanMode` control when it recognizes that a task needs investigation first; Agent Threads finishes the current handoff, switches Codex to a read-only Plan turn at the safe turn boundary, and shows the same approval card.
 
 **The flow:**
 
@@ -442,12 +442,12 @@ Plan Mode is useful for risky or large-scale tasks where you want to review the 
 
 ### MCP Elicitation
 
-Some MCP servers need a credential or a form filled before they can proceed — for example, an OAuth flow or a confirmation dialog. When this happens, Claude Threads renders an elicitation card inline in the conversation rather than silently failing.
+Some MCP servers need a credential or a form filled before they can proceed — for example, an OAuth flow or a confirmation dialog. When this happens, Agent Threads renders an elicitation card inline in the conversation rather than silently failing.
 
 - **URL auth card** — displays a clickable link for the OAuth URL. Click it to open the auth page in the host's Web Viewer (or your system browser), complete the flow, then return to the thread. Claude resumes automatically once the server receives the credential.
 - **Form card** — renders input fields derived from the server's JSON schema (text fields, selects, checkboxes). Fill in the form and submit; the response is forwarded to the MCP server and the session continues.
 
-Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Claude Threads.
+Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Agent Threads.
 
 ### Managing MCP servers
 
@@ -471,19 +471,19 @@ A server whose `${VAR_NAME}` placeholders cannot be resolved is **skipped rather
 
 ### Remote access (mobile)
 
-Claude Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, answer AskUserQuestion prompts, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
+Agent Threads can mirror your desktop sessions to Obsidian Mobile in real time. Your phone becomes a thin client: you can read the conversation as it streams, send messages, approve permission requests, answer AskUserQuestion prompts, and switch between threads — all over a secure WebSocket relay. The desktop does all the actual Claude work; mobile just shows the state.
 
 **Prerequisites:**
 
-- Obsidian desktop with Claude Threads installed and running
-- Obsidian Mobile with Claude Threads installed via [BRAT](https://github.com/TfTHacker/obsidian42-brat)
+- Obsidian desktop with Agent Threads installed and running
+- Obsidian Mobile with Agent Threads installed via [BRAT](https://github.com/TfTHacker/obsidian42-brat)
 - Both devices on any internet connection (no LAN required)
 
 **Setup:**
 
-1. On desktop: open Settings > Claude Threads > Remote Access and toggle **Enable remote access** on
+1. On desktop: open Settings > Agent Threads > Remote Access and toggle **Enable remote access** on
 2. Click **Show pairing QR code** — a QR code appears with a 5-minute expiry window
-3. On mobile: open the Claude Threads ribbon icon, tap **Connect to Desktop**, then scan the QR code (or tap the `claude-threads://pair` link if you're on the same device)
+3. On mobile: open the Agent Threads ribbon icon, tap **Connect to Desktop**, then scan the QR code (or tap the `claude-threads://pair` link if you're on the same device)
 4. The mobile view refreshes to show all your desktop threads
 
 **Manual pairing (URI scheme):**
@@ -494,7 +494,7 @@ If you can't scan a QR code, send yourself the pairing link directly:
 claude-threads://pair?roomId=<ROOM_ID>&relay=<RELAY_URL>
 ```
 
-Opening this URL on any device with Obsidian Mobile + Claude Threads installed will pair it to your desktop.
+Opening this URL on any device with Obsidian Mobile + Agent Threads installed will pair it to your desktop.
 
 **What you can do on mobile:**
 
@@ -638,15 +638,15 @@ Because the bar already names the branch and the PR, it is treated as the single
 
 ### Safe plugin reload
 
-Use **Claude Threads: Reload plugin (safe)** from the command palette instead of the host's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
+Use **Agent Threads: Reload plugin (safe)** from the command palette instead of the host's built-in "Reload plugin" button. When no threads are running it reloads immediately. When threads are active it opens a modal showing their names with three choices: **Cancel** (keep working), **Interrupt & Reload** (sends an interrupt signal and waits up to 30 seconds for a clean shutdown), or **Force Reload** (kills sessions immediately). Reloading via any other path (Settings toggle, manifest hot-reload) triggers a graceful 10-second interrupt wait automatically before teardown.
 
 ### Diagnostics report
 
-When the host app feels slow — the renderer pinning a core, typing lag, or a machine where an EDR/antivirus agent taxes every subprocess — Claude Threads keeps a small, **always-on, local-only** diagnostics layer running so you can capture what's actually happening. Nothing ever leaves your machine: there are no network calls and no remote reporting.
+When the host app feels slow — the renderer pinning a core, typing lag, or a machine where an EDR/antivirus agent taxes every subprocess — Agent Threads keeps a small, **always-on, local-only** diagnostics layer running so you can capture what's actually happening. Nothing ever leaves your machine: there are no network calls and no remote reporting.
 
 In the background it tracks a few cheap signals: how often the Agent Board rebuilds vs. how often a render was merely requested (measuring the incremental-render coalescing), how many `git`/status-line subprocesses were spawned, how many settings saves coalesced into actual disk writes, plus a ring of renderer CPU/memory samples (taken only while a plugin view is open) and a summary of any long main-thread tasks. It works identically in real Obsidian and in the Geode desktop app, and is a complete no-op on mobile.
 
-Run **Claude Threads: Generate diagnostics report** from the command palette (or click **Copy diagnostics** in Settings → General → Diagnostics). It:
+Run **Agent Threads: Generate diagnostics report** from the command palette (or click **Copy diagnostics** in Settings → General → Diagnostics). It:
 
 - copies a **redacted** Markdown report to your clipboard, ready to paste into a GitHub issue, and
 - saves that Markdown plus a raw `.json` bundle into a `claude-threads-diagnostics/` folder in your vault root, then shows a Notice with the path.
@@ -761,7 +761,7 @@ Both tools return a clear error if the vault-bridges plugin is not installed or 
 
 #### Bridge-aware edits
 
-When an agent edits files inside a bridged repo (rather than the synced vault copy), Claude Threads detects it automatically at the end of the turn:
+When an agent edits files inside a bridged repo (rather than the synced vault copy), Agent Threads detects it automatically at the end of the turn:
 
 - **Auto-pull** — each affected bridge is synced once per turn, so the vault copies update immediately (a notice confirms success or failure).
 - **Vault-relative links** — edited-file chips, the focus button, and absolute repo paths in Claude's messages all resolve to the synced vault note: chips show the vault path and open the note in the host workspace, and message paths become clickable internal links (only when the vault copy exists).

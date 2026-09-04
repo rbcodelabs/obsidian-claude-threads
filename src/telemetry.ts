@@ -1,5 +1,5 @@
 /**
- * telemetry.ts — always-on, LOCAL-ONLY diagnostics for Claude Threads.
+ * telemetry.ts — always-on, LOCAL-ONLY diagnostics for Agent Threads.
  *
  * NOTHING here ever leaves the machine: no network calls, no remote reporting.
  * It maintains in-memory counters, a short ring of renderer performance samples,
@@ -430,7 +430,7 @@ export function buildDiagnosticsReport(input: DiagnosticsInput): { markdown: str
   const c = input.counters;
 
   const lines: string[] = [];
-  lines.push('# Claude Threads — Diagnostics Report');
+  lines.push('# Agent Threads — Diagnostics Report');
   lines.push('');
   lines.push(`Generated: ${iso(input.generatedAt)}`);
   lines.push('');

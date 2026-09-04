@@ -4,7 +4,7 @@ import { anchorFocusedComposerToBottom, shot } from './helpers';
 
 const harnessUrl = 'file://' + path.resolve('test/harness/index.html');
 
-test.describe('Claude Threads UI', () => {
+test.describe('Agent Threads UI', () => {
   // Pin Date.now()/new Date() to the fixture epoch (test/harness/fixtures.ts)
   // so relative labels ("5m ago", "Last active …") and same-day timestamp
   // rendering are deterministic — without this, baselines with "Xd ago" text
@@ -2186,7 +2186,7 @@ test.describe('Claude Threads UI', () => {
     await page.waitForSelector('.ct-kanban-swimlanes');
     // One lane per app/project, alphabetical (case-insensitive) with Unassigned last.
     const lanes = await page.locator('.ct-kanban-lane-name').allInnerTexts();
-    const expected = ['acme-api', 'Claude Threads', 'HipTrip', 'Unassigned'];
+    const expected = ['acme-api', 'Agent Threads', 'HipTrip', 'Unassigned'];
     if (JSON.stringify(lanes) !== JSON.stringify(expected)) {
       throw new Error(`Unexpected swimlane order. Expected ${expected.join(', ')} — got ${lanes.join(', ')}`);
     }
@@ -2206,7 +2206,7 @@ test.describe('Claude Threads UI', () => {
     // (CSS text-transform uppercases .ct-kanban-col-label, same as the status board —
     // compare case-insensitively, same pattern as the "group by status" test above.)
     const columns = (await page.locator('.ct-kanban-project-col .ct-kanban-col-label').allInnerTexts()).map(s => s.toUpperCase());
-    const expected = ['acme-api', 'Claude Threads', 'HipTrip', 'Unassigned'].map(s => s.toUpperCase());
+    const expected = ['acme-api', 'Agent Threads', 'HipTrip', 'Unassigned'].map(s => s.toUpperCase());
     if (JSON.stringify(columns) !== JSON.stringify(expected)) {
       throw new Error(`Unexpected project column order. Expected ${expected.join(', ')} — got ${columns.join(', ')}`);
     }
@@ -2231,9 +2231,9 @@ test.describe('Claude Threads UI', () => {
       throw new Error('Project-columns mode must fold Awaiting into Working, not render a separate Awaiting section');
     }
 
-    // Claude Threads surfaces a non-default section (Failed).
+    // Agent Threads surfaces a non-default section (Failed).
     const threadsCol = page.locator('.ct-kanban-project-col').filter({
-      has: page.locator('.ct-kanban-col-label', { hasText: 'Claude Threads' }),
+      has: page.locator('.ct-kanban-col-label', { hasText: 'Agent Threads' }),
     });
     await expect(threadsCol.locator('.ct-kanban-project-section-name', { hasText: 'Failed' })).toHaveCount(1);
 
@@ -2261,7 +2261,7 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.ct-agents-floating-panel .ct-agents-search-btn')).toHaveCount(0);
 
     const projects = await page.locator('.ct-agents-project-name').allInnerTexts();
-    expect(projects.slice(0, 2)).toEqual(['acme-api', 'Claude Threads']);
+    expect(projects.slice(0, 2)).toEqual(['acme-api', 'Agent Threads']);
     expect(projects.at(-1)).toBe('Unassigned');
 
     const hiptrip = page.locator('.ct-agents-project').filter({
