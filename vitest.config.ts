@@ -5,14 +5,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/unit/**/*.test.ts', 'test/integration/**/*.test.ts'],
-    environmentMatchGlobs: [
-      // MobileView tests need a real DOM
-      ['test/unit/MobileView.test.ts', 'jsdom'],
-      // DispatchInput tests need a real DOM (createDiv, createEl, etc.)
-      ['test/unit/DispatchInput.test.ts', 'jsdom'],
-      // The visualize renderer mounts iframes and listens for postMessage
-      ['test/unit/visualize-renderer.test.ts', 'jsdom'],
-    ],
+    // The default environment is `node`. A test that touches the DOM opts in
+    // per file with an `@vitest-environment jsdom` docblock — there is no
+    // config-side list to update. (`environmentMatchGlobs` used to live here,
+    // but it was removed in Vitest 3 and silently ignored by the Vitest 4 we
+    // run on, so it was load-bearing for nothing.) Forget the docblock and the
+    // file runs under `node` and fails with "HTMLElement is not defined".
   },
   resolve: {
     alias: {

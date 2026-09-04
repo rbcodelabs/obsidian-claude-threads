@@ -26,7 +26,8 @@ import { isWebViewerEnabled } from './SettingsTab';
 import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
-import { ConfirmModal } from './SkillsManagerView';
+import { promptConfirm } from './confirmModal';
+import { describeOrchestratorThread, isOrchestratorThread, orchestratorWarning, type OrchestratorContext } from './orchestratorThreads';
 import { partitionThreads } from './threadRowState';
 import { agentLabel, buildAgentBreadcrumbs, summarizeAgentTeam } from './agentRuns/agentTreeModel';
 import { renderAgentPopoverTree } from './agentRuns/renderAgentPopoverTree';
@@ -450,7 +451,7 @@ export class ThreadsView extends ItemView {
     };
 
     this.unsubscribe = this.manager.subscribe((threadId, event) => {
-      this.handleThreadListEvent(event);
+      this.handleThreadListEvent(threadId, event);
       // Save whenever any thread's persistent state changes, not just the active one.
       // Without this, messages on background threads are never written to disk and
       // are lost on reload.
@@ -620,11 +621,44 @@ export class ThreadsView extends ItemView {
   }
 
   /** Refresh list-derived chrome after a batch of threads enters memory. */
-  private handleThreadListEvent(event: ThreadEvent): void {
+  private handleThreadListEvent(threadId: string, event: ThreadEvent): void {
     if (event.type === 'threads_loaded' || event.type === 'projects_changed') {
       this.renderProjectBar();
       if (event.type === 'projects_changed') this.renderComposerContext();
     }
+    if (event.type === 'thread_deleted') this.repairSelectionAfterDelete(threadId);
+  }
+
+  /**
+   * Keep the chat view off a thread ThreadManager has already dropped.
+   *
+   * Archiving happens from more places than `closeThread()`: the Agents List and
+   * Kanban right-click menus, the MCP `archiveThread` handler, and the idle
+   * sweep all reach `deleteThread()` directly. Repairing the selection here —
+   * on the event every one of those paths emits — covers all of them at once.
+   * Without it `activeThreadId` keeps pointing at the deleted thread, which is
+   * not merely cosmetic: `handleSendFromDispatch()` only guards against a *null*
+   * id, so the next send reaches `ThreadManager.sendMessage()` and throws
+   * `Thread not found` while the dead conversation is still rendered as live.
+   *
+   * `deleteThread()` removes the thread from its map *before* emitting, so
+   * `getThreads()` here already excludes it.
+   */
+  private repairSelectionAfterDelete(deletedId: string): void {
+    if (!this.titleEl) return; // buildUI hasn't run yet; nothing to repair or re-render
+    if (this.activeThreadId !== deletedId) {
+      // Not our thread, but the switcher/tab chrome lists it — refresh the label row.
+      this.renderTitleBar();
+      return;
+    }
+    const remaining = this.manager.getThreads();
+    if (remaining.length > 0) {
+      void this.setActiveThread(remaining[0].id);
+      return;
+    }
+    this.activeThreadId = null;
+    this.renderTitleBar();
+    void this.renderMessages();
   }
 
   async onClose(): Promise<void> {
@@ -1977,13 +2011,20 @@ export class ThreadsView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
+  /** Settings + live Projects, in the shape the orchestrator helpers expect. */
+  private orchestratorContext(): OrchestratorContext {
+    return {
+      portfolioThreadId: this.plugin.settings.orchestratorThreadId,
+      projects: this.manager.getProjects(),
+    };
+  }
+
   /**
    * False for the Portfolio orchestrator and for any thread that owns a Project —
    * `ThreadManager.setThreadProject` always throws for those.
    */
   private canMoveToProject(threadId: string): boolean {
-    if (threadId === this.plugin.settings.orchestratorThreadId) return false;
-    return !this.manager.getProjects().some(project => project.orchestratorThreadId === threadId);
+    return !isOrchestratorThread(threadId, this.orchestratorContext());
   }
 
   /**
@@ -6028,36 +6069,21 @@ export class ThreadsView extends ItemView {
     const threads = this.manager.getThreads();
     if (threads.length <= 1) return;
 
-    const projectOrchestrator = this.manager.getProjects().find(project => project.orchestratorThreadId === id);
-    if (id === this.plugin.settings.orchestratorThreadId || projectOrchestrator) {
-      const confirmed = await new Promise<boolean>((resolve) => {
-        new ConfirmModal(
-          this.app,
-          projectOrchestrator
-            ? `This is the ${projectOrchestrator.name} Project Orchestrator. Deleting it stops automatic Project review until it is recreated.`
-            : 'This is your Portfolio Orchestrator. Deleting it stops portfolio review until you run "Open Portfolio Orchestrator" again to create a new one.',
-          'Delete anyway',
-          resolve,
-        ).open();
+    const role = describeOrchestratorThread(id, this.orchestratorContext());
+    if (role) {
+      const confirmed = await promptConfirm(this.app, {
+        message: orchestratorWarning(role),
+        confirmLabel: 'Delete anyway',
       });
       if (!confirmed) return;
     }
 
     await this.plugin.archiveThreadById(id, true);
     await this.plugin.saveSettings();
-
-    if (this.activeThreadId === id) {
-      const remaining = this.manager.getThreads();
-      if (remaining.length > 0) {
-        void this.setActiveThread(remaining[0].id);
-      } else {
-        this.activeThreadId = null;
-        this.renderTitleBar();
-        this.renderMessages();
-      }
-    } else {
-      this.renderTitleBar();
-    }
+    // Selection repair and title-bar refresh are handled by
+    // repairSelectionAfterDelete(), driven by the `thread_deleted` event that
+    // archiveThreadById() emits — the same path every other archive entry point
+    // goes through.
   }
 
   private renameThread(id: string, labelEl: HTMLElement): void {

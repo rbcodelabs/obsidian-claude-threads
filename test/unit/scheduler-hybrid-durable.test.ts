@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_SCHEDULER_TIMEOUT_MS,
   Scheduler,
@@ -7,6 +7,28 @@ import {
 } from '../../src/Scheduler';
 import type { ScheduledItem } from '../../src/types';
 import { ScheduleCoordinator } from '../../src/ScheduleCoordinator';
+
+// The calendar tests below assert on LOCAL wall-clock fields (`getDate`,
+// `getHours`) of the instant node-cron returns, and they exist to pin DST
+// behaviour — which only means anything in a zone that observes DST. Left to
+// the ambient zone they are not deterministic: `2026-03-07T10:00:00-05:00` is
+// 10:00 in America/New_York (so the next 09:30 is the 8th, across the spring
+// forward) but 09:00 in America/Chicago (so the next 09:30 is the 7th, and the
+// assertion fails on any developer machine west of Eastern). Pin the zone so
+// the expected values are a property of the schedule, not of who ran the test.
+//
+// `vi.hoisted` runs before the imports above, so `node-cron` and `Scheduler`
+// are evaluated with TZ already set rather than capturing the ambient zone.
+const originalTZ = vi.hoisted(() => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  return previous;
+});
+
+afterAll(() => {
+  if (originalTZ === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTZ;
+});
 
 beforeEach(() => {
   vi.useFakeTimers();

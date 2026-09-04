@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Modal, Menu, App } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, setTooltip, Notice, Menu } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import {
   parseFrontmatter,
@@ -20,6 +20,12 @@ import {
   type MarketplaceSkill,
 } from './skillManager';
 import { canEditSkill } from './skillPaths';
+import { ConfirmModal } from './confirmModal';
+
+// ConfirmModal used to be declared in this file. It moved to confirmModal.ts so
+// leaf modules (the archive context menu) can use it without importing the
+// whole skills manager; re-exported here so existing importers keep working.
+export { ConfirmModal } from './confirmModal';
 
 // Re-exported so existing unit tests (test/unit/findSkillDir.test.ts,
 // importSkill.test.ts, parseFrontmatter.test.ts) that import these helpers
@@ -76,43 +82,6 @@ function formatInstalls(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M installs`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K installs`;
   return `${count} install${count === 1 ? '' : 's'}`;
-}
-
-// ── Confirmation Modal ────────────────────────────────────────────────────────
-
-export class ConfirmModal extends Modal {
-  private onResult: (confirmed: boolean) => void;
-  private message: string;
-  private confirmLabel: string;
-
-  constructor(
-    app: App,
-    message: string,
-    confirmLabel: string,
-    onResult: (confirmed: boolean) => void,
-  ) {
-    super(app);
-    this.message = message;
-    this.confirmLabel = confirmLabel;
-    this.onResult = onResult;
-  }
-
-  onOpen(): void {
-    this.contentEl.createEl('p', { text: this.message });
-    const btns = this.contentEl.createEl('div', { cls: 'ct-skills-modal-btns' });
-    btns.createEl('button', { cls: 'ct-skills-btn', text: 'Cancel' }).addEventListener('click', () => {
-      this.close();
-      this.onResult(false);
-    });
-    btns.createEl('button', { cls: 'ct-skills-btn ct-skills-btn--danger', text: this.confirmLabel }).addEventListener('click', () => {
-      this.close();
-      this.onResult(true);
-    });
-  }
-
-  onClose(): void {
-    this.contentEl.empty();
-  }
 }
 
 // ── Main View ─────────────────────────────────────────────────────────────────
