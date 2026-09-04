@@ -20,10 +20,10 @@ describe('dashboard project-first grouping', () => {
         ? { key: 'unassigned', label: 'Unassigned' }
         : item.id === 'h'
           ? { key: 'project:h', label: 'HipTrip' }
-          : { key: 'project:c', label: 'Claude Threads' },
+          : { key: 'project:c', label: 'Agent Threads' },
     );
 
-    expect(groups.map(group => group.label)).toEqual(['Claude Threads', 'HipTrip', 'Unassigned']);
+    expect(groups.map(group => group.label)).toEqual(['Agent Threads', 'HipTrip', 'Unassigned']);
     expect(groups.map(group => group.threads.map(item => item.id))).toEqual([['c'], ['h'], ['u']]);
   });
 

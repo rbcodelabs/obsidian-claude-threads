@@ -97,6 +97,8 @@ Vote on upcoming features and see what's in progress at the [public roadmap](htt
 2. Extract into your vault's plugin folder: `<vault>/.obsidian/plugins/claude-threads/`
 3. Enable **Agent Threads** in Settings → Community Plugins
 
+> **Upgrade compatibility:** the repository, plugin ID, install folder, saved command IDs, workspace view types, and `claude_threads` MCP namespace retain their historical names so existing installations, hotkeys, layouts, and automations continue to work.
+
 ## Usage
 
 Click the **message-square** icon in the left ribbon, or run **Open Agent Threads** from the command palette.
@@ -649,7 +651,7 @@ In the background it tracks a few cheap signals: how often the Agent Board rebui
 Run **Agent Threads: Generate diagnostics report** from the command palette (or click **Copy diagnostics** in Settings → General → Diagnostics). It:
 
 - copies a **redacted** Markdown report to your clipboard, ready to paste into a GitHub issue, and
-- saves that Markdown plus a raw `.json` bundle into a `claude-threads-diagnostics/` folder in your vault root, then shows a Notice with the path.
+- saves that Markdown plus a raw `.json` bundle into an `agent-threads-diagnostics/` folder in your vault root, then shows a Notice with the path.
 
 The report is redacted by construction: it never includes message or file contents, absolute paths are collapsed to `~` or reduced to a basename (so no username or private directory layout leaks), and obvious `SECRET=value` strings are stripped. On mobile the command shows a "desktop only" Notice and does nothing.
 

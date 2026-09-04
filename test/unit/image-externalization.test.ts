@@ -60,7 +60,7 @@ describe('extForMediaType', () => {
 describe('buildAttachmentPath', () => {
   it('builds a per-thread, per-message-index path under attachments/', () => {
     expect(buildAttachmentPath('Claude', 'thread-1', 'msg-9', 0, 'image/png')).toBe(
-      'Claude/attachments/thread-1/msg-9-0.png',
+      'Agent Threads/attachments/thread-1/msg-9-0.png',
     );
   });
 
@@ -72,7 +72,7 @@ describe('buildAttachmentPath', () => {
 
   it('defaults to the Claude folder when none is given', () => {
     expect(buildAttachmentPath('', 'tid', 'mid', 1, 'image/gif')).toBe(
-      'Claude/attachments/tid/mid-1.gif',
+      'Agent Threads/attachments/tid/mid-1.gif',
     );
   });
 });
@@ -84,7 +84,7 @@ describe('buildAttachmentPath', () => {
 describe('serializeThreadForSave', () => {
   it('drops base64 from a path-backed user image in the serialized copy but keeps it live', () => {
     const msg = userImageMsg('m1', [
-      { base64: 'AAAA', mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/m1-0.png' },
+      { base64: 'AAAA', mediaType: 'image/png', name: 'a.png', path: 'Agent Threads/attachments/t1/m1-0.png' },
     ]);
     const thread = makeThread({ messages: [msg] });
 
@@ -92,7 +92,7 @@ describe('serializeThreadForSave', () => {
 
     // Serialized copy has no base64 (bytes removed from data.json) but keeps path.
     expect(out.messages[0].images![0].base64).toBeUndefined();
-    expect(out.messages[0].images![0].path).toBe('Claude/attachments/t1/m1-0.png');
+    expect(out.messages[0].images![0].path).toBe('Agent Threads/attachments/t1/m1-0.png');
     expect(out.messages[0].images![0].name).toBe('a.png');
 
     // Live in-memory object is untouched.
@@ -104,14 +104,14 @@ describe('serializeThreadForSave', () => {
 
   it('drops data from a path-backed tool-result image in the serialized copy but keeps it live', () => {
     const msg = toolImageMsg('m2', [
-      { mediaType: 'image/png', data: 'BBBB', path: 'Claude/attachments/t1/m2-0.png' },
+      { mediaType: 'image/png', data: 'BBBB', path: 'Agent Threads/attachments/t1/m2-0.png' },
     ]);
     const thread = makeThread({ messages: [msg] });
 
     const out = serializeThreadForSave(thread);
 
     expect(out.messages[0].toolResultImages![0].data).toBeUndefined();
-    expect(out.messages[0].toolResultImages![0].path).toBe('Claude/attachments/t1/m2-0.png');
+    expect(out.messages[0].toolResultImages![0].path).toBe('Agent Threads/attachments/t1/m2-0.png');
     expect(thread.messages[0].toolResultImages![0].data).toBe('BBBB');
   });
 
@@ -143,7 +143,7 @@ describe('serializeThreadForSave', () => {
   it('only clones messages that actually need stripping', () => {
     const clean = userImageMsg('clean', [{ base64: 'x', mediaType: 'image/png', name: 'x.png' }]);
     const dirty = userImageMsg('dirty', [
-      { base64: 'y', mediaType: 'image/png', name: 'y.png', path: 'Claude/attachments/t1/dirty-0.png' },
+      { base64: 'y', mediaType: 'image/png', name: 'y.png', path: 'Agent Threads/attachments/t1/dirty-0.png' },
     ]);
     const thread = makeThread({ messages: [clean, dirty] });
 
@@ -185,9 +185,9 @@ describe('collectPendingImageExternalizations', () => {
       makeThread({
         messages: [
           userImageMsg('u1', [
-            { base64: 'AAA', mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/u1-0.png' },
+            { base64: 'AAA', mediaType: 'image/png', name: 'a.png', path: 'Agent Threads/attachments/t1/u1-0.png' },
           ]),
-          toolImageMsg('a1', [{ mediaType: 'image/png', data: 'BBB', path: 'Claude/attachments/t1/a1-0.png' }]),
+          toolImageMsg('a1', [{ mediaType: 'image/png', data: 'BBB', path: 'Agent Threads/attachments/t1/a1-0.png' }]),
         ],
       }),
     ];
@@ -200,10 +200,10 @@ describe('collectPendingImageExternalizations', () => {
     const threads = [makeThread({ messages: [msg] })];
 
     const [pending] = collectPendingImageExternalizations(threads);
-    pending.setPath('Claude/attachments/t1/u1-0.png');
+    pending.setPath('Agent Threads/attachments/t1/u1-0.png');
 
     // The live message ref now carries the path, so the next serialize strips base64.
-    expect(msg.images![0].path).toBe('Claude/attachments/t1/u1-0.png');
+    expect(msg.images![0].path).toBe('Agent Threads/attachments/t1/u1-0.png');
     expect(serializeThreadForSave(threads[0]).messages[0].images![0].base64).toBeUndefined();
   });
 
@@ -228,16 +228,16 @@ describe('collectPendingImageExternalizations', () => {
 describe('imageEmbedMarkdown', () => {
   it('renders an Obsidian embed for a path-backed user image', () => {
     const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
-      images: [{ mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/m1-0.png' }],
+      images: [{ mediaType: 'image/png', name: 'a.png', path: 'Agent Threads/attachments/t1/m1-0.png' }],
     };
-    expect(imageEmbedMarkdown(msg)).toBe('![[Claude/attachments/t1/m1-0.png]]');
+    expect(imageEmbedMarkdown(msg)).toBe('![[Agent Threads/attachments/t1/m1-0.png]]');
   });
 
   it('renders an embed for a path-backed tool-result image', () => {
     const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
-      toolResultImages: [{ mediaType: 'image/png', path: 'Claude/attachments/t1/m2-0.png' }],
+      toolResultImages: [{ mediaType: 'image/png', path: 'Agent Threads/attachments/t1/m2-0.png' }],
     };
-    expect(imageEmbedMarkdown(msg)).toBe('![[Claude/attachments/t1/m2-0.png]]');
+    expect(imageEmbedMarkdown(msg)).toBe('![[Agent Threads/attachments/t1/m2-0.png]]');
   });
 
   it('emits NO embed for a base64-only image (not yet externalized)', () => {
@@ -251,13 +251,13 @@ describe('imageEmbedMarkdown', () => {
   it('embeds only path-backed images and skips base64-only ones in the same message', () => {
     const msg: Pick<ChatMessage, 'images' | 'toolResultImages'> = {
       images: [
-        { mediaType: 'image/png', name: 'a.png', path: 'Claude/attachments/t1/m1-0.png' },
+        { mediaType: 'image/png', name: 'a.png', path: 'Agent Threads/attachments/t1/m1-0.png' },
         { mediaType: 'image/png', name: 'b.png', base64: 'CCCC' },
       ],
-      toolResultImages: [{ mediaType: 'image/png', path: 'Claude/attachments/t1/m1-1.png' }],
+      toolResultImages: [{ mediaType: 'image/png', path: 'Agent Threads/attachments/t1/m1-1.png' }],
     };
     expect(imageEmbedMarkdown(msg)).toBe(
-      '![[Claude/attachments/t1/m1-0.png]]\n![[Claude/attachments/t1/m1-1.png]]',
+      '![[Agent Threads/attachments/t1/m1-0.png]]\n![[Agent Threads/attachments/t1/m1-1.png]]',
     );
   });
 

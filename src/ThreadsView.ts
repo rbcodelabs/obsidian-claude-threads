@@ -2275,7 +2275,7 @@ export class ThreadsView extends ItemView {
         if (el) el.textContent = summary;
       } catch (err) {
         if (gen !== this.summaryGeneration) return;
-        console.error('[Claude Threads] message summary error:', err);
+        console.error('[Agent Threads] message summary error:', err);
         const el = this.summaryTextEls.get(msg.id);
         if (el) el.textContent = msg.content.slice(0, 120) + '…';
       }
@@ -2564,7 +2564,7 @@ export class ThreadsView extends ItemView {
         el.textContent = summary;
       } catch (err) {
         if (gen !== this.summaryGeneration) return;
-        console.error('[Claude Threads] group summary error:', err);
+        console.error('[Agent Threads] group summary error:', err);
         // Fall back to last message's content truncated
         el.textContent = group[group.length - 1].content.slice(0, 120) + '…';
       }
@@ -2612,7 +2612,7 @@ export class ThreadsView extends ItemView {
       // Refresh the Agent Dashboard so the new summary appears there immediately
       this.plugin.getAgentDashboard()?.render();
     } catch (err) {
-      console.error('[Claude Threads] summarize error:', err);
+      console.error('[Agent Threads] summarize error:', err);
       this.clearStatusCard('active');
       this.moreBtn.removeClass('ct-summarize-spinning');
       setIcon(this.moreBtn, 'menu');

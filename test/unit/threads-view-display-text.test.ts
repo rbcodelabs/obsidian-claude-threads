@@ -8,8 +8,8 @@ import type { Thread } from '../../src/types';
  *
  * Rules:
  *   1. When an active thread exists, return its title.
- *   2. Fall back to 'Claude Threads' when there is no active thread.
- *   3. Fall back to 'Claude Threads' if the activeThreadId is stale (thread deleted).
+ *   2. Fall back to 'Agent Threads' when there is no active thread.
+ *   3. Fall back to 'Agent Threads' if the activeThreadId is stale (thread deleted).
  */
 function getDisplayText(
   activeThreadId: string | null,
@@ -19,7 +19,7 @@ function getDisplayText(
     const thread = getThread(activeThreadId);
     if (thread) return thread.title;
   }
-  return 'Claude Threads';
+  return 'Agent Threads';
 }
 
 function makeThread(id: string, title: string): Thread {
@@ -40,12 +40,12 @@ describe('ThreadsView — getDisplayText()', () => {
     expect(getDisplayText('b', getThread)).toBe('Thread 2');
   });
 
-  it('falls back to "Claude Threads" when no thread is active (null)', () => {
-    expect(getDisplayText(null, getThread)).toBe('Claude Threads');
+  it('falls back to "Agent Threads" when no thread is active (null)', () => {
+    expect(getDisplayText(null, getThread)).toBe('Agent Threads');
   });
 
-  it('falls back to "Claude Threads" when activeThreadId is stale / deleted', () => {
-    expect(getDisplayText('gone-id', getThread)).toBe('Claude Threads');
+  it('falls back to "Agent Threads" when activeThreadId is stale / deleted', () => {
+    expect(getDisplayText('gone-id', getThread)).toBe('Agent Threads');
   });
 
   it('picks up a renamed title immediately after renameThread() mutates thread.title', () => {

@@ -24,7 +24,7 @@ import path from 'path';
 import { AttachmentWriter } from '../../src/AttachmentWriter';
 
 const PNG_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]).toString('base64');
-const EXPECTED_REL = 'Claude/attachments/thread-1/msg-1-0.png';
+const EXPECTED_REL = 'Agent Threads/attachments/thread-1/msg-1-0.png';
 
 const tempRoots: string[] = [];
 function makeTempVault(): string {
@@ -86,7 +86,7 @@ describe('AttachmentWriter fallback ladder', () => {
     expect(Buffer.from(createBinary.mock.calls[0]![1] as ArrayBuffer).toString('base64')).toBe(PNG_BASE64);
     expect(modifyBinary).not.toHaveBeenCalled();
     // Every ancestor was created, not just the leaf.
-    expect([...tree.dirs]).toEqual(['Claude', 'Claude/attachments', 'Claude/attachments/thread-1']);
+    expect([...tree.dirs]).toEqual(['Claude', 'Agent Threads/attachments', 'Agent Threads/attachments/thread-1']);
   });
 
   it('rung 2: overwrites an existing cached file through modifyBinary rather than createBinary', async () => {
@@ -217,6 +217,6 @@ describe('AttachmentWriter fallback ladder', () => {
     await expect(writerFor(app).write('thread-1', 'msg-1', 0, 'image/png', PNG_BASE64))
       .resolves.toBe(EXPECTED_REL);
     expect(createFolder.mock.calls.map(c => c[0]))
-      .toEqual(['Claude', 'Claude/attachments', 'Claude/attachments/thread-1']);
+      .toEqual(['Claude', 'Agent Threads/attachments', 'Agent Threads/attachments/thread-1']);
   });
 });
