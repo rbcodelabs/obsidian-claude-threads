@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.32.4-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.33.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -772,6 +772,14 @@ Thread A                              Thread B
 ```
 
 This pattern works across any combination of threads — you can fan out to multiple peers simultaneously by sending messages to several threads before waiting on any of them.
+
+### Peer-plugin API
+
+Enabled desktop plugins can integrate with Agent Threads through the versioned `plugin.api.v1` surface. API v1 exposes immutable thread and message snapshots, thread create/send/wait/open operations, semantic run and message events, Portfolio/Project orchestrator discovery and dispatch, and a transport-neutral `voice-orchestration` tool bundle. It does not expose mutable thread objects, private view state, settings, secrets, or raw event callbacks.
+
+Peer plugins should verify `apiVersion` and the advertised `capabilities`, listen for the host events `claude-threads:api-ready` and `claude-threads:api-stopping`, and reacquire the API after a plugin reload. Every API generation is revocable: calls through a stale reference fail with `PLUGIN_UNAVAILABLE` instead of operating on a replacement plugin instance.
+
+The TypeScript contract and structured error codes are defined in [`src/PublicApi.ts`](src/PublicApi.ts). API v1 intentionally excludes archive/delete operations, cross-Project elevation, generic extension registration, and direct access to private views or runtime sessions.
 
 ### Vault Bridges integration
 
