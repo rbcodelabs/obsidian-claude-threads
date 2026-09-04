@@ -1,4 +1,5 @@
 import { ItemView, WorkspaceLeaf, Modal, Menu, setIcon, setTooltip, Notice, sanitizeHTMLToDom, App, FileSystemAdapter, TFile, Platform } from 'obsidian';
+import { hasVisibleDirectViewHeader } from './headerPresentation';
 import type { ViewStateResult } from 'obsidian';
 import { marked } from 'marked';
 import { effectiveExtraEnv } from './types';
@@ -83,6 +84,7 @@ export class ThreadsView extends ItemView {
   private rootEl!: HTMLElement;
   private tabBar!: HTMLElement;
   private titleEl!: HTMLButtonElement;
+  private titleRowEl!: HTMLElement;
   private titleTextEl!: HTMLSpanElement;
   private mainEl!: HTMLElement;
   private messagesEl!: HTMLElement;
@@ -205,7 +207,14 @@ export class ThreadsView extends ItemView {
 
   // Thread switcher inline panel
   private switcherPanelEl: HTMLElement | null = null;
+  private switcherTriggerEl: HTMLElement | null = null;
   private switcherOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  private nativeHeaderMode = false;
+  private nativeSwitchActionEl: HTMLElement | null = null;
+  private nativeManagerNotesActionEl: HTMLElement | null = null;
+  private nativeNewThreadActionEl: HTMLElement | null = null;
+  private nativeCloseThreadActionEl: HTMLElement | null = null;
+  private headerSyncFrame: number | null = null;
 
   // Summary peek banner (shown on tab reactivation)
   private summaryBannerEl: HTMLElement | null = null;
@@ -369,6 +378,16 @@ export class ThreadsView extends ItemView {
 
   async onOpen(): Promise<void> {
     this.buildUI();
+    this.createNativeHeaderActions();
+    this.syncHeaderMode();
+    this.registerEvent(this.app.workspace.on('layout-change', () => {
+      if (this.headerSyncFrame !== null) cancelAnimationFrame(this.headerSyncFrame);
+      this.headerSyncFrame = requestAnimationFrame(() => {
+        this.headerSyncFrame = null;
+        this.syncHeaderMode();
+      });
+    }));
+    this.registerEvent(this.app.workspace.on('css-change', () => this.syncHeaderMode()));
 
     this.manager.permissionHandler = (threadId, toolName, detail) => {
       // First-party host tools are always trusted; classification is an explicit
@@ -665,6 +684,8 @@ export class ThreadsView extends ItemView {
     this.unsubscribe?.();
     this.stopWakeupCountdown();
     if (this.staleInterval) clearInterval(this.staleInterval);
+    if (this.headerSyncFrame !== null) cancelAnimationFrame(this.headerSyncFrame);
+    this.headerSyncFrame = null;
     // Both popovers register a capture-phase document listener; leaving either
     // attached leaks a handler that outlives the view.
     this.closeSwitcherPanel();
@@ -710,6 +731,7 @@ export class ThreadsView extends ItemView {
     root.setAttribute('data-density', this.plugin.settings.layoutDensity ?? 'comfortable');
 
     const titleRow = root.createDiv('ct-title-row');
+    this.titleRowEl = titleRow;
     this.titleEl = titleRow.createEl('button', { cls: 'ct-title-btn', attr: { title: 'Switch thread' } });
     const titleIcon = this.titleEl.createSpan('ct-title-icon');
     setIcon(titleIcon, 'message-square');
@@ -939,11 +961,52 @@ export class ThreadsView extends ItemView {
     const threads = this.manager.getThreads();
     const hasRunning = threads.some(t => t.id !== this.activeThreadId && this.manager.isRunning(t.id));
     this.titleEl.classList.toggle('ct-title-has-background', hasRunning);
+    this.nativeSwitchActionEl?.classList.toggle('ct-title-has-background', hasRunning);
+    this.nativeSwitchActionEl?.classList.toggle('ct-native-switch-ephemeral', Boolean(thread?.ephemeral));
+    if (this.nativeSwitchActionEl) {
+      const details = [thread?.ephemeral ? 'ephemeral thread' : '', hasRunning ? 'background thread running' : '']
+        .filter(Boolean)
+        .join(', ');
+      setTooltip(this.nativeSwitchActionEl, details ? `Switch thread — ${details}` : 'Switch thread');
+    }
 
     // Hide close button when there is only one thread (nothing to switch to)
     if (this.closeThreadBtn) {
       this.closeThreadBtn.classList.toggle('ct-hidden', threads.length <= 1);
     }
+    this.nativeCloseThreadActionEl?.classList.toggle('ct-hidden', threads.length <= 1);
+  }
+
+  private createNativeHeaderActions(): void {
+    if (this.nativeSwitchActionEl) return;
+    this.nativeSwitchActionEl = this.addAction('message-square', 'Switch thread', (event) => this.openThreadSwitcher(event));
+    this.nativeSwitchActionEl.addClass('ct-native-switch-action');
+    this.nativeManagerNotesActionEl = this.addAction('sticky-note', 'Manager notes', (event) => {
+      event.stopPropagation();
+      this.managerNotesCollapsed = !this.managerNotesCollapsed;
+      this.renderManagerNotesPanel();
+    });
+    this.nativeNewThreadActionEl = this.addAction('square-pen', 'New thread', (event) => this.openNewThread(event));
+    this.nativeCloseThreadActionEl = this.addAction('x', 'Close thread', () => {
+      if (this.activeThreadId) this.closeThread(this.activeThreadId).catch(console.error);
+    });
+  }
+
+  private syncHeaderMode(): void {
+    const useNativeHeader = hasVisibleDirectViewHeader(this.containerEl);
+    if (useNativeHeader !== this.nativeHeaderMode) this.closeSwitcherPanel();
+    this.nativeHeaderMode = useNativeHeader;
+    this.rootEl?.toggleClass('ct-native-header-mode', useNativeHeader);
+    this.titleRowEl?.toggleClass('ct-hidden', useNativeHeader);
+    for (const action of [
+      this.nativeSwitchActionEl,
+      this.nativeManagerNotesActionEl,
+      this.nativeNewThreadActionEl,
+      this.nativeCloseThreadActionEl,
+    ]) action?.toggleClass('ct-hidden-by-placement', !useNativeHeader);
+    this.renderTitleBar();
+    this.renderManagerNotesPanel();
+    if (useNativeHeader) this.refreshLeafHeader();
   }
 
 
@@ -1805,6 +1868,7 @@ export class ThreadsView extends ItemView {
     const notes = thread?.managerNotes;
 
     this.managerNotesToggleEl.toggleClass('ct-hidden', !notes);
+    this.nativeManagerNotesActionEl?.toggleClass('ct-hidden', !notes);
 
     this.managerNotesPanelEl.empty();
     if (!notes || this.managerNotesCollapsed) {
@@ -5841,15 +5905,16 @@ export class ThreadsView extends ItemView {
     }
   }
 
-  private openThreadSwitcher(_event: MouseEvent): void {
+  private openThreadSwitcher(event: MouseEvent): void {
     // Toggle: close if already open
     if (this.switcherPanelEl) {
       this.closeSwitcherPanel();
       return;
     }
 
-    const titleRow = this.titleEl.closest('.ct-title-row') as HTMLElement ?? this.rootEl;
-    const panel = titleRow.createDiv('ct-switcher-panel');
+    this.switcherTriggerEl = event.currentTarget as HTMLElement | null;
+    const anchor = this.nativeHeaderMode ? this.rootEl : (this.titleEl.closest('.ct-title-row') as HTMLElement ?? this.rootEl);
+    const panel = anchor.createDiv(`ct-switcher-panel${this.nativeHeaderMode ? ' ct-switcher-panel-native' : ''}`);
     this.switcherPanelEl = panel;
 
     const allThreads = this.manager.getThreads();
@@ -5960,8 +6025,21 @@ export class ThreadsView extends ItemView {
     if (errors.length > 0)    renderSwitcherGroup('Failed',   errors,     'error');
     if (empty.length > 0)     renderSwitcherGroup('Ready',    empty,      'empty');
 
-    // Footer: new chat
+    // Footer: rename current thread and start a new chat.
     const footer = panel.createDiv('ct-switcher-footer');
+    const activeThread = this.activeThreadId ? this.manager.getThread(this.activeThreadId) : null;
+    if (activeThread) {
+      const renameBtn = footer.createEl('button', {
+        cls: 'ct-switcher-new-btn ct-switcher-rename-btn',
+        attr: { title: 'Rename current thread', 'aria-label': 'Rename current thread' },
+      });
+      renameBtn.createSpan({ cls: 'ct-title-text', text: activeThread.title });
+      renameBtn.addEventListener('click', (renameEvent) => {
+        renameEvent.stopPropagation();
+        const label = renameBtn.querySelector<HTMLElement>('.ct-title-text');
+        if (label) this.renameThread(activeThread.id, label);
+      });
+    }
     const newBtn = footer.createEl('button', { cls: 'ct-switcher-new-btn', text: '+ New chat' });
     newBtn.addEventListener('click', () => {
       this.closeSwitcherPanel();
@@ -5971,7 +6049,7 @@ export class ThreadsView extends ItemView {
     // Close on outside click (next tick so this click doesn't immediately re-close)
     setTimeout(() => {
       const outsideHandler = (e: MouseEvent) => {
-        if (!panel.contains(e.target as Node) && !this.titleEl.contains(e.target as Node)) {
+        if (!panel.contains(e.target as Node) && !this.switcherTriggerEl?.contains(e.target as Node)) {
           this.closeSwitcherPanel();
         }
       };
@@ -5983,6 +6061,7 @@ export class ThreadsView extends ItemView {
   private closeSwitcherPanel(): void {
     this.switcherPanelEl?.remove();
     this.switcherPanelEl = null;
+    this.switcherTriggerEl = null;
     if (this.switcherOutsideHandler) {
       document.removeEventListener('mousedown', this.switcherOutsideHandler, true);
       this.switcherOutsideHandler = null;

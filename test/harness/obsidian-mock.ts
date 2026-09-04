@@ -169,6 +169,28 @@ const mockSecrets: Record<string, string> = {
   'ct-secret-STRIPE_SECRET_KEY': 'sk_live_mock00000000efgh',
 };
 
+type WorkspaceCallback = (...args: unknown[]) => void;
+const workspaceCallbacks = new Map<string, Set<WorkspaceCallback>>();
+
+export const mockWorkspace = {
+  on: (name: string, callback: WorkspaceCallback) => {
+    let callbacks = workspaceCallbacks.get(name);
+    if (!callbacks) {
+      callbacks = new Set();
+      workspaceCallbacks.set(name, callbacks);
+    }
+    callbacks.add(callback);
+    return { name, callback };
+  },
+  offref: (ref: { name: string; callback: WorkspaceCallback }) => {
+    workspaceCallbacks.get(ref.name)?.delete(ref.callback);
+  },
+  trigger: (name: string, ...args: unknown[]) => {
+    for (const callback of workspaceCallbacks.get(name) ?? []) callback(...args);
+  },
+  requestSaveLayout: () => {},
+};
+
 export const mockApp = {
   vault: {
     adapter: {
@@ -176,7 +198,7 @@ export const mockApp = {
       getResourcePath: (p: string) => p,
     },
   },
-  workspace: {},
+  workspace: mockWorkspace,
   secretStorage: {
     getSecret: (name: string) => mockSecrets[name] ?? null,
     setSecret: (name: string, value: string) => { mockSecrets[name] = value; },
@@ -186,7 +208,15 @@ export const mockApp = {
   },
 };
 
-export const mockLeaf = { app: mockApp, view: null, updateHeader: () => {} };
+export const mockLeaf: { app: typeof mockApp; view: ItemView | null; updateHeader: () => void } = {
+  app: mockApp,
+  view: null,
+  updateHeader: () => {
+    const titleEl = mockLeaf.view?.containerEl.querySelector('.view-header-title');
+    const displayText = (mockLeaf.view as unknown as { getDisplayText?: () => string })?.getDisplayText?.();
+    if (titleEl && displayText) titleEl.textContent = displayText;
+  },
+};
 
 export class ItemView {
   containerEl: HTMLElement;
@@ -198,12 +228,30 @@ export class ItemView {
     this.containerEl = document.createElement('div');
     // Obsidian ItemView has containerEl.children[0] (nav header) and children[1] (view-content)
     const header = document.createElement('div');
+    header.className = 'view-header';
+    header.style.display = 'none';
+    const title = header.createDiv('view-header-title');
+    title.textContent = 'Claude Threads';
+    header.createDiv('view-actions');
     const content = document.createElement('div');
+    content.className = 'view-content';
     this.containerEl.appendChild(header);
     this.containerEl.appendChild(content);
+    if (_leaf && typeof _leaf === 'object') (_leaf as { view?: ItemView }).view = this;
+  }
+
+  addAction(icon: string, title: string, callback: (event: MouseEvent) => unknown): HTMLElement {
+    const actions = this.containerEl.querySelector('.view-actions') as HTMLElement;
+    const action = actions.createEl('button', { cls: 'view-action', attr: { 'aria-label': title, title } });
+    setIcon(action, icon);
+    action.addEventListener('click', callback);
+    return action;
   }
 
   register(_cb: () => void): void {}
+  registerEvent(ref: { name: string; callback: WorkspaceCallback }): void {
+    this.register(() => mockWorkspace.offref(ref));
+  }
 }
 
 export class WorkspaceLeaf {}

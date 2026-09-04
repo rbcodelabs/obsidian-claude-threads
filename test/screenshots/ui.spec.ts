@@ -14,6 +14,69 @@ test.describe('Claude Threads UI', () => {
     await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
   });
 
+  test('document pane uses the native header and adapts when moved to a sidebar', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`${harnessUrl}?document`);
+    await page.waitForSelector('.ct-messages');
+
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.view-header-title')).toHaveText('Fix auth middleware');
+    await expect(page.locator('.ct-title-row')).toBeHidden();
+    await expect(page.locator('.view-action[aria-label="Switch thread"]')).toHaveCount(1);
+    await expect(page.locator('.view-action[aria-label="New thread"]')).toHaveCount(1);
+    await expect(page.locator('.view-action[aria-label="Close thread"]')).toHaveCount(1);
+    await expect(page.locator('.view-action[aria-label="Manager notes"]')).toBeHidden();
+
+    await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
+    await expect(page.locator('.view-header-title')).toHaveText('HipTrip feature ideas');
+
+    await page.locator('.view-action[aria-label="Switch thread"]').click();
+    await expect(page.locator('.ct-switcher-panel')).toBeVisible();
+    await expect(page.locator('.ct-switcher-rename-btn')).toBeVisible();
+    await expect(page.locator('.ct-switcher-panel')).toHaveClass(/ct-switcher-panel-native/);
+    await page.locator('.ct-switcher-rename-btn').click();
+    const renameInput = page.locator('.ct-switcher-footer .ct-title-rename-input');
+    await expect(renameInput).toHaveValue('HipTrip feature ideas');
+    await renameInput.fill('HipTrip roadmap workshop');
+    await renameInput.press('Enter');
+    await expect(page.locator('.view-header-title')).toHaveText('HipTrip roadmap workshop');
+
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager.getThread(view.getActiveThreadId()).managerNotes = 'Prioritize the native header QA.';
+      view.renderThreadInfo();
+    });
+    await expect(page.locator('.view-action[aria-label="Manager notes"]')).toBeVisible();
+
+    await page.locator('.view-action[aria-label^="Switch thread"]').click();
+    await expect(page.locator('.ct-switcher-panel')).toHaveCount(0);
+
+    await page.locator('#app').evaluate((element) => {
+      element.style.width = '1200px';
+      element.style.height = '760px';
+    });
+    await shot(page.locator('#app'), 'document-pane.png');
+
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      for (const thread of manager.getThreads()) {
+        if (thread.id !== view.getActiveThreadId()) manager.deleteThread(thread.id);
+      }
+    });
+    await expect(page.locator('.view-action[aria-label="Close thread"]')).toBeHidden();
+
+    await page.evaluate(() => (window as any).__setDocumentPane(false));
+    await expect(page.locator('.view-header')).toBeHidden();
+    await expect(page.locator('.ct-title-row')).toBeVisible();
+
+    await page.evaluate(() => (window as any).__setDocumentPane(true));
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.ct-title-row')).toBeHidden();
+    await expect(page.locator('.view-action[aria-label="Switch thread"]')).toHaveCount(1);
+  });
+
   // Guards the harness icon map on every state this spec renders, not just the
   // one the dedicated test below drives. setIcon() in
   // test/harness/obsidian-mock.ts records any name it cannot resolve on
