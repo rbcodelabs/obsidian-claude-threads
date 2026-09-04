@@ -129,9 +129,9 @@ export class AgentDashboard extends ItemView {
 
     const kanbanBtn = metaActions.createEl('button', {
       cls: 'ct-kanban-toggle clickable-icon',
-      attr: { title: 'Open Kanban Board', 'aria-label': 'Open Kanban Board' },
+      attr: { title: 'Open Agent Board', 'aria-label': 'Open Agent Board' },
     });
-    setIcon(kanbanBtn, 'layout-grid');
+    setIcon(kanbanBtn, 'kanban');
     kanbanBtn.addEventListener('click', () => {
       this.plugin.activateKanbanView();
     });
