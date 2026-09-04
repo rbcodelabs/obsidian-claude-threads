@@ -86,7 +86,10 @@ describe('OrchestratorWakeup', () => {
     const [threadId, message] = sendMessage.mock.calls[0];
     expect(threadId).toBe('orchestrator-thread');
     expect(message).toBe(
-      'New activity on 1 thread — run your review pass.\n- thread-1 "Fix login bug" (done)',
+      [
+        'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.',
+        '- thread-1 "Fix login bug" (done)',
+      ].join('\n'),
     );
   });
 
@@ -108,7 +111,7 @@ describe('OrchestratorWakeup', () => {
     const [, message] = sendMessage.mock.calls[0];
     expect(message).toBe(
       [
-        'New activity on 2 threads — run your review pass.',
+        'New activity on 2 threads. Review only the named changed threads; do not run a full reconciliation. The heartbeat handles missed activity.',
         '- thread-1 "Fix login bug" (done)',
         '- thread-2 "Update docs" (error)',
       ].join('\n'),
@@ -126,7 +129,9 @@ describe('OrchestratorWakeup', () => {
     await Promise.resolve();
 
     const [, message] = sendMessage.mock.calls[0];
-    expect(message).toBe('New activity on 1 thread — run your review pass.\n- thread-1 (done)');
+    expect(message).toBe(
+      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 (done)',
+    );
   });
 
   it('keeps only the most recent status when a thread fires multiple events before flush', async () => {
@@ -142,7 +147,9 @@ describe('OrchestratorWakeup', () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, message] = sendMessage.mock.calls[0];
-    expect(message).toBe('New activity on 1 thread — run your review pass.\n- thread-1 "Flaky thread" (done)');
+    expect(message).toBe(
+      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 "Flaky thread" (done)',
+    );
   });
 
   it('debounces projects independently and resolves each target at flush time', async () => {

@@ -2209,7 +2209,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (!hasHeartbeat) {
       this.scheduler.createItem({
         name: 'Portfolio Orchestrator Heartbeat',
-        prompt: 'Heartbeat: run your review pass across all threads.',
+        prompt: 'Heartbeat: reconcile activity missed by targeted event reviews across all threads. Do not reopen concluded work whose updatedAt is unchanged.',
         schedule: { type: 'interval', intervalSeconds: 3600 },
         enabled: true,
         targetThreadId: threadId,
@@ -2252,7 +2252,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       if (!isCurrent()) return undefined;
       await this.scheduler.createItem({
         name: `${project.name} Orchestrator Heartbeat`,
-        prompt: 'Heartbeat: run your Project review pass.',
+        prompt: 'Heartbeat: reconcile Project activity missed by targeted event reviews. Do not reopen concluded work whose updatedAt is unchanged.',
         schedule: { type: 'interval', intervalSeconds: 3600 },
         enabled: true,
         targetThreadId: threadId,

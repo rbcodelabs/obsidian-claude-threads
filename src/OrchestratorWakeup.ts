@@ -152,7 +152,11 @@ export class OrchestratorWakeup {
       const label = title ? `${threadId} "${title}"` : threadId;
       return `- ${label} (${status})`;
     });
-    const message = [`New activity on ${count} thread${count === 1 ? '' : 's'} — run your review pass.`, ...lines].join('\n');
+    const threadLabel = count === 1 ? 'thread' : 'threads';
+    const message = [
+      `New activity on ${count} ${threadLabel}. Review only the named changed ${threadLabel}; do not run a full reconciliation. The heartbeat handles missed activity.`,
+      ...lines,
+    ].join('\n');
 
     try {
       if (this.generation(bucket) !== generation) return;
