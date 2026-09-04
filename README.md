@@ -794,7 +794,7 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 | Default working directory | `cwd` for new threads; defaults to vault root |
 | Worktree location | Root directory for worktrees created by `enter_worktree` (default: `~/.geode/worktrees`, laid out as `<repo>/<branch>`). Must be durable storage — a temp directory is cleared on reboot, which deletes the worktree and any uncommitted work in it. |
 | Save threads to vault | Auto-save readable Markdown notes plus versioned machine recovery snapshots |
-| Vault folder | Folder for saved thread notes (default: `Claude/`) |
+| Vault folder | Folder for saved thread notes (default: `Agent Threads/`) |
 | Extra environment variables | `KEY=VALUE` pairs injected into Claude's environment (useful for `AWS_PROFILE`, `AWS_REGION`) |
 | Secret environment variables | Keychain-backed env vars (values stored in the OS keychain, never in `data.json`) — for API keys and tokens. Each secret defaults to Global (available to every Project and to Project-less threads); optionally restrict it to specific Projects via the checkboxes under its row. MCP server and skill *registration* stays global regardless — only whether a scoped secret's value resolves is gated by Project. |
 | Permission mode | How the selected Claude or Codex harness handles tool-use confirmation. Options: `default` (CLI default), `acceptEdits` (auto-approve file edits), `bypassPermissions` (skip all prompts), `plan` (propose a plan first — see [Plan Mode](#plan-mode)), `dontAsk` (no dialogs; for unattended/scheduled sessions), `auto` (the selected harness decides). See [Permissions](#permissions). |

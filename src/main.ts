@@ -45,7 +45,7 @@ import {
   sharedPersistenceWriterFence,
   type PersistenceWriterToken,
 } from './PersistenceWriterFence';
-import { DIAGNOSTICS_FOLDER, welcomeGuidePaths } from './productIdentity';
+import { DIAGNOSTICS_FOLDER, mergePersistedSettings, selectWelcomeGuidePath } from './productIdentity';
 
 // View-type string constants. Must match the values exported by each view module.
 // Defined here as literals so both desktop and mobile code can reference them without
@@ -1431,11 +1431,13 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { workspace, vault } = this.app;
 
     // 1. Write welcome guide to vault
-    const guidePaths = welcomeGuidePaths(this.settings.vaultFolder);
-    const guidePath = normalizePath(guidePaths.current);
-    const legacyGuidePath = normalizePath(guidePaths.legacy);
+    const selectedGuide = selectWelcomeGuidePath(
+      this.settings.vaultFolder,
+      path => Boolean(vault.getAbstractFileByPath(normalizePath(path))),
+    );
+    const guidePath = normalizePath(selectedGuide.path);
     try {
-      if (!vault.getAbstractFileByPath(guidePath) && !vault.getAbstractFileByPath(legacyGuidePath)) {
+      if (selectedGuide.shouldCreate) {
         const folderPath = normalizePath(this.settings.vaultFolder);
         if (!vault.getAbstractFileByPath(folderPath)) {
           await vault.createFolder(folderPath);
@@ -1460,7 +1462,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
     // 3. Open welcome guide in the CENTER editor
     try {
-      const guideFile = vault.getAbstractFileByPath(guidePath) ?? vault.getAbstractFileByPath(legacyGuidePath);
+      const guideFile = vault.getAbstractFileByPath(guidePath);
       if (guideFile instanceof TFile) {
         if (this.isConversationFirst()) {
           await this.contextPanel.openFile(guideFile);
@@ -2387,7 +2389,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   /**
    * Assemble the local-only, redacted diagnostics bundle, copy the markdown to the
-   * clipboard, and save both .md + .json into `claude-threads-diagnostics/` in the
+   * clipboard, and save both .md + .json into `agent-threads-diagnostics/` in the
    * vault root. Desktop-only; on mobile it shows a "desktop only" Notice and returns.
    * All host/OS access is behind the desktop guard + lazy require (mobile-safe).
    */
@@ -2456,7 +2458,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
       const { markdown, json } = buildDiagnosticsReport(input);
 
-      // Save .md + .json to claude-threads-diagnostics/ in the vault root.
+      // Save .md + .json to agent-threads-diagnostics/ in the vault root.
       const folder = DIAGNOSTICS_FOLDER;
       if (!this.app.vault.getAbstractFileByPath(folder)) {
         await this.app.vault.createFolder(folder).catch(() => {});
@@ -2483,7 +2485,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings = mergePersistedSettings(DEFAULT_SETTINGS, data);
     const { sanitizeConversationCompanionSettings } = require('./conversationFirstPlacement') as typeof import('./conversationFirstPlacement');
     sanitizeConversationCompanionSettings(this.settings as unknown as Record<string, unknown>);
     // Migrate old WebLLM model IDs to claude alias

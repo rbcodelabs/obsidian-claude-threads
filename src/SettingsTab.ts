@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Platform, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
+import { DEFAULT_VAULT_FOLDER } from './productIdentity';
 import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
@@ -1170,7 +1171,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Keep computer awake')
-      .setDesc('Prevent sleep while Claude is responding. Shows ☕ in the status bar when active.')
+      .setDesc('Prevent sleep while an agent is responding. Shows ☕ in the status bar when active.')
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.wakeLockEnabled).onChange(async (value) => {
           this.plugin.settings.wakeLockEnabled = value;
@@ -1701,10 +1702,10 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setDesc('Where thread notes are saved, relative to the vault root.')
       .addText((text) =>
         text
-          .setPlaceholder('Claude')
+          .setPlaceholder(DEFAULT_VAULT_FOLDER)
           .setValue(this.plugin.settings.vaultFolder)
           .onChange(async (value) => {
-            this.plugin.settings.vaultFolder = value || 'Agent Threads';
+            this.plugin.settings.vaultFolder = value || DEFAULT_VAULT_FOLDER;
             await this.plugin.saveSettings();
           }),
       );
