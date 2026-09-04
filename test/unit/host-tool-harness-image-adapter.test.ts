@@ -80,13 +80,13 @@ describe('toHarnessDynamicTools: image blocks never reach the harness as base64'
 
   it('keeps text blocks verbatim and preserves block order around an image', async () => {
     const { text } = await invokeWithContent([
-      { type: 'text', text: 'Saved to Agent Threads/attachments/captures/window.png' },
+      { type: 'text', text: 'Saved to Claude/attachments/captures/window.png' },
       anthropicImage('image/png', BIG_BASE64),
       { type: 'text', text: 'done' },
     ]);
 
     const lines = text.split('\n');
-    expect(lines[0]).toBe('Saved to Agent Threads/attachments/captures/window.png');
+    expect(lines[0]).toBe('Saved to Claude/attachments/captures/window.png');
     expect(lines[1]).toMatch(/^\[image: image\/png, \d+kB\]$/);
     expect(lines[2]).toBe('done');
     expect(text).not.toContain(BIG_BASE64);

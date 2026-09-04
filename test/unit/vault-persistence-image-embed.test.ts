@@ -49,14 +49,14 @@ describe('VaultPersistence note image embeds', () => {
         role: 'user',
         content: 'here is a screenshot',
         timestamp: 1,
-        images: [{ mediaType: 'image/png', name: 'shot.png', path: 'Agent Threads/attachments/t1/m1-0.png' }],
+        images: [{ mediaType: 'image/png', name: 'shot.png', path: 'Claude/attachments/t1/m1-0.png' }],
       },
       {
         id: 'm2',
         role: 'assistant',
         content: 'I read the file',
         timestamp: 2,
-        toolResultImages: [{ mediaType: 'image/png', path: 'Agent Threads/attachments/t1/m2-0.png' }],
+        toolResultImages: [{ mediaType: 'image/png', path: 'Claude/attachments/t1/m2-0.png' }],
       },
     ]);
 
@@ -64,8 +64,8 @@ describe('VaultPersistence note image embeds', () => {
 
     const written = Object.values(created)[0];
     expect(written).toBeDefined();
-    expect(written).toContain('![[Agent Threads/attachments/t1/m1-0.png]]');
-    expect(written).toContain('![[Agent Threads/attachments/t1/m2-0.png]]');
+    expect(written).toContain('![[Claude/attachments/t1/m1-0.png]]');
+    expect(written).toContain('![[Claude/attachments/t1/m2-0.png]]');
   });
 
   it('emits no embed and no base64 for an image that is not yet externalized', async () => {

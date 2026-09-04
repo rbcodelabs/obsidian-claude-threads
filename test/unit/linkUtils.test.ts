@@ -129,9 +129,9 @@ describe('resolveAbsoluteVaultHref', () => {
   // marked percent-encodes hrefs, so a vault path containing a space arrives
   // as "Claude%20Threads" while the vault index holds the literal space.
   it('resolves a percent-encoded space inside the vault-relative portion', () => {
-    const exists = (p: string) => p === 'Products/Agent Threads/notes.md';
+    const exists = (p: string) => p === 'Products/Claude Threads/notes.md';
     const href = '/Users/rick/Library/Mobile%20Documents/Personal/Products/Claude%20Threads/notes.md';
-    expect(resolveAbsoluteVaultHref(href, exists)).toBe('Products/Agent Threads/notes.md');
+    expect(resolveAbsoluteVaultHref(href, exists)).toBe('Products/Claude Threads/notes.md');
   });
 
   it('prefers a raw match over the decoded one when a filename really contains %20', () => {
@@ -160,9 +160,9 @@ describe('resolveAbsoluteVaultHref', () => {
   });
 
   it('handles a subpath alongside a percent-encoded space', () => {
-    const exists = (p: string) => p === 'Products/Agent Threads/notes.md';
+    const exists = (p: string) => p === 'Products/Claude Threads/notes.md';
     expect(resolveAbsoluteVaultHref('/Users/rick/Mobile%20Documents/Products/Claude%20Threads/notes.md#Section', exists))
-      .toBe('Products/Agent Threads/notes.md#Section');
+      .toBe('Products/Claude Threads/notes.md#Section');
   });
 
   it('returns null when the path resolves nowhere even though it carries a subpath', () => {
