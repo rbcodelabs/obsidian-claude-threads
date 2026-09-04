@@ -222,6 +222,7 @@ export class ItemView {
   containerEl: HTMLElement;
   app = mockApp;
   leaf: unknown;
+  private cleanupCallbacks: Array<() => void> = [];
 
   constructor(_leaf: unknown) {
     this.leaf = _leaf;
@@ -247,9 +248,15 @@ export class ItemView {
     return action;
   }
 
-  register(_cb: () => void): void {}
+  register(cb: () => void): void {
+    this.cleanupCallbacks.push(cb);
+  }
   registerEvent(ref: { name: string; callback: WorkspaceCallback }): void {
     this.register(() => mockWorkspace.offref(ref));
+  }
+
+  unload(): void {
+    for (const cleanup of this.cleanupCallbacks.splice(0).reverse()) cleanup();
   }
 }
 

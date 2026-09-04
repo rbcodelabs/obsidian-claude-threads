@@ -209,6 +209,7 @@ export class ThreadsView extends ItemView {
   private switcherPanelEl: HTMLElement | null = null;
   private switcherTriggerEl: HTMLElement | null = null;
   private switcherOutsideHandler: ((e: MouseEvent) => void) | null = null;
+  private switcherOutsideTimer: ReturnType<typeof setTimeout> | null = null;
   private nativeHeaderMode = false;
   private nativeSwitchActionEl: HTMLElement | null = null;
   private nativeManagerNotesActionEl: HTMLElement | null = null;
@@ -963,6 +964,7 @@ export class ThreadsView extends ItemView {
         .filter(Boolean)
         .join(', ');
       setTooltip(this.nativeSwitchActionEl, details ? `Switch thread — ${details}` : 'Switch thread');
+      this.nativeSwitchActionEl.setAttribute('aria-label', details ? `Switch thread — ${details}` : 'Switch thread');
     }
 
     // Hide close button when there is only one thread (nothing to switch to)
@@ -988,7 +990,7 @@ export class ThreadsView extends ItemView {
   }
 
   private syncHeaderMode(): void {
-    const useNativeHeader = hasVisibleDirectViewHeader(this.containerEl);
+    const useNativeHeader = !Platform.isMobile && hasVisibleDirectViewHeader(this.containerEl);
     if (useNativeHeader !== this.nativeHeaderMode) this.closeSwitcherPanel();
     this.nativeHeaderMode = useNativeHeader;
     this.rootEl?.toggleClass('ct-native-header-mode', useNativeHeader);
@@ -6042,7 +6044,9 @@ export class ThreadsView extends ItemView {
     });
 
     // Close on outside click (next tick so this click doesn't immediately re-close)
-    setTimeout(() => {
+    this.switcherOutsideTimer = setTimeout(() => {
+      this.switcherOutsideTimer = null;
+      if (this.switcherPanelEl !== panel || !panel.isConnected) return;
       const outsideHandler = (e: MouseEvent) => {
         if (!panel.contains(e.target as Node) && !this.switcherTriggerEl?.contains(e.target as Node)) {
           this.closeSwitcherPanel();
@@ -6054,6 +6058,10 @@ export class ThreadsView extends ItemView {
   }
 
   private closeSwitcherPanel(): void {
+    if (this.switcherOutsideTimer !== null) {
+      clearTimeout(this.switcherOutsideTimer);
+      this.switcherOutsideTimer = null;
+    }
     this.switcherPanelEl?.remove();
     this.switcherPanelEl = null;
     this.switcherTriggerEl = null;

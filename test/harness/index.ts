@@ -214,3 +214,7 @@ view.onOpen();
   hostHeader.style.display = enabled ? 'flex' : 'none';
   mockWorkspace.trigger('layout-change');
 };
+(window as any).__closeView = async () => {
+  await view.onClose();
+  (view as any).unload();
+};

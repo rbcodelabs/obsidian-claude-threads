@@ -22,7 +22,7 @@ test.describe('Claude Threads UI', () => {
     await expect(page.locator('.view-header')).toBeVisible();
     await expect(page.locator('.view-header-title')).toHaveText('Fix auth middleware');
     await expect(page.locator('.ct-title-row')).toBeHidden();
-    await expect(page.locator('.view-action[aria-label="Switch thread"]')).toHaveCount(1);
+    await expect(page.locator('.view-action[aria-label^="Switch thread"]')).toHaveCount(1);
     await expect(page.locator('.view-action[aria-label="New thread"]')).toHaveCount(1);
     await expect(page.locator('.view-action[aria-label="Close thread"]')).toHaveCount(1);
     await expect(page.locator('.view-action[aria-label="Manager notes"]')).toBeHidden();
@@ -30,7 +30,16 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__view.focusThread('thread-brainstorm'));
     await expect(page.locator('.view-header-title')).toHaveText('HipTrip feature ideas');
 
-    await page.locator('.view-action[aria-label="Switch thread"]').click();
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const manager = (window as any).__manager;
+      manager.getThread(view.getActiveThreadId()).ephemeral = true;
+      (window as any).__setThreadRunning('thread-agentic', true);
+      view.renderTitleBar();
+    });
+    await expect(page.locator('.view-action[aria-label="Switch thread — ephemeral thread, background thread running"]')).toBeVisible();
+
+    await page.locator('.view-action[aria-label^="Switch thread"]').click();
     await expect(page.locator('.ct-switcher-panel')).toBeVisible();
     await expect(page.locator('.ct-switcher-rename-btn')).toBeVisible();
     await expect(page.locator('.ct-switcher-panel')).toHaveClass(/ct-switcher-panel-native/);
@@ -61,6 +70,7 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => {
       const view = (window as any).__view;
       const manager = (window as any).__manager;
+      (window as any).__setThreadRunning('thread-agentic', false);
       for (const thread of manager.getThreads()) {
         if (thread.id !== view.getActiveThreadId()) manager.deleteThread(thread.id);
       }
@@ -74,7 +84,43 @@ test.describe('Claude Threads UI', () => {
     await page.evaluate(() => (window as any).__setDocumentPane(true));
     await expect(page.locator('.view-header')).toBeVisible();
     await expect(page.locator('.ct-title-row')).toBeHidden();
-    await expect(page.locator('.view-action[aria-label="Switch thread"]')).toHaveCount(1);
+    await expect(page.locator('.view-action[aria-label^="Switch thread"]')).toHaveCount(1);
+  });
+
+  test('closing the switcher before deferred outside-listener setup leaves no stale handler', async ({ page }) => {
+    await page.goto(`${harnessUrl}?document`);
+    await page.waitForSelector('.ct-messages');
+    const switchAction = page.locator('.view-action[aria-label="Switch thread"]');
+    await switchAction.click();
+    await switchAction.click();
+    await page.waitForTimeout(20);
+
+    const state = await page.evaluate(() => ({
+      panel: (window as any).__view.switcherPanelEl,
+      timer: (window as any).__view.switcherOutsideTimer,
+      handler: (window as any).__view.switcherOutsideHandler,
+    }));
+    expect(state).toEqual({ panel: null, timer: null, handler: null });
+  });
+
+  test('mobile keeps the custom conversation title even when a host header is visible', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${harnessUrl}?document&mobile`);
+    await page.waitForSelector('.ct-messages');
+
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.ct-title-row')).toBeVisible();
+    await expect(page.locator('.view-action[aria-label="Switch thread"]')).toBeHidden();
+  });
+
+  test('closed conversation view ignores later workspace layout changes', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    await page.evaluate(() => (window as any).__closeView());
+    await page.evaluate(() => (window as any).__setDocumentPane(true));
+    await page.waitForTimeout(50);
+
+    await expect(page.locator('.ct-title-row')).toBeVisible();
   });
 
   // Guards the harness icon map on every state this spec renders, not just the
