@@ -119,6 +119,9 @@ describe('ClaudeThreadsPlugin.ensureOrchestratorThread() — stale heartbeat cle
     expect(plugin.manager.getThread(threadId!)!).toMatchObject({ title: 'HipTrip Orchestrator', cwd: '/repos/hiptrip', projectId: project.id });
     expect(createItem).toHaveBeenCalledOnce();
     expect(createItem).toHaveBeenCalledWith(expect.objectContaining({ targetThreadId: threadId, projectId: project.id, isOrchestratorHeartbeat: true }));
+    expect(createItem).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'Heartbeat: reconcile Project activity missed by targeted event reviews. Do not reopen concluded work whose updatedAt is unchanged.',
+    }));
     expect(plugin.openThreadInChatView).not.toHaveBeenCalled();
     expect(plugin.manager.getProject(project.id)?.orchestratorEnabled).toBe(true);
   });
@@ -262,5 +265,8 @@ describe('ClaudeThreadsPlugin.ensureOrchestratorThread() — stale heartbeat cle
     const createArgs = createItem.mock.calls[0][0];
     expect(createArgs.isOrchestratorHeartbeat).toBe(true);
     expect(createArgs.targetThreadId).toBe(plugin.settings.orchestratorThreadId);
+    expect(createArgs.prompt).toBe(
+      'Heartbeat: reconcile activity missed by targeted event reviews across all threads. Do not reopen concluded work whose updatedAt is unchanged.',
+    );
   });
 });
