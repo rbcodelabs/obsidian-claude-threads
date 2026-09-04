@@ -146,8 +146,8 @@ describe('Claude Threads public API v1 contract', () => {
     const { runId } = await service.api.threads.send(thread.id, { prompt: 'pending' });
     const waiting = service.api.threads.wait(runId);
     service.stop(); service.stop();
-    await expect(waiting).resolves.toMatchObject({ status: 'failed', error: { code: 'PLUGIN_UNAVAILABLE' } });
-    await expect(service.api.threads.list()).rejects.toMatchObject({ code: 'PLUGIN_UNAVAILABLE', generation: service.api.generation });
+    await expect(waiting).resolves.toMatchObject({ status: 'failed', error: { code: 'PLUGIN_UNAVAILABLE', message: 'Agent Threads became unavailable.' } });
+    await expect(service.api.threads.list()).rejects.toMatchObject({ code: 'PLUGIN_UNAVAILABLE', message: 'Agent Threads is not available.', generation: service.api.generation });
     expect(hostSignals.filter(signal => signal.name === 'claude-threads:api-stopping')).toHaveLength(1);
   });
 
@@ -169,7 +169,8 @@ describe('Claude Threads public API v1 contract', () => {
     await expect(bundle.execute('ct_send_message', { thread_id: thread.id, message: 'Continue', wait: false })).resolves.toContain('Running in the background');
     const listResult = await bundle.execute('ct_list_threads', { status: 'all' });
     expect(JSON.parse(listResult).threads[0]).toMatchObject({ id: 'existing' });
-    await expect(bundle.execute('ct_close_thread', {})).resolves.toContain('not available');
+    await expect(bundle.execute('ct_open_thread', { thread_id: thread.id })).resolves.toBe(`Opened thread ${thread.id} in the Agent Threads panel.`);
+    await expect(bundle.execute('ct_close_thread', {})).resolves.toBe('Error: Agent Threads tool "ct_close_thread" is not available in public API v1.');
     emit(thread.id, { type: 'done' });
   });
 

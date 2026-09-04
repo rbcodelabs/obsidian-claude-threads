@@ -70,10 +70,10 @@ export function createClaudeThreadsApiV1(deps: PublicApiDependencies): ClaudeThr
   const listeners = new Set<(event: PublicThreadEvent) => void>(); const runs = new Map<string, RunRecord>();
   const runIdsByThread = new Map<string, Set<string>>(); const latestRunByThread = new Map<string, string>();
   let active = true; let started = false; let stopped = false;
-  const unavailable = () => new ClaudeThreadsApiError('PLUGIN_UNAVAILABLE', 'Claude Threads is not available.', generation);
+  const unavailable = () => new ClaudeThreadsApiError('PLUGIN_UNAVAILABLE', 'Agent Threads is not available.', generation);
   const guard = () => { if (!active) throw unavailable(); };
   const publish = (event: PublicThreadEvent) => { if (!active) return; const immutable = freeze(event); for (const listener of [...listeners]) { try { listener(immutable); } catch (error) { console.error('[ClaudeThreads] Public API listener failed:', error); } } };
-  const publicFailure = (code: PublicErrorCode): PublicError => freeze({ code, message: code === 'PLUGIN_UNAVAILABLE' ? 'Claude Threads became unavailable.' : code === 'RUN_INTERRUPTED' ? 'The agent run was interrupted.' : 'The agent run failed.' });
+  const publicFailure = (code: PublicErrorCode): PublicError => freeze({ code, message: code === 'PLUGIN_UNAVAILABLE' ? 'Agent Threads became unavailable.' : code === 'RUN_INTERRUPTED' ? 'The agent run was interrupted.' : 'The agent run failed.' });
   const settle = (record: RunRecord, result: Exclude<RunResult, { status: 'timed_out' }>) => { if (record.result) return; record.result = freeze(result); for (const resolve of [...record.waiters]) resolve(record.result); record.waiters.clear(); runIdsByThread.get(record.threadId)?.delete(record.runId); };
   const activeRuns = (threadId: string) => [...(runIdsByThread.get(threadId) ?? [])].map(id => runs.get(id)).filter((record): record is RunRecord => !!record && !record.result);
   const lastAssistant = (threadId: string) => { const message = [...(deps.getThread(threadId)?.messages ?? [])].reverse().find(candidate => candidate.role === 'assistant'); return message ? snapshotMessage(message) : undefined; };
@@ -107,8 +107,8 @@ export function createClaudeThreadsApiV1(deps: PublicApiDependencies): ClaudeThr
       if (name === 'ct_wait_for_thread') { const threadId = String(args.thread_id ?? '').trim(); const thread = deps.getThread(threadId); if (!thread) throw new ClaudeThreadsApiError('THREAD_NOT_FOUND', `Thread not found: ${threadId}`); const runId = latestRunByThread.get(threadId); return runId ? formatRunResult(await wait(runId, { timeoutMs: toolTimeout(args) })) : formatFinishedThread(thread); }
       if (name === 'ct_get_thread') { const threadId = String(args.thread_id ?? '').trim(); const thread = await get(threadId); if (!thread) throw new ClaudeThreadsApiError('THREAD_NOT_FOUND', `Thread not found: ${threadId}`); const lastN = Math.min(Math.max(1, Number(args.last_n) || 5), 20); return JSON.stringify({ ...thread, messages: thread.messages.slice(-lastN) }, null, 2); }
       if (name === 'ct_list_threads') { const status = String(args.status ?? 'all'); const limit = Math.min(Math.max(1, Number(args.limit) || 15), 30); let threads = [...await list()].sort((a, b) => b.updatedAt - a.updatedAt); threads = threads.filter(thread => toolStatus(thread) === status || status === 'all' || (status === 'waiting' && thread.status === 'waiting')).slice(0, limit); return JSON.stringify({ count: threads.length, threads }, null, 2); }
-      if (name === 'ct_open_thread') { const threadId = String(args.thread_id ?? '').trim(); await api.threads.open(threadId); return `Opened thread ${threadId} in the Claude Threads panel.`; }
-      return `Error: Claude Threads tool "${name}" is not available in public API v1.`;
+      if (name === 'ct_open_thread') { const threadId = String(args.thread_id ?? '').trim(); await api.threads.open(threadId); return `Opened thread ${threadId} in the Agent Threads panel.`; }
+      return `Error: Agent Threads tool "${name}" is not available in public API v1.`;
     } catch (error) { return `Error: ${error instanceof Error ? error.message : String(error)}`; }
   };
   const api: ClaudeThreadsApiV1 = freeze({ apiVersion: 1 as const, generation, capabilities: CAPABILITIES,
