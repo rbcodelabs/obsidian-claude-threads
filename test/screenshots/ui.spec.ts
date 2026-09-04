@@ -1493,13 +1493,16 @@ test.describe('Claude Threads UI', () => {
     await page.goto(settingsUrl);
     await page.waitForSelector('.ct-settings-tabs');
     await page.click('.ct-settings-tab-btn:has-text("Scheduled")');
-    await expect(page.getByRole('heading', { name: 'Next up' })).toBeVisible();
-    await expect(page.getByText('Overdue — catching up', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Next up' })).toHaveCount(0);
+    await expect(page.locator('.ct-scheduled-card')).toHaveCount(5);
+    await expect(page.locator('.ct-scheduled-name', { hasText: 'Morning inbox triage' })).toHaveCount(1);
+    await expect(page.locator('.ct-scheduled-card[open]')).toHaveCount(0);
+    await expect(page.getByText('Overdue — catching up', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Next check').first()).toBeVisible();
     await expect(page.getByText('Thread loops & wakeups')).toBeVisible();
     await expect(page.getByText('Thread Orchestrator heartbeat')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Create with Claude' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open last run' })).toHaveCount(0);
     await page.evaluate(() => {
       const app = document.getElementById('app');
       const content = app?.querySelector<HTMLElement>('.vertical-tab-content');
@@ -1511,6 +1514,20 @@ test.describe('Claude Threads UI', () => {
     });
     await page.waitForTimeout(200);
     await shot(page, 'settings-scheduled.png', { fullPage: true });
+
+    const morning = page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' });
+    await morning.locator('summary').click();
+    await expect(morning).toHaveAttribute('open', '');
+    await expect(morning.getByText('Prompt', { exact: true })).toBeVisible();
+    await expect(morning.getByText('test -s inbox/pending.txt', { exact: false })).toBeVisible();
+    await expect(morning.getByText('Creates a new thread', { exact: false })).toBeVisible();
+    await expect(morning.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await expect(morning.getByText('Fired', { exact: true })).toBeVisible();
+    await shot(page, 'settings-scheduled-expanded.png', { fullPage: true });
+
+    await page.setViewportSize({ width: 360, height: 760 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await shot(page, 'settings-scheduled-narrow.png', { fullPage: true });
 
     await page.getByRole('button', { name: 'Create with Claude' }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls)).toEqual({
