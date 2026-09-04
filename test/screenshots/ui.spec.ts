@@ -1516,12 +1516,14 @@ test.describe('Claude Threads UI', () => {
     await shot(page, 'settings-scheduled.png', { fullPage: true });
 
     const morning = page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' });
-    await morning.locator('summary').click();
+    await morning.locator(':scope > summary').focus();
+    await page.keyboard.press('Enter');
     await expect(morning).toHaveAttribute('open', '');
     await expect(morning.getByText('Prompt', { exact: true })).toBeVisible();
     await expect(morning.getByText('test -s inbox/pending.txt', { exact: false })).toBeVisible();
     await expect(morning.getByText('Creates a new thread', { exact: false })).toBeVisible();
     await expect(morning.getByRole('button', { name: 'Open last run' })).toBeVisible();
+    await morning.locator('.ct-run-history-summary').click();
     await expect(morning.getByText('Fired', { exact: true })).toBeVisible();
     await shot(page, 'settings-scheduled-expanded.png', { fullPage: true });
 
@@ -1529,14 +1531,30 @@ test.describe('Claude Threads UI', () => {
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await shot(page, 'settings-scheduled-narrow.png', { fullPage: true });
 
+    await morning.getByRole('button', { name: 'Open last run' }).click();
+
     await page.getByRole('button', { name: 'Create with Claude' }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls)).toEqual({
       dispatches: [{
         prompt: 'Help me create scheduled work. Ask me what should happen, when it should run, and whether it needs active hours or a deterministic gate. Then use CronCreate once the schedule is clear.',
         title: 'Create scheduled work',
       }],
-      openedThreadIds: ['thread-created'],
+      openedThreadIds: ['thread-morning', 'thread-created'],
+      updatedItemIds: [],
+      deletedItemIds: [],
     });
+
+    await morning.getByRole('button', { name: 'Pause' }).click();
+    const recurringNames = page.locator('.ct-scheduled-section').filter({ hasText: 'Recurring jobs' }).locator('.ct-scheduled-name');
+    await expect(recurringNames).toHaveText(['Project pulse', 'Morning inbox triage', 'Weekly PR sweep']);
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Morning inbox triage' }).getByText('Paused', { exact: true }).first()).toBeVisible();
+
+    const weekly = page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' });
+    await weekly.locator(':scope > summary').click();
+    await weekly.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('.ct-scheduled-card').filter({ hasText: 'Weekly PR sweep' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.updatedItemIds)).toEqual(['sched-1']);
+    await expect.poll(() => page.evaluate(() => (window as any).__scheduledCreateCalls.deletedItemIds)).toEqual(['sched-2']);
   });
 
   test('settings — mcp tab', async ({ page }) => {

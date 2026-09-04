@@ -2157,7 +2157,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       const summaryMeta = summary.createDiv({ cls: 'ct-scheduled-summary-meta' });
       summaryMeta.createEl('span', { text: formatScheduleDescription(item.schedule, !!item.gate?.command) });
       summaryMeta.createEl('span', {
-        text: occurrence ? `${occurrence.label}: ${occurrence.relative}` : 'Paused',
+        text: occurrence
+          ? `${occurrence.label}: ${occurrence.relative}`
+          : item.enabled
+            ? `${item.gate?.command ? 'Next check' : 'Next run'} unavailable`
+            : 'Paused',
         cls: occurrence?.overdue ? 'is-overdue' : '',
         attr: occurrence ? { title: occurrence.exact } : undefined,
       });
