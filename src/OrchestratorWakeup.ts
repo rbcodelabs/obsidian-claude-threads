@@ -148,9 +148,11 @@ export class OrchestratorWakeup {
 
     const count = entries.length;
     const lines = entries.map(([threadId, status]) => {
-      const title = this.manager.getThread(threadId)?.title;
+      const thread = this.manager.getThread(threadId);
+      const title = thread?.title;
       const label = title ? `${threadId} "${title}"` : threadId;
-      return `- ${label} (${status})`;
+      const updatedAt = thread?.updatedAt ?? 'unavailable';
+      return `- ${label} (${status}; updatedAt=${updatedAt})`;
     });
     const threadLabel = count === 1 ? 'thread' : 'threads';
     const message = [

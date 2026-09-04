@@ -25,7 +25,7 @@ function makeManager(titles: Record<string, string> = {}): {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    getThread: (id: string) => (titles[id] !== undefined ? { id, title: titles[id] } : undefined),
+    getThread: (id: string) => ({ id, title: titles[id], updatedAt: 1_700_000_000_000 }),
   } as unknown as ThreadManager;
 
   return {
@@ -88,7 +88,7 @@ describe('OrchestratorWakeup', () => {
     expect(message).toBe(
       [
         'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.',
-        '- thread-1 "Fix login bug" (done)',
+        '- thread-1 "Fix login bug" (done; updatedAt=1700000000000)',
       ].join('\n'),
     );
   });
@@ -112,8 +112,8 @@ describe('OrchestratorWakeup', () => {
     expect(message).toBe(
       [
         'New activity on 2 threads. Review only the named changed threads; do not run a full reconciliation. The heartbeat handles missed activity.',
-        '- thread-1 "Fix login bug" (done)',
-        '- thread-2 "Update docs" (error)',
+        '- thread-1 "Fix login bug" (done; updatedAt=1700000000000)',
+        '- thread-2 "Update docs" (error; updatedAt=1700000000000)',
       ].join('\n'),
     );
   });
@@ -130,7 +130,7 @@ describe('OrchestratorWakeup', () => {
 
     const [, message] = sendMessage.mock.calls[0];
     expect(message).toBe(
-      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 (done)',
+      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 (done; updatedAt=1700000000000)',
     );
   });
 
@@ -148,7 +148,7 @@ describe('OrchestratorWakeup', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const [, message] = sendMessage.mock.calls[0];
     expect(message).toBe(
-      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 "Flaky thread" (done)',
+      'New activity on 1 thread. Review only the named changed thread; do not run a full reconciliation. The heartbeat handles missed activity.\n- thread-1 "Flaky thread" (done; updatedAt=1700000000000)',
     );
   });
 

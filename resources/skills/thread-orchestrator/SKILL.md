@@ -33,9 +33,12 @@ before replacement.
 
 Identify why you woke up before reading other threads:
 
-1. **Event ping:** review only the named changed threads. Do not call
-   `threads_list()` or scan unrelated threads. The heartbeat handles missed or
-   coalesced activity.
+1. **Event ping:** review only the named changed threads. Each event line gives
+   the thread's exact `updatedAt`; use it as the manager notes cursor after the
+   targeted review. Do not call `threads_list()` or scan unrelated threads. The
+   heartbeat handles missed or coalesced activity. If a line says
+   `updatedAt=unavailable`, the thread disappeared before the batch flushed;
+   leave it untouched for this event.
 2. **Heartbeat:** call `threads_list()` once to reconcile activity missed by
    targeted event reviews across your authorized scope.
 3. **Direct message:** answer or carry out Rick's stated request without an

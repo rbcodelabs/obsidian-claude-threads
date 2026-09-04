@@ -54,6 +54,7 @@ describe('thread-orchestrator skill contract', () => {
 
   it('keeps targeted events, reconciliation heartbeats, and direct requests distinct', () => {
     expect(skill).toMatch(/Event ping[\s\S]*only[\s\S]*named/i);
+    expect(normalizedSkill).toMatch(/Event ping.*updatedAt.*manager notes cursor/i);
     expect(skill).toMatch(/Heartbeat[\s\S]*reconcil/i);
     expect(skill).toMatch(/Direct message[\s\S]*without[\s\S]*unrelated/i);
     expect(normalizedSkill).toMatch(/updatedAt.*unchanged.*no reads, writes, questions, or proposals/i);
