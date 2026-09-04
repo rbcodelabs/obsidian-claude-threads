@@ -2091,11 +2091,12 @@ test.describe('Claude Threads UI', () => {
     await page.setViewportSize({ width: 760, height: 820 });
     await page.goto(kanbanUrl + '?dashboard=1');
     await page.waitForSelector('.ct-agents-project');
-    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents List');
+    expect(await page.evaluate(() => (window as any).__dashboard.getDisplayText())).toBe('Agents · 14 threads');
     expect(await page.evaluate(() => (window as any).__dashboard.getIcon())).toBe('list');
-    await expect(page.locator('.ct-agents-header')).toBeVisible();
-    await expect(page.locator('.ct-agents-header-title')).toHaveText('Agents');
-    await expect(page.locator('.ct-agents-header .ct-agents-count')).toContainText('thread');
+    await expect(page.locator('.view-header')).toBeVisible();
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await expect(page.locator('.ct-agents-header')).toHaveCount(0);
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
     await expect(page.locator('.ct-agents-floating-panel .ct-agents-count')).toHaveCount(0);
     await expect(page.locator('.ct-agents-floating-panel .ct-agents-search-btn')).toHaveCount(0);
 
@@ -2145,36 +2146,43 @@ test.describe('Claude Threads UI', () => {
   test('agents list — grouping toggles and sibling search panel', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 820 });
     await page.goto(kanbanUrl + '?dashboard=1');
-    await page.waitForSelector('.ct-agents-header');
+    await page.waitForSelector('.view-header');
 
     const root = page.locator('.ct-dashboard-root');
-    const header = page.locator('.ct-agents-header');
+    const header = page.locator('.view-header');
     const searchButton = page.getByRole('button', { name: 'Search threads' });
+    const headerUpdatesAfterInitialRender = await page.evaluate(() => (window as any).__getHeaderUpdateCalls());
+    await page.evaluate(() => (window as any).__dashboard.render());
+    expect(await page.evaluate(() => (window as any).__getHeaderUpdateCalls())).toBe(headerUpdatesAfterInitialRender);
     const headerHeight = await header.evaluate(el => el.getBoundingClientRect().height);
     await searchButton.click();
     const searchPanel = page.locator('.ct-agents-search-bar');
     await expect(searchPanel).toBeVisible();
     expect(await root.evaluate(el => Array.from(el.children).map(child => child.className))).toEqual(
-      expect.arrayContaining(['ct-agents-header', expect.stringContaining('ct-agents-search-bar')]),
+      expect.arrayContaining([expect.stringContaining('ct-agents-search-bar')]),
     );
     expect(await header.evaluate(el => el.getBoundingClientRect().height)).toBe(headerHeight);
     const search = page.getByPlaceholder('Search threads…');
     await expect(search).toBeFocused();
     await search.fill('Mobile layout polish');
     await expect(page.locator('.ct-agents-row')).toHaveCount(1);
-    await expect(page.locator('.ct-agents-header .ct-agents-count')).toHaveText('1 thread');
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 1 thread');
+    await page.locator('.search-input-clear-button').click();
+    await expect(search).toHaveValue('');
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
+    await search.fill('Mobile layout polish');
     await search.press('Escape');
     await expect(searchPanel).toBeHidden();
     await expect(page.locator('.ct-agents-row')).not.toHaveCount(1);
     await searchButton.click();
     await search.fill('Kanban');
-    await page.getByRole('button', { name: 'Close search' }).click();
+    await searchButton.click();
     await expect(searchPanel).toBeHidden();
-    await expect(page.locator('.ct-agents-header .ct-agents-count')).toHaveText('14 threads');
+    await expect(page.locator('.view-header-title')).toHaveText('Agents · 14 threads');
 
-    const groupingButton = page.getByRole('button', { name: /Group by Project and Status/ });
+    const groupingButton = page.getByRole('button', { name: 'Group agents' });
     await groupingButton.click();
-    const menu = page.locator('.ct-agents-group-menu');
+    const menu = page.locator('.menu');
     const projectItem = menu.getByRole('menuitemcheckbox', { name: 'Project' });
     const statusItem = menu.getByRole('menuitemcheckbox', { name: 'Status' });
     await expect(projectItem).toHaveAttribute('aria-checked', 'true');
@@ -2182,21 +2190,31 @@ test.describe('Claude Threads UI', () => {
 
     const savesBefore = await page.evaluate(() => (window as any).__getSaveSettingsCalls());
     await statusItem.click();
-    await expect(menu).toBeVisible();
-    await expect(projectItem).toHaveAttribute('aria-disabled', 'true');
+    await expect(menu).toHaveCount(0);
     await expect(page.locator('.ct-agents-project')).not.toHaveCount(0);
     await expect(page.locator('.ct-agents-project .ct-agents-group-label')).toHaveCount(0);
     expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('project');
 
-    await statusItem.click();
-    await projectItem.click();
-    await expect(menu).toBeVisible();
-    await expect(statusItem).toHaveAttribute('aria-disabled', 'true');
+    await groupingButton.click();
+    const projectOnlyMenu = page.locator('.menu');
+    await expect(projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Project' })).toHaveAttribute('aria-disabled', 'true');
+    await projectOnlyMenu.getByRole('menuitemcheckbox', { name: 'Status' }).click();
+    await groupingButton.click();
+    await page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Project' }).click();
+    await groupingButton.click();
+    await expect(page.locator('.menu').getByRole('menuitemcheckbox', { name: 'Status' })).toHaveAttribute('aria-disabled', 'true');
     await expect(page.locator('.ct-agents-project')).toHaveCount(0);
     await expect(page.locator('.ct-agents-status-section')).not.toHaveCount(0);
     await expect(page.locator('.ct-agents-row-project').first()).toBeVisible();
     expect(await page.evaluate(() => (window as any).__getAgentsGroupBy())).toBe('status');
     expect(await page.evaluate(() => (window as any).__getSaveSettingsCalls())).toBe(savesBefore + 3);
+
+    await page.evaluate(async () => {
+      const dashboard = (window as any).__dashboard;
+      await dashboard.onClose();
+      await dashboard.onOpen();
+    });
+    await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
   });
 
   // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
@@ -2275,11 +2293,8 @@ test.describe('Claude Threads UI', () => {
       await expect(list).toHaveCSS('width', `${width}px`);
       expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
       expect(await page.locator('.ct-agents-row').evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth))).toBe(true);
-      expect(await page.locator('.ct-agents-header').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-
-      const groupLabel = page.locator('.ct-agents-group-control-label');
-      if (width <= 320) await expect(groupLabel).toBeHidden();
-      else await expect(groupLabel).toBeVisible();
+      expect(await page.locator('.view-header').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
 
       if (width <= 380) {
         await expect(page.locator('.ct-agents-row').first()).toHaveCSS('min-height', '52px');

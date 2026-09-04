@@ -52,6 +52,37 @@ export class ItemView {
 
   registerEvent(_event: unknown) {}
   registerDomEvent(_el: unknown, _type: string, _handler: unknown) {}
+  addAction(_icon: string, title: string, callback: (evt: MouseEvent) => unknown): HTMLElement {
+    const action = document.createElement('button');
+    action.className = 'clickable-icon view-action';
+    action.setAttribute('aria-label', title);
+    action.addEventListener('click', callback);
+    this.containerEl.children[0].appendChild(action);
+    return action;
+  }
+}
+
+export class SearchComponent {
+  inputEl: HTMLInputElement;
+  clearButtonEl: HTMLElement;
+
+  constructor(containerEl: HTMLElement) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'search-input-container';
+    this.inputEl = document.createElement('input');
+    this.inputEl.type = 'search';
+    this.clearButtonEl = document.createElement('div');
+    this.clearButtonEl.className = 'search-input-clear-button';
+    wrapper.append(this.inputEl, this.clearButtonEl);
+    containerEl.appendChild(wrapper);
+  }
+
+  setPlaceholder(placeholder: string): this { this.inputEl.placeholder = placeholder; return this; }
+  setValue(value: string): this { this.inputEl.value = value; return this; }
+  onChange(cb: (value: string) => unknown): this {
+    this.inputEl.addEventListener('input', () => cb(this.inputEl.value));
+    return this;
+  }
 }
 
 export class WorkspaceLeaf {

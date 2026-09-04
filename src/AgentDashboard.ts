@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon, Notice, Platform } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon, Notice, Platform, Menu, SearchComponent } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import type { ThreadManager, ThreadEvent } from './ThreadManager';
 import type { Thread } from './types';
@@ -28,16 +28,12 @@ export class AgentDashboard extends ItemView {
   private unsubscribe: (() => void) | null = null;
 
   private listEl!: HTMLElement;
-  private headerCountEl!: HTMLElement;
   private searchBarEl!: HTMLElement;
   private searchInputEl!: HTMLInputElement;
-  private searchClearBtn!: HTMLButtonElement;
-  private searchBtn!: HTMLButtonElement;
-  private groupBtn!: HTMLButtonElement;
-  private groupMenuEl!: HTMLElement;
-  private groupProjectItem!: HTMLButtonElement;
-  private groupStatusItem!: HTMLButtonElement;
+  private searchActionEl: HTMLElement | null = null;
+  private groupActionEl: HTMLElement | null = null;
   private searchQuery = '';
+  private displayedThreadCount = 0;
   private dispatchComponent!: DispatchInput;
   private selectedProjectId = '';
   private projectSelectEl!: HTMLSelectElement;
@@ -64,19 +60,17 @@ export class AgentDashboard extends ItemView {
 
   /** Built once; every row's archive menu shares it (all fields read live state). */
   private archiveDeps: ArchiveMenuDeps | null = null;
-  private closeGroupMenuOnOutsideClick = (event: MouseEvent): void => {
-    const target = event.target as Node | null;
-    if (target && !this.groupMenuEl.contains(target) && !this.groupBtn.contains(target)) this.closeGroupMenu();
-  };
-
   constructor(leaf: WorkspaceLeaf, plugin: ClaudeThreadsPlugin) {
     super(leaf);
     this.plugin = plugin;
     this.manager = plugin.manager;
+    this.containerEl.addClass('mod-show-generic-header');
   }
 
   getViewType(): string { return AGENT_VIEW_TYPE; }
-  getDisplayText(): string { return 'Agents List'; }
+  getDisplayText(): string {
+    return `Agents · ${this.displayedThreadCount} thread${this.displayedThreadCount === 1 ? '' : 's'}`;
+  }
   getIcon(): string { return 'list'; }
 
   async onOpen(): Promise<void> {
@@ -96,7 +90,6 @@ export class AgentDashboard extends ItemView {
     if (this.timeInterval) clearInterval(this.timeInterval);
     if (this.staleInterval) clearInterval(this.staleInterval);
     this.dispatchComponent?.destroy();
-    document.removeEventListener('mousedown', this.closeGroupMenuOnOutsideClick);
   }
 
   /**
@@ -117,53 +110,17 @@ export class AgentDashboard extends ItemView {
     root.addClass('ct-dashboard-root');
     root.toggleClass('ct-mobile', Platform.isMobile);
 
-    const header = root.createDiv('ct-agents-header');
-    const heading = header.createDiv('ct-agents-heading');
-    heading.createSpan({ cls: 'ct-agents-header-title', text: 'Agents' });
-    this.headerCountEl = heading.createSpan('ct-agents-count');
-    const headerActions = header.createDiv('ct-agents-header-actions');
+    this.ensureHeaderActions();
 
-    this.searchBtn = headerActions.createEl('button', {
-      cls: 'ct-agents-search-btn clickable-icon',
-      attr: { title: 'Search threads', 'aria-label': 'Search threads', 'aria-expanded': 'false' },
-    });
-    setIcon(this.searchBtn, 'search');
-    this.searchBtn.addEventListener('click', () => this.toggleSearch());
-
-    const groupControl = headerActions.createDiv('ct-agents-group-control');
-    this.groupBtn = groupControl.createEl('button', {
-      cls: 'ct-agents-group-btn',
-      attr: { type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
-    });
-    const groupIcon = this.groupBtn.createSpan('ct-agents-group-control-icon');
-    setIcon(groupIcon, 'list-filter');
-    this.groupBtn.createSpan('ct-agents-group-control-label');
-    const chevron = this.groupBtn.createSpan('ct-agents-group-control-chevron');
-    setIcon(chevron, 'chevron-down');
-    this.groupBtn.addEventListener('click', () => this.toggleGroupMenu());
-
-    this.groupMenuEl = groupControl.createDiv({ cls: 'ct-agents-group-menu ct-hidden', attr: { role: 'menu', 'aria-label': 'Group agents by' } });
-    this.groupProjectItem = this.createGroupingMenuItem('Project', 'project');
-    this.groupStatusItem = this.createGroupingMenuItem('Status', 'status');
-    this.updateGroupingControl();
-
-    // Search is a sibling panel so the fixed-height title bar never grows.
+    // Search lives in the content area so the host-owned header stays stable.
     this.searchBarEl = root.createDiv('ct-agents-search-bar ct-hidden');
-    const searchFieldEl = this.searchBarEl.createDiv('ct-agents-search-field');
-    this.searchInputEl = searchFieldEl.createEl('input', {
-      cls: 'ct-agents-search-input',
-      attr: { type: 'text', placeholder: 'Search threads…' },
-    });
-    this.searchClearBtn = searchFieldEl.createEl('button', {
-      cls: 'ct-agents-search-clear',
-      attr: { type: 'button', 'aria-label': 'Close search' },
-    });
-    setIcon(this.searchClearBtn, 'x');
-    this.searchClearBtn.addEventListener('click', () => this.closeSearch());
-    this.searchInputEl.addEventListener('input', () => {
-      this.searchQuery = this.searchInputEl.value.toLowerCase().trim();
-      this.render();
-    });
+    const search = new SearchComponent(this.searchBarEl)
+      .setPlaceholder('Search threads…')
+      .onChange(value => {
+        this.searchQuery = value.toLowerCase().trim();
+        this.render();
+      });
+    this.searchInputEl = search.inputEl;
     this.searchInputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.closeSearch();
     });
@@ -283,16 +240,39 @@ export class AgentDashboard extends ItemView {
     this.dispatchComponent.mount(dispatchEl);
   }
 
-  private createGroupingMenuItem(label: string, dimension: AgentsGroupingDimension): HTMLButtonElement {
-    const item = this.groupMenuEl.createEl('button', {
-      cls: 'ct-agents-group-menu-item',
-      attr: { type: 'button', role: 'menuitemcheckbox' },
-    });
-    const check = item.createSpan('ct-agents-group-menu-check');
-    setIcon(check, 'check');
-    item.createSpan({ text: label });
-    item.addEventListener('click', () => void this.setGroupingDimension(dimension));
-    return item;
+  private ensureHeaderActions(): void {
+    if (!this.searchActionEl) {
+      this.searchActionEl = this.addAction('search', 'Search threads', () => this.toggleSearch());
+      this.searchActionEl.setAttribute('aria-expanded', 'false');
+    }
+    if (!this.groupActionEl) {
+      this.groupActionEl = this.addAction('list-filter', 'Group agents', event => this.openGroupingMenu(event));
+      this.groupActionEl.setAttribute('aria-haspopup', 'menu');
+    }
+  }
+
+  private openGroupingMenu(event: MouseEvent): void {
+    const mode = this.currentGroupMode();
+    const hasProject = mode !== 'status';
+    const hasStatus = mode !== 'project';
+    const menu = new Menu();
+    this.addGroupingMenuItem(menu, 'Project', 'project', hasProject, hasProject && !hasStatus);
+    this.addGroupingMenuItem(menu, 'Status', 'status', hasStatus, hasStatus && !hasProject);
+    menu.showAtMouseEvent(event);
+  }
+
+  private addGroupingMenuItem(
+    menu: Menu,
+    label: string,
+    dimension: AgentsGroupingDimension,
+    checked: boolean,
+    disabled: boolean,
+  ): void {
+    menu.addItem(item => item
+      .setTitle(label)
+      .setChecked(checked)
+      .setDisabled(disabled)
+      .onClick(() => void this.setGroupingDimension(dimension)));
   }
 
   private currentGroupMode(): AgentsGroupBy {
@@ -304,46 +284,8 @@ export class AgentDashboard extends ItemView {
     const next = toggleAgentsGrouping(current, dimension);
     if (next === current) return;
     this.plugin.settings.agentsGroupBy = next;
-    this.updateGroupingControl();
     this.render();
     await this.plugin.saveSettings();
-  }
-
-  private updateGroupingControl(): void {
-    const mode = this.currentGroupMode();
-    const hasProject = mode !== 'status';
-    const hasStatus = mode !== 'project';
-    const label = hasProject && hasStatus ? 'Project + Status' : hasProject ? 'Project' : 'Status';
-    const description = `Group by ${hasProject && hasStatus ? 'Project and Status' : label}`;
-    this.groupBtn.querySelector('.ct-agents-group-control-label')?.setText(label);
-    this.groupBtn.setAttribute('title', description);
-    this.groupBtn.setAttribute('aria-label', description);
-    for (const [item, checked, only] of [
-      [this.groupProjectItem, hasProject, hasProject && !hasStatus],
-      [this.groupStatusItem, hasStatus, hasStatus && !hasProject],
-    ] as const) {
-      item.setAttribute('aria-checked', String(checked));
-      item.setAttribute('aria-disabled', String(only));
-      item.toggleClass('is-checked', checked);
-      item.toggleClass('is-disabled', only);
-    }
-  }
-
-  private toggleGroupMenu(): void {
-    if (this.groupMenuEl.hasClass('ct-hidden')) this.openGroupMenu();
-    else this.closeGroupMenu();
-  }
-
-  private openGroupMenu(): void {
-    this.groupMenuEl.removeClass('ct-hidden');
-    this.groupBtn.setAttribute('aria-expanded', 'true');
-    document.addEventListener('mousedown', this.closeGroupMenuOnOutsideClick);
-  }
-
-  private closeGroupMenu(): void {
-    this.groupMenuEl.addClass('ct-hidden');
-    this.groupBtn.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('mousedown', this.closeGroupMenuOnOutsideClick);
   }
 
   private addProjectSelector(container: HTMLElement): void {
@@ -553,7 +495,7 @@ export class AgentDashboard extends ItemView {
       }
     }
 
-    this.updateHeader(threads.length);
+    this.updateDisplayedThreadCount(threads.length);
   }
 
   private statusSections(threads: Thread[]): Array<{ label: string; threads: Thread[]; state: RowState }> {
@@ -895,8 +837,10 @@ export class AgentDashboard extends ItemView {
     }
   }
 
-  private updateHeader(total: number): void {
-    this.headerCountEl.setText(`${total} thread${total !== 1 ? 's' : ''}`);
+  private updateDisplayedThreadCount(total: number): void {
+    if (this.displayedThreadCount === total) return;
+    this.displayedThreadCount = total;
+    (this.leaf as WorkspaceLeaf & { updateHeader(): void }).updateHeader();
   }
 
   private markReviewed(id: string): void {
@@ -932,7 +876,7 @@ export class AgentDashboard extends ItemView {
   private toggleSearch(): void {
     if (this.searchBarEl.hasClass('ct-hidden')) {
       this.searchBarEl.removeClass('ct-hidden');
-      this.searchBtn.setAttribute('aria-expanded', 'true');
+      this.searchActionEl?.setAttribute('aria-expanded', 'true');
       this.searchInputEl.focus();
     } else {
       this.closeSearch();
@@ -943,7 +887,7 @@ export class AgentDashboard extends ItemView {
     this.searchBarEl.addClass('ct-hidden');
     this.searchQuery = '';
     this.searchInputEl.value = '';
-    this.searchBtn.setAttribute('aria-expanded', 'false');
+    this.searchActionEl?.setAttribute('aria-expanded', 'false');
     this.render();
   }
 

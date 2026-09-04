@@ -14,7 +14,7 @@ import {
   kanbanWaitingFireAt,
   kanbanWaitingReason,
 } from './fixtures';
-import { mockLeaf } from './obsidian-mock';
+import { getHeaderUpdateCalls, mockLeaf } from './obsidian-mock';
 import { Platform } from 'obsidian';
 
 const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
@@ -128,6 +128,7 @@ void view.onOpen();
 (window as any).__archivedThreadIds = archivedThreadIds;
 (window as any).__getSaveSettingsCalls = () => saveSettingsCalls;
 (window as any).__getAgentsGroupBy = () => settings.agentsGroupBy;
+(window as any).__getHeaderUpdateCalls = getHeaderUpdateCalls;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   if (dashboardMode) return;
   settings.kanbanGroupBy = mode;

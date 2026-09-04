@@ -2616,47 +2616,14 @@
   font-size: var(--font-ui-small);
 }
 
-.ct-agents-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  height: 44px;
-  min-height: 44px;
-  box-sizing: border-box;
-  padding: 0 10px 0 12px;
-  background: var(--background-secondary);
-  border-bottom: 1px solid var(--background-modifier-border);
-  flex-shrink: 0;
-}
-
-.ct-agents-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.ct-agents-header-title {
-  font-weight: 600;
-  font-size: var(--font-ui-medium);
-  white-space: nowrap;
-}
-
 .ct-agents-count {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
-.ct-agents-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
+/* Kanban still owns its floating-panel search control. AgentDashboard uses
+   the host ItemView action and SearchComponent instead. */
 .ct-agents-search-btn {
   display: flex;
   align-items: center;
@@ -2677,73 +2644,22 @@
   background: var(--background-modifier-hover);
 }
 
-.ct-agents-group-control { position: relative; min-width: 0; }
-.ct-agents-group-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 3px 7px;
-  border: none;
-  border-radius: var(--radius-s);
-  box-shadow: none;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ct-agents-group-btn:hover,
-.ct-agents-group-btn:focus-visible { color: var(--text-normal); background: var(--background-modifier-hover); }
-.ct-agents-group-control-icon,
-.ct-agents-group-control-chevron { display: inline-flex; flex: 0 0 auto; }
-.ct-agents-group-control-icon svg { width: 15px; height: 15px; }
-.ct-agents-group-control-chevron svg { width: 11px; height: 11px; }
-.ct-agents-group-menu {
-  position: absolute;
-  z-index: var(--layer-menu, 1000);
-  top: calc(100% + 5px);
-  right: 0;
-  width: 150px;
-  padding: 4px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  background: var(--background-primary);
-  box-shadow: var(--shadow-s);
-}
-.ct-agents-group-menu-item {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  gap: 7px;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--radius-s);
-  box-shadow: none;
-  background: transparent;
-  color: var(--text-normal);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.ct-agents-group-menu-item:hover,
-.ct-agents-group-menu-item:focus-visible { background: var(--background-modifier-hover); }
-.ct-agents-group-menu-item.is-disabled { color: var(--text-faint); cursor: default; }
-.ct-agents-group-menu-check { display: inline-flex; width: 14px; opacity: 0; }
-.ct-agents-group-menu-item.is-checked .ct-agents-group-menu-check { opacity: 1; }
-.ct-agents-group-menu-check svg { width: 13px; height: 13px; }
-.ct-agents-group-control-label { overflow: hidden; text-overflow: clip; }
-
 .ct-agents-search-bar {
+  display: flex;
   padding: 6px 10px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ct-agents-search-bar .search-input-container {
+  width: 100%;
 }
 
 .ct-agents-search-field {
   position: relative;
   display: flex;
   align-items: center;
+  width: 100%;
 }
 
 .ct-agents-search-input {
@@ -3105,12 +3021,6 @@
   .ct-dashboard-root .ct-agents-floating-panel.ct-panel-collapsible:focus-within .ct-agents-panel-meta {
     max-height: 112px;
   }
-}
-
-@container ct-dashboard (max-width: 320px) {
-  .ct-agents-group-control-label,
-  .ct-agents-group-control-chevron { display: none; }
-  .ct-agents-group-btn { width: 28px; padding-inline: 6px; }
 }
 
 .ct-agents-root.ct-mobile .ct-dashboard-agent-count,
