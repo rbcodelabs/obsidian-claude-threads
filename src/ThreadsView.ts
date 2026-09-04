@@ -343,11 +343,6 @@ export class ThreadsView extends ItemView {
   /** Force Obsidian to re-read getDisplayText() and repaint the workspace tab header. */
   private refreshLeafHeader(): void {
     (this.leaf as any).updateHeader();
-    // Belt-and-suspenders: directly update the tab strip title element when available.
-    // updateHeader() refreshes the pane header but may not always repaint the tab strip
-    // depending on the Obsidian version.
-    const titleEl = (this.leaf as any).tabHeaderInnerTitleEl as HTMLElement | undefined;
-    if (titleEl) titleEl.textContent = this.getDisplayText();
   }
 
   getIcon(): string {
