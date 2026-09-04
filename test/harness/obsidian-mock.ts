@@ -169,6 +169,28 @@ const mockSecrets: Record<string, string> = {
   'ct-secret-STRIPE_SECRET_KEY': 'sk_live_mock00000000efgh',
 };
 
+type WorkspaceCallback = (...args: unknown[]) => void;
+const workspaceCallbacks = new Map<string, Set<WorkspaceCallback>>();
+
+export const mockWorkspace = {
+  on: (name: string, callback: WorkspaceCallback) => {
+    let callbacks = workspaceCallbacks.get(name);
+    if (!callbacks) {
+      callbacks = new Set();
+      workspaceCallbacks.set(name, callbacks);
+    }
+    callbacks.add(callback);
+    return { name, callback };
+  },
+  offref: (ref: { name: string; callback: WorkspaceCallback }) => {
+    workspaceCallbacks.get(ref.name)?.delete(ref.callback);
+  },
+  trigger: (name: string, ...args: unknown[]) => {
+    for (const callback of workspaceCallbacks.get(name) ?? []) callback(...args);
+  },
+  requestSaveLayout: () => {},
+};
+
 export const mockApp = {
   vault: {
     adapter: {
@@ -176,7 +198,7 @@ export const mockApp = {
       getResourcePath: (p: string) => p,
     },
   },
-  workspace: {},
+  workspace: mockWorkspace,
   secretStorage: {
     getSecret: (name: string) => mockSecrets[name] ?? null,
     setSecret: (name: string, value: string) => { mockSecrets[name] = value; },
@@ -206,6 +228,7 @@ export class ItemView {
   containerEl: HTMLElement;
   app = mockApp;
   leaf: unknown;
+  private cleanupCallbacks: Array<() => void> = [];
 
   constructor(_leaf: unknown) {
     this.leaf = _leaf;
@@ -231,7 +254,16 @@ export class ItemView {
     queueMicrotask(() => this.refreshHeaderTitle());
   }
 
-  register(_cb: () => void): void {}
+  register(cb: () => void): void {
+    this.cleanupCallbacks.push(cb);
+  }
+  registerEvent(ref: { name: string; callback: WorkspaceCallback }): void {
+    this.register(() => mockWorkspace.offref(ref));
+  }
+
+  unload(): void {
+    for (const cleanup of this.cleanupCallbacks.splice(0).reverse()) cleanup();
+  }
 
   getDisplayText(): string { return ''; }
 

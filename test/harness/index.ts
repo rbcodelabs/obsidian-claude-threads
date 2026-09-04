@@ -3,7 +3,7 @@ import { ThreadsView } from '../../src/ThreadsView';
 import { ThreadManager } from '../../src/ThreadManager';
 import { DEFAULT_SETTINGS } from '../../src/types';
 import { fixtureThreads } from './fixtures';
-import { mockLeaf } from './obsidian-mock';
+import { mockLeaf, mockWorkspace } from './obsidian-mock';
 import { Platform } from 'obsidian';
 
 if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
@@ -203,8 +203,18 @@ const mgrInternals = manager as unknown as {
 const view = new ThreadsView(mockLeaf as any, mockPlugin as any);
 const container = document.getElementById('app')!;
 container.appendChild(view.containerEl);
+const hostHeader = view.containerEl.querySelector<HTMLElement>(':scope > .view-header')!;
+hostHeader.style.display = new URLSearchParams(window.location.search).has('document') ? 'flex' : 'none';
 view.onOpen();
 
 // Expose for Playwright
 (window as any).__view = view;
 (window as any).__manager = manager;
+(window as any).__setDocumentPane = (enabled: boolean) => {
+  hostHeader.style.display = enabled ? 'flex' : 'none';
+  mockWorkspace.trigger('layout-change');
+};
+(window as any).__closeView = async () => {
+  await view.onClose();
+  (view as any).unload();
+};
