@@ -1,4 +1,7 @@
 import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile, Modal } from 'obsidian';
+import { createClaudeThreadsApiV1, type ClaudeThreadsApiService, type ClaudeThreadsApiV1, type CreateThreadInput, type OrchestratorSnapshot, type OrchestratorTarget } from './PublicApi';
+export { createClaudeThreadsApiV1 } from './PublicApi';
+export type { ClaudeThreadsApiV1 } from './PublicApi';
 // Desktop-only modules: type-only imports so their module-level code never runs on mobile.
 // Obsidian Mobile's require() returns null for Node.js built-ins; those modules call
 // require('fs') / require('child_process') etc. at the top level, which would crash.
@@ -226,6 +229,8 @@ export function subscribeAgentRunPersistence(
 }
 
 export default class ClaudeThreadsPlugin extends Plugin {
+  /** Stable peer-plugin entry point. Its v1 generation is revoked on unload. */
+  api!: { readonly v1: ClaudeThreadsApiV1 };
   settings!: PluginSettings;
   manager!: ThreadManager;
   persistence!: VaultPersistence;
@@ -269,6 +274,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   // Tracks background-task-monitor timeout IDs keyed by threadId (one timer per thread at a time).
   private pendingBgTaskTimers = new Map<string, number>();
   private persistenceWriterToken?: PersistenceWriterToken;
+  private publicApiService?: ClaudeThreadsApiService;
 
   /** Maximum number of poll attempts per thread before giving up on background task monitoring. */
   private static readonly BG_TASK_MAX_POLLS = 10;
@@ -1411,6 +1417,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // Initialize relay client if remote access is enabled
     this.initDesktopRelayClient();
 
+    // Publish only after every execution dependency (persistence, scheduler,
+    // views, and relay hooks) is ready. Workspace events are synchronous, so a
+    // peer may call the API from its api-ready handler immediately.
+    this.initializePublicApi();
+
     // First-run onboarding: auto-open panels + welcome guide for brand-new installs.
     // Migration guard: if the user already has threads they're upgrading from a prior
     // version — mark hasSeenWelcome silently rather than hijacking their layout.
@@ -1806,6 +1817,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
   }
 
   async onunload(): Promise<void> {
+    // Revoke peer references before asynchronous shutdown begins. Obsidian does
+    // not await plugin onunload hooks, so delaying this would leave a stale
+    // generation callable while sessions are draining.
+    this.revokePublicApi();
+
     // Stop scheduler timers FIRST, before anything else — including before the
     // graceful-shutdown wait below. Obsidian's Component.unload() does not await
     // onunload(), so a reload can construct a brand-new Scheduler (with its own
@@ -1874,6 +1890,63 @@ export default class ClaudeThreadsPlugin extends Plugin {
       const threads = this.manager.getThreads().filter((t) => t.status !== 'archived');
       await Promise.all(threads.map((t) => this.persistence!.saveThread(t).catch(console.error)));
     }
+  }
+
+  initializePublicApi(): void {
+    this.revokePublicApi();
+    const service = createClaudeThreadsApiV1({
+      getThreads: () => this.manager.getThreads(),
+      getThread: (id) => this.manager.getThread(id),
+      isRunning: (id) => this.manager.isRunning(id),
+      createThread: async (input: CreateThreadInput) => {
+        const project = input.projectId ? this.manager.getProject(input.projectId) : undefined;
+        if (input.projectId && !project) throw new Error(`Project not found: ${input.projectId}`);
+        const cwd = input.cwd ?? (project ? this.manager.getProjectCwd(project) : this.getEffectiveCwd());
+        const thread = this.manager.createThread(input.title?.trim() || 'New Thread', cwd, project?.id, input.agentHarness);
+        await this.saveSettings();
+        return thread;
+      },
+      sendMessage: (id, prompt) => this.manager.sendMessage(id, prompt),
+      openThread: (id) => this.openThreadInChatView(id),
+      subscribe: (listener) => this.manager.subscribe(listener),
+      listOrchestrators: () => this.listPublicOrchestrators(),
+      resolveOrchestrator: (target) => this.resolvePublicOrchestrator(target),
+      triggerHostEvent: (name, payload) => {
+        const workspace = this.app.workspace as unknown as { trigger(event: string, payload: unknown): void };
+        workspace.trigger(name, payload);
+      },
+    });
+    this.publicApiService = service;
+    this.api = Object.freeze({ v1: service.api });
+    service.start();
+  }
+
+  revokePublicApi(): void {
+    this.publicApiService?.stop();
+    this.publicApiService = undefined;
+  }
+
+  private listPublicOrchestrators(): OrchestratorSnapshot[] {
+    const result: OrchestratorSnapshot[] = [];
+    const portfolioId = this.settings.orchestratorThreadId;
+    const portfolio = portfolioId ? this.manager.getThread(portfolioId) : undefined;
+    if (portfolio) result.push({ id: 'portfolio', kind: 'portfolio', threadId: portfolio.id, title: portfolio.title });
+    for (const project of this.manager.getProjects()) {
+      const thread = project.orchestratorThreadId ? this.manager.getThread(project.orchestratorThreadId) : undefined;
+      if (thread) result.push({ id: `project:${project.id}`, kind: 'project', projectId: project.id, threadId: thread.id, title: thread.title });
+    }
+    return result;
+  }
+
+  private async resolvePublicOrchestrator(target: OrchestratorTarget): Promise<string | null> {
+    if (target.id === 'portfolio') {
+      await this.ensureOrchestratorThread();
+      return this.settings.orchestratorThreadId ?? null;
+    }
+    if (!target.id.startsWith('project:')) return null;
+    const projectId = target.id.slice('project:'.length);
+    if (!projectId || !this.manager.getProject(projectId)) return null;
+    return (await this.ensureProjectOrchestratorThread(projectId, false)) ?? null;
   }
 
   // ── Auto-archive idle threads ────────────────────────────────────────────────
@@ -2214,7 +2287,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (!hasHeartbeat) {
       this.scheduler.createItem({
         name: 'Portfolio Orchestrator Heartbeat',
-        prompt: 'Heartbeat: run your review pass across all threads.',
+        prompt: 'Heartbeat: reconcile activity missed by targeted event reviews across all threads. Do not reopen concluded work whose updatedAt is unchanged.',
         schedule: { type: 'interval', intervalSeconds: 3600 },
         enabled: true,
         targetThreadId: threadId,
@@ -2257,7 +2330,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       if (!isCurrent()) return undefined;
       await this.scheduler.createItem({
         name: `${project.name} Orchestrator Heartbeat`,
-        prompt: 'Heartbeat: run your Project review pass.',
+        prompt: 'Heartbeat: reconcile Project activity missed by targeted event reviews. Do not reopen concluded work whose updatedAt is unchanged.',
         schedule: { type: 'interval', intervalSeconds: 3600 },
         enabled: true,
         targetThreadId: threadId,

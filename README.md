@@ -571,6 +571,29 @@ Projects group related threads, choose their initial working directory, inject s
 
 **Managing projects:** Edit the name, cwd override, or context prompt at any time in Settings → Vault → Projects. Create or open the Project Orchestrator from the same row; the first completed Project thread also creates it automatically without stealing focus. Intentionally archiving a Project Orchestrator disables that automatic recreation (including after a synced-settings reload) until you deliberately choose Create/Open again. Changing a Project cwd affects new dispatches and Project-derived new-thread scheduled jobs that do not store an explicit cwd; it does not silently move existing sessions. Deleting a Project detaches its threads, clears pending proposals, removes its orchestrator heartbeat, and pins affected schedules to the Project's former effective cwd.
 
+**Giving an orchestrator direction:** A Project's context prompt can act as its goal contract. The headings are optional, but this shape gives the orchestrator the clearest operating boundaries:
+
+```markdown
+## Desired outcome
+...
+
+## Current priority
+...
+
+## Done when
+...
+
+## Constraints and non-goals
+...
+
+## Risk tolerance
+...
+```
+
+For each new thread, the orchestrator first looks for an explicit `/goal`, the initiating request, and a concrete completion condition. Clear requests are recorded as **user-stated** and proceed without another interview. If the intended outcome or definition of done is ambiguous, the orchestrator records that it is awaiting direction and asks one focused question in the Project Orchestrator conversation before proposing execution, inspection, or verification. A later answer can make the goal **user-confirmed**; an **inferred** goal may guide the explicit work already underway but never expands its scope.
+
+Orchestrators use each thread's exact `updatedAt` value as their review cursor. Targeted completion events review only the named changed threads, while the hourly heartbeat reconciles activity that an event may have missed. Threads with unchanged state are not reread or rewritten, unanswered goal questions are not repeated, and concluded work stays quiet unless new evidence appears. Verification is limited to one additional orchestrator-requested pass for a substantive implementation state unless a new failure, external change, user direction, or concrete risk justifies another.
+
 **Scheduled work:** Cron items resolve their effective cwd at fire time in this order: explicit scheduled-item cwd, current Project cwd, then the global default. The same resolved path is used for a gate command and its spawned thread. Cron create/update rejects unknown Projects, and a deleted Project reference fails the run rather than dispatching in an unrelated fallback directory.
 
 **Schedule Manager:** Settings → Scheduled presents every non-system item once in two compact groups: recurring jobs, and thread loops/wakeups. Rows are collapsed by default and sorted by next occurrence, with paused work last. The summary shows status, cadence, next run or check, Project, and execution environment; expand a row to inspect its prompt, active hours, effective working directory, gate, run history, and controls. New-thread jobs show the global harness and model they will inherit at fire time (a blank model means the CLI default). Loops and wakeups show the target thread's harness/model; a missing target is called out along with its new-thread fallback.
