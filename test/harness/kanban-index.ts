@@ -84,13 +84,14 @@ const dispatchCalls: unknown[][] = [];
 const openedAgentTeams: string[] = [];
 /** Threads archived via the right-click menu, in order — asserted by ui.spec.ts. */
 const archivedThreadIds: string[] = [];
+let saveSettingsCalls = 0;
 
 const mockPlugin = {
   app: (mockLeaf as any).app,
   settings,
   manager,
   persistence: null,
-  saveSettings: async () => {},
+  saveSettings: async () => { saveSettingsCalls += 1; },
   getActiveThreadId: () => null,
   openThreadInChatView: async () => {},
   openAgentTeamInChatView: async (threadId: string) => { openedAgentTeams.push(threadId); },
@@ -125,6 +126,8 @@ void view.onOpen();
 (window as any).__dispatchCalls = dispatchCalls;
 (window as any).__openedAgentTeams = openedAgentTeams;
 (window as any).__archivedThreadIds = archivedThreadIds;
+(window as any).__getSaveSettingsCalls = () => saveSettingsCalls;
+(window as any).__getAgentsGroupBy = () => settings.agentsGroupBy;
 (window as any).__setGroupBy = (mode: 'status' | 'folder' | 'project') => {
   if (dashboardMode) return;
   settings.kanbanGroupBy = mode;

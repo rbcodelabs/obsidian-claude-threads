@@ -711,6 +711,8 @@ export interface PluginSettings {
   projects: Project[];
   wakeLockEnabled: boolean;
   layoutDensity: LayoutDensity;
+  /** Primary grouping shown in the Agents List. Missing values use project-status. */
+  agentsGroupBy?: 'project' | 'status' | 'project-status';
   /**
    * Shell command for the context footer bar. Receives JSON on stdin with
    * {cwd, workspace:{current_dir}, branch} describing the thread. stdout may be
@@ -897,6 +899,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   projects: [],
   wakeLockEnabled: true,
   layoutDensity: 'comfortable',
+  agentsGroupBy: 'project-status',
   statusLineCommand: 'bash $HOME/claude-config/bin/statusline-command.sh',
   statusLineIntervalMs: 30_000,
   createPrMessage: '/create-pr',
