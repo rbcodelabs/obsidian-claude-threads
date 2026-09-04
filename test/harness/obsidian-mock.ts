@@ -234,7 +234,6 @@ export class ItemView {
     title.textContent = 'Claude Threads';
     header.createDiv('view-actions');
     const content = document.createElement('div');
-    content.className = 'view-content';
     this.containerEl.appendChild(header);
     this.containerEl.appendChild(content);
     if (_leaf && typeof _leaf === 'object') (_leaf as { view?: ItemView }).view = this;
