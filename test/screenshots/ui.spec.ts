@@ -2441,6 +2441,31 @@ test.describe('Agent Threads UI', () => {
     await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
   });
 
+  test('agents list — themed Project menu selects, checks, and dispatches a Project', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+
+    const trigger = page.getByRole('button', { name: 'Dispatch Project: No Project' });
+    await page.locator('.ct-agents-floating-panel').hover();
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+
+    let menu = page.locator('.menu');
+    await expect(menu.getByRole('menuitemcheckbox', { name: 'No Project' })).toHaveAttribute('aria-checked', 'true');
+    await menu.getByRole('menuitemcheckbox', { name: 'HipTrip' }).click();
+    await expect(page.getByRole('button', { name: 'Dispatch Project: HipTrip' })).toBeVisible();
+
+    await page.getByPlaceholder('Dispatch a task...').fill('Ship the themed menu');
+    await page.getByPlaceholder('Dispatch a task...').press('Enter');
+    await expect.poll(() => page.evaluate(() => (window as any).__dispatchCalls.length)).toBe(1);
+    expect(await page.evaluate(() => (window as any).__dispatchCalls[0][3].projectId)).toBe('proj-hiptrip');
+
+    await page.getByRole('button', { name: 'Dispatch Project: HipTrip' }).click();
+    menu = page.locator('.menu');
+    await expect(menu.getByRole('menuitemcheckbox', { name: 'HipTrip' })).toHaveAttribute('aria-checked', 'true');
+    await shot(page, 'agent-dashboard-project-menu.png', { fullPage: true });
+  });
+
   // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
   // to snapshot. This drives the real listener end to end instead — right-click,
   // read the rendered menu, click the item, and confirm the thread is gone.
@@ -2561,7 +2586,7 @@ test.describe('Agent Threads UI', () => {
         await page.locator('.ct-agents-floating-panel').hover();
         await expect(page.locator('.ct-dispatch-project')).toBeVisible();
         await expect(page.locator('.ct-dispatch-project-label')).toHaveCount(0);
-        await expect(page.getByLabel('Dispatch Project').locator('option').first()).toHaveText('No Project');
+        await expect(page.getByRole('button', { name: 'Dispatch Project: No Project' })).toBeVisible();
         expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
         await expect.poll(() => page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
         if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');
@@ -2593,6 +2618,10 @@ test.describe('Agent Threads UI', () => {
     await page.waitForSelector('.ct-agents-row-plan');
     await expect(page.locator('.ct-agents-permission-actions .ct-permission-btn').first()).toHaveCSS('min-height', '44px');
     await expect(page.locator('.ct-dashboard-agent-count')).toHaveCSS('min-height', '44px');
+    const projectTrigger = page.getByRole('button', { name: 'Dispatch Project: No Project' });
+    await expect(projectTrigger).toBeVisible();
+    expect((await projectTrigger.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect(await page.locator('.ct-agents-list').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await shot(page, 'agent-dashboard-exceptional-mobile.png', { fullPage: true });
   });
