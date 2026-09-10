@@ -292,7 +292,7 @@ export class WorkspaceLeaf {}
 export class Modal {
   titleEl: HTMLElement;
   contentEl: HTMLElement;
-  onClose: () => void = () => {};
+  onClose(): void {}
 
   private overlay: HTMLElement;
   private container: HTMLElement;
