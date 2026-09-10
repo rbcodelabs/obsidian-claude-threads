@@ -3058,6 +3058,7 @@
   .ct-agents-panel-meta > .ct-agents-count { flex: 1 1 auto; min-width: 0; }
   .ct-dispatch-project { flex: 1 1 120px; min-width: 0; }
   .ct-dispatch-project select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  .ct-agents-project-trigger { max-width: 100%; }
   .ct-agents-panel-actions { margin-left: auto; flex: 0 0 auto; }
 
   .ct-dashboard-root .ct-agents-floating-panel.ct-panel-collapsible:hover .ct-agents-panel-meta,
@@ -6595,6 +6596,30 @@ textarea.ct-settings-wide-input {
   box-shadow: none;
   background: transparent;
   border: none;
+}
+
+/* Dashboard Project picker mirrors the compact context pill in Chat. The
+   compound selector restores its chrome after the panel's button reset. */
+.ct-agents-floating-panel button.ct-agents-project-trigger {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(65%, 240px);
+  min-height: 28px;
+  padding: 2px 7px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ct-agents-floating-panel button.ct-agents-project-trigger:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ct-agents-root.ct-mobile .ct-agents-floating-panel button.ct-agents-project-trigger {
+  min-height: 44px;
+  max-width: min(70%, 240px);
 }
 
 /* Re-apply accent for send button */
