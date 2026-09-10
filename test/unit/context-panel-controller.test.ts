@@ -266,6 +266,24 @@ describe('ContextPanelController', () => {
     });
   });
 
+  it('waits for the companion to become active before creating its adjacent tab', async () => {
+    const { controller, workspace } = makeHarness();
+    await controller.setViewStateInNewTab({ type: 'webviewer', state: { url: 'https://first.example' } });
+    workspace.getLeaf.mockClear();
+    workspace.revealLeaf.mockClear();
+    let revealed!: () => void;
+    workspace.revealLeaf.mockImplementation(() => new Promise<void>((resolve) => { revealed = resolve; }));
+
+    const opening = controller.setViewStateInNewTab({
+      type: 'webviewer', state: { url: 'https://second.example' },
+    });
+    await vi.waitFor(() => expect(workspace.revealLeaf).toHaveBeenCalled());
+    expect(workspace.getLeaf).not.toHaveBeenCalled();
+    revealed();
+    await opening;
+    expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
+  });
+
   it('rehydrates only the controller-owned adjacent companion after controller recreation', async () => {
     const { controller, createController, workspace, firstCompanion } = makeHarness();
     await controller.openFile({ path: 'Notes/context.md' } as TFile);

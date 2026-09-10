@@ -119,7 +119,7 @@ export class ContextPanelController {
     const { leaf: companionLeaf, reused } = this.acquireLeaf();
     await this.ensureMarkerPersisted();
     this.assertActive();
-    if (reused) this.app.workspace.revealLeaf(companionLeaf);
+    if (reused) await this.app.workspace.revealLeaf(companionLeaf);
     const leaf = reused ? this.app.workspace.getLeaf('tab') : companionLeaf;
     try {
       await leaf.setViewState(viewState);
