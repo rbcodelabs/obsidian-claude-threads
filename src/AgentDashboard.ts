@@ -40,7 +40,8 @@ export class AgentDashboard extends ItemView {
   private displayedThreadCount = 0;
   private dispatchComponent!: DispatchInput;
   private selectedProjectId = '';
-  private projectSelectEl!: HTMLSelectElement;
+  private projectButtonEl!: HTMLButtonElement;
+  private projectButtonNameEl!: HTMLElement;
 
   // Per-row activity text elements for live update without full re-render
   private activityEls: Map<string, HTMLElement> = new Map();
@@ -293,22 +294,49 @@ export class AgentDashboard extends ItemView {
   }
 
   private addProjectSelector(container: HTMLElement): void {
-    const label = container.createEl('label', { cls: 'ct-dispatch-project' });
-    this.projectSelectEl = label.createEl('select', { attr: { 'aria-label': 'Dispatch Project' } });
-    this.projectSelectEl.addEventListener('change', () => { this.selectedProjectId = this.projectSelectEl.value; });
+    this.projectButtonEl = container.createEl('button', {
+      cls: 'ct-dispatch-project ct-agents-project-trigger ct-footer-context',
+      attr: { type: 'button', 'aria-haspopup': 'menu' },
+    });
+    const projectIcon = this.projectButtonEl.createSpan('ct-footer-context-icon');
+    setIcon(projectIcon, 'folder');
+    this.projectButtonNameEl = this.projectButtonEl.createSpan('ct-footer-context-name');
+    const projectChevron = this.projectButtonEl.createSpan('ct-footer-context-chevron');
+    setIcon(projectChevron, 'chevron-down');
+    this.projectButtonEl.addEventListener('click', (event) => this.openProjectMenu(event));
     this.refreshProjectSelector();
   }
 
   private refreshProjectSelector(): void {
-    const select = this.projectSelectEl;
-    select.empty();
-    select.createEl('option', { text: 'No Project', attr: { value: '' } });
-    for (const project of this.manager.getProjects()) {
-      select.createEl('option', { text: project.name, attr: { value: project.id } });
-    }
     const selectionStillExists = !this.selectedProjectId || this.manager.getProject(this.selectedProjectId);
     if (!selectionStillExists) this.selectedProjectId = '';
-    select.value = this.selectedProjectId;
+    const projectName = this.manager.getProject(this.selectedProjectId)?.name ?? 'No Project';
+    this.projectButtonNameEl.textContent = projectName;
+    this.projectButtonEl.setAttribute('aria-label', `Dispatch Project: ${projectName}`);
+    this.projectButtonEl.setAttribute('title', `Dispatch Project: ${projectName}`);
+  }
+
+  private openProjectMenu(event: MouseEvent): void {
+    this.refreshProjectSelector();
+    const menu = new Menu();
+    menu.addItem(item => item
+      .setTitle('No Project')
+      .setIcon('folder-minus')
+      .setChecked(!this.selectedProjectId)
+      .onClick(() => this.selectProject('')));
+    for (const project of this.manager.getProjects()) {
+      menu.addItem(item => item
+        .setTitle(project.name)
+        .setIcon('folder')
+        .setChecked(this.selectedProjectId === project.id)
+        .onClick(() => this.selectProject(project.id)));
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private selectProject(projectId: string): void {
+    this.selectedProjectId = projectId;
+    this.refreshProjectSelector();
   }
 
   /** Adapter for the shared archive context menu (see threadArchiveMenu.ts). */
@@ -330,7 +358,7 @@ export class AgentDashboard extends ItemView {
 
   private handleEvent(threadId: string, event: ThreadEvent): void {
     if (event.type === 'projects_changed') {
-      if (this.projectSelectEl) this.refreshProjectSelector();
+      if (this.projectButtonEl) this.refreshProjectSelector();
       this.scheduleRender();
       return;
     }

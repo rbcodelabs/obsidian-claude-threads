@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.34.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.35.2-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -43,6 +43,7 @@ Agent Threads embeds Claude Code directly in your host workspace. Each tab is an
 - **Compressed conversation view** — toggle "Compress view" from the ⋯ menu to collapse an agentic thread's history into one-line summaries per exchange. Consecutive assistant turns (a full agentic run between two user messages) are grouped into a single summary entry. Click the expand arrow on any entry to read the full response. Summaries are generated lazily in a serial background queue so the UI never spawns multiple Claude processes at once
 - **Focus edited files** — one click opens the files the active Claude or Codex agent touched. Classic placement keeps its original focus behavior (closing other Markdown tabs); conversation-first opens them through the companion without detaching unrelated leaves
 - **Conversation-first workspace (prototype)** — opt in under Settings → General → Conversation placement to keep one chat in the main area and open wikilinks, edited or bridged files, Web Viewer pages, artifacts, and agent-triggered navigation in one reusable native companion beside it. Closing the companion restores the conversation's available width. Classic sidebar placement remains the default, and mobile is unchanged
+  - On Geode hosts with durable companion support, the companion survives plugin reloads, workspace restoration, and placement changes. Closing its destination tab while other tabs remain opens the next contextual item in a replacement tab in that same split. Close the whole split to retire it. Older Geode versions and Obsidian retain the existing reload behavior. Previously created unmarked panes are left untouched and may need one-time manual cleanup.
 - **Workspace tab syncing** — the host workspace tab title automatically reflects the active thread so you always know which session is which
 - **Native document header** — when the conversation is in a main document pane, its title and thread controls use the host's native header instead of adding a second title bar. The compact custom title bar remains available in sidebars, and the view adapts automatically when you drag it between the two
 - **Slash commands** — built-in context commands plus every skill the session can see (`~/.claude/skills/`, vault-installed, and plugin sources), browseable with `/`
@@ -132,7 +133,7 @@ Agent profiles supplied by installed GitHub plugin sources remain native agent d
 |---|---|
 | New thread | Click `+` in the tab bar |
 | Close thread | Hover a tab → click `×` |
-| Rename thread | Double-click the tab label |
+| Rename thread | Right-click the workspace tab → **Rename thread**, click the header pencil, or choose **Rename thread** in the thread switcher. You can also double-click the conversation title (inside the pane). Enter saves; Escape cancels. |
 | Switch to tab N | `Cmd+1` through `Cmd+9` |
 | Next / previous tab | `Cmd+]` / `Cmd+[` |
 
@@ -334,7 +335,7 @@ When the context window fills up, Claude compacts the conversation automatically
 
 ### Agents List
 
-Open the **Agents List** from the ribbon or command palette to see all threads at a glance. Its native host header shows the filtered thread count and standard icon actions for Search and Group; search opens in a separate content row so the title bar stays stable. The native Group menu has independent **Project** and **Status** toggles, supporting Project-only, Status-only, or the default Project + Status hierarchy. At least one grouping remains enabled, and the choice is saved for the next session. In Status-only mode, each row shows its resolved Project as context.
+Open the **Agents List** from the ribbon or command palette to see all threads at a glance. Its native host header shows the filtered thread count and standard icon actions for Search and Group; search opens in a separate content row so the title bar stays stable. The native Group menu has independent **Project** and **Status** toggles, supporting Project-only, Status-only, or the default Project + Status hierarchy. At least one grouping remains enabled, and the choice is saved for the next session. In Status-only mode, each row shows its resolved Project as context. The dispatch panel's themed **Project** pill opens a checked menu of configured Projects; choose **No Project** to use the global default working directory.
 
 Adaptive two-line rows use **Working**, **Waiting**, **New**, **Reviewed**, **Failed**, and **Ready** status classification. The primary line shows status, title, orchestrator indicator when applicable, and recency; activity, repository/Project context, and agent count share a truncation-safe secondary line. Permission, question, plan, waiting, and AWS reauthentication states expand into dedicated action rows when your attention is required. Child-agent activity is summarized by one accessible agent-count control; it turns green only while at least one child agent is starting, working, or waiting, and otherwise uses the same faint secondary treatment as recency. Click it to open the team picker without losing your current agent selection.
 
@@ -454,6 +455,44 @@ Some MCP servers need a credential or a form filled before they can proceed — 
 Without elicitation support the session would stall indefinitely with no visible feedback. The card makes the situation visible and actionable without leaving Agent Threads.
 
 ### Managing MCP servers
+
+#### Google Workspace
+
+On desktop Geode and Obsidian, Settings → **MCP → Google Workspace** offers
+**Google Docs**, **Google Drive**, **Google Sheets**, and **Google Slides**.
+All four start disabled. Enable the services you want, then start a new thread.
+Google's servers supply their complete read and write toolsets and schemas; Claude
+Threads does not implement a separate set of Google tools. Interactive and newly
+scheduled threads inherit the same selection on Claude and Codex, with their
+existing permission behavior.
+
+Install and connect **Google Docs Sync v0.7.1 or later** first. This integration requires its guarded
+connection refresh support (`tokenStore.supportsConnectionGuard`); older builds
+show an update instruction. The auth service must request the Docs, Drive, Sheets,
+and Slides scopes. After updating the auth service, disconnect and reconnect
+Google Docs Sync to grant the additional scopes. A corporate auth host can be
+selected through Google Docs Sync's **Auth proxy URL** setting; disconnect the
+old account before changing it.
+
+Google Workspace MCP is a Developer Preview. Enroll the OAuth client's Cloud
+project, enable each selected product API and MCP API, and obtain Workspace
+administrator access as needed. See Google's [setup guide](https://developers.google.com/workspace/guides/configure-mcp-servers)
+and [preview program](https://developers.google.com/workspace/preview).
+
+Access tokens are refreshed inside Google Docs Sync. The harness receives only an
+ephemeral credential for a loopback transport; no Google token is written to MCP
+configuration. Missing or incompatible Google Docs Sync does not prevent a thread
+from starting; its Google services are omitted and Settings → MCP explains why.
+Disabling a service revokes existing Google connections. Reconnecting accounts,
+changing auth hosts, or refresh-token rotation requires a new thread; ordinary
+access-token refresh remains automatic. Google may report missing scopes, service
+enablement, document access, or preview enrollment during discovery/tool calls.
+The transport forwards these errors without pretending that initialization alone
+validates access. This is an opt-in beta: corporate live validation of all four
+services remains pending. For a self-hosted auth service, update its deployment
+with the expanded Workspace scopes before reconnecting Google Docs Sync.
+
+#### Custom servers
 
 Settings → **MCP** lists, adds, edits, and removes the external MCP servers referenced above (Compass, Helio, or any other HTTP/SSE/stdio server) — no manual JSON editing required for the common case.
 

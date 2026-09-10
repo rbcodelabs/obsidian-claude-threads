@@ -44,6 +44,64 @@ test.describe('Agent Threads UI', () => {
     await page.clock.setFixedTime(new Date('2026-01-15T10:00:00Z'));
   });
 
+  test('thread rename supports repeated edits, cancellation, and empty names', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(`${harnessUrl}?document`);
+    await page.waitForSelector('.ct-messages');
+    const input = page.getByRole('textbox', { name: 'Thread name', exact: true });
+    await page.getByRole('button', { name: 'Rename thread', exact: true }).click();
+    await expect(input).toHaveValue('Fix auth middleware');
+    await shot(page.locator('#app').locator('..'), 'rename-thread.png');
+    await input.fill('Cancelled before first edit');
+    await input.press('Escape');
+    expect(await page.evaluate(() => (window as any).__manager.getThread((window as any).__view.getActiveThreadId()).titleUserSet)).toBeFalsy();
+    await page.locator('.view-header-title').dblclick();
+    await input.fill('First name');
+    const saves = await page.evaluate(() => (window as any).__saveSettingsCalls ?? 0);
+    await input.press('Enter');
+    await expect(page.locator('.view-header-title')).toHaveText('First name');
+    expect(await page.evaluate(() => (window as any).__saveSettingsCalls)).toBe(saves + 1);
+    await page.locator('.view-header-title').dblclick();
+    await expect(input).toHaveValue('First name');
+    await input.fill('Cancelled name');
+    await input.press('Escape');
+    await expect(input).toHaveCount(0);
+    await expect(page.locator('.view-header-title')).toHaveText('First name');
+    await page.locator('.view-header-title').dblclick();
+    await input.fill('   ');
+    await input.press('Enter');
+    await expect(input).toBeVisible();
+    await input.fill('  Second name  ');
+    await page.getByRole('button', { name: 'Rename', exact: true }).click();
+    await expect(page.locator('.view-header-title')).toHaveText('Second name');
+    await page.evaluate(() => (window as any).__setDocumentPane(false));
+    await page.locator('.ct-title-btn').dblclick();
+    await expect(input).toHaveValue('Second name');
+    await input.fill('Third name');
+    await input.press('Enter');
+    await page.locator('.ct-title-btn').dblclick();
+    await expect(input).toHaveValue('Third name');
+    await input.press('Escape');
+  });
+
+  test('thread rename fits a mobile viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${harnessUrl}?mobile`);
+    await page.waitForSelector('.ct-messages');
+    await page.locator('.ct-title-btn').click();
+    await page.getByRole('button', { name: 'Rename current thread' }).click();
+    const input = page.getByRole('textbox', { name: 'Thread name', exact: true });
+    await expect(input).toBeVisible();
+    const bounds = await input.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    await shot(page.locator('.modal-overlay'), 'rename-thread-mobile.png');
+    await input.fill('Mobile thread name');
+    await page.getByRole('button', { name: 'Rename', exact: true }).click();
+    await expect(page.locator('.ct-title-text').first()).toHaveText('Mobile thread name');
+  });
+
   test('document pane uses the native header and adapts when moved to a sidebar', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(`${harnessUrl}?document`);
@@ -74,7 +132,7 @@ test.describe('Agent Threads UI', () => {
     await expect(page.locator('.ct-switcher-rename-btn')).toBeVisible();
     await expect(page.locator('.ct-switcher-panel')).toHaveClass(/ct-switcher-panel-native/);
     await page.locator('.ct-switcher-rename-btn').click();
-    const renameInput = page.locator('.ct-switcher-footer .ct-title-rename-input');
+    const renameInput = page.getByRole('textbox', { name: 'Thread name', exact: true });
     await expect(renameInput).toHaveValue('HipTrip feature ideas');
     await renameInput.fill('HipTrip roadmap workshop');
     await renameInput.press('Enter');
@@ -88,7 +146,6 @@ test.describe('Agent Threads UI', () => {
     });
     await expect(page.locator('.view-action[aria-label="Manager notes"]')).toBeVisible();
 
-    await page.locator('.view-action[aria-label^="Switch thread"]').click();
     await expect(page.locator('.ct-switcher-panel')).toHaveCount(0);
 
     await page.locator('#app').evaluate((element) => {
@@ -1762,7 +1819,51 @@ test.describe('Agent Threads UI', () => {
       expect(await page.evaluate(() => (window as any).__mcpRegistrationResult)).toBe(true);
     });
   }
+  test('Google Workspace services are opt-in and persisted independently', async ({ page }) => {
+    await page.goto('file://' + path.resolve('test/harness/settings.html'));
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    for (const name of ['Google Docs', 'Google Drive', 'Google Sheets', 'Google Slides']) {
+      const toggle = page.locator('.setting-item').filter({ has: page.locator('.setting-item-name', { hasText: new RegExp(`^${name}$`) }) }).locator('.checkbox-container');
+      await expect(toggle).not.toHaveClass(/is-enabled/);
+      await toggle.click();
+      await expect(toggle).toHaveClass(/is-enabled/);
+    }
+    await expect(page.getByText('Google Workspace requires desktop Google Docs Sync with a connected account.', { exact: true })).toBeVisible();
+    await page.click('.ct-settings-tab-btn:has-text("General")');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    for (const name of ['Google Docs', 'Google Drive', 'Google Sheets', 'Google Slides']) {
+      await expect(page.locator('.setting-item').filter({ has: page.locator('.setting-item-name', { hasText: new RegExp(`^${name}$`) }) }).locator('.checkbox-container')).toHaveClass(/is-enabled/);
+    }
+  });
 
+  for (const width of [1280, 390, 375]) {
+    test(`Google Workspace settings at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto('file://' + path.resolve('test/harness/settings.html'));
+      await page.click('.ct-settings-tab-btn:has-text("MCP")');
+      await page.evaluate(() => { document.getElementById('app')!.style.height = 'auto'; });
+      await expect(page.getByText('Google Workspace', { exact: true })).toBeVisible();
+      await expect(page.locator('.setting-item-name').filter({ hasText: /^Google (Docs|Drive|Sheets|Slides)$/ })).toHaveCount(4);
+      await shot(page, `google-workspace-settings-${width}.png`, { fullPage: true });
+    });
+  }
+
+  test('Google Workspace connected settings update transport selection after save', async ({ page }) => {
+    await page.goto('file://' + path.resolve('test/harness/settings.html'));
+    await page.evaluate(() => {
+      const calls: string[] = [];
+      (window as any).__workspaceCalls = calls;
+      (window as any).__settingsPlugin.saveSettings = async () => { calls.push('save'); };
+      (window as any).__settingsPlugin.googleWorkspaceMcp = {
+        status: () => 'Connected through Google Docs Sync. Google validates service access when a thread connects.',
+        configure: async (selection: unknown) => { calls.push(JSON.stringify(selection)); },
+      };
+    });
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await expect(page.getByText('Connected through Google Docs Sync.', { exact: false })).toBeVisible();
+    await page.locator('.setting-item').filter({ has: page.locator('.setting-item-name', { hasText: /^Google Sheets$/ }) }).locator('.checkbox-container').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__workspaceCalls)).toEqual(['save', '{"sheets":true}']);
+  });
   test('settings — mcp edit server form', async ({ page }) => {
     const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
     await page.setViewportSize({ width: 860, height: 820 });
@@ -1925,6 +2026,9 @@ test.describe('Agent Threads UI', () => {
     }
     await expect(page.locator('.ct-task-row-completed')).toHaveCount(4);
     await expect(page.locator('.ct-task-row-in_progress')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (window as any).__view.getActiveThreadId())).toBe('thread-tasks');
+    // Capture the intended bottom after async rendering and composer expansion.
+    await anchorFocusedComposerToBottom(page);
     await shot(page, 'task-list-card.png', { fullPage: true });
 
     // Collapse on header click
@@ -1952,6 +2056,8 @@ test.describe('Agent Threads UI', () => {
     // Four pills, in order, with the PR pill rendered.
     await expect(page.locator('.ct-footer-pill')).toHaveCount(4);
     await expect(page.locator('.ct-footer-pill-warn')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (window as any).__view.getActiveThreadId())).toBe('thread-brainstorm');
+    await anchorFocusedComposerToBottom(page);
     await shot(page, 'status-line-tags.png', { fullPage: true });
   });
 
@@ -2474,6 +2580,31 @@ test.describe('Agent Threads UI', () => {
     await expect(page.locator('.view-actions .view-action')).toHaveCount(2);
   });
 
+  test('agents list — themed Project menu selects, checks, and dispatches a Project', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(kanbanUrl + '?dashboard=1');
+
+    const trigger = page.getByRole('button', { name: 'Dispatch Project: No Project' });
+    await page.locator('.ct-agents-floating-panel').hover();
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+
+    let menu = page.locator('.menu');
+    await expect(menu.getByRole('menuitemcheckbox', { name: 'No Project' })).toHaveAttribute('aria-checked', 'true');
+    await menu.getByRole('menuitemcheckbox', { name: 'HipTrip' }).click();
+    await expect(page.getByRole('button', { name: 'Dispatch Project: HipTrip' })).toBeVisible();
+
+    await page.getByPlaceholder('Dispatch a task...').fill('Ship the themed menu');
+    await page.getByPlaceholder('Dispatch a task...').press('Enter');
+    await expect.poll(() => page.evaluate(() => (window as any).__dispatchCalls.length)).toBe(1);
+    expect(await page.evaluate(() => (window as any).__dispatchCalls[0][3].projectId)).toBe('proj-hiptrip');
+
+    await page.getByRole('button', { name: 'Dispatch Project: HipTrip' }).click();
+    menu = page.locator('.menu');
+    await expect(menu.getByRole('menuitemcheckbox', { name: 'HipTrip' })).toHaveAttribute('aria-checked', 'true');
+    await shot(page, 'agent-dashboard-project-menu.png', { fullPage: true });
+  });
+
   // Non-visual: the archive menu adds no resting-state DOM, so there is nothing
   // to snapshot. This drives the real listener end to end instead — right-click,
   // read the rendered menu, click the item, and confirm the thread is gone.
@@ -2594,7 +2725,7 @@ test.describe('Agent Threads UI', () => {
         await page.locator('.ct-agents-floating-panel').hover();
         await expect(page.locator('.ct-dispatch-project')).toBeVisible();
         await expect(page.locator('.ct-dispatch-project-label')).toHaveCount(0);
-        await expect(page.getByLabel('Dispatch Project').locator('option').first()).toHaveText('No Project');
+        await expect(page.getByRole('button', { name: 'Dispatch Project: No Project' })).toBeVisible();
         expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
         await expect.poll(() => page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true);
         if (width === 320) await shot(page.locator('#app'), 'agent-dashboard-narrow-desktop.png');
@@ -2626,6 +2757,10 @@ test.describe('Agent Threads UI', () => {
     await page.waitForSelector('.ct-agents-row-plan');
     await expect(page.locator('.ct-agents-permission-actions .ct-permission-btn').first()).toHaveCSS('min-height', '44px');
     await expect(page.locator('.ct-dashboard-agent-count')).toHaveCSS('min-height', '44px');
+    const projectTrigger = page.getByRole('button', { name: 'Dispatch Project: No Project' });
+    await expect(projectTrigger).toBeVisible();
+    expect((await projectTrigger.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    expect(await page.locator('.ct-agents-panel-meta').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     expect(await page.locator('.ct-agents-list').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     await shot(page, 'agent-dashboard-exceptional-mobile.png', { fullPage: true });
   });
@@ -2929,6 +3064,8 @@ test.describe('Agent Threads UI', () => {
     await expect(page.locator('.ct-proposed-reply-edit')).toBeVisible();
     await expect(page.locator('.ct-proposed-reply-discard')).toBeVisible();
     await expect(page.locator('.ct-proposed-reply-label')).toHaveText('Proposed reply');
+    await expect.poll(() => page.evaluate(() => (window as any).__view.getActiveThreadId())).toBe('thread-proposed-reply');
+    await anchorFocusedComposerToBottom(page);
     await shot(page, 'proposed-reply-card.png', { fullPage: true });
   });
 
