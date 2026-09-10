@@ -7,14 +7,14 @@ vi.mock('../../src/SettingsTab', () => ({ isWebViewerEnabled: () => true }));
 vi.mock('../../src/linkUtils', async (original) => ({ ...await original<object>(), openUrlPreferringWebViewer: vi.fn() }));
 
 describe('conversation-first footer URLs', () => {
-  it('uses asynchronous controller navigation instead of acquiring a leaf before layout restoration', async () => {
+  it('uses asynchronous new-tab navigation instead of acquiring a leaf before layout restoration', async () => {
     const view = Object.create(ThreadsView.prototype);
-    const setViewState = vi.fn().mockResolvedValue(true);
+    const setViewStateInNewTab = vi.fn().mockResolvedValue(undefined);
     const getLeaf = vi.fn(() => { throw new Error('layout is restoring'); });
     view.app = { workspace: {} };
-    view.plugin = { isConversationFirst: () => true, contextPanel: { setViewState, getLeaf } };
+    view.plugin = { isConversationFirst: () => true, contextPanel: { setViewStateInNewTab, getLeaf } };
     await view.openLink('https://example.com');
-    expect(setViewState).toHaveBeenCalledWith({ type: 'webviewer', active: true, state: { url: 'https://example.com' } });
+    expect(setViewStateInNewTab).toHaveBeenCalledWith({ type: 'webviewer', active: true, state: { url: 'https://example.com' } });
     expect(getLeaf).not.toHaveBeenCalled();
   });
 
@@ -23,7 +23,7 @@ describe('conversation-first footer URLs', () => {
     const view = Object.create(ThreadsView.prototype);
     const error = loadError ? new ContextPanelViewError(new Error('view failed')) : new Error('controller is disposed');
     view.app = { workspace: {} };
-    view.plugin = { isConversationFirst: () => true, contextPanel: { setViewState: vi.fn().mockRejectedValue(error) } };
+    view.plugin = { isConversationFirst: () => true, contextPanel: { setViewStateInNewTab: vi.fn().mockRejectedValue(error) } };
     await view.openLink('https://example.com');
     expect(openUrlPreferringWebViewer).toHaveBeenCalledTimes(loadError ? 1 : 0);
     if (loadError) expect(openUrlPreferringWebViewer).toHaveBeenCalledWith(view.app, 'https://example.com', expect.objectContaining({ webViewerEnabled: false }));

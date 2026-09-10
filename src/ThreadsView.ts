@@ -1483,7 +1483,7 @@ export class ThreadsView extends ItemView {
     let webViewerEnabled = !forceExternal && isWebViewerEnabled(this.app);
     if (webViewerEnabled && this.plugin.isConversationFirst()) {
       try {
-        await this.plugin.contextPanel.setViewState({ type: 'webviewer', active: true, state: { url } });
+        await this.plugin.contextPanel.setViewStateInNewTab({ type: 'webviewer', active: true, state: { url } });
         return;
       } catch (error) {
         if (error instanceof ContextPanelViewError) webViewerEnabled = false;

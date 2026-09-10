@@ -85,9 +85,9 @@ export interface OpenUrlDeps {
 }
 
 /**
- * Open `url`, preferring the Web Viewer when enabled. Reuses an existing
- * webviewer tab if one is open. Falls back to the system browser when the Web
- * Viewer is disabled or fails to load. Returns the path taken (for tests).
+ * Open a user-selected `url`, preferring a fresh Web Viewer tab when enabled.
+ * Falls back to the system browser when the Web Viewer is disabled or fails to
+ * load. Returns the path taken (for tests).
  */
 export function openUrlPreferringWebViewer(app: App, url: string, deps: OpenUrlDeps): 'webviewer' | 'external' {
   if (!deps.webViewerEnabled) {
@@ -96,8 +96,7 @@ export function openUrlPreferringWebViewer(app: App, url: string, deps: OpenUrlD
   }
   try {
     const ws = app.workspace;
-    const existing = deps.destinationLeaf ? [] : ws.getLeavesOfType('webviewer');
-    const leaf = deps.destinationLeaf ?? (existing.length > 0 ? existing[0] : ws.getLeaf('tab'));
+    const leaf = deps.destinationLeaf ?? ws.getLeaf('tab');
     ws.revealLeaf(leaf);
     void Promise.resolve(leaf.setViewState({ type: 'webviewer', active: true, state: { url } }))
       .catch(() => deps.openExternal(url));

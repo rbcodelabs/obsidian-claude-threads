@@ -3,16 +3,25 @@ import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebVie
 import type { App } from 'obsidian';
 
 function fakeApp(opts: { existingWebviewer?: boolean } = {}) {
-  const setViewState = vi.fn(() => Promise.resolve());
+  const existingSetViewState = vi.fn(() => Promise.resolve());
+  const newSetViewState = vi.fn(() => Promise.resolve());
   const reveal = vi.fn();
-  const existingLeaf = { setViewState };
-  const newLeaf = { setViewState };
+  const existingLeaf = { setViewState: existingSetViewState };
+  const newLeaf = { setViewState: newSetViewState };
   const ws = {
     getLeavesOfType: vi.fn((t: string) => (opts.existingWebviewer && t === 'webviewer' ? [existingLeaf] : [])),
     getLeaf: vi.fn(() => newLeaf),
     revealLeaf: reveal,
   };
-  return { app: { workspace: ws } as unknown as App, setViewState, reveal, ws, existingLeaf, newLeaf };
+  return {
+    app: { workspace: ws } as unknown as App,
+    setViewState: newSetViewState,
+    existingSetViewState,
+    reveal,
+    ws,
+    existingLeaf,
+    newLeaf,
+  };
 }
 
 describe('openUrlPreferringWebViewer', () => {
@@ -47,12 +56,13 @@ describe('openUrlPreferringWebViewer', () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it('reuses an existing webviewer tab when one is open', () => {
-    const { app, ws } = fakeApp({ existingWebviewer: true });
+  it('opens a fresh tab and preserves an existing webviewer tab', () => {
+    const { app, ws, existingSetViewState, setViewState } = fakeApp({ existingWebviewer: true });
     const openExternal = vi.fn();
     openUrlPreferringWebViewer(app, 'https://x', { webViewerEnabled: true, openExternal });
-    expect(ws.getLeavesOfType).toHaveBeenCalledWith('webviewer');
-    expect(ws.getLeaf).not.toHaveBeenCalled(); // reused, no new tab
+    expect(ws.getLeaf).toHaveBeenCalledWith('tab');
+    expect(existingSetViewState).not.toHaveBeenCalled();
+    expect(setViewState).toHaveBeenCalledWith({ type: 'webviewer', active: true, state: { url: 'https://x' } });
   });
 
   it('uses a caller-selected contextual leaf instead of an unrelated webviewer tab', () => {
