@@ -1587,6 +1587,9 @@ export class ThreadsView extends ItemView {
         await this.plugin.contextPanel.setViewState({
           type: 'geode-artifact', active: true, state: { root: artifact.root },
         });
+        if (this.plugin.contextPanel.getLeaf().getViewState().type !== 'geode-artifact') {
+          throw new Error('Secure artifact preview is unavailable.');
+        }
         return { status: 'opened' };
       }
       const existing = this.app.workspace.getLeavesOfType('geode-artifact');
@@ -1594,6 +1597,7 @@ export class ThreadsView extends ItemView {
         (candidate.getViewState().state as { root?: string } | undefined)?.root === artifact.root,
       ) ?? existing[0] ?? this.app.workspace.getLeaf('tab');
       await leaf.setViewState({ type: 'geode-artifact', active: true, state: { root: artifact.root } });
+      if (leaf.getViewState().type !== 'geode-artifact') throw new Error('Secure artifact preview is unavailable.');
       await this.app.workspace.revealLeaf(leaf);
       return { status: 'opened' };
     } catch {

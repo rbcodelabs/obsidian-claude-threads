@@ -102,6 +102,12 @@ const mockPlugin = {
     manager.notifyWakeupChanged(threadId);
   },
 };
+// A registered artifact leaf models the host preview boundary; the entry,
+// persistence ordering, focus, and toolbar below use the production workflow.
+const designPreviewLeaf = {
+  setViewState: async () => {},
+  getViewState: () => ({ type: 'geode-artifact' }),
+};
 (window as any).__enterDesignMode = (threadId: string, brief: string) => enterDesignMode(threadId, '/vault', brief, {
   getThread: id => manager.getThread(id),
   assertWritable: thread => assertDesignWriteAllowed(thread, settings.permissionMode),
@@ -109,6 +115,7 @@ const mockPlugin = {
   openThread: async id => { await (window as any).__view.focusThread(id); },
   openPreview: async artifact => {
     const view = (window as any).__view as ThreadsView;
+    Object.assign(mockWorkspace, { getLeavesOfType: () => [], getLeaf: () => designPreviewLeaf, revealLeaf: () => {} });
     view.refreshArtifactCard();
     return view.openArtifactPreview(artifact);
   },
