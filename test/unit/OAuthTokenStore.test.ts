@@ -120,6 +120,38 @@ describe('OAuthTokenStore — scheduled refresh timing', () => {
     await vi.advanceTimersByTimeAsync(15 * 60_000 + 1000);
     expect(refreshFn).toHaveBeenCalledTimes(1);
   });
+
+  it('does not schedule a background timer for a token whose lifetime never exceeds the proactive window', async () => {
+    // Regression test: a token with expires_in <= 300s used to make store()/scheduleRefresh()
+    // compute delayMs=0 forever — refresh() resolves, its (equally short-lived) result is handed
+    // straight back to store(), which reschedules at 0ms again, and so on. This hammered the AS's
+    // token endpoint continuously and raced real proxy requests (a request's just-fetched access
+    // token could be rotated out from under it by this background loop before the HTTP forward
+    // even completed), observed as a real, load-dependent 401 flake in the integration suite.
+    // getAccessToken()'s own near-expiry check already covers refreshing such a token on access,
+    // so scheduleRefresh() should simply decline to arm a timer for it.
+    const secretStorage = fakeSecretStorage();
+    const refreshFn = vi.fn(async (): Promise<TokenSet> => ({ accessToken: 'at-2', refreshToken: 'rt', expiresAt: Date.now() + 2000 }));
+    const tokenStore = new OAuthTokenStore(secretStorage, refreshFn);
+
+    // expires_in = 2s, far inside the 5-minute proactive window.
+    tokenStore.store('vercel', { accessToken: 'at-1', refreshToken: 'rt', expiresAt: Date.now() + 2000 });
+
+    // If the old bug were present, a 0ms timer would already have fired (and rescheduled itself)
+    // well within this window; advancing a generous few seconds of fake time with no external
+    // getAccessToken() call must produce zero refreshFn invocations.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshFn).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule when expiresAt has already passed', async () => {
+    const secretStorage = fakeSecretStorage();
+    const refreshFn = vi.fn(async (): Promise<TokenSet> => ({ accessToken: 'at-2', expiresAt: Date.now() + 3600_000 }));
+    const tokenStore = new OAuthTokenStore(secretStorage, refreshFn);
+    tokenStore.store('vercel', { accessToken: 'at-1', refreshToken: 'rt', expiresAt: Date.now() - 1000 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshFn).not.toHaveBeenCalled();
+  });
 });
 
 describe('OAuthTokenStore — clear', () => {

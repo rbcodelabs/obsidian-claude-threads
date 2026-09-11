@@ -112,16 +112,36 @@ export class OAuthTokenStore {
     return job;
   }
 
-  /** Schedule a proactive refresh for `expires_in - 300` seconds from now. */
+  /**
+   * Schedule a proactive refresh for `expires_in - 300` seconds from now.
+   *
+   * No-ops (after clearing any existing timer) when the token's remaining
+   * lifetime is already inside — or past — the proactive window. Scheduling
+   * a timer in that case would fire at (or near) 0ms delay; since the
+   * refreshed token this class receives from a real AS is itself handed
+   * straight back to `store()`, which calls this method again, a token
+   * whose lifetime never exceeds the window (any AS issuing access tokens
+   * with `expires_in <= 300`, which is common for short-lived tokens)
+   * created a self-perpetuating, zero-delay refresh loop here — hammering
+   * the AS's token endpoint continuously and, worse, racing real in-flight
+   * proxy requests: a request's own captured access token could be rotated
+   * out from under it by the background loop before the HTTP forward
+   * completed, surfacing as a spurious 401 (observed as a real, load-
+   * dependent flake in the integration suite). `getAccessToken()`'s
+   * synchronous near-expiry check already refreshes such a token the
+   * moment it's actually needed, so no background timer is required for it.
+   */
   scheduleRefresh(serverName: string, expiresAt: number): void {
     const existing = this.refreshTimers.get(serverName);
     if (existing) clearTimeout(existing);
-    const delayMs = Math.max(0, expiresAt - Date.now() - PROACTIVE_REFRESH_WINDOW_MS);
+    this.refreshTimers.delete(serverName);
+    const remainingMs = expiresAt - Date.now() - PROACTIVE_REFRESH_WINDOW_MS;
+    if (remainingMs <= 0) return;
     const timer = setTimeout(() => {
       this.refresh(serverName).catch(() => {
         // Network hiccups are expected; the next proxy request will retry via getAccessToken()/401 handling.
       });
-    }, delayMs);
+    }, remainingMs);
     this.refreshTimers.set(serverName, timer);
   }
 
