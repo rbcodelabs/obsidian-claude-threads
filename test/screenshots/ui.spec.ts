@@ -867,12 +867,18 @@ test.describe('Agent Threads UI', () => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(harnessUrl);
     await page.waitForSelector('.ct-title-row');
-    const entry = await page.evaluate(async () => {
-      const first = await (window as any).__enterDesignMode('thread-fix-auth', 'Responsive checkout concept');
-      const second = await (window as any).__enterDesignMode('thread-fix-auth', 'Revise checkout');
-      return { created: first.created, reused: !second.created, preview: first.preview.status };
+    await page.evaluate(() => {
+      const view = (window as any).__view;
+      const thread = view.manager.getThread('thread-fix-auth');
+      thread.artifacts = [{
+        id: 'design-thread-fix-auth', kind: 'design-static', title: 'Responsive checkout concept',
+        root: '/vault/.geode/artifacts/design-thread-fix-auth',
+        manifestPath: '/vault/.geode/artifacts/design-thread-fix-auth/artifact.json',
+        entryPath: '/vault/.geode/artifacts/design-thread-fix-auth/index.html',
+        createdAt: 1, updatedAt: 1,
+      }];
+      view.syncEditedFiles();
     });
-    expect(entry).toEqual({ created: true, reused: true, preview: 'opened' });
     // Expand through the panel's :focus-within path instead of hovering the
     // panel by coordinates. The latter can land on the focus-files chip after
     // small browser/font layout shifts and capture an incidental hover ring.
@@ -889,6 +895,21 @@ test.describe('Agent Threads UI', () => {
     expect(layout.toolbarOverflow).toBe(false);
     expect(layout.documentOverflow).toBe(false);
     await shot(page, `design-artifact-toolbar-${viewport.name}.png`, { fullPage: true });
+  });
+
+  test('agent design entry refreshes controls and reuses the selected thread artifact', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    const entry = await page.evaluate(async () => {
+      const first = await (window as any).__enterDesignMode('thread-fix-auth', 'Responsive checkout concept');
+      const second = await (window as any).__enterDesignMode('thread-fix-auth', 'Revise checkout');
+      return { created: first.created, reused: !second.created, preview: first.preview.status };
+    });
+    expect(entry).toEqual({ created: true, reused: true, preview: 'opened' });
+    await page.locator('.ct-input').focus();
+    await expect(page.getByRole('button', { name: 'Preview design' })).toBeVisible();
+    await expect(page.locator('.ct-artifact-card')).toContainText('Responsive checkout concept');
+    await expect(page.locator('.ct-artifact-card')).toHaveCount(1);
   });
 
   test('permission card', async ({ page }) => {
