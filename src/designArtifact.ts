@@ -21,6 +21,87 @@ export interface DesignArtifactFs {
   rm?(target: string, options: { recursive: true; force: true }): Promise<unknown>;
 }
 
+export type DesignPreviewResult = { status: 'opened' } | { status: 'source-revealed' | 'unavailable'; warning: string };
+
+export interface DesignModeResult {
+  artifact: DesignArtifact;
+  created: boolean;
+  preview: DesignPreviewResult;
+  instructions: string;
+}
+
+export interface DesignModeDeps {
+  getThread(id: string): Thread | undefined;
+  assertWritable(thread: Thread): void;
+  saveSettings(): Promise<void>;
+  openThread(id: string): Promise<void>;
+  openPreview(artifact: DesignArtifact): Promise<DesignPreviewResult>;
+}
+
+// Composer and agent entries share a queue, including persistence and navigation.
+// Weak keys let a deleted thread and its completed transaction be collected.
+const designEntries = new WeakMap<Thread, Promise<unknown>>();
+
+export function assertDesignWriteAllowed(thread: Thread, defaultPermissionMode: string): void {
+  if (thread.pendingPlan !== undefined) throw new Error('Design mode is unavailable while plan approval is pending.');
+  if ((thread.permissionMode ?? defaultPermissionMode) === 'plan') {
+    throw new Error('Design mode writes artifact files and is unavailable in read-only Plan mode.');
+  }
+}
+
+export async function enterDesignMode(
+  threadId: string,
+  vaultRoot: string,
+  brief: string,
+  deps: DesignModeDeps,
+  fileFs: DesignArtifactFs = defaultFs,
+): Promise<DesignModeResult> {
+  const thread = deps.getThread(threadId);
+  if (!thread) throw new Error('Calling thread is unavailable.');
+  const assertCurrent = () => {
+    if (deps.getThread(threadId) !== thread) throw new Error('Calling thread is unavailable.');
+    deps.assertWritable(thread);
+  };
+  const previous = designEntries.get(thread) ?? Promise.resolve();
+  const operation = previous.catch(() => {}).then(async () => {
+    assertCurrent();
+    const before = thread.artifacts;
+    // Prepare against detached metadata: failed writes and saves must not mutate
+    // an existing artifact timestamp or attach partially-created artifacts.
+    const draft = { id: thread.id, artifacts: before?.map(artifact => ({ ...artifact })) };
+    const created = !draft.artifacts?.some(artifact => artifact.kind === 'design-static');
+    const artifact = await ensureDesignArtifact(draft, vaultRoot, brief, Date.now(), fileFs);
+    assertCurrent();
+    thread.artifacts = draft.artifacts;
+    try {
+      await deps.saveSettings();
+    } catch (error) {
+      thread.artifacts = before;
+      throw error;
+    }
+    assertCurrent();
+    let preview: DesignPreviewResult;
+    try {
+      await deps.openThread(threadId);
+      assertCurrent();
+      preview = await deps.openPreview(artifact);
+    } catch (error) {
+      // Navigation failure cannot undo a durable artifact. A deleted thread,
+      // however, must still be reported as an error rather than a usable result.
+      assertCurrent();
+      preview = { status: 'unavailable', warning: error instanceof Error ? error.message : String(error) };
+    }
+    assertCurrent();
+    return { artifact, created, preview, instructions: designKickoffMessage(artifact, brief) };
+  });
+  designEntries.set(thread, operation);
+  try {
+    return await operation;
+  } finally {
+    if (designEntries.get(thread) === operation) designEntries.delete(thread);
+  }
+}
+
 export interface DesignThreadDispatchDeps {
   createThread(title: string, agentHarness?: 'claude' | 'codex'): Thread;
   deleteThread(threadId: string): void;

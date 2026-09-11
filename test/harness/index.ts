@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../../src/types';
 import { fixtureThreads } from './fixtures';
 import { mockLeaf, mockWorkspace } from './obsidian-mock';
 import { Platform } from 'obsidian';
+import { enterDesignMode, assertDesignWriteAllowed } from '../../src/designArtifact';
 
 if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
 
@@ -101,6 +102,17 @@ const mockPlugin = {
     manager.notifyWakeupChanged(threadId);
   },
 };
+(window as any).__enterDesignMode = (threadId: string, brief: string) => enterDesignMode(threadId, '/vault', brief, {
+  getThread: id => manager.getThread(id),
+  assertWritable: thread => assertDesignWriteAllowed(thread, settings.permissionMode),
+  saveSettings: () => mockPlugin.saveSettings(),
+  openThread: async id => { await (window as any).__view.focusThread(id); },
+  openPreview: async artifact => {
+    const view = (window as any).__view as ThreadsView;
+    view.refreshArtifactCard();
+    return view.openArtifactPreview(artifact);
+  },
+}, { mkdir: async () => {}, writeFile: async () => {} });
 (window as any).__contextLinkCalls = [];
 (window as any).__setConversationFirst = (enabled: boolean) => {
   settings.threadViewPlacement = enabled ? 'conversation-first' : 'classic';
