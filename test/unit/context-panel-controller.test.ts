@@ -26,6 +26,7 @@ function makeHarness(
   const chat = makeLeaf('chat');
   const firstCompanion = makeLeaf('companion-1');
   const secondCompanion = makeLeaf('companion-2');
+  const newTabLeaf = makeLeaf('new-tab');
   const attached = new Set<WorkspaceLeaf>([chat, ...unrelatedLeaves]);
   let chatLeaf = chat as WorkspaceLeaf;
   firstCompanion.detach = vi.fn(() => attached.delete(firstCompanion));
@@ -45,6 +46,7 @@ function makeHarness(
       for (const leaf of attached) callback(leaf);
     }),
     splitActiveLeaf,
+    getLeaf: vi.fn(() => newTabLeaf),
     revealLeaf: vi.fn(),
     openLinkText: vi.fn().mockResolvedValue(undefined),
   };
@@ -66,7 +68,7 @@ function makeHarness(
   );
   const controller = createController();
   return {
-    controller, createController, workspace, chat, firstCompanion, secondCompanion, attached,
+    controller, createController, workspace, chat, firstCompanion, secondCompanion, newTabLeaf, attached,
     getMarker: () => marker,
     resolveLink: (linktext: string, sourcePath: string, file: TFile) => {
       resolvedFiles.set(`${sourcePath}::${linktext}`, file);
@@ -247,6 +249,39 @@ describe('ContextPanelController', () => {
       state: { url: 'https://example.com' },
     });
     expect(reused).toBe(false);
+  });
+
+  it('opens later user-selected views in a new tab beside the reusable companion', async () => {
+    const { controller, workspace, firstCompanion, newTabLeaf } = makeHarness();
+    await controller.setViewStateInNewTab({ type: 'webviewer', state: { url: 'https://first.example' } });
+    await controller.setViewStateInNewTab({ type: 'webviewer', state: { url: 'https://second.example' } });
+
+    expect(firstCompanion.setViewState).toHaveBeenCalledWith({
+      type: 'webviewer', state: { url: 'https://first.example' },
+    });
+    expect(workspace.getLeaf).toHaveBeenCalledOnce();
+    expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
+    expect(newTabLeaf.setViewState).toHaveBeenCalledWith({
+      type: 'webviewer', state: { url: 'https://second.example' },
+    });
+  });
+
+  it('waits for the companion to become active before creating its adjacent tab', async () => {
+    const { controller, workspace } = makeHarness();
+    await controller.setViewStateInNewTab({ type: 'webviewer', state: { url: 'https://first.example' } });
+    workspace.getLeaf.mockClear();
+    workspace.revealLeaf.mockClear();
+    let revealed!: () => void;
+    workspace.revealLeaf.mockImplementation(() => new Promise<void>((resolve) => { revealed = resolve; }));
+
+    const opening = controller.setViewStateInNewTab({
+      type: 'webviewer', state: { url: 'https://second.example' },
+    });
+    await vi.waitFor(() => expect(workspace.revealLeaf).toHaveBeenCalled());
+    expect(workspace.getLeaf).not.toHaveBeenCalled();
+    revealed();
+    await opening;
+    expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
   });
 
   it('rehydrates only the controller-owned adjacent companion after controller recreation', async () => {

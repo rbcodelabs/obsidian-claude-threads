@@ -113,6 +113,24 @@ export class ContextPanelController {
     return reused;
   }
 
+  /** Open user-selected content without replacing an existing context tab. */
+  async setViewStateInNewTab(viewState: ViewState): Promise<void> {
+    await this.waitForLayout();
+    const { leaf: companionLeaf, reused } = this.acquireLeaf();
+    await this.ensureMarkerPersisted();
+    this.assertActive();
+    if (reused) await this.app.workspace.revealLeaf(companionLeaf);
+    const leaf = reused ? this.app.workspace.getLeaf('tab') : companionLeaf;
+    try {
+      await leaf.setViewState(viewState);
+    } catch (error) {
+      this.assertActive();
+      throw new ContextPanelViewError(error);
+    }
+    this.assertActive();
+    this.app.workspace.revealLeaf(leaf);
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     if (typeof (this.app.workspace as RatioWorkspace).getOrCreateCompanionLeaf === 'function') {

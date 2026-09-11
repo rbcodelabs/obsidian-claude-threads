@@ -35,7 +35,7 @@ Agent Threads embeds Claude Code directly in your host workspace. Each tab is an
 - **Multi-tab sessions** — open as many Claude threads as you need, switch between them instantly
 - **Streaming responses** — tokens stream in with live markdown rendering (code blocks, tables, lists, etc.)
 - **Responsive conversation width** — wide conversation panes center the complete timeline and composer in a readable-width column, while narrow panes remain full width
-- **Clickable links in messages** — both `[[wikilinks]]` and ordinary `[label](path.md)` Markdown links in a response open the target note, in the sidebar and in conversation-first placement alike. Agents writing from outside Obsidian often emit an absolute filesystem path rather than a vault-relative one; when that path lands inside your vault, it still resolves to the right note — heading and block anchors included. A path that points outside the vault says so rather than opening (or creating) anything. An ordinary `http(s)://` link in a message opens the same way status-line pill links do — in the host's in-app Web Viewer when enabled (reusing an existing tab, or the conversation-first companion when that placement is active), otherwise the system browser; Cmd-click (Ctrl-click) always forces the system browser
+- **Clickable links in messages** — both `[[wikilinks]]` and ordinary `[label](path.md)` Markdown links in a response open the target note, in the sidebar and in conversation-first placement alike. Agents writing from outside Obsidian often emit an absolute filesystem path rather than a vault-relative one; when that path lands inside your vault, it still resolves to the right note — heading and block anchors included. A path that points outside the vault says so rather than opening (or creating) anything. An ordinary `http(s)://` link in a message opens the same way status-line pill links do — in a fresh tab in the host's in-app Web Viewer when enabled (in the conversation-first context region when that placement is active), otherwise the system browser; Cmd-click (Ctrl-click) always forces the system browser
 - **Persistent conversations** — sessions resume where you left off after restarting the host app
 - **Auto-naming** — tabs rename themselves based on what you're working on (powered by the summarizer)
 - **Thread summaries** — a header bar shows what each thread is about, auto-updated after each response
@@ -684,7 +684,7 @@ A row of pills below the input area shows live context for each thread — git b
 
 **PR detection** is fully script-driven: a `kind:"pr"` tag with a `url` (e.g. from `gh pr view`) populates the thread's `prUrl`, which is **sticky** — it survives after the PR merges so release tooling can still match the thread.
 
-**Opening links:** clicking a pill with a `url` opens it in the host's in-app **Web Viewer** when available (reusing an existing tab); otherwise it opens in your system browser. **Cmd-click** (Ctrl-click on Windows/Linux) always opens in the system browser, even when the Web Viewer is enabled.
+**Opening links:** clicking a pill with a `url` opens it in a fresh tab in the host's in-app **Web Viewer** when available; otherwise it opens in your system browser. **Cmd-click** (Ctrl-click on Windows/Linux) always opens in the system browser, even when the Web Viewer is enabled.
 
 A ready-to-use reference script (branch · PR · dev URL · Bedrock-gated AWS) ships at [`docs/statusline-command.example.sh`](docs/statusline-command.example.sh).
 
