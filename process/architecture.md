@@ -88,6 +88,26 @@ Invariants to preserve:
 
 ---
 
+## Agent-initiated Design
+
+`EnterDesignMode({ brief })` is registered in the shared MCP catalog, so Claude
+and Codex use the same handler and validation. The host binds it to the calling
+thread ID; no target thread or artifact path is accepted. It is a mutating tool,
+with an additional host guard for read-only Plan mode and pending plan approval.
+
+The tool and in-thread `/design` command share `enterDesignMode` in
+`src/designArtifact.ts`. Per-thread serialization covers preparation, persistence,
+and preview opening. Metadata is prepared separately, attached before saving, and
+restored if saving fails; scaffold files remain retryable. Thread existence is
+checked after asynchronous work. A preview failure leaves the saved artifact intact
+and returns an explicit `source-revealed` or `unavailable` outcome.
+
+The tool returns `{ artifact, created, preview, instructions }` for the current
+turn. It does not send another message or change session cwd. The composer still
+owns its design kickoff message. New-thread dispatch retains its provisional-thread
+rollback behavior. Artifact controls are refreshed even when the calling thread was
+already selected; successful preview results require the actual artifact view type.
+
 ## DispatchInput Component
 
 `DispatchInput` only renders the bottom footer row (attach button, mic button) when either `showCwdChip` or `appendFooterActions` is passed. If you want the footer layout without other chips (e.g. in AgentDashboard), pass `appendFooterActions: () => {}` as an empty callback — this sets `needsFooter = true` internally.

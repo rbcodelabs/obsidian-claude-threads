@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../../src/types';
 import { fixtureThreads } from './fixtures';
 import { mockLeaf, mockWorkspace } from './obsidian-mock';
 import { Platform } from 'obsidian';
+import { enterDesignMode, assertDesignWriteAllowed } from '../../src/designArtifact';
 
 if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
 
@@ -101,6 +102,24 @@ const mockPlugin = {
     manager.notifyWakeupChanged(threadId);
   },
 };
+// A registered artifact leaf models the host preview boundary; the entry,
+// persistence ordering, focus, and toolbar below use the production workflow.
+const designPreviewLeaf = {
+  setViewState: async () => {},
+  getViewState: () => ({ type: 'geode-artifact' }),
+};
+(window as any).__enterDesignMode = (threadId: string, brief: string) => enterDesignMode(threadId, '/vault', brief, {
+  getThread: id => manager.getThread(id),
+  assertWritable: thread => assertDesignWriteAllowed(thread, settings.permissionMode),
+  saveSettings: () => mockPlugin.saveSettings(),
+  openThread: async id => { await (window as any).__view.focusThread(id); },
+  openPreview: async artifact => {
+    const view = (window as any).__view as ThreadsView;
+    Object.assign(mockWorkspace, { getLeavesOfType: () => [], getLeaf: () => designPreviewLeaf, revealLeaf: () => {} });
+    view.refreshArtifactCard();
+    return view.openArtifactPreview(artifact);
+  },
+}, { mkdir: async () => {}, writeFile: async () => {} });
 (window as any).__contextLinkCalls = [];
 (window as any).__setConversationFirst = (enabled: boolean) => {
   settings.threadViewPlacement = enabled ? 'conversation-first' : 'classic';

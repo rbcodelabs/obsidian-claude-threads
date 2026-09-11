@@ -897,6 +897,21 @@ test.describe('Agent Threads UI', () => {
     await shot(page, `design-artifact-toolbar-${viewport.name}.png`, { fullPage: true });
   });
 
+  test('agent design entry refreshes controls and reuses the selected thread artifact', async ({ page }) => {
+    await page.goto(harnessUrl);
+    await page.waitForSelector('.ct-title-row');
+    const entry = await page.evaluate(async () => {
+      const first = await (window as any).__enterDesignMode('thread-fix-auth', 'Responsive checkout concept');
+      const second = await (window as any).__enterDesignMode('thread-fix-auth', 'Revise checkout');
+      return { created: first.created, reused: !second.created, preview: first.preview.status };
+    });
+    expect(entry).toEqual({ created: true, reused: true, preview: 'opened' });
+    await page.locator('.ct-input').focus();
+    await expect(page.getByRole('button', { name: 'Preview design' })).toBeVisible();
+    await expect(page.locator('.ct-artifact-card')).toContainText('Responsive checkout concept');
+    await expect(page.locator('.ct-artifact-card')).toHaveCount(1);
+  });
+
   test('permission card', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

@@ -466,6 +466,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
       try {
         const mcpServers = createClaudeThreadsMcpServers(this.app, {
+          onEnterDesignMode: brief => this.enterDesignMode(threadId, brief),
           onRegisterMcpServer: input => {
             const caller = this.manager.getThread(threadId);
             return registerMcpServer(input, mcpRegistrationAvailable && !!caller && !caller.scheduledItemId);
@@ -2461,11 +2462,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return thread.id;
   }
 
-  /**
-   * Creates a new thread whose first turn uses Threads' native static-artifact
-   * workflow. Keep the fs-backed module behind this desktop-only method so it
-   * is never initialized by the mobile entry path.
-   */
+  /** Caller-bound design entry; the composer shares preparation but owns its next turn. */
+  async enterDesignMode(threadId: string, brief: string, fromComposer = false): Promise<import('./designArtifact').DesignModeResult> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      throw new Error('Design artifacts require a desktop vault with local filesystem access.');
+    }
+    const { enterDesignMode, assertDesignWriteAllowed } = await import('./designArtifact');
+    return enterDesignMode(threadId, adapter.getBasePath(), brief, {
+      getThread: id => this.manager.getThread(id),
+      assertWritable: thread => {
+        if (!fromComposer) assertDesignWriteAllowed(thread, this.settings.permissionMode);
+      },
+      saveSettings: () => this.saveSettings(),
+      openThread: id => this.openThreadInChatView(id),
+      openPreview: async artifact => {
+        const view = this.getView();
+        if (!view) throw new Error('Agent Threads view is unavailable.');
+        view.refreshArtifactCard();
+        return view.openArtifactPreview(artifact);
+      },
+    });
+  }
+
+  /** Creates a new thread whose first turn uses the native static-artifact workflow. */
   async dispatchNewDesignThread(brief: string, agentHarness?: 'claude' | 'codex'): Promise<string> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
