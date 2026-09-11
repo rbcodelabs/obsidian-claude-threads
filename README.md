@@ -516,7 +516,17 @@ A server whose `${VAR_NAME}` placeholders cannot be resolved is **skipped rather
 
 Agents can also call `mcp_register_server` to propose a server. A host dialog shows the unresolved configuration and asks you to **Register server** or **Cancel**, including when normal tool permissions are bypassed. Approval saves globally for newly initialized Claude and Codex sessions; it does not launch a command, contact an endpoint, or change the calling session's tools. Scheduled threads return an unavailable result instead of waiting for a dialog.
 
-The tool accepts a flat `name`, `type` (`stdio`, `http`, or `sse`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+The tool accepts a flat `name`, `type` (`stdio`, `http`, `sse`, or `oauth`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+
+#### OAuth-gated servers
+
+A remote MCP server that requires OAuth 2.1 + PKCE (Vercel's, for example) registers with `type: "oauth"` instead of `"http"`. The plugin brokers the whole flow itself — discovery, Dynamic Client Registration, consent, token custody, refresh, and revocation — so neither Claude nor Codex needs any OAuth-specific code; both harnesses see the server as a plain authenticated HTTP endpoint behind a local per-server proxy. Unlike the other transports, registering one is asynchronous and interactive: an agent's `mcp_register_server` call triggers discovery, then opens the consent screen in the host's Web Viewer and waits (up to 5 minutes) for you to complete sign-in before exchanging the code for tokens and starting the proxy. Denying consent or letting the window lapse leaves no partial state behind.
+
+Settings → **MCP → OAuth MCP servers** lists every connected server with a live status (connected + expiry countdown, expiring soon, needs re-authorization, or not configured) and a **Disconnect** button. There is no manual "Add" form here — registration only happens through an agent, since the flow needs a real consent screen to drive. See [`docs/mcp-registration.md`](docs/mcp-registration.md#oauth-gated-servers-type-oauth) for the full field reference (`scopes`, `tools.allow`/`tools.deny` for per-tool filtering, `clientId`/`authorizationServerUrl` overrides). Access and refresh tokens live only in the OS keychain, never in `data.json`.
+
+<p align="center">
+  <img src="docs/screenshot-mcp-oauth-servers.png" width="800" alt="Settings MCP tab: OAuth MCP servers section showing two connected servers with status dots and expiry countdowns, and a Disconnect button on each row" />
+</p>
 
 Use `${NAME}` for every credential and `request_secret` to save its value securely. Common credential fields are validated, but arbitrary argument strings cannot be reliably classified: all literal values must be nonsecret. Registration returns status and required variable names, never resolved credentials. Missing variables are checked when a future session initializes. See [agent registration details](docs/mcp-registration.md).
 

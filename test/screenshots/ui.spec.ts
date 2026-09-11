@@ -1900,6 +1900,33 @@ test.describe('Agent Threads UI', () => {
     await shot(page, 'settings-mcp-edit.png', { fullPage: true });
   });
 
+  test('settings — oauth mcp servers', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+    // Collapse the fixed-height harness shell to the content, same as the
+    // "settings — mcp tab" screenshot above, so this crops tight to the
+    // OAuth MCP servers panel instead of trailing empty space below it.
+    await page.evaluate(() => {
+      const app = document.getElementById('app');
+      if (app) app.style.height = 'auto';
+    });
+    await page.waitForTimeout(50);
+    await expect(page.getByText('OAuth MCP servers', { exact: true })).toBeVisible();
+    // Both fixture servers' status rows and their Disconnect buttons.
+    const figmaRow = page.locator('.ct-oauth-mcp-servers-list .setting-item').filter({ hasText: 'figma' });
+    await expect(figmaRow.getByText('Needs re-authorization')).toBeVisible();
+    await expect(figmaRow.getByText('Refresh failed: invalid_grant', { exact: false })).toBeVisible();
+    await expect(figmaRow.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    const vercelRow = page.locator('.ct-oauth-mcp-servers-list .setting-item').filter({ hasText: 'vercel' });
+    await expect(vercelRow.getByText('Connected · expires in 2h 45m', { exact: false })).toBeVisible();
+    await expect(vercelRow.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await shot(page, 'settings-oauth-mcp.png', { fullPage: true });
+  });
+
   test('sub-agent task pill while working', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 740 });
     await page.goto(harnessUrl);

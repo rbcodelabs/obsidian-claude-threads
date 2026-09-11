@@ -119,12 +119,56 @@ const fixtureMcpServers: PluginSettings['mcpServers'] = {
   },
 };
 
+// Two OAuth MCP servers for the Settings → MCP tab's "OAuth MCP servers"
+// panel, covering the two visually distinct statuses `describeOAuthMcpStatus`
+// renders: a healthy 'connected' server (green dot, live countdown) and an
+// 'error' server (red dot, plus the inline warning line). The countdown is a
+// fixed offset from FIXTURE_NOW (not Date.now()) so "expires in 2h 45m"
+// renders identically on every run — using the real clock would make the
+// screenshot's text drift and fail the pixel-diff a few minutes later.
+const fixtureOAuthMcpServers: PluginSettings['oauthMcpServers'] = {
+  vercel: {
+    url: 'https://mcp.vercel.com/',
+    scopes: 'read write',
+    authorizationServerUrl: 'https://mcp.vercel.com/',
+  },
+  figma: {
+    url: 'https://mcp.figma.com/',
+    authorizationServerUrl: 'https://mcp.figma.com/',
+  },
+};
+
+const fixtureOAuthMcpState: PluginSettings['oauthMcpState'] = {
+  vercel: {
+    serverName: 'vercel',
+    clientId: 'dcr-client-vercel',
+    asMetadataUrl: 'https://mcp.vercel.com/',
+    proxyPort: 51231,
+    status: 'connected',
+    accessTokenExpiresAt: FIXTURE_NOW + 165 * 60_000, // -> "expires in 2h 45m"
+    hasRefreshToken: true,
+    tokenEndpoint: 'https://mcp.vercel.com/oauth/token',
+  },
+  figma: {
+    serverName: 'figma',
+    clientId: 'dcr-client-figma',
+    asMetadataUrl: 'https://mcp.figma.com/',
+    proxyPort: 0,
+    status: 'error',
+    errorMessage: 'Refresh failed: invalid_grant — re-authorize this server.',
+    hasRefreshToken: false,
+    tokenEndpoint: 'https://mcp.figma.com/oauth/token',
+  },
+};
+
 const settings: PluginSettings = {
   ...DEFAULT_SETTINGS,
   claudeBinaryPath: '/opt/homebrew/bin/claude',
   defaultModel: 'sonnet',
   secretEnvKeys: ['STRIPE_SECRET_KEY', 'NOTES_API_TOKEN'],
   mcpServers: fixtureMcpServers,
+  oauthMcpServers: fixtureOAuthMcpServers,
+  oauthMcpState: fixtureOAuthMcpState,
   alwaysAllowedTools: ['Bash', 'Read', 'mcp__obsidian__obsidian_search_vault'],
   escalationEnabled: true,
   summarizationEnabled: true,
@@ -181,6 +225,13 @@ const mockPlugin = {
     getEffectiveCwd: (item: ScheduledItem) => item.cwd ?? (item.projectId
       ? (settings.projects.find((project) => project.id === item.projectId)?.cwdOverride ?? `/Users/mock/vault/${settings.projects.find((project) => project.id === item.projectId)?.vaultFolder}`)
       : '/Users/mock/vault'),
+  },
+  oauthMcpRegistry: {
+    status: (name: string) => settings.oauthMcpState[name],
+    disconnect: async (name: string) => {
+      delete settings.oauthMcpServers[name];
+      delete settings.oauthMcpState[name];
+    },
   },
   wakeLock: { setEnabled: () => {} },
   relayClient: null,
