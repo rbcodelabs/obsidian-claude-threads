@@ -1,0 +1,279 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthClientInformationFull, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+
+// vi.mock calls must be hoisted above the imports they affect.
+const sdkAuth = vi.hoisted(() => ({
+  discoverOAuthServerInfo: vi.fn(),
+  exchangeAuthorization: vi.fn(),
+  refreshAuthorization: vi.fn(),
+  registerClient: vi.fn(),
+  parseErrorResponse: vi.fn(async (input: Response | string) => new Error(typeof input === 'string' ? input : `HTTP ${input.status}`)),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/auth.js', () => sdkAuth);
+
+const { OAuthMcpFlow, generatePkcePair, pkceChallengeForVerifier } = await import('../../src/OAuthMcpFlow');
+type TokenSet = import('../../src/OAuthTokenStore').TokenSet;
+type OAuthTokenStoreLike = import('../../src/OAuthMcpFlow').OAuthTokenStoreLike;
+
+function fixtureAsMetadata(overrides: Partial<OAuthServerInfo> = {}): OAuthServerInfo {
+  return {
+    authorizationServerUrl: 'https://vercel.com',
+    authorizationServerMetadata: {
+      issuer: 'https://vercel.com',
+      authorization_endpoint: 'https://vercel.com/oauth/authorize',
+      token_endpoint: 'https://vercel.com/oauth/token',
+      registration_endpoint: 'https://vercel.com/oauth/register',
+      revocation_endpoint: 'https://vercel.com/oauth/revoke',
+      response_types_supported: ['code'],
+    },
+    ...overrides,
+  };
+}
+
+function fixtureTokenStore(initial: Partial<Record<string, unknown>> = {}): OAuthTokenStoreLike & { stored: TokenSet[] } {
+  const stored: TokenSet[] = [];
+  return {
+    stored,
+    store: vi.fn(async (_serverName: string, tokens: TokenSet) => { stored.push(tokens); }),
+    getClientId: vi.fn(async () => (initial.clientId as string | undefined)),
+    getCurrentTokens: vi.fn(async () => (initial.currentTokens as TokenSet | undefined)),
+    clear: vi.fn(async () => {}),
+  };
+}
+
+async function httpGet(url: string): Promise<{ status: number; body: string }> {
+  const res = await fetch(url);
+  return { status: res.status, body: await res.text() };
+}
+
+beforeEach(() => {
+  sdkAuth.discoverOAuthServerInfo.mockReset();
+  sdkAuth.exchangeAuthorization.mockReset();
+  sdkAuth.refreshAuthorization.mockReset();
+  sdkAuth.registerClient.mockReset();
+});
+
+describe('PKCE generation', () => {
+  it('matches the RFC 7636 Appendix B.1 S256 test vector', () => {
+    // https://datatracker.ietf.org/doc/html/rfc7636#appendix-B
+    const verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+    expect(pkceChallengeForVerifier(verifier)).toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+  });
+
+  it('generatePkcePair produces a verifier/challenge pair consistent with pkceChallengeForVerifier', () => {
+    const { verifier, challenge } = generatePkcePair();
+    expect(verifier).toMatch(/^[A-Za-z0-9_-]{40,}$/); // 32 random bytes, base64url — no padding, no +/=
+    expect(challenge).toBe(pkceChallengeForVerifier(verifier));
+  });
+
+  it('generates a distinct verifier on every call', () => {
+    const a = generatePkcePair();
+    const b = generatePkcePair();
+    expect(a.verifier).not.toBe(b.verifier);
+  });
+});
+
+describe('OAuthMcpFlow.discoverAS', () => {
+  it('delegates to discoverOAuthServerInfo and returns its result', async () => {
+    const info = fixtureAsMetadata();
+    sdkAuth.discoverOAuthServerInfo.mockResolvedValue(info);
+    const flow = new OAuthMcpFlow(fixtureTokenStore(), vi.fn());
+    await expect(flow.discoverAS('https://mcp.vercel.com/')).resolves.toEqual(info);
+    expect(sdkAuth.discoverOAuthServerInfo).toHaveBeenCalledWith('https://mcp.vercel.com/');
+  });
+});
+
+describe('OAuthMcpFlow.registerClient', () => {
+  it('registers with the given registration endpoint and redirect_uri, returning the issued client_id', async () => {
+    const info: OAuthClientInformationFull = {
+      client_id: 'client-123', redirect_uris: ['http://127.0.0.1:1234/callback'],
+    };
+    sdkAuth.registerClient.mockResolvedValue(info);
+    const flow = new OAuthMcpFlow(fixtureTokenStore(), vi.fn());
+    const clientId = await flow.registerClient('https://vercel.com/oauth/register', 'http://127.0.0.1:1234/callback', 'openid profile');
+    expect(clientId).toBe('client-123');
+    expect(sdkAuth.registerClient).toHaveBeenCalledWith(
+      'https://vercel.com/oauth/register',
+      expect.objectContaining({
+        scope: 'openid profile',
+        clientMetadata: expect.objectContaining({ redirect_uris: ['http://127.0.0.1:1234/callback'] }),
+        metadata: expect.objectContaining({ registration_endpoint: 'https://vercel.com/oauth/register' }),
+      }),
+    );
+  });
+});
+
+describe('OAuthMcpFlow.authorize', () => {
+  let openUrl: ReturnType<typeof vi.fn>;
+  let capturedUrl: URL;
+
+  beforeEach(() => {
+    capturedUrl = undefined as unknown as URL;
+    openUrl = vi.fn(async (url: string) => { capturedUrl = new URL(url); });
+  });
+
+  it('opens a well-formed authorization URL with PKCE params, exchanges the callback code, and resolves the token set', async () => {
+    const tokens: OAuthTokens = { access_token: 'at-1', refresh_token: 'rt-1', token_type: 'bearer', expires_in: 3600 };
+    sdkAuth.exchangeAuthorization.mockResolvedValue(tokens);
+    const tokenStore = fixtureTokenStore();
+    const flow = new OAuthMcpFlow(tokenStore, openUrl);
+
+    const promise = flow.authorize({ serverName: 'vercel', clientId: 'client-123', asMetadata: fixtureAsMetadata(), scopes: 'openid profile' });
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalled());
+
+    expect(capturedUrl.origin + capturedUrl.pathname).toBe('https://vercel.com/oauth/authorize');
+    expect(capturedUrl.searchParams.get('response_type')).toBe('code');
+    expect(capturedUrl.searchParams.get('client_id')).toBe('client-123');
+    expect(capturedUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(capturedUrl.searchParams.get('scope')).toBe('openid profile');
+    const state = capturedUrl.searchParams.get('state');
+    const redirectUri = capturedUrl.searchParams.get('redirect_uri')!;
+    expect(state).toBeTruthy();
+    expect(redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+
+    const callbackRes = await httpGet(`${redirectUri}?code=auth-code-1&state=${state}`);
+    expect(callbackRes.status).toBe(200);
+
+    const result = await promise;
+    expect(result).toEqual({ accessToken: 'at-1', refreshToken: 'rt-1', expiresAt: expect.any(Number) });
+    expect(tokenStore.store).toHaveBeenCalledWith('vercel', result);
+    expect(sdkAuth.exchangeAuthorization).toHaveBeenCalledWith('https://vercel.com', expect.objectContaining({
+      authorizationCode: 'auth-code-1',
+      redirectUri,
+      clientInformation: { client_id: 'client-123' },
+    }));
+  });
+
+  it('rejects on a state mismatch without exchanging the code', async () => {
+    const tokenStore = fixtureTokenStore();
+    const flow = new OAuthMcpFlow(tokenStore, openUrl);
+    const promise = flow.authorize({ serverName: 'vercel', clientId: 'client-123', asMetadata: fixtureAsMetadata() });
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalled());
+    const redirectUri = capturedUrl.searchParams.get('redirect_uri')!;
+
+    // Attach the rejection handler before triggering the callback — the promise rejects
+    // synchronously as soon as the server processes the request, which can race ahead of
+    // an `await` on the client-side fetch resolving.
+    const rejection = expect(promise).rejects.toThrow(/state mismatch/i);
+    const callbackRes = await httpGet(`${redirectUri}?code=auth-code-1&state=wrong-state`);
+    expect(callbackRes.status).toBe(400);
+    await rejection;
+    expect(sdkAuth.exchangeAuthorization).not.toHaveBeenCalled();
+    expect(tokenStore.store).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the authorization server reports a denial', async () => {
+    const tokenStore = fixtureTokenStore();
+    const flow = new OAuthMcpFlow(tokenStore, openUrl);
+    const promise = flow.authorize({ serverName: 'vercel', clientId: 'client-123', asMetadata: fixtureAsMetadata() });
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalled());
+    const redirectUri = capturedUrl.searchParams.get('redirect_uri')!;
+
+    const rejection = expect(promise).rejects.toThrow(/denied/i);
+    const callbackRes = await httpGet(`${redirectUri}?error=access_denied`);
+    expect(callbackRes.status).toBe(200); // still a normal browser-facing page
+    await rejection;
+    expect(sdkAuth.exchangeAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('rejects and cleans up the callback server when openUrl itself fails', async () => {
+    const failingOpenUrl = vi.fn(async () => { throw new Error('Web Viewer unavailable'); });
+    const flow = new OAuthMcpFlow(fixtureTokenStore(), failingOpenUrl);
+    await expect(flow.authorize({ serverName: 'vercel', clientId: 'c', asMetadata: fixtureAsMetadata() }))
+      .rejects.toThrow('Web Viewer unavailable');
+  });
+
+  it('times out after 5 minutes of no callback and closes the listening socket', async () => {
+    vi.useFakeTimers();
+    try {
+      const flow = new OAuthMcpFlow(fixtureTokenStore(), openUrl);
+      const promise = flow.authorize({ serverName: 'vercel', clientId: 'client-123', asMetadata: fixtureAsMetadata() });
+      await vi.waitFor(() => expect(openUrl).toHaveBeenCalled(), { timeout: 2000, interval: 10 });
+      const redirectUri = capturedUrl.searchParams.get('redirect_uri')!;
+
+      const rejection = expect(promise).rejects.toThrow(/timed out/i);
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      await rejection;
+
+      // The callback server must be closed — a request to its port now fails outright.
+      await expect(fetch(redirectUri)).rejects.toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 10_000);
+});
+
+describe('OAuthMcpFlow.refresh', () => {
+  it('refreshes using the stored refresh token and client_id, and persists the result', async () => {
+    const tokens: OAuthTokens = { access_token: 'at-2', refresh_token: 'rt-2', token_type: 'bearer', expires_in: 1800 };
+    sdkAuth.refreshAuthorization.mockResolvedValue(tokens);
+    const tokenStore = fixtureTokenStore({ clientId: 'client-123', currentTokens: { accessToken: 'at-1', refreshToken: 'rt-1' } });
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn());
+
+    const result = await flow.refresh('vercel', fixtureAsMetadata());
+    expect(result.accessToken).toBe('at-2');
+    expect(sdkAuth.refreshAuthorization).toHaveBeenCalledWith('https://vercel.com', expect.objectContaining({
+      refreshToken: 'rt-1', clientInformation: { client_id: 'client-123' },
+    }));
+    expect(tokenStore.store).toHaveBeenCalledWith('vercel', result);
+  });
+
+  it('rejects without calling the AS when there is no refresh token on file', async () => {
+    const tokenStore = fixtureTokenStore({ clientId: 'client-123', currentTokens: { accessToken: 'at-1' } });
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn());
+    await expect(flow.refresh('vercel', fixtureAsMetadata())).rejects.toThrow(/refresh token/i);
+    expect(sdkAuth.refreshAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('rejects without calling the AS when there is no client_id on file', async () => {
+    const tokenStore = fixtureTokenStore({ currentTokens: { accessToken: 'at-1', refreshToken: 'rt-1' } });
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn());
+    await expect(flow.refresh('vercel', fixtureAsMetadata())).rejects.toThrow(/client_id/i);
+    expect(sdkAuth.refreshAuthorization).not.toHaveBeenCalled();
+  });
+});
+
+describe('OAuthMcpFlow.revoke', () => {
+  it('revokes both tokens at the AS revocation endpoint, then clears local state', async () => {
+    const tokenStore = fixtureTokenStore({ clientId: 'client-123', currentTokens: { accessToken: 'at-1', refreshToken: 'rt-1' } });
+    const fetchFn = vi.fn(async () => new Response(null, { status: 200 }));
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn(), fetchFn as unknown as typeof fetch);
+
+    await flow.revoke('vercel', fixtureAsMetadata());
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    const bodies = fetchFn.mock.calls.map(([, init]) => (init as RequestInit).body as URLSearchParams);
+    expect(bodies.some((b) => b.get('token') === 'rt-1' && b.get('token_type_hint') === 'refresh_token')).toBe(true);
+    expect(bodies.some((b) => b.get('token') === 'at-1' && b.get('token_type_hint') === 'access_token')).toBe(true);
+    expect(tokenStore.clear).toHaveBeenCalledWith('vercel');
+  });
+
+  it('still clears local state when the AS revocation call fails', async () => {
+    const tokenStore = fixtureTokenStore({ clientId: 'client-123', currentTokens: { accessToken: 'at-1', refreshToken: 'rt-1' } });
+    const fetchFn = vi.fn(async () => { throw new Error('network down'); });
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn(), fetchFn as unknown as typeof fetch);
+
+    await flow.revoke('vercel', fixtureAsMetadata());
+    expect(tokenStore.clear).toHaveBeenCalledWith('vercel');
+  });
+
+  it('skips revocation entirely when the AS has no revocation_endpoint, but still clears local state', async () => {
+    const tokenStore = fixtureTokenStore({ clientId: 'client-123', currentTokens: { accessToken: 'at-1', refreshToken: 'rt-1' } });
+    const fetchFn = vi.fn();
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn(), fetchFn as unknown as typeof fetch);
+
+    const asMetadata = fixtureAsMetadata({
+      authorizationServerMetadata: {
+        issuer: 'https://vercel.com',
+        authorization_endpoint: 'https://vercel.com/oauth/authorize',
+        token_endpoint: 'https://vercel.com/oauth/token',
+        response_types_supported: ['code'],
+      },
+    });
+    await flow.revoke('vercel', asMetadata);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(tokenStore.clear).toHaveBeenCalledWith('vercel');
+  });
+});

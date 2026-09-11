@@ -676,6 +676,35 @@ export type StoredMcpServer =
       headers?: Record<string, string>;
     };
 
+/**
+ * Runtime status for one registered `oauth`-type MCP server (see
+ * `mcpServerStore.mcpRegistrationSchema`'s `oauth` variant). Not yet persisted
+ * anywhere — this is the shape a future `PluginSettings.oauthMcpState` map (or
+ * equivalent) will use once thread lifecycle wiring lands; see
+ * `mcpServerStore.resolveMcpServers` for why `oauth` isn't resolved yet.
+ *
+ * Tokens are **never** stored on this interface or anywhere in data.json —
+ * only in the OS keychain via `OAuthTokenStore`. This only tracks enough to
+ * render connection status and drive proxy/refresh lifecycle without ever
+ * touching a secret value.
+ */
+export interface OAuthMcpState {
+  serverName: string;
+  /** DCR-issued client_id, or the user-provided `clientId` override. */
+  clientId: string;
+  /** Resolved authorization server URL from discovery, cached to skip re-discovery. */
+  asMetadataUrl: string;
+  /** Local proxy port, assigned when the proxy starts. */
+  proxyPort: number;
+  status: 'connected' | 'needs-auth' | 'expired' | 'error';
+  errorMessage?: string;
+  /** Access token expiry, ms epoch. Only the timestamp is kept here — never the token. */
+  accessTokenExpiresAt?: number;
+  hasRefreshToken: boolean;
+  revocationEndpoint?: string;
+  tokenEndpoint: string;
+}
+
 export interface PluginSettings {
   claudeBinaryPath: string;
   /** Which local coding-agent harness new threads use. */
