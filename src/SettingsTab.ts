@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Platform, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import { DEFAULT_VAULT_FOLDER } from './productIdentity';
-import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
+import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent, OAuthMcpState } from './types';
 import { serializeKey } from './stt';
 import { setDebugLogging } from './logger';
 import { telemetry } from './telemetry';
@@ -27,6 +27,25 @@ const AGENT_VIEW_TYPE = 'claude-threads:agents';
  * Returns true when the Web Viewer core plugin is enabled.
  * The Web Viewer's internal plugin ID in Obsidian's core plugin registry is "webviewer".
  */
+function formatOAuthDuration(ms: number): string {
+  const totalMinutes = Math.max(0, Math.round(ms / 60_000));
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}
+
+/** Status dot color + human-readable label for one OAuth MCP server row. */
+export function describeOAuthMcpStatus(state: OAuthMcpState | undefined): { label: string; tone: 'green' | 'yellow' | 'red' | 'grey' } {
+  if (!state) return { label: 'Not configured', tone: 'grey' };
+  if (state.status === 'connected') {
+    if (state.accessTokenExpiresAt !== undefined) {
+      const remaining = state.accessTokenExpiresAt - Date.now();
+      if (remaining < 15 * 60_000) return { label: 'Expires soon', tone: 'yellow' };
+      return { label: `Connected · expires in ${formatOAuthDuration(remaining)}`, tone: 'green' };
+    }
+    return { label: 'Connected', tone: 'green' };
+  }
+  return { label: 'Needs re-authorization', tone: 'red' };
+}
+
 export function isWebViewerEnabled(app: App): boolean {
   type InternalPlugins = { plugins: Record<string, { enabled: boolean }> };
   return (app as unknown as { internalPlugins: InternalPlugins })
@@ -2462,6 +2481,40 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           googleStatus.setText(this.plugin.googleWorkspaceMcp?.status() ?? 'Google Workspace requires desktop Google Docs Sync with a connected account.');
         }));
     }
+    containerEl.createEl('h3', { text: 'OAuth MCP servers' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: 'Registered via an agent\'s mcp_register_server call. Connect a server by asking an agent to register it; this panel only shows status and lets you disconnect.',
+    });
+    const oauthListEl = containerEl.createDiv({ cls: 'ct-oauth-mcp-servers-list' });
+    const renderOAuthList = () => {
+      oauthListEl.empty();
+      const entries = Object.entries(this.plugin.settings.oauthMcpServers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length === 0) {
+        oauthListEl.createEl('p', { text: 'No OAuth MCP servers connected yet.', cls: 'ct-settings-empty' });
+        return;
+      }
+      for (const [name, entry] of entries) {
+        const state = this.plugin.oauthMcpRegistry?.status(name);
+        const { label, tone } = describeOAuthMcpStatus(state);
+        const row = new Setting(oauthListEl).setName(name).setDesc(entry.url);
+        row.nameEl.createEl('span', { cls: `ct-oauth-status-dot ct-oauth-status-dot--${tone}` });
+        row.nameEl.createEl('span', { cls: 'ct-oauth-status-label', text: label });
+        if (state?.status === 'error' && state.errorMessage) {
+          row.descEl.createEl('br');
+          row.descEl.createEl('span', { cls: 'ct-mcp-server-warning', text: state.errorMessage });
+        }
+        row.addButton((btn) =>
+          btn.setButtonText('Disconnect').setWarning().onClick(async () => {
+            await this.plugin.oauthMcpRegistry?.disconnect(name);
+            new Notice(`Disconnected "${name}".`);
+            renderOAuthList();
+          }),
+        );
+      }
+    };
+    renderOAuthList();
+
     containerEl.createEl('h3', { text: 'Custom MCP servers' });
     containerEl.createEl('p', {
       cls: 'setting-item-description',

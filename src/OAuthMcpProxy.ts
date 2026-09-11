@@ -147,6 +147,13 @@ export class OAuthMcpProxy {
     this.capabilityTokens.delete(threadId);
   }
 
+  /** Cleanup sweep (mirrors `GoogleWorkspaceMcp.retainThreads`): revoke tokens for any thread no longer active. */
+  retainThreads(activeThreadIds: Set<string>): void {
+    for (const threadId of this.capabilityTokens.keys()) {
+      if (!activeThreadIds.has(threadId)) this.revokeCapabilityToken(threadId);
+    }
+  }
+
   async stop(): Promise<void> {
     for (const controller of this.requests) controller.abort();
     this.requests.clear();

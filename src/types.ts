@@ -688,6 +688,18 @@ export type StoredMcpServer =
  * render connection status and drive proxy/refresh lifecycle without ever
  * touching a secret value.
  */
+/**
+ * Config for one `oauth`-type MCP server (see `mcpServerStore.mcpRegistrationSchema`'s
+ * oauth variant). Tokens live only in the OS keychain — see `OAuthMcpState` / `OAuthTokenStore`.
+ */
+export interface StoredOAuthMcpServer {
+  url: string;
+  scopes?: string;
+  tools?: { allow?: string[]; deny?: string[] };
+  clientId?: string;
+  authorizationServerUrl?: string;
+}
+
 export interface OAuthMcpState {
   serverName: string;
   /** DCR-issued client_id, or the user-provided `clientId` override. */
@@ -844,6 +856,16 @@ export interface PluginSettings {
    * that resolves their `${VAR}` placeholders in one file instead of two.
    */
   mcpServers: Record<string, StoredMcpServer>;
+  /**
+   * `oauth`-type MCP servers registered via the `mcp_register_server` tool's
+   * async consent flow (see `OAuthMcpRegistry.registerServer`). Keyed by
+   * server name, same key space as `mcpServers` (name collisions are rejected
+   * at registration). Nonsecret config only — access/refresh tokens and the
+   * DCR-issued client_id live in the OS keychain, never here.
+   */
+  oauthMcpServers: Record<string, StoredOAuthMcpServer>;
+  /** Runtime connection status for each `oauthMcpServers` entry, keyed the same way. */
+  oauthMcpState: Record<string, OAuthMcpState>;
   /** Opt-in Google-provided MCP toolsets, authenticated by Google Docs Sync. */
   googleWorkspaceMcp?: Partial<Record<'docs' | 'drive' | 'sheets' | 'slides', boolean>>;
   /** Nonsecret identity/service pinning; local bearer capabilities are never persisted. */
@@ -975,6 +997,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   openAIKey: '',
   secretEnvKeys: [],
   mcpServers: {},
+  oauthMcpServers: {},
+  oauthMcpState: {},
   remoteAccess: {
     enabled: false,
     roomId: '',
