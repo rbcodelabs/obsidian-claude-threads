@@ -91,6 +91,31 @@ export function describeSecretStorage(protection: SecretStorageProtection): stri
 }
 
 /**
+ * Write host-accurate secret-storage copy into `el`, then correct it in place
+ * once the host answers.
+ *
+ * Every caller renders synchronously (`PluginSettingTab.display`, `Modal.onOpen`)
+ * while the answer is async, so `compose` runs twice: first with the
+ * "could not confirm" wording, then with the truth. Starting pessimistic is the
+ * point — a slow or missing probe leaves an accurate description on screen, never
+ * a keychain promise the host does not keep.
+ *
+ * `compose` takes the storage sentence and returns the full string, so each site
+ * keeps its own surrounding claims (injection, data.json) while the keychain
+ * question itself is answered in exactly one place.
+ */
+export function applySecretStorageCopy(
+  app: App,
+  el: HTMLElement,
+  compose: (storageSentence: string) => string,
+): void {
+  el.textContent = compose(describeSecretStorage('unknown'));
+  void probeSecretStorageProtection(app).then((protection) => {
+    el.textContent = compose(describeSecretStorage(protection));
+  });
+}
+
+/**
  * Open the host's secret picker and hand the chosen secret name to `onPicked`
  * (empty string when the user picked nothing).
  *
@@ -332,10 +357,14 @@ class SecretEnvModal extends Modal {
     contentEl.createEl('h2', { text: isNew ? 'Add secret variable' : `Change: ${this.varName}` });
 
     if (isNew) {
-      contentEl.createEl('p', {
-        text: 'The value is stored in the OS keychain and never written to disk.',
-        cls: 'setting-item-description',
-      });
+      // "never written to disk" was false on a host without encrypted storage —
+      // plaintext in localStorage is very much on disk. data.json is the
+      // invariant that actually holds everywhere, so that is what it claims now.
+      applySecretStorageCopy(
+        this.app,
+        contentEl.createEl('p', { cls: 'setting-item-description' }),
+        (storage) => `${storage} It is never written to data.json.`,
+      );
 
       contentEl.createEl('label', { text: 'Variable name', cls: 'ct-modal-label' });
       this.nameInput = contentEl.createEl('input', {
@@ -384,8 +413,9 @@ class SecretEnvModal extends Modal {
 /**
  * Modal opened when an agent calls the `request_secret` MCP tool.
  * Shows the secret name and the agent's reason for requesting it, collects
- * a password-type value, writes it to the OS keychain, and resolves the
- * promise with true (saved) or false (cancelled).
+ * a password-type value, writes it to `app.secretStorage` (the OS keychain on a
+ * host that has one), and resolves the promise with true (saved) or false
+ * (cancelled).
  */
 export class RequestSecretModal extends Modal {
   private valueInput: HTMLInputElement | null = null;
@@ -419,10 +449,11 @@ export class RequestSecretModal extends Modal {
       cls: 'setting-item-description',
     });
 
-    contentEl.createEl('p', {
-      text: 'The value will be stored in your OS keychain and injected into future sessions. It will never appear in the conversation.',
-      cls: 'setting-item-description',
-    });
+    applySecretStorageCopy(
+      this.app,
+      contentEl.createEl('p', { cls: 'setting-item-description' }),
+      (storage) => `${storage} It will be injected into future sessions and will never appear in the conversation.`,
+    );
 
     if (this.force) {
       contentEl.createEl('p', {
@@ -1567,9 +1598,8 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       }
     };
 
-    new Setting(containerEl)
+    const secretsSetting = new Setting(containerEl)
       .setName('Secret environment variables')
-      .setDesc('API keys and tokens stored in the OS keychain (never in data.json), injected into every Claude session.')
       .addButton((btn) =>
         btn.setButtonText('Add secret').setCta().onClick(() => {
           new SecretEnvModal(this.app, '', async (val, varName) => {
@@ -1583,6 +1613,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }).open();
         }),
       );
+    applySecretStorageCopy(
+      this.app,
+      secretsSetting.descEl,
+      (storage) => `API keys and tokens injected into every Claude session, never into data.json. ${storage}`,
+    );
     containerEl.appendChild(secretsList);
     renderSecrets();
 
@@ -2040,16 +2075,13 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         .setName('OpenAI API key')
         .setDesc('Used for Whisper speech-to-text.');
 
-      // Where the key actually lands depends on the host, and the answer only
-      // arrives asynchronously. Render the honest "unconfirmed" wording first
-      // and upgrade it in place, so a slow (or missing) probe can never leave a
-      // keychain promise on screen that the host does not keep.
-      const storageNote = openAiSetting.descEl.createEl('span', {
-        text: ` ${describeSecretStorage('unknown')}`,
-      });
-      void probeSecretStorageProtection(this.app).then((protection) => {
-        storageNote.textContent = ` ${describeSecretStorage(protection)}`;
-      });
+      // Its own span, because the masked key below is a sibling in the same
+      // descEl and must survive the async correction.
+      applySecretStorageCopy(
+        this.app,
+        openAiSetting.descEl.createEl('span'),
+        (storage) => ` ${storage}`,
+      );
 
       openAiSetting.descEl.createEl('br');
       openAiSetting.descEl.createEl('span', {

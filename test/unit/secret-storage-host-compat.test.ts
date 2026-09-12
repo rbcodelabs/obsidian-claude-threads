@@ -21,6 +21,7 @@ import { Notice, SecretComponent } from 'obsidian';
 
 import '../setup/obsidian-dom';
 import {
+  applySecretStorageCopy,
   describeSecretStorage,
   probeSecretStorageProtection,
   openSecretPicker,
@@ -93,6 +94,56 @@ describe('probeSecretStorageProtection', () => {
 
   it('reports unknown when the host has no secretStorage at all', async () => {
     await expect(probeSecretStorageProtection(appWith(undefined))).resolves.toBe('unknown');
+  });
+});
+
+describe('applySecretStorageCopy', () => {
+  it('renders the unconfirmed wording synchronously, before the host answers', () => {
+    const el = document.createElement('p');
+    let resolveProbe: (v: boolean) => void = () => {};
+    const app = appWith({ isEncryptionAvailable: () => new Promise<boolean>((r) => { resolveProbe = r; }) });
+
+    applySecretStorageCopy(app, el, (storage) => `Lead. ${storage} Tail.`);
+
+    // The pessimistic default is on screen while the probe is still in flight —
+    // the window in which a keychain promise would otherwise be visible.
+    expect(el.textContent).toContain('could not confirm');
+    expect(el.textContent).not.toContain('Stored in your OS keychain');
+    resolveProbe(true);
+  });
+
+  it('corrects the sentence in place once the host confirms encryption', async () => {
+    const el = document.createElement('p');
+    applySecretStorageCopy(appWith({ isEncryptionAvailable: async () => true }), el, (s) => `Lead. ${s} Tail.`);
+
+    await vi.waitFor(() => expect(el.textContent).toContain('Stored in your OS keychain'));
+    // The caller's own claims survive the correction.
+    expect(el.textContent).toBe('Lead. Stored in your OS keychain. Tail.');
+  });
+
+  it('corrects to the plaintext wording on a host without encrypted storage', async () => {
+    const el = document.createElement('p');
+    applySecretStorageCopy(appWith({ isEncryptionAvailable: async () => false }), el, (s) => `Lead. ${s} Tail.`);
+
+    await vi.waitFor(() => expect(el.textContent).toContain('no encrypted secret storage'));
+    expect(el.textContent).not.toContain('Stored in your OS keychain');
+    expect(el.textContent).toMatch(/^Lead\. /);
+    expect(el.textContent).toMatch(/ Tail\.$/);
+  });
+
+  it('leaves sibling nodes alone — the masked key is not collateral', async () => {
+    // The OpenAI setting puts the storage sentence and the masked key in the
+    // same description element; correcting one must not wipe the other.
+    const desc = document.createElement('div');
+    const storageSpan = desc.appendChild(document.createElement('span'));
+    const key = desc.appendChild(document.createElement('span'));
+    key.textContent = 'sk-abc…wxyz';
+
+    applySecretStorageCopy(appWith({ isEncryptionAvailable: async () => false }), storageSpan, (s) => ` ${s}`);
+
+    await vi.waitFor(() => expect(storageSpan.textContent).toContain('no encrypted secret storage'));
+    expect(key.textContent).toBe('sk-abc…wxyz');
+    expect(desc.children.length).toBe(2);
   });
 });
 
