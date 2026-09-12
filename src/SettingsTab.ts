@@ -91,6 +91,48 @@ export function describeSecretStorage(protection: SecretStorageProtection): stri
 }
 
 /**
+ * Open the host's secret picker and hand the chosen secret name to `onPicked`
+ * (empty string when the user picked nothing).
+ *
+ * `SecretComponent` has no "open" method, so the only way in is to render it
+ * into a hidden container and click the control it draws. That container is the
+ * caller's to clean up, and every failure path has to take it back down — which
+ * is why `opened` gates the `finally` rather than the happy path removing it
+ * inline (there the picker itself owns the container until `onChange` fires).
+ *
+ * The construction is wrapped because hosts disagree about the signature.
+ * Obsidian's is `(app, containerEl)`; Geode's shim currently takes the
+ * container alone, so `app` lands where the container is expected and the
+ * constructor dies on `container.appendChild is not a function` — synchronously,
+ * inside a click handler. Unguarded that is a dead button: no picker, no
+ * message, and a leaked hidden div, because the removal sat past the throw. A
+ * host mismatch now degrades to a Notice that points at the manual entry path,
+ * with the underlying error kept in the debug log.
+ */
+export function openSecretPicker(app: App, onPicked: (secretName: string) => void): void {
+  const tmp = document.body.createDiv();
+  tmp.style.display = 'none';
+  let opened = false;
+  try {
+    const picker = new SecretComponent(app, tmp);
+    picker.onChange((secretName: string) => {
+      tmp.remove();
+      onPicked(secretName);
+    });
+    // SecretComponent renders a button — click it immediately to open the picker
+    const inner = tmp.querySelector('button, input') as HTMLElement | null;
+    if (!inner) throw new Error('SecretComponent rendered no control to click');
+    inner.click();
+    opened = true;
+  } catch (err) {
+    debugLog('[ClaudeThreads] secret picker unavailable on this host:', String(err));
+    new Notice('The secret picker isn’t available on this host — use “Set key” to enter the key directly.');
+  } finally {
+    if (!opened) tmp.remove();
+  }
+}
+
+/**
  * Ask the host whether its secret storage is encrypted.
  *
  * `isEncryptionAvailable` is duck-typed rather than called straight off the
@@ -2024,11 +2066,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         })
         .addButton((btn) => {
           btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
-            const tmp = document.body.createDiv();
-            tmp.style.display = 'none';
-            const picker = new SecretComponent(this.app, tmp);
-            picker.onChange((secretName: string) => {
-              tmp.remove();
+            openSecretPicker(this.app, (secretName) => {
               if (!secretName) return;
               const actualValue = this.app.secretStorage.getSecret(secretName);
               if (actualValue) {
@@ -2039,14 +2077,6 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
                 new Notice('That secret has no value stored');
               }
             });
-            // SecretComponent renders a button — click it immediately to open the picker
-            const inner = tmp.querySelector('button, input') as HTMLElement | null;
-            if (inner) {
-              inner.click();
-            } else {
-              tmp.remove();
-              new Notice('Secret picker not available');
-            }
           });
         });
     }
