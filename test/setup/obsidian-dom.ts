@@ -8,6 +8,18 @@
  * Only runs in the jsdom environment (loaded via vitest setupFiles).
  */
 
+/** The subset of Obsidian's `DomElementInfo` this shim understands. */
+interface DomElementInfoLike {
+  cls?: string;
+  text?: string;
+  attr?: Record<string, string>;
+  type?: string;
+  placeholder?: string;
+  value?: string;
+  title?: string;
+  href?: string;
+}
+
 declare global {
   interface HTMLElement {
     empty(): void;
@@ -19,14 +31,14 @@ declare global {
     createSpan(options?: string | { cls?: string; text?: string; attr?: Record<string, string> }): HTMLSpanElement;
     createEl<K extends keyof HTMLElementTagNameMap>(
       tag: K,
-      options?: { cls?: string; text?: string; attr?: Record<string, string> }
+      options?: DomElementInfoLike
     ): HTMLElementTagNameMap[K];
     setText(text: string): void;
     insertBefore<T extends Node>(newChild: T, reference: Node | null): T;
   }
 }
 
-function applyOptions(el: HTMLElement, options?: string | { cls?: string; text?: string; attr?: Record<string, string> }) {
+function applyOptions(el: HTMLElement, options?: string | DomElementInfoLike) {
   if (!options) return;
   if (typeof options === 'string') {
     if (options) el.className = options;
@@ -34,6 +46,15 @@ function applyOptions(el: HTMLElement, options?: string | { cls?: string; text?:
   }
   if (options.cls) el.className = options.cls;
   if (options.text) el.textContent = options.text;
+  // Obsidian's DomElementInfo applies these as properties on the created
+  // element, not just as `attr`. The shim used to drop them, so any form built
+  // with `createEl('input', { type, placeholder, value })` came out bare in
+  // tests and could only be selected positionally.
+  if (options.type !== undefined) el.setAttribute('type', options.type);
+  if (options.placeholder !== undefined) el.setAttribute('placeholder', options.placeholder);
+  if (options.value !== undefined) (el as HTMLInputElement).value = options.value;
+  if (options.title !== undefined) el.setAttribute('title', options.title);
+  if (options.href !== undefined) el.setAttribute('href', options.href);
   if (options.attr) {
     for (const [k, v] of Object.entries(options.attr)) {
       el.setAttribute(k, v);
@@ -88,7 +109,7 @@ HTMLElement.prototype.createSpan = function (
 HTMLElement.prototype.createEl = function <K extends keyof HTMLElementTagNameMap>(
   this: HTMLElement,
   tag: K,
-  options?: { cls?: string; text?: string; attr?: Record<string, string> }
+  options?: DomElementInfoLike
 ): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag) as HTMLElementTagNameMap[K];
   applyOptions(el as HTMLElement, options);

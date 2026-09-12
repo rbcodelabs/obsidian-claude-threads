@@ -1900,6 +1900,76 @@ test.describe('Agent Threads UI', () => {
     await shot(page, 'settings-mcp-edit.png', { fullPage: true });
   });
 
+  test('settings — add mcp server form offers the OAuth type', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+    await page.getByRole('button', { name: 'Add MCP server' }).click();
+    await page.waitForSelector('.modal-overlay');
+    await page.getByRole('button', { name: 'OAuth', exact: true }).click();
+    await page.waitForTimeout(200);
+    // The OAuth arm collects its own field set — no command/args/env or headers.
+    await expect(page.getByPlaceholder('https://mcp.vercel.com/')).toBeVisible();
+    await expect(page.getByPlaceholder('openid profile email')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeVisible();
+    await shot(page, 'settings-mcp-add-oauth.png', { fullPage: true });
+  });
+
+  test('settings — OAuth type is offered when adding but not when editing', async ({ page }) => {
+    const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+    await page.setViewportSize({ width: 860, height: 820 });
+    await page.goto(settingsUrl);
+    await page.waitForSelector('.ct-settings-tabs');
+    await page.click('.ct-settings-tab-btn:has-text("MCP")');
+    await page.waitForTimeout(200);
+
+    await page.getByRole('button', { name: 'Add MCP server' }).click();
+    await page.waitForSelector('.modal-overlay');
+    await expect(page.getByRole('button', { name: 'OAuth', exact: true })).toBeVisible();
+    // Dismiss via the form's own Cancel: Escape does not close the modal in the
+    // harness, and the lingering overlay intercepts the Edit click below.
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForSelector('.modal-overlay', { state: 'detached' });
+
+    // Editing an existing server must NOT offer OAuth: a connected OAuth server
+    // is reconnected, not edited in place.
+    await page
+      .locator('.ct-mcp-servers-list .setting-item')
+      .filter({ hasText: 'obsidian_notes' })
+      .getByRole('button', { name: 'Edit' })
+      .click();
+    await page.waitForSelector('.modal-overlay');
+    await expect(page.getByRole('button', { name: 'Command (stdio)' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'OAuth', exact: true })).toHaveCount(0);
+  });
+
+  for (const width of [390, 375]) {
+    test(`settings — three MCP type buttons fit viewport ${width}`, async ({ page }) => {
+      const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
+      await page.setViewportSize({ width, height: 760 });
+      await page.goto(settingsUrl);
+      await page.waitForSelector('.ct-settings-tabs');
+      await page.click('.ct-settings-tab-btn:has-text("MCP")');
+      await page.waitForTimeout(200);
+      await page.getByRole('button', { name: 'Add MCP server' }).click();
+      await page.waitForSelector('.modal-overlay');
+      await page.waitForTimeout(200);
+
+      // Adding a third type button must not push the row into horizontal
+      // overflow on a phone-width modal — the row wraps instead.
+      const overflow = await page.locator('.ct-modal-type-row').evaluate(
+        (el) => el.scrollWidth - el.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(1);
+      for (const label of ['Command (stdio)', 'HTTP or SSE', 'OAuth']) {
+        await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible();
+      }
+    });
+  }
+
   test('settings — oauth mcp servers', async ({ page }) => {
     const settingsUrl = 'file://' + path.resolve('test/harness/settings.html');
     await page.setViewportSize({ width: 860, height: 820 });

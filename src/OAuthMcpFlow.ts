@@ -69,9 +69,80 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
 
-function callbackPage(message: string): string {
-  return `<!doctype html><html><body><p>${escapeHtml(message)}</p><script>window.close()</script></body></html>`;
+/**
+ * The one page a user ever sees from this plugin's local callback server: the
+ * tab the authorization server redirects back to after consent.
+ *
+ * `<meta charset>` is not optional here. Without it the browser decodes this
+ * UTF-8 string as Latin-1 and the em dash in "Authorization complete" renders
+ * as `â€”`. The Content-Type header sent alongside it also carries the charset,
+ * since the header wins over the meta tag when both are present.
+ *
+ * Everything is inline — no fonts, no stylesheets, no images. The page is
+ * served once from 127.0.0.1 on an ephemeral port and the server is torn down
+ * immediately after, so any external reference would race the shutdown.
+ */
+function callbackPage(opts: { variant: 'success' | 'error'; title: string; detail?: string }): string {
+  const accent = opts.variant === 'success' ? '#16a34a' : '#dc2626';
+  const icon = opts.variant === 'success'
+    ? '<path d="M20 6 9 17l-5-5"/>'
+    : '<path d="M12 8v5"/><path d="M12 16h.01"/><circle cx="12" cy="12" r="9"/>';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(opts.title)}</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: #f6f7f9; color: #1f2328;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  .card {
+    width: 100%; max-width: 420px; padding: 32px; text-align: center;
+    background: #fff; border: 1px solid rgba(0,0,0,.08); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  }
+  .badge {
+    width: 48px; height: 48px; margin: 0 auto 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: ${accent}1a; color: ${accent};
+  }
+  svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+  h1 { margin: 0 0 8px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  p { margin: 0; font-size: 14px; color: #656d76; overflow-wrap: anywhere; }
+  .hint { margin-top: 20px; font-size: 12.5px; color: #8b949e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181d; color: #e6edf3; }
+    .card { background: #1c1f26; border-color: rgba(255,255,255,.09); box-shadow: none; }
+    p { color: #9198a1; }
+    .hint { color: #6e7681; }
+  }
+</style>
+</head>
+<body>
+  <main class="card" role="status">
+    <div class="badge" aria-hidden="true"><svg viewBox="0 0 24 24">${icon}</svg></div>
+    <h1>${escapeHtml(opts.title)}</h1>
+    ${opts.detail ? `<p>${escapeHtml(opts.detail)}</p>` : ''}
+    <p class="hint">You can close this tab and return to Agent Threads.</p>
+  </main>
+  <script>
+    // Only works for script-opened windows, so the hint above stands either way.
+    setTimeout(function () { window.close(); }, 1200);
+  </script>
+</body>
+</html>`;
 }
+
+/** Content-Type for the callback page. The charset must be explicit — see callbackPage. */
+const CALLBACK_CONTENT_TYPE = 'text/html; charset=utf-8';
 
 function asError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
@@ -85,9 +156,16 @@ export class OAuthMcpFlow {
     private readonly callbackTimeoutMs = CALLBACK_TIMEOUT_MS,
   ) {}
 
-  /** RFC 9728 protected-resource discovery -> RFC 8414/OIDC AS metadata discovery, combined by the SDK. */
+  /**
+   * RFC 9728 protected-resource discovery -> RFC 8414/OIDC AS metadata discovery, combined by the SDK.
+   *
+   * `fetchFn` is mandatory here rather than left to the SDK's `fetch` default:
+   * the renderer's origin is `file://`, from which Chromium blocks every
+   * cross-origin fetch, and the SDK turns that failure into `undefined`
+   * metadata instead of an error (see src/requestUrlFetch.ts).
+   */
   async discoverAS(serverUrl: string): Promise<OAuthASMetadata> {
-    return discoverOAuthServerInfo(serverUrl);
+    return discoverOAuthServerInfo(serverUrl, { fetchFn: this.fetchFn });
   }
 
   /**
@@ -110,6 +188,7 @@ export class OAuthMcpFlow {
       registration_endpoint: registrationEndpoint,
     };
     const info = await sdkRegisterClient(registrationEndpoint, {
+      fetchFn: this.fetchFn,
       metadata,
       clientMetadata: {
         redirect_uris: [redirectUri],
@@ -204,18 +283,27 @@ export class OAuthMcpFlow {
     const returnedState = url.searchParams.get('state');
 
     if (error) {
-      res.writeHead(200, { 'Content-Type': 'text/html' }).end(callbackPage(`Authorization was denied: ${error}`));
+      res.writeHead(200, { 'Content-Type': CALLBACK_CONTENT_TYPE }).end(callbackPage({
+        variant: 'error',
+        title: 'Authorization denied',
+        detail: `The authorization server reported: ${error}`,
+      }));
       finish({ ok: false, error: new Error(`OAuth authorization was denied: ${error}`) });
       return;
     }
     if (!code || returnedState !== ctx.expectedState) {
-      res.writeHead(400, { 'Content-Type': 'text/html' }).end(callbackPage('Invalid authorization response.'));
+      res.writeHead(400, { 'Content-Type': CALLBACK_CONTENT_TYPE }).end(callbackPage({
+        variant: 'error',
+        title: 'Invalid authorization response',
+        detail: 'The redirect was missing its authorization code, or its state did not match this request.',
+      }));
       finish({ ok: false, error: new Error('OAuth callback state mismatch or missing authorization code.') });
       return;
     }
 
     try {
       const tokens = await exchangeAuthorization(ctx.asMetadata.authorizationServerUrl, {
+        fetchFn: this.fetchFn,
         metadata: ctx.asMetadata.authorizationServerMetadata,
         clientInformation: { client_id: ctx.clientId },
         authorizationCode: code,
@@ -224,10 +312,18 @@ export class OAuthMcpFlow {
       });
       const tokenSet = toTokenSet(tokens);
       await this.tokenStore.store(ctx.serverName, tokenSet);
-      res.writeHead(200, { 'Content-Type': 'text/html' }).end(callbackPage('Authorization complete — you can close this tab.'));
+      res.writeHead(200, { 'Content-Type': CALLBACK_CONTENT_TYPE }).end(callbackPage({
+        variant: 'success',
+        title: 'Authorization complete',
+        detail: `${ctx.serverName} is connected.`,
+      }));
       finish({ ok: true, tokens: tokenSet });
     } catch (err) {
-      res.writeHead(502, { 'Content-Type': 'text/html' }).end(callbackPage('Token exchange failed.'));
+      res.writeHead(502, { 'Content-Type': CALLBACK_CONTENT_TYPE }).end(callbackPage({
+        variant: 'error',
+        title: 'Token exchange failed',
+        detail: 'The authorization server rejected the request to exchange the code for tokens.',
+      }));
       finish({ ok: false, error: asError(err) });
     }
   }
@@ -240,6 +336,7 @@ export class OAuthMcpFlow {
     if (!clientId) throw new Error(`No client_id stored for "${serverName}"; re-authorization is required.`);
 
     const tokens = await refreshAuthorization(asMetadata.authorizationServerUrl, {
+      fetchFn: this.fetchFn,
       metadata: asMetadata.authorizationServerMetadata,
       clientInformation: { client_id: clientId },
       refreshToken: current.refreshToken,

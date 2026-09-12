@@ -19,6 +19,7 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { OAuthMcpFlow, type OAuthASMetadata } from './OAuthMcpFlow';
 import { OAuthMcpProxy, type ToolFilter } from './OAuthMcpProxy';
 import { OAuthTokenStore, type SecretStorageLike, type TokenSet } from './OAuthTokenStore';
+import { createRequestUrlFetch } from './requestUrlFetch';
 import type { McpRegistrationResult } from './mcpServerStore';
 import type { OAuthMcpState, StoredOAuthMcpServer } from './types';
 
@@ -37,6 +38,12 @@ export interface OAuthMcpRegistryHost {
   save: () => Promise<void>;
   secretStorage: SecretStorageLike;
   openUrl: (url: string) => Promise<unknown>;
+  /**
+   * HTTP client for authorization-server traffic. Defaults to the
+   * `requestUrl`-backed adapter, which is the only thing that works in the
+   * renderer (`file://` origin blocks cross-origin fetch). Tests inject a stub.
+   */
+  fetchFn?: typeof fetch;
 }
 
 interface Connection {
@@ -81,7 +88,9 @@ export class OAuthMcpRegistry {
       if (!asMetadata) return Promise.reject(new Error(`No cached authorization-server metadata for "${name}"; re-authorize in Settings.`));
       return flow.refresh(name, asMetadata);
     });
-    flow = new OAuthMcpFlow(tokenStore, this.host.openUrl);
+    // Must be the requestUrl-backed fetch, not the renderer's: see
+    // src/requestUrlFetch.ts. `this.host.fetchFn` lets tests inject a stub.
+    flow = new OAuthMcpFlow(tokenStore, this.host.openUrl, this.host.fetchFn ?? createRequestUrlFetch());
     return { flow, tokenStore, setAsMetadata: (m: OAuthASMetadata) => { asMetadata = m; } };
   }
 

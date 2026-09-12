@@ -58,6 +58,13 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
+ * The response the plugin's local callback server served on the most recent
+ * consent round-trip. Captured so tests can assert on the page a real user sees
+ * (see the charset regression test) rather than only on the flow's return value.
+ */
+let lastCallbackResponse: Awaited<ReturnType<typeof httpGetNoRedirect>> | undefined;
+
+/**
  * Stands in for a real browser/webview completing the OAuth consent redirect
  * dance: GETs the authorization URL (expecting a 302), then GETs whatever
  * `Location` it was handed — which is the REAL local callback server
@@ -71,7 +78,7 @@ async function simulateBrowserConsent(authorizationUrl: string, opts: { deny?: b
   if (first.status < 300 || first.status >= 400 || !first.headers.location) {
     throw new Error(`Mock AS /authorize did not redirect as expected (status ${first.status}): ${first.body}`);
   }
-  await httpGetNoRedirect(first.headers.location);
+  lastCallbackResponse = await httpGetNoRedirect(first.headers.location);
 }
 
 // ── Mock Authorization Server ───────────────────────────────────────────────
@@ -418,7 +425,19 @@ function makeHost(openUrl: (url: string) => Promise<unknown>): {
     oauthMcpState: {},
   };
   return {
-    host: { getSettings: () => settings, save: async () => {}, secretStorage, openUrl },
+    // `fetchFn` is injected explicitly rather than left to the production
+    // default. These tests drive a real local mock AS over 127.0.0.1 from Node,
+    // where global fetch works fine; the production default is the
+    // requestUrl-backed adapter, because the renderer's `file://` origin cannot
+    // fetch cross-origin at all.
+    //
+    // Be clear about what that means for this file's coverage: everything below
+    // exercises the broker's *protocol* behavior and nothing about its
+    // *transport* in the real app. This suite was fully green while the feature
+    // was completely non-functional in Geode. The transport is covered by
+    // test/unit/requestUrlFetch.test.ts and by the fetchFn-plumbing guard in
+    // test/unit/OAuthMcpFlow.test.ts.
+    host: { getSettings: () => settings, save: async () => {}, secretStorage, openUrl, fetchFn: fetch },
     settings,
     secretStorage,
     raw,
@@ -476,6 +495,37 @@ function registry(openUrl: (url: string) => Promise<unknown> = (url) => simulate
 // ── Scenario 1: full flow ───────────────────────────────────────────────────
 
 describe('OAuth MCP broker integration — full registration flow', () => {
+  /**
+   * The callback page is the only UI this plugin serves over HTTP, and it is
+   * the last thing a user sees before returning to the app.
+   *
+   * Regression: it was sent as `text/html` with no charset and no
+   * `<meta charset>`, so browsers decoded the UTF-8 body as Latin-1 and the em
+   * dash in the success copy rendered as `\u00e2\u0080\u0094`. Asserting the
+   * declared charset is the durable guard; asserting on the decoded text alone
+   * would pass here regardless, because this test reads the body as UTF-8.
+   */
+  it('serves the consent callback page as UTF-8 so non-ASCII copy is not mojibaked', async () => {
+    const { as, upstream } = await setupServers();
+    const { registry: reg } = registry();
+    lastCallbackResponse = undefined;
+
+    const result = await reg.registerServer({ name: 'vercel', url: upstream.baseUrl, authorizationServerUrl: as.baseUrl });
+    expect(result.success).toBe(true);
+
+    // registerServer resolves from inside the callback handler via finish(),
+    // which can beat the simulated browser finishing its read of that response.
+    for (let i = 0; i < 100 && !lastCallbackResponse; i++) await delay(10);
+
+    const callback = lastCallbackResponse;
+    expect(callback).toBeDefined();
+    expect(String(callback!.headers['content-type'])).toMatch(/charset=utf-8/i);
+    expect(callback!.body).toContain('<meta charset="utf-8">');
+    expect(callback!.body).toContain('Authorization complete');
+    // The bytes a mis-declared page would have produced must not appear.
+    expect(callback!.body).not.toContain('\u00e2\u0080\u0094');
+  });
+
   it('discovers, DCRs, completes PKCE consent over a real redirect round-trip, and proxies tools/list', async () => {
     const { as, upstream } = await setupServers();
     const { registry: reg, settings } = registry();

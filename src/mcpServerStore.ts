@@ -33,23 +33,37 @@ const isReservedMcpName = (name: string): boolean =>
 export const mcpRegistrationSchema = z.object({
   name: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).refine(name =>
     !isReservedMcpName(name)),
-  type: z.enum(['stdio', 'http', 'sse', 'oauth']),
+  type: z.enum(['stdio', 'http', 'sse', 'oauth']).describe(
+    'Transport. Use "oauth" for any remote server that requires its own sign-in ' +
+    '(Vercel, Figma, Linear, Notion and similar) — the plugin then brokers OAuth 2.1 + PKCE ' +
+    'and opens a consent screen. Use "http"/"sse" only for endpoints that need no sign-in or ' +
+    'authenticate with a static header. Use "stdio" for a local command.',
+  ),
   command: z.string().trim().min(1).optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().trim().min(1).optional(),
   headers: z.record(z.string(), z.string()).optional(),
   /** `oauth` only: space-separated scope list requested at authorization. Omit to use the AS default scope. */
-  scopes: z.string().optional(),
+  scopes: z.string().optional().describe(
+    'oauth only. Space-separated OAuth scopes. Omit to use the authorization server\'s default.',
+  ),
   /** `oauth` only: tool allow/deny filtering enforced at the local proxy. `allow` and `deny` are mutually exclusive. */
   tools: z.object({
     allow: z.array(z.string()).optional(),
     deny: z.array(z.string()).optional(),
-  }).optional(),
+  }).optional().describe(
+    'oauth only. Per-tool filtering enforced at the local proxy. Set allow to expose only those ' +
+    'tools, or deny to hide them; the two are mutually exclusive.',
+  ),
   /** `oauth` only: skip Dynamic Client Registration by supplying a known public client_id. */
-  clientId: z.string().optional(),
+  clientId: z.string().optional().describe(
+    'oauth only. Skip Dynamic Client Registration with a known public client_id. Usually omitted.',
+  ),
   /** `oauth` only: skip protected-resource discovery by supplying the AS metadata URL directly. */
-  authorizationServerUrl: z.string().trim().url().startsWith('https://').optional(),
+  authorizationServerUrl: z.string().trim().url().startsWith('https://').optional().describe(
+    'oauth only. Skip protected-resource discovery by naming the authorization server directly. Usually omitted.',
+  ),
 }).strict().superRefine((entry, ctx) => {
   const invalid = () => ctx.addIssue({ code: 'custom', message: 'Invalid MCP configuration. Credentials must use ${NAME} placeholders; use request_secret to store them.' });
   const credentialKey = /authorization|cookie|token|secret|password|credential|api[-_]?key/i;

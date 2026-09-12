@@ -81,7 +81,46 @@ describe('OAuthMcpFlow.discoverAS', () => {
     sdkAuth.discoverOAuthServerInfo.mockResolvedValue(info);
     const flow = new OAuthMcpFlow(fixtureTokenStore(), vi.fn());
     await expect(flow.discoverAS('https://mcp.vercel.com/')).resolves.toEqual(info);
-    expect(sdkAuth.discoverOAuthServerInfo).toHaveBeenCalledWith('https://mcp.vercel.com/');
+    expect(sdkAuth.discoverOAuthServerInfo).toHaveBeenCalledWith(
+      'https://mcp.vercel.com/',
+      expect.objectContaining({ fetchFn: expect.any(Function) }),
+    );
+  });
+
+  /**
+   * Regression guard for a bug that was green in CI and broken in the app.
+   *
+   * Every authorization-server call must go through the injected fetchFn, never
+   * the SDK's default global `fetch`. Under vitest (Node) both work, so nothing
+   * here catches the difference by accident — but in the renderer the origin is
+   * `file://`, from which Chromium blocks all cross-origin fetches, and the SDK
+   * converts that TypeError into `undefined` metadata rather than an error. The
+   * user-visible symptom was "this authorization server does not support
+   * Dynamic Client Registration" for a server that plainly does.
+   */
+  it('routes every authorization-server call through the injected fetchFn', async () => {
+    const fetchFn = vi.fn() as unknown as typeof fetch;
+    const info = fixtureAsMetadata();
+    sdkAuth.discoverOAuthServerInfo.mockResolvedValue(info);
+    sdkAuth.registerClient.mockResolvedValue({ client_id: 'issued' });
+    sdkAuth.refreshAuthorization.mockResolvedValue({ access_token: 'a', refresh_token: 'r', expires_in: 60 });
+
+    const tokenStore = fixtureTokenStore();
+    tokenStore.getCurrentTokens = vi.fn().mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+    tokenStore.getClientId = vi.fn().mockResolvedValue('client-1');
+    const flow = new OAuthMcpFlow(tokenStore, vi.fn(), fetchFn);
+
+    await flow.discoverAS('https://mcp.vercel.com/');
+    await flow.registerClient('https://as.example/register', 'http://127.0.0.1:1/callback');
+    await flow.refresh('vercel', info);
+
+    for (const call of [
+      sdkAuth.discoverOAuthServerInfo.mock.calls[0][1],
+      sdkAuth.registerClient.mock.calls[0][1],
+      sdkAuth.refreshAuthorization.mock.calls[0][1],
+    ]) {
+      expect(call.fetchFn).toBe(fetchFn);
+    }
   });
 });
 

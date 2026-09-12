@@ -9,6 +9,11 @@ import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
 import type { AgentDashboard } from './AgentDashboard';
 import type { McpServerEntry } from './mcpServerStore';
+// Value import is mobile-safe: mcpServerStore's only value dependency is zod
+// (pure JS, no Node built-ins), so this adds nothing to module-init that
+// Obsidian Mobile's require() interceptor would return null for.
+// See test/unit/bundle-safety.test.ts.
+import { mcpRegistrationSchema } from './mcpServerStore';
 import { classifyScheduledItems, describeScheduledExecution, formatNextOccurrence } from './scheduledWorkView';
 
 // View-type string constants, mirrored as local literals (see main.ts) so referencing
@@ -769,8 +774,8 @@ class AddSkillSourceModal extends Modal {
  * Pass `existing` (and it carries `previousName` implicitly via its `name`)
  * to pre-fill the form for an edit; pass `null` to add a new entry.
  */
-class McpServerModal extends Modal {
-  private serverType: 'stdio' | 'http';
+export class McpServerModal extends Modal {
+  private serverType: 'stdio' | 'http' | 'oauth';
   private contentEl2!: HTMLElement;
 
   constructor(
@@ -789,29 +794,32 @@ class McpServerModal extends Modal {
     contentEl.createEl('h2', { text: this.existing ? 'Edit MCP server' : 'Add MCP server' });
 
     const typeRow = contentEl.createEl('div', { cls: 'ct-modal-type-row' });
-    const stdioBtn = typeRow.createEl('button', {
-      cls: 'ct-modal-type-btn' + (this.serverType === 'stdio' ? ' ct-modal-type-btn--active' : ''),
-      text: 'Command (stdio)',
-    });
-    const httpBtn = typeRow.createEl('button', {
-      cls: 'ct-modal-type-btn' + (this.serverType === 'http' ? ' ct-modal-type-btn--active' : ''),
-      text: 'HTTP or SSE',
-    });
+    // OAuth is add-only: a connected server's credentials live in the keychain and
+    // its config in `oauthMcpServers`, so changing one means Disconnect + reconnect
+    // (a fresh consent round-trip), not editing fields in place. Offering the tab
+    // during an edit would imply an in-place edit this modal cannot perform.
+    const types: { id: 'stdio' | 'http' | 'oauth'; label: string }[] = [
+      { id: 'stdio', label: 'Command (stdio)' },
+      { id: 'http', label: 'HTTP or SSE' },
+      ...(this.existing ? [] : [{ id: 'oauth' as const, label: 'OAuth' }]),
+    ];
+    const buttons = new Map<string, HTMLElement>();
+    for (const { id, label } of types) {
+      const btn = typeRow.createEl('button', {
+        cls: 'ct-modal-type-btn' + (this.serverType === id ? ' ct-modal-type-btn--active' : ''),
+        text: label,
+      });
+      buttons.set(id, btn);
+      btn.addEventListener('click', () => {
+        this.serverType = id;
+        for (const [otherId, otherBtn] of buttons) {
+          otherBtn.toggleClass('ct-modal-type-btn--active', otherId === id);
+        }
+        this.renderTypeContent();
+      });
+    }
 
     this.contentEl2 = contentEl.createEl('div');
-
-    stdioBtn.addEventListener('click', () => {
-      this.serverType = 'stdio';
-      stdioBtn.addClass('ct-modal-type-btn--active');
-      httpBtn.removeClass('ct-modal-type-btn--active');
-      this.renderTypeContent();
-    });
-    httpBtn.addEventListener('click', () => {
-      this.serverType = 'http';
-      httpBtn.addClass('ct-modal-type-btn--active');
-      stdioBtn.removeClass('ct-modal-type-btn--active');
-      this.renderTypeContent();
-    });
 
     this.renderTypeContent();
   }
@@ -819,6 +827,7 @@ class McpServerModal extends Modal {
   private renderTypeContent(): void {
     this.contentEl2.empty();
     if (this.serverType === 'stdio') this.renderStdioForm();
+    else if (this.serverType === 'oauth') this.renderOAuthForm();
     else this.renderHttpForm();
   }
 
@@ -967,6 +976,157 @@ class McpServerModal extends Modal {
     saveBtn.addEventListener('click', handleSave);
     nameInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
     urlInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  /**
+   * Connect an OAuth-gated server (`type: "oauth"`). Unlike the stdio/HTTP forms
+   * this does not write settings directly: `OAuthMcpRegistry.registerServer()`
+   * owns the whole round-trip (discovery → DCR → consent in the Web Viewer →
+   * token exchange → proxy start → save), and only it knows how to unwind a
+   * half-finished attempt. So the modal's job is to collect fields, hand them
+   * over, and stay open across a wait that can legitimately run to the flow's
+   * 5-minute consent timeout.
+   */
+  private renderOAuthForm(): void {
+    const el = this.contentEl2;
+
+    el.createEl('p', {
+      cls: 'ct-modal-desc',
+      text:
+        'Connecting opens the provider\'s sign-in page in the Web Viewer. Tokens are stored ' +
+        'in the OS keychain, never in this plugin\'s data.json.',
+    });
+
+    el.createEl('label', { text: 'Name', cls: 'ct-modal-label' });
+    const nameInput = el.createEl('input', { type: 'text', placeholder: 'vercel', cls: 'ct-modal-input' });
+
+    el.createEl('label', { text: 'URL', cls: 'ct-modal-label' });
+    const urlInput = el.createEl('input', {
+      type: 'text',
+      placeholder: 'https://mcp.vercel.com/',
+      cls: 'ct-modal-input',
+    });
+
+    el.createEl('label', { text: 'Scopes (optional, space-separated)', cls: 'ct-modal-label' });
+    const scopesInput = el.createEl('input', {
+      type: 'text',
+      placeholder: 'openid profile email',
+      cls: 'ct-modal-input',
+    });
+
+    el.createEl('label', { text: 'Tool filter (optional)', cls: 'ct-modal-label' });
+    const filterModeSelect = el.createEl('select', { cls: 'ct-modal-input' });
+    filterModeSelect.createEl('option', { text: 'No filter', value: 'none' });
+    filterModeSelect.createEl('option', { text: 'Allow only these', value: 'allow' });
+    filterModeSelect.createEl('option', { text: 'Deny these', value: 'deny' });
+    const toolsInput = el.createEl('textarea', { cls: 'ct-modal-input ct-modal-textarea' });
+    toolsInput.placeholder = 'buy_pro\nbuy_credits';
+    toolsInput.style.display = 'none';
+    filterModeSelect.addEventListener('change', () => {
+      toolsInput.style.display = filterModeSelect.value === 'none' ? 'none' : '';
+    });
+
+    const advanced = el.createEl('details');
+    advanced.createEl('summary', { text: 'Advanced' });
+    advanced.createEl('label', { text: 'Client ID (skips Dynamic Client Registration)', cls: 'ct-modal-label' });
+    const clientIdInput = advanced.createEl('input', { type: 'text', cls: 'ct-modal-input' });
+    advanced.createEl('label', { text: 'Authorization server URL (skips discovery)', cls: 'ct-modal-label' });
+    const asUrlInput = advanced.createEl('input', { type: 'text', cls: 'ct-modal-input' });
+
+    const errorEl = el.createEl('p', { cls: 'ct-modal-error' });
+    errorEl.style.display = 'none';
+    const statusEl = el.createEl('p', { cls: 'ct-modal-desc' });
+    statusEl.style.display = 'none';
+
+    const buttonRow = el.createDiv('ct-modal-button-row');
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+    const saveBtn = buttonRow.createEl('button', { text: 'Connect', cls: 'mod-cta' });
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg;
+      errorEl.style.display = '';
+    };
+
+    let connecting = false;
+    const handleConnect = async () => {
+      if (connecting) return;
+      errorEl.style.display = 'none';
+
+      const registry = this.plugin.oauthMcpRegistry;
+      if (!registry) { showError('OAuth MCP registration is unavailable in this context.'); return; }
+
+      const mode = filterModeSelect.value;
+      const toolNames = toolsInput.value.split('\n').map(t => t.trim()).filter(Boolean);
+      const entry = {
+        name: nameInput.value.trim(),
+        type: 'oauth' as const,
+        url: urlInput.value.trim(),
+        ...(scopesInput.value.trim() ? { scopes: scopesInput.value.trim() } : {}),
+        ...(mode !== 'none' && toolNames.length > 0 ? { tools: { [mode]: toolNames } } : {}),
+        ...(clientIdInput.value.trim() ? { clientId: clientIdInput.value.trim() } : {}),
+        ...(asUrlInput.value.trim() ? { authorizationServerUrl: asUrlInput.value.trim() } : {}),
+      };
+
+      if (!entry.name) { showError('Name is required.'); return; }
+      if (!entry.url) { showError('URL is required.'); return; }
+
+      // Validate against the same schema the agent tool path uses, so the two
+      // entry points cannot drift on what counts as a valid OAuth server.
+      const parsed = mcpRegistrationSchema.safeParse(entry);
+      if (!parsed.success) {
+        showError(parsed.error.issues[0]?.message ?? 'Invalid OAuth MCP configuration.');
+        return;
+      }
+
+      connecting = true;
+      saveBtn.setAttribute('disabled', 'true');
+      cancelBtn.setAttribute('disabled', 'true');
+      saveBtn.textContent = 'Connecting…';
+      statusEl.textContent = 'Waiting for you to finish signing in…';
+      statusEl.style.display = '';
+
+      let result: { success: boolean; message: string };
+      try {
+        result = await registry.registerServer({
+          name: entry.name,
+          url: entry.url,
+          scopes: entry.scopes,
+          tools: entry.tools,
+          clientId: entry.clientId,
+          authorizationServerUrl: entry.authorizationServerUrl,
+        });
+      } catch (err) {
+        result = { success: false, message: err instanceof Error ? err.message : String(err) };
+      }
+
+      connecting = false;
+      statusEl.style.display = 'none';
+      saveBtn.removeAttribute('disabled');
+      cancelBtn.removeAttribute('disabled');
+      saveBtn.textContent = 'Connect';
+
+      if (!result.success) {
+        showError(result.message || 'Could not connect this OAuth MCP server.');
+        return;
+      }
+
+      new Notice(`Connected OAuth MCP server "${entry.name}".`);
+      this.close();
+      this.onSaved();
+    };
+
+    saveBtn.addEventListener('click', () => { void handleConnect(); });
+    // Enter-to-submit, matching the stdio and HTTP forms. This is why
+    // handleConnect keeps its own `connecting` guard: a keypress reaches the
+    // handler even while the Connect button is disabled, so the disabled
+    // attribute alone would not prevent a second consent round-trip.
+    const submitOnEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') void handleConnect(); };
+    nameInput.addEventListener('keydown', submitOnEnter);
+    urlInput.addEventListener('keydown', submitOnEnter);
+    scopesInput.addEventListener('keydown', submitOnEnter);
 
     setTimeout(() => nameInput.focus(), 50);
   }
@@ -2484,7 +2644,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'OAuth MCP servers' });
     containerEl.createEl('p', {
       cls: 'setting-item-description',
-      text: 'Registered via an agent\'s mcp_register_server call. Connect a server by asking an agent to register it; this panel only shows status and lets you disconnect.',
+      text:
+        'Remote MCP servers that require their own OAuth sign-in. Connect one with "Add MCP server" ' +
+        'below (choose OAuth), or by asking an agent to call mcp_register_server. Either way the ' +
+        'provider\'s consent screen opens in the Web Viewer; tokens are kept in the OS keychain. ' +
+        'Disconnect revokes them and stops the local proxy.',
     });
     const oauthListEl = containerEl.createDiv({ cls: 'ct-oauth-mcp-servers-list' });
     const renderOAuthList = () => {
@@ -2618,7 +2782,12 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .addButton((btn) =>
         btn.setButtonText('Add MCP server').setCta().onClick(() => {
-          new McpServerModal(this.app, this.plugin, null, () => renderList()).open();
+          // Refresh both lists: the modal can now land an entry in either
+          // `mcpServers` (stdio/http/sse) or `oauthMcpServers` (oauth).
+          new McpServerModal(this.app, this.plugin, null, () => {
+            renderList();
+            renderOAuthList();
+          }).open();
         }),
       );
   }
