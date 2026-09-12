@@ -366,6 +366,9 @@ export class SkillsManagerView extends ItemView {
     if (this.activeTab !== 'installed') return;
 
     const canInstall = !!this.plugin.getPluginSkillsRoot();
+    const newBtn = this.tabActionsEl.createEl('button', { text: 'New skill', cls: 'ct-skills-btn ct-skills-author-btn' });
+    newBtn.disabled = !this.plugin.getLocalSkillsRoot?.();
+    newBtn.addEventListener('click', () => this.renderNewSkill());
     const importBtn = this.tabActionsEl.createEl('button', { cls: 'clickable-icon ct-skills-tab-action' });
     setIcon(importBtn, 'plus');
     importBtn.disabled = !canInstall;
@@ -507,7 +510,7 @@ export class SkillsManagerView extends ItemView {
     });
 
     // ── Count line ───────────────────────────────────────────────────────────
-    const vaultCount = this.installedSkills.filter(s => s.origin === 'vault').length;
+    const vaultCount = this.installedSkills.filter(s => s.origin === 'vault' || s.origin === 'local').length;
     const homeCount = this.installedSkills.length - vaultCount;
     const agentCount = this.installedAgents.length;
     const sourceCount = githubSources.length;
@@ -606,7 +609,12 @@ export class SkillsManagerView extends ItemView {
       !q || name.toLowerCase().includes(q) || (description?.toLowerCase().includes(q) ?? false);
 
     const vaultSkills = this.installedSkills.filter(s => !s.sourceName && s.origin === 'vault');
-    const homeSkills = this.installedSkills.filter(s => !s.sourceName && s.origin !== 'vault');
+    const homeSkills = this.installedSkills.filter(s => !s.sourceName && s.origin === 'home');
+    const authoredSkills = this.installedSkills.filter(s => s.origin === 'local');
+    this.renderTreeGroup(inner, {
+      key: 'authored', label: 'Local skills', hasAnyItems: authoredSkills.length > 0,
+      skills: authoredSkills.filter(s => matchesQuery(s.name, s.description)), agents: [],
+    });
     const filteredVaultSkills = vaultSkills.filter(s => matchesQuery(s.name, s.description));
     const filteredHomeSkills = homeSkills.filter(s => matchesQuery(s.name, s.description));
     const filteredAgents = this.installedAgents.filter(a => matchesQuery(a.name, a.description));
@@ -930,6 +938,7 @@ export class SkillsManagerView extends ItemView {
     // Header
     const header = this.detailEl.createEl('div', { cls: 'ct-skills-detail-header' });
     header.createEl('div', { cls: 'ct-skills-detail-name', text: skill.name });
+    if (skill.origin === 'local') header.createEl('p', { text: 'Available in new sessions.', cls: 'ct-skills-availability' });
 
     const pathRow = header.createEl('div', { cls: 'ct-skills-detail-path' });
     const pathText = skill.isSymlink
@@ -1612,7 +1621,7 @@ export class SkillsManagerView extends ItemView {
 
   async loadInstalledSkills(): Promise<void> {
     const skillSources = this.plugin.settings.skillSources ?? [];
-    this.installedSkills = await listInstalledSkills(skillSources);
+    this.installedSkills = await listInstalledSkills(skillSources, this.plugin.getManagedSkillRoots?.());
 
     // Keep selected skill in sync after reload. Matched on skillPath, not name:
     // a vault skill can legitimately shadow a same-named home skill, and
@@ -1712,6 +1721,40 @@ export class SkillsManagerView extends ItemView {
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
+  private renderNewSkill(): void {
+    if (this.isDirty || this.isAgentDirty) { new Notice('Save or reload your edits before creating a skill.'); return; }
+    this.detailEl.empty();
+    this.detailEl.createEl('h3', { text: 'New local skill' });
+    this.detailEl.createEl('p', { text: `Create in ${this.plugin.getLocalSkillsRoot()}. Available in new sessions.`, cls: 'ct-skills-availability' });
+    const input = this.detailEl.createEl('input', { type: 'text', placeholder: 'meeting-notes', attr: { 'aria-label': 'Skill identifier' } });
+    const errorEl = this.detailEl.createEl('p', { attr: { role: 'alert' } });
+    const create = this.detailEl.createEl('button', { text: 'Create skill', cls: 'ct-skills-btn ct-skills-btn--primary ct-skills-author-btn' });
+    create.addEventListener('click', async () => {
+      const skillId = input.value.trim();
+      const content = `---\nname: ${skillId}\ndescription: Describe when to use this skill.\n---\n\n# ${skillId}\n\nWrite the instructions for this skill here.\n`;
+      create.disabled = true;
+      try {
+        const result = await this.plugin.createLocalSkill({ skillId, skillMd: content });
+        const skill: InstalledSkill = {
+          name: skillId, identifier: `local:${skillId}`, description: 'Describe when to use this skill.',
+          skillPath: result.path, realPath: result.path, skillMdPath: `${result.path}/SKILL.md`,
+          isSymlink: false, isDirectory: true, content, origin: 'local', isEditable: true, isRemovable: true,
+        };
+        this.installedSkills.push(skill);
+        this.selectedInstalled = skill;
+        this.selectedAgent = null;
+        this.selectedGithubSource = null;
+        this.selectedGithubSourceSkill = null;
+        this.editContent = content;
+        this.isDirty = false;
+        this.expandedSources.add('authored');
+        this.renderList();
+        this.renderDetail();
+      } catch (error) { errorEl.setText(String(error)); create.disabled = false; }
+    });
+    input.focus();
+  }
+
   private async saveSkillContent(skill: InstalledSkill, textarea: HTMLTextAreaElement): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const fs = require('fs') as typeof import('fs');
@@ -1723,7 +1766,9 @@ export class SkillsManagerView extends ItemView {
       return;
     }
     try {
-      await fs.promises.writeFile(skill.skillMdPath, this.editContent, 'utf-8');
+      if (skill.origin === 'local') {
+        await this.plugin.updateLocalSkill({ skillId: skill.skillPath.split(/[\\/]/).pop()!, files: [{ path: 'SKILL.md', encoding: 'utf8', content: this.editContent }] });
+      } else await fs.promises.writeFile(skill.skillMdPath, this.editContent, 'utf-8');
       skill.content = this.editContent;
       this.isDirty = false;
       new Notice(`Saved ${skill.name}`);
@@ -1762,10 +1807,10 @@ export class SkillsManagerView extends ItemView {
 
   private async doUninstall(skill: InstalledSkill): Promise<void> {
     try {
-      await uninstallSkillByPath(skill.skillPath);
+      await uninstallSkillByPath(skill.skillPath, this.plugin.getManagedSkillRoots?.());
       new Notice(`Uninstalled ${skill.name}`);
-      this.installedSkills = this.installedSkills.filter((s) => s.name !== skill.name);
-      if (this.selectedInstalled?.name === skill.name) {
+      this.installedSkills = this.installedSkills.filter((s) => s.skillPath !== skill.skillPath);
+      if (this.selectedInstalled?.skillPath === skill.skillPath) {
         this.selectedInstalled = null;
         this.editContent = '';
         this.isDirty = false;

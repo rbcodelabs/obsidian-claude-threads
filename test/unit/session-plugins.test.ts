@@ -226,6 +226,17 @@ describe('ThreadManager.buildSessionOptions → opts.plugins', () => {
     expect(opts?.plugins).toBeUndefined();
   });
 
+  it('loads the configured authored folder for a newly started session', async () => {
+    const localRoot = path.join(tmpVault, 'My Skills');
+    writeSkill(localRoot, 'authored-one');
+    const opts = await optionsFor(m => {
+      m.vaultRoot = tmpVault;
+      m.pluginResourceDir = pluginResourceDir;
+      m.settings.localSkillsFolder = 'My Skills';
+    });
+    expect(opts?.plugins).toContainEqual({ type: 'local', path: localRoot });
+  });
+
   it('registers nothing when pluginResourceDir is unset (mobile / no FileSystemAdapter)', async () => {
     writeSkill(path.join(tmpHome, '.claude', 'skills'), 'home-one');
     const opts = await optionsFor(() => { /* pluginResourceDir left undefined */ });

@@ -850,3 +850,5 @@ export async function requestUrl(options: { url: string; method?: string; header
   const json = await res.json();
   return { json, status: res.status };
 }
+// Filesystem authoring is verified against real temp directories in unit tests.
+export function parseYaml(_text: string): unknown { throw new Error('YAML parsing is outside the visual harness'); }

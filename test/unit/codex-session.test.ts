@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { CodexSession, applyCodexResumeFallback, codexContextUsage, codexDeveloperInstructions, codexDynamicToolDefinitions, codexMcpServers, codexResumeInstructions } from '../../src/CodexSession';
 
 describe('Codex built-in tools', () => {
@@ -146,8 +149,8 @@ describe('Codex resume fallback', () => {
     session.send('First continuation');
     session.send('Second continuation');
 
-    expect(startTurn).toHaveBeenNthCalledWith(1, '[canonical prior history]\n\nFirst continuation', undefined);
-    expect(startTurn).toHaveBeenNthCalledWith(2, 'Second continuation', undefined);
+    expect(startTurn).toHaveBeenNthCalledWith(1, '[canonical prior history]\n\nFirst continuation', undefined, 'First continuation');
+    expect(startTurn).toHaveBeenNthCalledWith(2, 'Second continuation', undefined, 'Second continuation');
   });
 });
 
@@ -1334,5 +1337,90 @@ describe('CodexSession protocol notifications', () => {
     expect(internal.request).toHaveBeenCalledWith('skills/extraRoots/set', {
       extraRoots: ['/skills/source', '/skills/bundled'],
     });
+  });
+
+  it('namespaces authored skills while keeping installed commands distinct', async () => {
+    const session = new CodexSession('codex') as any;
+    const onCommandsChanged = vi.fn();
+    session.options = { cwd: '/project', codex: { localSkillsRoot: '/vault/Skills' }, callbacks: { onCommandsChanged } };
+    vi.spyOn(session, 'request').mockResolvedValue({ data: [{ skills: [
+      { name: 'review', path: '/installed/review/SKILL.md', description: 'Installed' },
+      { name: 'review', path: '/vault/Skills/review/SKILL.md', description: 'Authored' },
+      { name: 'other', path: '/vault/Skills-other/other/SKILL.md', description: 'Outside' },
+    ] }] });
+    session.discoverSkills();
+    await vi.waitFor(() => expect(onCommandsChanged).toHaveBeenCalled());
+    expect(onCommandsChanged.mock.calls[0][0].map((command: any) => command.name)).toEqual(['review', 'local:review', 'other']);
+  });
+
+  it('invokes authored skills by explicit path and keeps user arguments', async () => {
+    const session = new CodexSession('codex') as any;
+    session.options = { cwd: '/project', codex: { localSkillsRoot: '/vault/Skills' }, callbacks: { onCommandsChanged: vi.fn(), onError: vi.fn() } };
+    const request = vi.spyOn(session, 'request').mockResolvedValue({ data: [{ skills: [{ name: 'review', path: '/vault/Skills/review/SKILL.md' }] }] });
+    session.discoverSkills();
+    await vi.waitFor(() => expect(session.options.callbacks.onCommandsChanged).toHaveBeenCalled());
+    request.mockResolvedValue({ turn: { id: 'turn' } });
+    session.closed = false;
+    session.codexThreadId = 'thread';
+    session.send('/local:review check this patch');
+    expect(request).toHaveBeenLastCalledWith('turn/start', expect.objectContaining({ input: [
+      { type: 'text', text: '$review check this patch', text_elements: [] },
+      { type: 'skill', name: 'review', path: '/vault/Skills/review/SKILL.md' },
+    ] }));
+  });
+  it('recognizes canonical paths beneath an aliased vault path', async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-local-test-'));
+    try {
+      fs.mkdirSync(path.join(temp, 'real/review'), { recursive: true });
+      fs.writeFileSync(path.join(temp, 'real/review/SKILL.md'), 'test');
+      fs.symlinkSync(path.join(temp, 'real'), path.join(temp, 'alias'));
+      const session = new CodexSession('codex') as any;
+      const onCommandsChanged = vi.fn();
+      session.options = { cwd: '/project', codex: { localSkillsRoot: path.join(temp, 'alias') }, callbacks: { onCommandsChanged } };
+      vi.spyOn(session, 'request').mockResolvedValue({ data: [{ skills: [{ name: 'review', path: fs.realpathSync(path.join(temp, 'real/review/SKILL.md')) }] }] });
+      await session.discoverSkills();
+      expect(onCommandsChanged.mock.calls[0][0][0].name).toBe('local:review');
+    } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  });
+
+  it('does not expose newly created authored skills during an active session', async () => {
+    const session = new CodexSession('codex') as any;
+    const onCommandsChanged = vi.fn();
+    session.options = { cwd: '/project', codex: { localSkillsRoot: '/vault/Skills' }, callbacks: { onCommandsChanged } };
+    const request = vi.spyOn(session, 'request').mockResolvedValue({ data: [{ skills: [{ name: 'review', path: '/vault/Skills/review/SKILL.md' }] }] });
+    session.discoverSkills();
+    await vi.waitFor(() => expect(onCommandsChanged).toHaveBeenCalledTimes(1));
+    request.mockResolvedValue({ data: [{ skills: [{ name: 'new', path: '/vault/Skills/new/SKILL.md' }] }] });
+    session.discoverSkills();
+    await vi.waitFor(() => expect(onCommandsChanged).toHaveBeenCalledTimes(2));
+    expect(onCommandsChanged.mock.calls[1][0].map((command: any) => command.name)).toEqual(['local:review']);
+  });
+  it('preserves local selection when fallback history is prepended', async () => {
+    const session = new CodexSession('codex') as any;
+    session.options = { cwd: '/project', resumeFallbackHistory: 'Prior history\n\n', codex: { localSkillsRoot: '/vault/Skills' }, callbacks: { onCommandsChanged: vi.fn(), onError: vi.fn() } };
+    const request = vi.spyOn(session, 'request').mockResolvedValue({ data: [{ skills: [{ name: 'review', path: '/vault/Skills/review/SKILL.md' }] }] });
+    await session.discoverSkills();
+    request.mockResolvedValue({ turn: { id: 'turn' } });
+    session.closed = false;
+    session.codexThreadId = 'thread';
+    session.resumeFallbackPending = true;
+    session.send('/local:review check this patch');
+    expect(request).toHaveBeenLastCalledWith('turn/start', expect.objectContaining({ input: [
+      { type: 'text', text: 'Prior history\n\n$review check this patch', text_elements: [] },
+      { type: 'skill', name: 'review', path: '/vault/Skills/review/SKILL.md' },
+    ] }));
+  });
+
+  it('fails an unknown local invocation instead of allowing ambiguous name resolution', () => {
+    const session = new CodexSession('codex') as any;
+    const onError = vi.fn();
+    session.options = { callbacks: { onError } };
+    session.closed = false;
+    session.codexThreadId = 'thread';
+    const request = vi.spyOn(session, 'request').mockResolvedValue({});
+    session.send('/local:missing');
+    expect(request).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/new session/i) }));
+    expect(session.turnInFlight).toBe(false);
   });
 });

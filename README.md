@@ -220,6 +220,14 @@ Open the **Skills Manager** from the ribbon (puzzle icon) or command palette to 
 
 > **Where installs go.** Everything the Skills Manager installs or imports lands in `<vault>/.obsidian/plugins/claude-threads/skills/`, beside the plugin's `skill-sources/` clones — never in `~/.claude/`. That folder shares the plugin folder's fate: community-plugin *updates* leave unknown subdirectories alone, but manually uninstalling and reinstalling the plugin will delete your installed skills along with it.
 
+#### Authoring local skills
+
+Choose **New skill** in Skills Manager, enter a lowercase identifier such as `meeting-notes`, and edit the starter `SKILL.md`. Authored packages appear under **Local skills** and live in `<vault>/Skills/<identifier>/`. Set **Settings → Skills → Local skills folder** to another vault-relative folder. Changing it does not move files. Marketplace installs, imports, and GitHub source clones retain their existing locations; nothing is migrated.
+
+Agents can use `skills_create_local({ skillId, skillMd, files? })` and `skills_update_local({ skillId, files?, deleteFiles? })`. Each file is `{ path, encoding: "utf8" | "base64", content }`, relative to the package. Creation requires YAML frontmatter with a `name` matching the identifier and a nonempty `description`. Updates preserve omitted files and remove only explicitly listed paths; `SKILL.md` can be replaced but cannot be deleted. Paths cannot traverse outside the package or follow symlinks. Supporting files can be managed through these tools or the filesystem.
+
+Authored skills are available in newly started Claude and Codex sessions as `/local:<identifier>`. Active sessions are not restarted. Installed Claude skills retain `/vault:<name>`. Use qualified identifiers from `skills_list_installed`, such as `local:meeting-notes`, with `skills_get` and `skills_uninstall` to distinguish same-named packages. Ambiguous removal involving an authored skill is rejected. `skills_update` continues to pull configured GitHub sources.
+
 #### Declaring skill sources in config
 
 GitHub skill sources don't have to be added through the UI. A vault whose `data.json` is committed to a config repo can **declare** them, and the plugin materializes each one on load:
@@ -887,13 +895,15 @@ Everything the [Skills Manager](#skills-manager) panel can do — browse the [sk
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `skills_list_installed` | — | Lists every visible skill: name, description, install path, and which configured skill source (if any) each came from. Each entry carries `origin` (`vault` or `home`) plus `isEditable`/`isRemovable`, both false for anything under `~/.claude/`. |
+| `skills_list_installed` | — | Lists skills with their qualified identifier, name, description, path, origin (`local`, `vault`, or `home`), and edit/remove permissions. |
 | `skills_search` | `query`, `limit?` | Searches the skills.sh marketplace registry. Returns each match's name, slug, GitHub source, install count, and whether it's already installed. Default limit: 15. |
 | `skills_get` | `identifier` | Returns full detail for one skill, whether installed or not. Pass an installed skill's name, or a marketplace slug in `owner/repo/skill-id` form (as returned by `skills_search`). Installed skills include their full `SKILL.md` content. |
 | `skills_list_sources` | — | Lists configured skill sources (GitHub-cloned or local-path plugin sources) plus the built-in skills.sh registry, with id, name, type, and (for GitHub sources) staleness info. |
 | `skills_check_updates` | — | Checks every configured GitHub-type skill source for upstream commits it's behind (`git fetch` + count). Returns each source's id, name, and either its refreshed `behindCount`/`lastFetched` or an `error` if the check failed (e.g. offline). |
 | `skills_install` | `slug`, `skillId`, `source`, `name` | Installs a skill from the marketplace into `<vault>/.obsidian/plugins/claude-threads/skills/`. Pass the four fields exactly as returned by `skills_search` for the skill you want. |
-| `skills_uninstall` | `name` | Permanently deletes a vault-installed skill by name. Refuses anything under `~/.claude/skills` — those are Claude Code's, and this tool has no confirmation dialog. |
+| `skills_uninstall` | `name` | Permanently deletes an installed or authored vault package. Use its qualified identifier to distinguish duplicate names. Home skills remain read-only. |
+| `skills_create_local` | `skillId`, `skillMd`, `files?` | Creates a complete authored package in the configured vault folder, available in new sessions. Rejects existing packages. |
+| `skills_update_local` | `skillId`, `files?`, `deleteFiles?` | Patches an authored package; preserves omitted files and protects `SKILL.md` from deletion. |
 | `skills_update` | `sourceId` | Pulls the latest commits for a configured GitHub-type skill source (`git pull` on its local clone), refreshing every skill it provides. Use the source id from `skills_list_sources` — not `"registry"`, which has no single-source update (reinstall individual skills instead). |
 
 ## Settings

@@ -945,6 +945,8 @@ export interface PluginSettings {
   enableInlineVisualizations?: boolean;
   /** Registered local skill collections browsable from the Skills Manager. */
   skillSources: SkillSource[];
+  /** Vault-relative folder for authored packages; installs retain their own root. */
+  localSkillsFolder?: string;
   /** Durable peer-API correlations and bounded run results. Internal format; consumers use api.v1. */
   publicApiState?: import('./PublicApi').PublicApiPersistedState;
   /** Width in px of the Skills Manager's left list panel, set by dragging the divider. */
@@ -1013,6 +1015,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   kanbanCollapseSide: 'none',
   stackScheduledThreads: true,
   skillSources: [],
+  localSkillsFolder: 'Skills',
   skillsListWidth: 200,
 };
 

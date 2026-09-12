@@ -33,6 +33,28 @@ vi.mock('@anthropic-ai/claude-agent-sdk/browser', () => ({
 
 import { createObsidianMcpServer } from '../../src/ObsidianTools';
 
+describe('local authoring tools', () => {
+  it('passes complete packages to create and reports next-session availability', async () => {
+    const onSkillsCreateLocal = vi.fn().mockResolvedValue({ skillId: 'demo', availability: 'next-session' });
+    const server = createObsidianMcpServer(makeApp(), { onSkillsCreateLocal }) as unknown as CapturedServer;
+    const args = { skillId: 'demo', skillMd: 'instructions', files: [{ path: 'data.bin', encoding: 'base64', content: 'AA==' }] };
+    const result = await getTool(server, 'skills_create_local')._handler(args);
+    expect(onSkillsCreateLocal).toHaveBeenCalledWith(args);
+    expect(result.content[0].text).toContain('next-session');
+  });
+  it('passes update patches including explicit deletions', async () => {
+    const onSkillsUpdateLocal = vi.fn().mockResolvedValue({ availability: 'next-session' });
+    const server = createObsidianMcpServer(makeApp(), { onSkillsUpdateLocal }) as unknown as CapturedServer;
+    const args = { skillId: 'demo', deleteFiles: ['old.txt'] };
+    await getTool(server, 'skills_update_local')._handler(args);
+    expect(onSkillsUpdateLocal).toHaveBeenCalledWith(args);
+  });
+  it('reports unavailable authoring callbacks as tool errors', async () => {
+    const server = createObsidianMcpServer(makeApp(), {}) as unknown as CapturedServer;
+    expect((await getTool(server, 'skills_create_local')._handler({ skillId: 'demo', skillMd: '' })).isError).toBe(true);
+  });
+});
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ToolResult {

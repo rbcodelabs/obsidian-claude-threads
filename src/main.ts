@@ -432,7 +432,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
       const osNode = require('os') as typeof import('os');
       const vaultRoot = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : '';
       skillPaths.setSkillRoots(
-        skillPaths.computeSkillRoots(vaultRoot, this.manifest?.dir ?? '', osNode.homedir()),
+        { ...skillPaths.computeSkillRoots(vaultRoot, this.manifest?.dir ?? '', osNode.homedir()), localRoot: this.getLocalSkillsRoot() },
       );
     }
 
@@ -737,14 +737,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
           onCronDelete: (id) => this.scheduler.deleteItem(id),
           onSkillsListInstalled: async () => {
-            const skills = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            const skills = await skillManager.listInstalledSkills(this.settings.skillSources ?? [], this.getManagedSkillRoots());
             return skills.map(({ content: _content, ...rest }) => rest);
           },
           onSkillsSearch: async (query, limit) => {
-            const installed = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            const installed = await skillManager.listInstalledSkills(this.settings.skillSources ?? [], this.getManagedSkillRoots());
             return skillManager.searchMarketplaceSkills(query, limit ?? 15, installed);
           },
-          onSkillsGet: (identifier) => skillManager.getSkillDetail(identifier, this.settings.skillSources ?? []),
+          onSkillsGet: (identifier) => skillManager.getSkillDetail(identifier, this.settings.skillSources ?? [], this.getManagedSkillRoots()),
           onSkillsListSources: () => skillManager.listSkillSources(this.settings.skillSources ?? []),
           onSkillsCheckUpdates: async () => {
             const results = await skillManager.checkAllSourcesForUpdates(this.settings.skillSources ?? []);
@@ -766,7 +766,15 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onSkillsInstall: (params) => skillManager.installSkillFromMarketplace(params, {
             installRoot: this.getPluginSkillsRoot(),
           }),
-          onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? []),
+          onSkillsCreateLocal: params => {
+            const { createLocalSkill } = require('./localSkills') as typeof import('./localSkills');
+            return createLocalSkill(this.getLocalSkillsRoot(), params);
+          },
+          onSkillsUpdateLocal: params => {
+            const { updateLocalSkill } = require('./localSkills') as typeof import('./localSkills');
+            return updateLocalSkill(this.getLocalSkillsRoot(), params);
+          },
+          onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? [], this.getManagedSkillRoots()),
           onSkillsUpdate: async (sourceId) => {
             const source = (this.settings.skillSources ?? []).find((s) => s.id === sourceId);
             if (!source) {
@@ -1903,6 +1911,42 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { pluginSkillsRootFrom } = require('./skillPaths') as typeof import('./skillPaths');
     return pluginSkillsRootFrom(pathNode.join(adapter.getBasePath(), dir));
+  }
+
+  getLocalSkillsRoot(): string {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return '';
+    const { resolveLocalSkillsRoot, externalSkillRoots } = require('./localSkills') as typeof import('./localSkills');
+    try { return resolveLocalSkillsRoot(adapter.getBasePath(), this.settings.localSkillsFolder ?? 'Skills', externalSkillRoots(this.settings.skillSources)); }
+    catch (error) { console.warn('[ClaudeThreads] Local skills unavailable:', error); return ''; }
+  }
+
+  getManagedSkillRoots(): import('./skillPaths').SkillRoots {
+    const { getSkillRoots } = require('./skillPaths') as typeof import('./skillPaths');
+    return { ...getSkillRoots(), localRoot: this.getLocalSkillsRoot() };
+  }
+
+  createLocalSkill(params: import('./localSkills').CreateLocalSkillInput) {
+    const { createLocalSkill } = require('./localSkills') as typeof import('./localSkills');
+    return createLocalSkill(this.getLocalSkillsRoot(), params);
+  }
+
+  updateLocalSkill(params: import('./localSkills').UpdateLocalSkillInput) {
+    const { updateLocalSkill } = require('./localSkills') as typeof import('./localSkills');
+    return updateLocalSkill(this.getLocalSkillsRoot(), params);
+  }
+
+  async setLocalSkillsFolder(folder: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) throw new Error('Local skills require a desktop filesystem vault.');
+    const { resolveLocalSkillsRoot, externalSkillRoots } = require('./localSkills') as typeof import('./localSkills');
+    const localRoot = resolveLocalSkillsRoot(adapter.getBasePath(), folder, externalSkillRoots(this.settings.skillSources));
+    const previous = this.settings.localSkillsFolder;
+    this.settings.localSkillsFolder = folder;
+    try { await this.saveSettings(); }
+    catch (error) { this.settings.localSkillsFolder = previous; throw error; }
+    const { getSkillRoots, setSkillRoots } = require('./skillPaths') as typeof import('./skillPaths');
+    setSkillRoots({ ...getSkillRoots(), localRoot });
   }
 
   /**

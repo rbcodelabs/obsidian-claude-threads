@@ -1,4 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import * as path from 'path';
+import fs from 'fs';
 import type { AskQuestion, ImageAttachment } from './types';
 import { parseExtraEnv } from './types';
 import type { SessionCallbacks } from './ClaudeSession';
@@ -22,6 +24,10 @@ type CodexThreadTokenUsage = {
 };
 
 type ContextUsage = import('@anthropic-ai/claude-agent-sdk').SDKControlGetContextUsageResponse;
+
+function canonicalSkillPath(value: string): string {
+  try { return fs.realpathSync(value); } catch { return path.resolve(value); }
+}
 
 const ENTER_PLAN_MODE_TOOL = {
   type: 'function',
@@ -155,6 +161,8 @@ export class CodexSession {
   private activeSubagentTurns = new Map<string, string>();
   private resumeFallbackPending = false;
   private pendingQuestionRequestIds = new Set<string>();
+  private localSkillCommands = new Map<string, { name: string; path: string; description: string }>();
+  private localSkillsDiscovered = false;
 
   constructor(private codexPath: string) {}
 
@@ -172,6 +180,8 @@ export class CodexSession {
     this.announcedSubagents.clear();
     this.activeSubagentTurns.clear();
     this.pendingQuestionRequestIds.clear();
+    this.localSkillCommands.clear();
+    this.localSkillsDiscovered = false;
     this.resumeFallbackPending = false;
     this.planTransitionRequested = false;
     this.awaitingPlanApproval = false;
@@ -250,7 +260,7 @@ export class CodexSession {
     this.codexThreadId = result.thread.id;
     this.activeModel = result.model ?? this.activeModel;
     this.discoverModels();
-    this.discoverSkills();
+    await this.discoverSkills();
   }
 
   private async registerSkillRoots(): Promise<void> {
@@ -366,10 +376,20 @@ export class CodexSession {
     }
     const effectiveText = applyCodexResumeFallback(text, this.options?.resumeFallbackHistory, this.resumeFallbackPending);
     this.resumeFallbackPending = false;
-    this.startTurn(effectiveText, images);
+    this.startTurn(effectiveText, images, text);
   }
 
-  private startTurn(text: string, images?: ImageAttachment[]): void {
+  private startTurn(text: string, images?: ImageAttachment[], invocationText = text): void {
+    const invocation = /^(\s*)\/local:([^\s]+)(?=\s|$)/.exec(invocationText);
+    const skill = invocation ? this.localSkillCommands.get(`local:${invocation[2]}`) : undefined;
+    if (invocation && !skill) {
+      this.options?.callbacks.onError(new Error(`Local skill ${invocation[2]} is unavailable in this session. Start a new session after creating it.`));
+      return;
+    }
+    if (invocation && skill) {
+      const expanded = invocationText.replace(invocation[0], `${invocation[1]}$${skill.name}`);
+      text = text === invocationText ? expanded : text.slice(0, text.length - invocationText.length) + expanded;
+    }
     this._turnInFlight = true;
     this.activeTurnId = undefined;
     this.activeTurnMode = this.options?.permissionMode;
@@ -378,6 +398,8 @@ export class CodexSession {
     const isPlanMode = this.options?.permissionMode === 'plan';
     if (isPlanMode) this.options?.callbacks.onEnterPlanMode?.();
     const input: any[] = [{ type: 'text', text, text_elements: [] }];
+    // App-server's documented Skill input selects the package even when names collide.
+    if (skill) input.push({ type: 'skill', name: skill.name, path: skill.path });
     for (const image of images ?? []) input.push({ type: 'image', url: `data:${image.mediaType};base64,${image.base64}` });
     this.turnStartPromise = this.request('turn/start', {
       threadId: this.codexThreadId,
@@ -510,20 +532,32 @@ export class CodexSession {
       .catch((error) => console.warn('[ClaudeThreads] Could not list Codex models:', error));
   }
 
-  private discoverSkills(): void {
-    this.request('skills/list', {
+  private discoverSkills(): Promise<void> {
+    return this.request('skills/list', {
       cwds: this.options?.cwd ? [this.options.cwd] : [],
       forceReload: true,
     })
-      .then((result: { data?: Array<{ skills?: Array<{ name?: string; description?: string; shortDescription?: string; enabled?: boolean }> }> }) => {
+      .then((result: { data?: Array<{ skills?: Array<{ name?: string; path?: string; description?: string; shortDescription?: string; enabled?: boolean }> }> }) => {
+        const firstDiscovery = !this.localSkillsDiscovered;
         const commands = (result.data ?? [])
           .flatMap((entry) => entry.skills ?? [])
           .filter((skill) => skill.enabled !== false && !!skill.name)
-          .map((skill) => ({
-            name: String(skill.name),
-            description: String(skill.description ?? skill.shortDescription ?? ''),
-            argumentHint: '',
-          }));
+          .flatMap((skill) => {
+            const root = this.options?.codex?.localSkillsRoot;
+            const relative = root && skill.path ? path.relative(canonicalSkillPath(root), canonicalSkillPath(skill.path)) : undefined;
+            const local = relative !== undefined && relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+            const name = String(skill.name);
+            const description = String(skill.description ?? skill.shortDescription ?? '');
+            if (local) {
+              if (!firstDiscovery) return [];
+              this.localSkillCommands.set(`local:${name}`, { name, path: skill.path!, description });
+            }
+            return [{ name: local ? `local:${name}` : name, description, argumentHint: '' }];
+          });
+        if (!firstDiscovery) {
+          for (const [name, skill] of this.localSkillCommands) commands.push({ name, description: skill.description, argumentHint: '' });
+        }
+        this.localSkillsDiscovered = true;
         if (commands.length > 0) this.options?.callbacks.onCommandsChanged?.(commands);
       })
       .catch((error) => console.warn('[ClaudeThreads] Could not list Codex skills:', error));

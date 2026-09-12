@@ -350,6 +350,8 @@ export interface ObsidianMcpServerOptions {
   onSkillsUninstall?: (name: string) => Promise<{ skillPath: string }>;
   /** Pulls the latest commits for a configured GitHub-type skill source by its source id. */
   onSkillsUpdate?: (sourceId: string) => Promise<{ behindCount: number; lastFetched: number }>;
+  onSkillsCreateLocal?: (params: { skillId: string; skillMd: string; files?: Array<{ path: string; encoding: 'utf8' | 'base64'; content: string }> }) => Promise<unknown>;
+  onSkillsUpdateLocal?: (params: { skillId: string; files?: Array<{ path: string; encoding: 'utf8' | 'base64'; content: string }>; deleteFiles?: string[] }) => Promise<unknown>;
 }
 
 export interface CronCreateParams {
@@ -2302,7 +2304,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundSkillsListInstalled = tool(
     'skills_list_installed',
-    "Lists every skill visible to this session, with name, description, install path, and which configured skill source (if any) each came from. Each entry carries `origin` ('vault' = installed by the plugin into the vault, 'home' = managed by Claude Code in ~/.claude/skills) plus `isEditable` and `isRemovable`, which are false for everything under ~/.claude/. Use skills_get for a specific skill's full SKILL.md content.",
+    "Lists skills with name, description, path, qualified identifier, and origin: local (authored), vault (installed), or home (read-only). isEditable/isRemovable describe supported operations. Use the returned identifier with skills_get and skills_uninstall to distinguish duplicate names. Newly authored skills become available in new sessions.",
     {},
     async (_args, _extra) => {
       try {
@@ -2423,9 +2425,41 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
     },
   );
 
+  const localFileSchema = z.object({
+    path: z.string().describe('Package-relative file path'),
+    encoding: z.enum(['utf8', 'base64']),
+    content: z.string(),
+  });
+  const boundSkillsCreateLocal = tool(
+    'skills_create_local',
+    'Creates a new authored skill in the configured vault folder (default Skills/). Supply a safe skillId, complete SKILL.md with name and description frontmatter, and optional supporting files. Rejects existing packages. Available to newly started sessions; active sessions are not restarted.',
+    { skillId: z.string(), skillMd: z.string(), files: z.array(localFileSchema).optional() },
+    async args => {
+      try {
+        if (!options.onSkillsCreateLocal) throw new Error('skills_create_local is not available in this context.');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(await options.onSkillsCreateLocal(args)) }] };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }], isError: true };
+      }
+    },
+  );
+  const boundSkillsUpdateLocal = tool(
+    'skills_update_local',
+    'Patches an existing authored skill in the configured vault folder. Omitted files are preserved; only deleteFiles entries are removed. SKILL.md may be replaced but never deleted. Does not edit installed or external-source packages. Available in newly started sessions. skills_update separately pulls GitHub sources.',
+    { skillId: z.string(), files: z.array(localFileSchema).optional(), deleteFiles: z.array(z.string()).optional() },
+    async args => {
+      try {
+        if (!options.onSkillsUpdateLocal) throw new Error('skills_update_local is not available in this context.');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(await options.onSkillsUpdateLocal(args)) }] };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }], isError: true };
+      }
+    },
+  );
+
   const boundSkillsUninstall = tool(
     'skills_uninstall',
-    'Uninstalls (permanently deletes) a skill the plugin installed into the vault. Skills in ~/.claude/skills are managed by Claude Code and are read-only here — this tool refuses them rather than deleting them.',
+    'Permanently deletes an installed or authored vault skill. Pass a qualified identifier from skills_list_installed, such as local:meeting-notes, in name. Ambiguous names involving authored skills are rejected. Home skills remain read-only.',
     {
       name: z.string().describe('Name of the skill to uninstall (as returned by skills_list_installed, where isRemovable is true)'),
     },
@@ -2595,6 +2629,8 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundSkillsListSources,
       boundSkillsCheckUpdates,
       boundSkillsInstall,
+      boundSkillsCreateLocal,
+      boundSkillsUpdateLocal,
       boundSkillsUninstall,
       boundSkillsUpdate,
     ];

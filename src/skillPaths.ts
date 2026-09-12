@@ -31,6 +31,8 @@ const os = require('os') as typeof import('os');
 export const VAULT_SKILLS_PLUGIN_NAME = 'vault';
 
 export interface SkillRoots {
+  /** User-authored packages in the configured vault folder. */
+  localRoot?: string;
   /**
    * `<vault>/<plugin-dir>/skills` — the only place the plugin ever writes.
    * `''` when unresolvable (mobile, no `FileSystemAdapter`, or a test that
@@ -155,6 +157,20 @@ export function requirePluginRoot(roots: SkillRoots = getSkillRoots()): string {
 
 // ── Edit / remove gates ───────────────────────────────────────────────────────
 
+/** Authored roots are canonical when configured; reject later symlink substitution. */
+export function isCurrentLocalRoot(root: string): boolean {
+  try {
+    return fs.lstatSync(root).isDirectory() && fs.realpathSync(root) === path.resolve(root);
+  } catch { return false; }
+}
+
+function isCurrentLocalPackage(skillPath: string, root: string): boolean {
+  if (!isCurrentLocalRoot(root) || path.dirname(path.resolve(skillPath)) !== path.resolve(root)) return false;
+  try {
+    return fs.lstatSync(skillPath).isDirectory() && fs.realpathSync(skillPath) === path.resolve(skillPath);
+  } catch { return false; }
+}
+
 /**
  * Whether the plugin may write to this skill's SKILL.md.
  *
@@ -164,6 +180,11 @@ export function requirePluginRoot(roots: SkillRoots = getSkillRoots()): string {
  * so — that was the original `saveSkillContent` bug.
  */
 export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillRoots()): boolean {
+  if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
+    if (!isCurrentLocalPackage(skill.skillPath, roots.localRoot)) return false;
+    try { return fs.lstatSync(path.join(skill.skillPath, 'SKILL.md')).isFile(); }
+    catch { return false; }
+  }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.realPath, roots.pluginRoot)
     && isInsideRoot(skill.skillPath, roots.pluginRoot);
@@ -176,6 +197,9 @@ export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillR
  * follow it, so removing a vault-local symlink never touches the target repo.
  */
 export function canRemoveSkill(skill: { skillPath: string }, roots: SkillRoots = getSkillRoots()): boolean {
+  if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
+    return isCurrentLocalPackage(skill.skillPath, roots.localRoot);
+  }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.skillPath, roots.pluginRoot);
 }
@@ -202,6 +226,7 @@ export function enumerateSkillDirs(
   }
   const dirs: string[] = [];
   for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
     const entryPath = path.join(root, entry);
     try {
       if (!fsModule.statSync(entryPath).isDirectory()) continue;
