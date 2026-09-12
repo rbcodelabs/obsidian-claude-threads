@@ -165,7 +165,13 @@ async function mutate(root: string, input: UpdateLocalSkillInput, creating: bool
       return { skillId: input.skillId, path: target, availability: 'next-session' };
     } finally {
       // If rollback itself fails, preserve the backup for recovery.
-      if (!movedOriginal) await fsp.rm(stage, { recursive: true, force: true });
+      if (!movedOriginal) {
+        try { await fsp.rm(stage, { recursive: true, force: true }); }
+        catch (error) {
+          // Cleanup cannot undo a completed commit or replace the original write error.
+          console.warn('[ClaudeThreads] Local skill staging cleanup failed; remaining files retained at:', stage, error);
+        }
+      }
     }
   });
 }

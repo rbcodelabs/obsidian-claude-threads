@@ -105,6 +105,24 @@ describe('local skill packages', () => {
     await expect(updateLocalSkill(root, { skillId: 'example', files: [textFile('new')] })).rejects.toThrow('read-only');
     expect(fs.readFileSync(path.join(root, 'example', 'SKILL.md'), 'utf8')).toBe(manifest);
   });
+  it('reports a successful commit when staging cleanup fails', async () => {
+    await createLocalSkill(root, { skillId: 'example', skillMd: manifest });
+    vi.spyOn(fsp, 'rm').mockRejectedValue(new Error('cleanup failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(updateLocalSkill(root, { skillId: 'example', files: [textFile('new')] })).resolves.toMatchObject({ availability: 'next-session' });
+    expect(fs.readFileSync(path.join(root, 'example', 'new'), 'utf8')).toBe('hello');
+    const stage = fs.readdirSync(root).find(name => name.startsWith('.local-skill-'))!;
+    expect(fs.readFileSync(path.join(root, stage, 'backup', 'SKILL.md'), 'utf8')).toBe(manifest);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cleanup'), path.join(root, stage), expect.any(Error));
+  });
+  it('preserves the original write error when staging cleanup also fails', async () => {
+    await createLocalSkill(root, { skillId: 'example', skillMd: manifest });
+    vi.spyOn(fsp, 'writeFile').mockRejectedValue(new Error('original write failure'));
+    vi.spyOn(fsp, 'rm').mockRejectedValue(new Error('cleanup failed'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(updateLocalSkill(root, { skillId: 'example', files: [textFile('new')] })).rejects.toThrow('original write failure');
+    expect(fs.readFileSync(path.join(root, 'example', 'SKILL.md'), 'utf8')).toBe(manifest);
+  });
 });
 describe('local root', () => {
   it('resolves default and nested custom vault folders', () => {
