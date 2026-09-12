@@ -7807,6 +7807,7 @@ body.ct-skills-resizing {
 
 .ct-modal-type-row {
   display: flex;
+  flex-wrap: wrap; /* three types (stdio/HTTP/OAuth) must not overflow a phone-width modal */
   gap: 8px;
   margin-bottom: 16px;
 }
