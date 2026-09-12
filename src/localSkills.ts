@@ -43,14 +43,16 @@ function noSymlinks(base: string, target: string): void {
 function canonicalFuturePath(value: string): string {
   let ancestor = path.resolve(value);
   while (!exists(ancestor)) ancestor = path.dirname(ancestor);
-  return path.join(fs.realpathSync(ancestor), path.relative(ancestor, path.resolve(value)));
+  // The native resolver preserves the filesystem's canonical spelling on
+  // case-insensitive macOS volumes; realpathSync's JS implementation does not.
+  return path.join(fs.realpathSync.native(ancestor), path.relative(ancestor, path.resolve(value)));
 }
 
 export function resolveLocalSkillsRoot(vaultRoot: string, folder = 'Skills', excludedRoots: string[] = []): string {
   if (!vaultRoot || !path.isAbsolute(vaultRoot)) throw new Error('A filesystem vault root is required');
   const relative = relativePath(folder.replace(/\/$/, ''));
   if (relative.split('/').some(part => part.startsWith('.'))) throw new Error('Local skills cannot use hidden configuration folders');
-  const base = fs.realpathSync(vaultRoot);
+  const base = fs.realpathSync.native(vaultRoot);
   const lexicalRoot = path.resolve(base, relative);
   noSymlinks(base, lexicalRoot);
   const root = canonicalFuturePath(lexicalRoot);
