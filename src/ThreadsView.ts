@@ -25,7 +25,7 @@ import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUti
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
 import { ContextPanelViewError } from './ContextPanelController';
-import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openLocalFileViaHost, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { promptConfirm } from './confirmModal';
@@ -1762,7 +1762,7 @@ export class ThreadsView extends ItemView {
     new Notice(`Focused ${relPaths.length} file${relPaths.length === 1 ? '' : 's'}`);
   }
 
-  /** Open HTML in the Web Viewer when available; otherwise use vault or OS routing. */
+  /** Open HTML in the Web Viewer when available; otherwise use vault, host, or OS routing. */
   private async openEditedFile(filePath: string): Promise<void> {
     try {
       if (/\.html?$/i.test(filePath) && isWebViewerEnabled(this.app)) {
@@ -1799,7 +1799,11 @@ export class ThreadsView extends ItemView {
           return;
         }
       }
-      // Non-vault file — open with the OS default application
+      // Outside the vault. Give the host first refusal: Geode can open a file
+      // that sits inside a Project folder the user attached read-only, and
+      // going straight to the OS would silently ignore that grant.
+      if (await openLocalFileViaHost(this.app, filePath)) return;
+      // No host routing (Obsidian) — open with the OS default application.
       const { shell } = require('electron') as { shell: { openPath: (p: string) => Promise<string> } };
       await shell.openPath(filePath);
     } catch (err) {

@@ -75,6 +75,30 @@ export function resolveAbsoluteVaultHref(href: string, exists: (path: string) =>
   return null;
 }
 
+/**
+ * Ask the host to open an absolute filesystem path the way it would handle a
+ * clicked local-file link, returning false when it has no such concept.
+ *
+ * Geode can open a path that lives inside a Project folder the user attached
+ * read-only, showing it in its in-app read-only viewer. The plugin cannot make
+ * that decision itself: the host deliberately keeps attached-root identity
+ * private, so an absolute path is all we have and only the host can map it.
+ * Obsidian has no equivalent, so there the call simply reports "not handled"
+ * and the caller keeps its existing OS fallback.
+ */
+export async function openLocalFileViaHost(app: App, absolutePath: string): Promise<boolean> {
+  const open = (app as unknown as { openLocalFileLink?: (href: string) => Promise<string | void> })
+    .openLocalFileLink;
+  if (typeof open !== 'function') return false;
+  try {
+    // Older hosts resolve to undefined; treat that as handled, since they still
+    // route the path themselves. Only an explicit "rejected" hands it back.
+    return (await open.call(app, absolutePath)) !== 'rejected';
+  } catch {
+    return false;
+  }
+}
+
 export interface OpenUrlDeps {
   /** Whether the Web Viewer core plugin is enabled. */
   webViewerEnabled: boolean;
