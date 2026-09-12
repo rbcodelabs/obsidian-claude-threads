@@ -29,6 +29,14 @@ import { debugLog } from './logger';
  * `vault.createFolder`, so under Geode `ensureDir` now succeeds via that
  * branch; it is the write itself that still falls through to rung 3.
  *
+ * Removal has the same shape and therefore its own two-rung ladder (see
+ * `removeThreadDir`). `adapter.rmdir` does not exist on Geode's shim either, so
+ * the old single-call implementation threw a TypeError straight into its own
+ * catch: every hard-delete of a thread with no markdown note left
+ * `attachments/<threadId>/` orphaned on disk, silently, forever. Rung 2 is a
+ * raw `fs.rmSync`, bounded to the attachments directory so a delete can never
+ * reach outside it.
+ *
  * Desktop-only: every method is a no-op off a FileSystemAdapter (mobile is
  * relay-fed and cannot resolve a desktop attachment path). Never throws into the
  * session hot path. A write failure is logged and swallowed, leaving base64 in
@@ -73,6 +81,7 @@ interface ProbedAdapter {
   exists?(path: string): Promise<boolean> | boolean;
   writeBinary?(path: string, data: ArrayBuffer): Promise<void>;
   mkdir?(path: string): Promise<void>;
+  rmdir?(path: string, recursive: boolean): Promise<void>;
 }
 
 function defaultHostWindow(): HostWindowLike {
@@ -158,22 +167,55 @@ export class AttachmentWriter {
   /**
    * Remove a thread's entire attachment directory. Used on a hard-delete of a
    * thread that has no markdown note (see ThreadManager.deleteThread). No-op off
-   * desktop, if the directory doesn't exist, or if the host exposes no way to
-   * remove it (leaving orphaned files is a far cheaper failure than throwing
-   * out of a delete).
+   * desktop, if the directory doesn't exist, or if every rung fails (leaving
+   * orphaned files is a far cheaper failure than throwing out of a delete).
+   *
+   * Two rungs, mirroring `write`'s ladder for the same reason — a host may not
+   * implement the API this needs:
+   *
+   *   1. `adapter.rmdir`: preferred, because the host removes the files through
+   *      its own path and updates its vault index itself.
+   *   2. Node `fs.rmSync` straight to disk: see `removeThroughNodeFs`. Reached
+   *      when `rmdir` is missing (Geode's `FileSystemAdapter` shim has no
+   *      `rmdir` at all) or when it throws.
    */
   async removeThreadDir(threadId: string): Promise<void> {
     const app = this.getApp();
     if (!app || !(app.vault.adapter instanceof FileSystemAdapter)) return;
     const folder = this.getVaultFolder() || 'Claude';
-    const dir = `${folder}/attachments/${threadId}`;
+    const attachmentsRoot = `${folder}/attachments`;
+    const dir = `${attachmentsRoot}/${threadId}`;
+
+    // A thread id is plugin-generated, but it lands in a path that both rungs
+    // then delete recursively, so refuse traversal before either one runs
+    // rather than trusting the fs-side boundary check alone.
+    if (!threadId || threadId.includes('/') || threadId.includes('\\') || threadId === '..' || threadId === '.') {
+      debugLog('[ClaudeThreads] attachment dir remove refused for unsafe thread id:', threadId);
+      return;
+    }
+
+    const adapter = app.vault.adapter as unknown as ProbedAdapter;
+
+    // Rung 1: the Obsidian adapter API.
     try {
-      if (await app.vault.adapter.exists(dir)) {
-        await app.vault.adapter.rmdir(dir, true);
+      if (typeof adapter.exists === 'function' && !(await adapter.exists(dir))) {
+        this.ensuredDirs.delete(dir);
+        return;
       }
+      if (typeof adapter.rmdir !== 'function') throw new Error('adapter.rmdir unavailable');
+      await adapter.rmdir(dir, true);
+      this.ensuredDirs.delete(dir);
+      return;
+    } catch (err) {
+      debugLog('[ClaudeThreads] attachment dir remove via adapter failed:', dir, String(err));
+    }
+
+    // Rung 2: Node fs.
+    try {
+      this.removeThroughNodeFs(app.vault.adapter, dir, attachmentsRoot);
       this.ensuredDirs.delete(dir);
     } catch (err) {
-      debugLog('[ClaudeThreads] attachment dir remove failed:', dir, String(err));
+      debugLog('[ClaudeThreads] attachment dir remove via fs failed:', dir, String(err));
     }
   }
 
@@ -262,6 +304,52 @@ export class AttachmentWriter {
     const abs = path.join(basePath, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, Buffer.from(base64, 'base64'));
+  }
+
+  /**
+   * Rung 2 of `removeThreadDir`: delete the directory straight off disk under
+   * the vault root, the same way `writeThroughNodeFs` writes to it.
+   *
+   * Exists because `adapter.rmdir` is not universal: Geode's `FileSystemAdapter`
+   * shim implements `getBasePath`/`getName`/`getResourcePath`/`exists` and
+   * nothing else, so `adapter.rmdir(...)` is `undefined` there. The resulting
+   * TypeError was swallowed by `removeThreadDir`'s own catch, which turned a
+   * hard-delete into a silent no-op and left `attachments/<threadId>/` on disk
+   * forever — unbounded growth nobody could see.
+   *
+   * Visibility has the same caveat as the write side: the removal bypasses the
+   * host's own path, so the host's file watcher is what drops the files out of
+   * its index. Under Geode that watcher exists (see `writeThroughNodeFs` for
+   * the measured behavior on the create side).
+   *
+   * `boundaryRel` is the vault-relative attachments root. The resolved absolute
+   * path must sit strictly inside it, so neither a traversing thread id nor a
+   * symlinked/absolute vault folder can turn a thread delete into an rm of
+   * anything else. A path that fails the check throws instead of deleting.
+   *
+   * `fs`/`path` are required lazily for the mobile-bundle reason documented on
+   * `writeThroughNodeFs`; this method is unreachable off a FileSystemAdapter
+   * anyway.
+   */
+  private removeThroughNodeFs(adapter: FileSystemAdapter, rel: string, boundaryRel: string): void {
+    const probed = adapter as unknown as ProbedAdapter;
+    if (typeof probed.getBasePath !== 'function') throw new Error('adapter.getBasePath unavailable');
+    const basePath = probed.getBasePath();
+    if (!basePath) throw new Error('adapter.getBasePath returned no vault root');
+
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const root = path.resolve(basePath);
+    const boundary = path.resolve(root, boundaryRel);
+    const abs = path.resolve(root, rel);
+
+    const insideBoundary = abs.startsWith(boundary + path.sep);
+    const insideVault = boundary === root || boundary.startsWith(root + path.sep);
+    if (!insideBoundary || !insideVault) {
+      throw new Error(`refusing to remove outside ${boundaryRel}: ${abs}`);
+    }
+
+    fs.rmSync(abs, { recursive: true, force: true });
   }
 
   /**
