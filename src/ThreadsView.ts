@@ -25,7 +25,7 @@ import { getVaultBridgesAPI, mapToVaultPath, type BridgeInfo } from './bridgeUti
 import { resolveTagIcon, planFooter, derivePrUrl } from './statusLine';
 import { isWebViewerEnabled } from './SettingsTab';
 import { ContextPanelViewError } from './ContextPanelController';
-import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
+import { classifyRenderedMarkdownLink, isOsAbsoluteHref, openLocalFileViaHost, openUrlPreferringWebViewer, resolveAbsoluteVaultHref } from './linkUtils';
 import type { StatusTag } from './types';
 import { appendOrchestratorBadge } from './orchestrator-badge';
 import { promptConfirm } from './confirmModal';
@@ -34,7 +34,7 @@ import { partitionThreads } from './threadRowState';
 import { agentLabel, buildAgentBreadcrumbs, summarizeAgentTeam } from './agentRuns/agentTreeModel';
 import { renderAgentPopoverTree } from './agentRuns/renderAgentPopoverTree';
 import { renderAgentActivity } from './agentRuns/renderAgentActivity';
-import { designKickoffMessage, ensureDesignArtifact } from './designArtifact';
+import { designKickoffMessage, type DesignPreviewResult } from './designArtifact';
 import type { DesignArtifact } from './types';
 import { extractVisualizeMarkers } from './visualizeMarker';
 import { VisualizeMountManager, resolveVisualizeTokens, toFileUrl, type VisualizeFs } from './visualizeRenderer';
@@ -1572,29 +1572,44 @@ export class ThreadsView extends ItemView {
       button.addEventListener('click', () => { void handler(); });
       return button;
     };
-    action('Preview design', 'play', () => this.openArtifactPreview(artifact), true);
+    action('Preview design', 'play', async () => { await this.openArtifactPreview(artifact); }, true);
     action('Capture design screenshot', 'camera', () => this.captureArtifact(artifact));
     action('Reveal design source', 'folder-open', () => this.revealArtifactSource(artifact));
   }
 
-  async openArtifactPreview(artifact: DesignArtifact): Promise<void> {
+  refreshArtifactCard(): void {
+    this.renderArtifactCard();
+  }
+
+  async openArtifactPreview(artifact: DesignArtifact): Promise<DesignPreviewResult> {
     try {
       if (this.plugin.isConversationFirst()) {
         await this.plugin.contextPanel.setViewState({
           type: 'geode-artifact', active: true, state: { root: artifact.root },
         });
-        return;
+        if (this.plugin.contextPanel.getLeaf().getViewState().type !== 'geode-artifact') {
+          throw new Error('Secure artifact preview is unavailable.');
+        }
+        return { status: 'opened' };
       }
       const existing = this.app.workspace.getLeavesOfType('geode-artifact');
       const leaf = existing.find((candidate) =>
         (candidate.getViewState().state as { root?: string } | undefined)?.root === artifact.root,
       ) ?? existing[0] ?? this.app.workspace.getLeaf('tab');
       await leaf.setViewState({ type: 'geode-artifact', active: true, state: { root: artifact.root } });
-      this.app.workspace.revealLeaf(leaf);
+      if (leaf.getViewState().type !== 'geode-artifact') throw new Error('Secure artifact preview is unavailable.');
+      await this.app.workspace.revealLeaf(leaf);
+      return { status: 'opened' };
     } catch {
-      const { shell } = require('electron') as { shell: { showItemInFolder: (target: string) => void } };
-      shell.showItemInFolder(artifact.manifestPath);
-      new Notice('Secure artifact preview requires Geode; revealed the source instead.');
+      try {
+        const { shell } = require('electron') as { shell: { showItemInFolder: (target: string) => void } };
+        shell.showItemInFolder(artifact.manifestPath);
+        const warning = 'Secure artifact preview requires Geode; revealed the source instead.';
+        new Notice(warning);
+        return { status: 'source-revealed', warning };
+      } catch (error) {
+        return { status: 'unavailable', warning: `Could not open artifact preview or reveal source: ${error instanceof Error ? error.message : String(error)}` };
+      }
     }
   }
 
@@ -1747,7 +1762,7 @@ export class ThreadsView extends ItemView {
     new Notice(`Focused ${relPaths.length} file${relPaths.length === 1 ? '' : 's'}`);
   }
 
-  /** Open HTML in the Web Viewer when available; otherwise use vault or OS routing. */
+  /** Open HTML in the Web Viewer when available; otherwise use vault, host, or OS routing. */
   private async openEditedFile(filePath: string): Promise<void> {
     try {
       if (/\.html?$/i.test(filePath) && isWebViewerEnabled(this.app)) {
@@ -1784,7 +1799,11 @@ export class ThreadsView extends ItemView {
           return;
         }
       }
-      // Non-vault file — open with the OS default application
+      // Outside the vault. Give the host first refusal: Geode can open a file
+      // that sits inside a Project folder the user attached read-only, and
+      // going straight to the OS would silently ignore that grant.
+      if (await openLocalFileViaHost(this.app, filePath)) return;
+      // No host routing (Obsidian) — open with the OS default application.
       const { shell } = require('electron') as { shell: { openPath: (p: string) => Promise<string> } };
       await shell.openPath(filePath);
     } catch (err) {
@@ -5585,14 +5604,12 @@ export class ThreadsView extends ItemView {
     const existing = thread.artifacts?.find((artifact) => artifact.kind === 'design-static');
     let artifact: DesignArtifact;
     try {
-      artifact = await ensureDesignArtifact(
-        thread,
-        adapter.getBasePath(),
+      const result = await this.plugin.enterDesignMode(
+        thread.id,
         brief || existing?.title || 'Design artifact',
+        true,
       );
-      await this.plugin.saveSettings();
-      this.renderArtifactCard();
-      await this.openArtifactPreview(artifact);
+      artifact = result.artifact;
     } catch (error) {
       this.showCommandDivider(`Could not prepare the design artifact: ${(error as Error).message}`, true);
       return;
@@ -5603,7 +5620,7 @@ export class ThreadsView extends ItemView {
       return;
     }
     this.showCommandDivider(existing ? 'Revising design artifact…' : 'Design artifact created. Starting design turn…');
-    const sendThreadId = this.activeThreadId;
+    const sendThreadId = thread.id;
     this.manager.sendMessage(sendThreadId, designKickoffMessage(artifact, brief)).catch((error) => {
       this.showCommandDivider(`Failed to start design turn: ${(error as Error).message}`, true);
       if (this.activeThreadId === sendThreadId) this.setRunningState(false);

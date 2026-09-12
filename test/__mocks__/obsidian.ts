@@ -85,6 +85,37 @@ export class SearchComponent {
   }
 }
 
+/**
+ * Obsidian's secret picker. Mirrors the real `(app, containerEl)` signature and
+ * renders a button into the container, which is what `openSecretPicker` clicks
+ * to open the picker. A test that needs the host-mismatch behavior overrides
+ * this export with `vi.mock`.
+ */
+export class SecretComponent {
+  private changeCb: ((secretName: string) => unknown) | null = null;
+  /** The most recently constructed instance, so a test can drive onChange. */
+  static last: SecretComponent | null = null;
+
+  constructor(_app: unknown, containerEl: HTMLElement) {
+    const btn = document.createElement('button');
+    btn.textContent = 'Select secret';
+    containerEl.appendChild(btn);
+    SecretComponent.last = this;
+  }
+
+  setValue(_value: string): this { return this; }
+
+  onChange(cb: (secretName: string) => unknown): this {
+    this.changeCb = cb;
+    return this;
+  }
+
+  /** Test-only: simulate the user picking a secret. */
+  pick(secretName: string): void {
+    this.changeCb?.(secretName);
+  }
+}
+
 export class WorkspaceLeaf {
   view: unknown = null;
 }

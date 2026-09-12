@@ -18,7 +18,7 @@ import type { createClaudeThreadsMcpServers, ProjectSnapshot, ProjectUpdatePatch
 import type { ContextPanelController } from './ContextPanelController';
 import { detectHostName } from './hostEnvironment';
 import { mergeMcpServers } from './mcpServerMerge';
-import { createMcpRegistration } from './mcpServerStore';
+import { createMcpRegistration, mcpRegistrationSchema } from './mcpServerStore';
 import { McpRegistrationModal } from './confirmModal';
 import type { SkillsManagerView } from './SkillsManagerView';
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
@@ -246,6 +246,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
   orchestratorWakeup: import('./OrchestratorWakeup').OrchestratorWakeup | null = null;
   contextPanel!: ContextPanelController;
   googleWorkspaceMcp?: import('./GoogleWorkspaceMcp').GoogleWorkspaceMcp;
+  oauthMcpRegistry?: import('./OAuthMcpRegistry').OAuthMcpRegistry;
 
   /**
    * MCP-server warnings already shown as a Notice this plugin load, so a
@@ -393,6 +394,33 @@ export default class ClaudeThreadsPlugin extends Plugin {
     await this.googleWorkspaceMcp.configure(this.settings.googleWorkspaceMcp ?? {});
     this.register(() => this.googleWorkspaceMcp?.close());
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { OAuthMcpRegistry } = require('./OAuthMcpRegistry') as typeof import('./OAuthMcpRegistry');
+    this.settings.oauthMcpServers ??= {};
+    this.settings.oauthMcpState ??= {};
+    this.oauthMcpRegistry = new OAuthMcpRegistry({
+      getSettings: () => this.settings,
+      save: () => this.saveSettings(),
+      secretStorage: this.app.secretStorage,
+      // Mirrors openContextualUrl's/obsidian_open_url's fallback leaf-finding logic
+      // (see ObsidianTools.ts's boundOpenUrl and this file's openContextualUrl) so an
+      // OAuth consent tab opens the same way any other in-app URL does. Only invoked
+      // lazily at authorize() time, well after this.contextPanel exists.
+      openUrl: async (url: string) => {
+        if (this.isConversationFirst()) {
+          const reusedTab = await this.contextPanel.setViewState({ type: 'webviewer', active: true, state: { url } });
+          return { reusedTab };
+        }
+        const existing = this.app.workspace.getLeavesOfType('webviewer');
+        const leaf = existing.length > 0 ? existing[0] : this.app.workspace.getLeaf('tab');
+        this.app.workspace.revealLeaf(leaf);
+        await leaf.setViewState({ type: 'webviewer', active: true, state: { url } });
+        return { reusedTab: existing.length > 0 };
+      },
+    });
+    await this.oauthMcpRegistry.configure();
+    this.register(() => this.oauthMcpRegistry?.close());
+
     // Resolve the skill roots before anything reads them. Everything the plugin
     // installs goes under <vault>/<plugin-dir>/skills/; ~/.claude/ is scanned
     // but never written. Hoisted above migrateGithubSourcesIntoVault() below,
@@ -466,9 +494,32 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.manager.mcpServerFactory = (threadId: string, initialCwd: string) => {
       try {
         const mcpServers = createClaudeThreadsMcpServers(this.app, {
+          onEnterDesignMode: brief => this.enterDesignMode(threadId, brief),
           onRegisterMcpServer: input => {
             const caller = this.manager.getThread(threadId);
-            return registerMcpServer(input, mcpRegistrationAvailable && !!caller && !caller.scheduledItemId);
+            const interactive = mcpRegistrationAvailable && !!caller && !caller.scheduledItemId;
+            // The OAuth consent round-trip needs an interactive human even more than a
+            // static server registration does, so it shares the exact same guard.
+            const parsed = mcpRegistrationSchema.safeParse(input);
+            if (parsed.success && parsed.data.type === 'oauth') {
+              if (!interactive) {
+                return Promise.resolve({ success: false, status: 'unavailable', message: 'Interactive host confirmation is unavailable. Register this server from an interactive thread.' });
+              }
+              if (!this.oauthMcpRegistry) {
+                return Promise.resolve({ success: false, status: 'unavailable', message: 'OAuth MCP registration is unavailable in this context.' });
+              }
+              const data = parsed.data;
+              // Guaranteed non-empty for an oauth entry by mcpRegistrationSchema's superRefine.
+              return this.oauthMcpRegistry.registerServer({
+                name: data.name,
+                url: data.url ?? '',
+                scopes: data.scopes,
+                tools: data.tools,
+                clientId: data.clientId,
+                authorizationServerUrl: data.authorizationServerUrl,
+              });
+            }
+            return registerMcpServer(input, interactive);
           },
           enableOpenUrl: (this.settings.enableWebViewerTool ?? true) && isWebViewerEnabled(this.app),
           openContextualFile: async (file) => {
@@ -772,8 +823,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
         if (Object.values(this.settings.googleWorkspaceMcp ?? {}).some(Boolean) && !Object.keys(googleMcps).length) {
           this.reportMcpWarnings([this.googleWorkspaceMcp?.status() ?? 'Google Workspace is unavailable. Check Settings → MCP.']);
         }
+        const oauthMcps = this.oauthMcpRegistry?.serversForThread(threadId) ?? {};
         return mergeMcpServers<import('@anthropic-ai/claude-agent-sdk').McpServerConfig>(
-          mergeMcpServers<import('@anthropic-ai/claude-agent-sdk').McpServerConfig>(mcpServers, googleMcps), externalMcps);
+          mergeMcpServers<import('@anthropic-ai/claude-agent-sdk').McpServerConfig>(
+            mergeMcpServers<import('@anthropic-ai/claude-agent-sdk').McpServerConfig>(mcpServers, googleMcps), externalMcps), oauthMcps);
       } catch (err) {
         console.error('[ClaudeThreads] Failed to create built-in MCP servers:', err);
         return {} as Record<string, McpServerConfig>;
@@ -838,6 +891,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     this.register(unsubStatus);
     this.register(this.manager.subscribe(() => {
       this.googleWorkspaceMcp?.retainThreads(new Set(this.manager.getThreads().filter(thread => thread.status !== 'archived').map(thread => thread.id)));
+      this.oauthMcpRegistry?.retainThreads(new Set(this.manager.getThreads().filter(thread => thread.status !== 'archived').map(thread => thread.id)));
     }));
 
     // AgentRun state is a crash-recovery record, so persist every lifecycle
@@ -1877,6 +1931,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // that race window immediately, regardless of how long thread shutdown takes.
     this.scheduler?.destroy();
     this.googleWorkspaceMcp?.close();
+    this.oauthMcpRegistry?.close();
 
     // ── Safe-reload guard ────────────────────────────────────────────────────
     // If any agent threads are actively running, interrupt them and wait up to
@@ -2464,11 +2519,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
     return thread.id;
   }
 
-  /**
-   * Creates a new thread whose first turn uses Threads' native static-artifact
-   * workflow. Keep the fs-backed module behind this desktop-only method so it
-   * is never initialized by the mobile entry path.
-   */
+  /** Caller-bound design entry; the composer shares preparation but owns its next turn. */
+  async enterDesignMode(threadId: string, brief: string, fromComposer = false): Promise<import('./designArtifact').DesignModeResult> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) {
+      throw new Error('Design artifacts require a desktop vault with local filesystem access.');
+    }
+    const { enterDesignMode, assertDesignWriteAllowed } = await import('./designArtifact');
+    return enterDesignMode(threadId, adapter.getBasePath(), brief, {
+      getThread: id => this.manager.getThread(id),
+      assertWritable: thread => {
+        if (!fromComposer) assertDesignWriteAllowed(thread, this.settings.permissionMode);
+      },
+      saveSettings: () => this.saveSettings(),
+      openThread: id => this.openThreadInChatView(id),
+      openPreview: async artifact => {
+        const view = this.getView();
+        if (!view) throw new Error('Agent Threads view is unavailable.');
+        view.refreshArtifactCard();
+        return view.openArtifactPreview(artifact);
+      },
+    });
+  }
+
+  /** Creates a new thread whose first turn uses the native static-artifact workflow. */
   async dispatchNewDesignThread(brief: string, agentHarness?: 'claude' | 'codex'): Promise<string> {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) {
@@ -2638,6 +2712,9 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // deliberately no import from ~/.claude/settings.json here: the plugin does
     // not read that file at all any more.
     this.settings.mcpServers = this.settings.mcpServers ?? {};
+    // Ensure oauthMcpServers/oauthMcpState maps exist for installs predating this feature.
+    this.settings.oauthMcpServers = this.settings.oauthMcpServers ?? {};
+    this.settings.oauthMcpState = this.settings.oauthMcpState ?? {};
     // Ensure scheduledItems array exists for installs predating this feature
     this.settings.scheduledItems = this.settings.scheduledItems ?? [];
     // Ensure remoteAccess block exists for installs predating this feature

@@ -205,6 +205,8 @@ const addVaultBridgeSchema = {
 // ── Factory ──────────────────────────────────────────────────────────────────
 
 export interface ObsidianMcpServerOptions {
+  /** Prepare the calling thread's artifact without queuing another turn. */
+  onEnterDesignMode?: (brief: string) => Promise<import('./designArtifact').DesignModeResult>;
   onRegisterMcpServer?: (input: unknown) => Promise<McpRegistrationResult>;
   /** Route agent-triggered file navigation through the host's contextual panel policy. */
   openContextualFile?: (file: TFile, newLeaf: boolean) => Promise<boolean>;
@@ -694,6 +696,24 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true };
       }
     },
+  );
+
+  const boundEnterDesignMode = tool(
+    'EnterDesignMode',
+    'Creates or reuses this thread\'s static design artifact, opens its preview and artifact controls, and returns paths and design instructions. Continue editing the artifact in this turn. Requires a desktop filesystem vault and write permission; unavailable during Plan mode or pending plan approval.',
+    { brief: z.string().trim().min(1).describe('The visual design brief or requested revision.') },
+    async (args) => {
+      try {
+        // Native harnesses invoke handlers directly, bypassing MCP schema parsing.
+        if (typeof args?.brief !== 'string' || !args.brief.trim()) throw new Error('A nonblank design brief is required.');
+        if (!options.onEnterDesignMode) throw new Error('Design mode is unavailable in this host.');
+        const result = await options.onEnterDesignMode(args.brief.trim());
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+      }
+    },
+    { alwaysLoad: true },
   );
 
   const boundScheduleWakeup = tool(
@@ -2450,7 +2470,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
 
   const boundRegisterMcpServer = tool(
     'mcp_register_server',
-    'Register a global external MCP server (stdio, HTTP or SSE). Requires a separate host confirmation even when tool approvals are bypassed. Creates only: identical retries are unchanged, conflicting names are rejected. Saved settings apply to newly initialized sessions, not the calling session. Use ${NAME} placeholders for every credential and request_secret to store values; all other literals must be nonsecret. No server is launched or contacted during registration. Scheduled threads cannot prompt for confirmation.',
+    'Register a global external MCP server (stdio, HTTP, SSE, or OAuth). Choose the transport before anything else: if the server requires its own sign-in — Vercel, Figma, Linear, Notion and most hosted vendor MCP servers do — use type "oauth" and the plugin brokers OAuth 2.1 + PKCE for you, opening a consent screen in the Web Viewer. Registering such a server as "http" appears to succeed but produces a server that cannot authenticate. Reserve "http"/"sse" for endpoints needing no sign-in or a static ${NAME} header, and "stdio" for a local command. Requires a separate host confirmation even when tool approvals are bypassed. Creates only: identical retries are unchanged, conflicting names are rejected. Saved settings apply to newly initialized sessions, not the calling session. Use ${NAME} placeholders for every credential and request_secret to store values; all other literals must be nonsecret. No stdio/http/sse server is launched or contacted during registration; an oauth registration does contact the server to discover its authorization metadata. Scheduled threads cannot prompt for confirmation.',
     mcpRegistrationSchema.shape,
     async (args) => {
       // The direct Codex adapter bypasses SDK schema parsing.
@@ -2537,6 +2557,7 @@ function createMcpToolSurfaces(app: App, options: ObsidianMcpServerOptions = {})
       boundGetNoteMetadata,
       boundSetWorkingDirectory,
       boundScheduleWakeup,
+      boundEnterDesignMode,
       boundEnterWorktree,
       boundExitWorktree,
       boundListCommands,

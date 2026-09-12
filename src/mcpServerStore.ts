@@ -33,18 +33,47 @@ const isReservedMcpName = (name: string): boolean =>
 export const mcpRegistrationSchema = z.object({
   name: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).refine(name =>
     !isReservedMcpName(name)),
-  type: z.enum(['stdio', 'http', 'sse']),
+  type: z.enum(['stdio', 'http', 'sse', 'oauth']).describe(
+    'Transport. Use "oauth" for any remote server that requires its own sign-in ' +
+    '(Vercel, Figma, Linear, Notion and similar) — the plugin then brokers OAuth 2.1 + PKCE ' +
+    'and opens a consent screen. Use "http"/"sse" only for endpoints that need no sign-in or ' +
+    'authenticate with a static header. Use "stdio" for a local command.',
+  ),
   command: z.string().trim().min(1).optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   url: z.string().trim().min(1).optional(),
   headers: z.record(z.string(), z.string()).optional(),
+  /** `oauth` only: space-separated scope list requested at authorization. Omit to use the AS default scope. */
+  scopes: z.string().optional().describe(
+    'oauth only. Space-separated OAuth scopes. Omit to use the authorization server\'s default.',
+  ),
+  /** `oauth` only: tool allow/deny filtering enforced at the local proxy. `allow` and `deny` are mutually exclusive. */
+  tools: z.object({
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
+  }).optional().describe(
+    'oauth only. Per-tool filtering enforced at the local proxy. Set allow to expose only those ' +
+    'tools, or deny to hide them; the two are mutually exclusive.',
+  ),
+  /** `oauth` only: skip Dynamic Client Registration by supplying a known public client_id. */
+  clientId: z.string().optional().describe(
+    'oauth only. Skip Dynamic Client Registration with a known public client_id. Usually omitted.',
+  ),
+  /** `oauth` only: skip protected-resource discovery by supplying the AS metadata URL directly. */
+  authorizationServerUrl: z.string().trim().url().startsWith('https://').optional().describe(
+    'oauth only. Skip protected-resource discovery by naming the authorization server directly. Usually omitted.',
+  ),
 }).strict().superRefine((entry, ctx) => {
   const invalid = () => ctx.addIssue({ code: 'custom', message: 'Invalid MCP configuration. Credentials must use ${NAME} placeholders; use request_secret to store them.' });
   const credentialKey = /authorization|cookie|token|secret|password|credential|api[-_]?key/i;
   const placeholder = /^(?:Bearer\s+|Basic\s+)?\$\{[A-Z_][A-Z0-9_]*\}$/i;
+  // scopes/tools/clientId/authorizationServerUrl only make sense for an oauth entry;
+  // a non-oauth entry carrying any of them is malformed input, not a silently-ignored extra.
+  const oauthOnlyFieldsSet = entry.scopes !== undefined || entry.tools !== undefined
+    || entry.clientId !== undefined || entry.authorizationServerUrl !== undefined;
   if (entry.type === 'stdio') {
-    if (!entry.command || entry.url !== undefined || entry.headers !== undefined) invalid();
+    if (!entry.command || entry.url !== undefined || entry.headers !== undefined || oauthOnlyFieldsSet) invalid();
     for (let i = 0; i < (entry.args?.length ?? 0); i++) {
       const arg = entry.args![i];
       if (arg.startsWith('-') && credentialKey.test(arg.split('=')[0])) {
@@ -52,8 +81,17 @@ export const mcpRegistrationSchema = z.object({
         if (!value || !placeholder.test(value)) invalid();
       }
     }
+  } else if (entry.type === 'oauth') {
+    if (!entry.url || entry.command !== undefined || entry.args !== undefined || entry.env !== undefined || entry.headers !== undefined) invalid();
+    try {
+      const url = new URL(entry.url ?? '');
+      if (url.protocol !== 'https:' || url.username || url.password) invalid();
+    } catch { invalid(); }
+    if (entry.tools?.allow !== undefined && entry.tools?.deny !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'tools.allow and tools.deny are mutually exclusive.', path: ['tools'] });
+    }
   } else {
-    if (!entry.url || entry.command !== undefined || entry.args !== undefined || entry.env !== undefined) invalid();
+    if (!entry.url || entry.command !== undefined || entry.args !== undefined || entry.env !== undefined || oauthOnlyFieldsSet) invalid();
     try {
       const url = new URL(entry.url ?? '');
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) invalid();
@@ -87,7 +125,12 @@ export function createMcpRegistration(host: {
       success: status === 'registered' || status === 'unchanged', status, message,
     });
     if (!parsed.success) return Promise.resolve(result('invalid', 'Invalid MCP configuration. Check the server name, transport and fields. Credentials must use ${NAME} placeholders; use request_secret to store them.'));
-    const entry = parsed.data;
+    // OAuth registration needs an async consent flow (discovery, DCR, PKCE, browser
+    // round-trip) that this synchronous confirm-then-save transaction can't drive.
+    // That flow is separate follow-up work; until it lands, reject here rather than
+    // pass an `oauth` entry into toStoredServer(), which only models stdio/http/sse.
+    if (parsed.data.type === 'oauth') return Promise.resolve(result('invalid', 'OAuth MCP servers cannot be registered through this flow yet.'));
+    const entry = parsed.data as McpServerEntry;
     if (!interactive || !host.confirm) return Promise.resolve(result('unavailable', 'Interactive host confirmation is unavailable. Register this server from an interactive thread.'));
     const config = toStoredServer(entry);
     const variables = new Set<string>();

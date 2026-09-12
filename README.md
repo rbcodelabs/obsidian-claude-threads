@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.35.4-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.37.1-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -196,6 +196,8 @@ Type `/` in the input box to see built-in context commands and your installed Cl
 | `/escalate <prompt>` | Route just this turn to the [escalation model](#model-switching) (default `/escalate`, keyword and target model configurable in Settings; only shown when escalation is enabled) |
 
 ### Design artifacts in Geode
+
+Agents can call `EnterDesignMode({ brief })` in an existing Claude or Codex thread to create or reuse its artifact, open the preview, and show the same artifact controls as `/design`. The tool returns the artifact paths, whether it was created or reused, the preview outcome, and design instructions; the agent continues editing in its current turn. It requires a desktop filesystem vault and write permission, and is unavailable in read-only Plan mode or while plan approval is pending. If preview opening fails, the saved artifact remains available and the result explains whether source was revealed or the preview is unavailable. On older versions, submit `/design <brief>` in the composer.
 
 Use `/design <brief>` from the Agents List or Agent Board dispatch box to create a new design thread, or use it in an existing thread to create or revise that thread's artifact. Threads creates a zero-install static UI artifact under `.geode/artifacts/` in your vault, and the agent edits ordinary `index.html`, `styles.css`, `app.js`, and local asset files. The artifact card keeps a primary **Preview** button plus icon-only **Capture design screenshot** and **Reveal design source** buttons (hover either for its label) available after the turn and after reopening the thread. Run `/design` with no brief inside a thread to reopen its existing preview; a new-thread dispatch always requires a brief. Design dispatch does not currently accept image or text attachments.
 
@@ -514,7 +516,24 @@ A server whose `${VAR_NAME}` placeholders cannot be resolved is **skipped rather
 
 Agents can also call `mcp_register_server` to propose a server. A host dialog shows the unresolved configuration and asks you to **Register server** or **Cancel**, including when normal tool permissions are bypassed. Approval saves globally for newly initialized Claude and Codex sessions; it does not launch a command, contact an endpoint, or change the calling session's tools. Scheduled threads return an unavailable result instead of waiting for a dialog.
 
-The tool accepts a flat `name`, `type` (`stdio`, `http`, or `sse`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+The tool accepts a flat `name`, `type` (`stdio`, `http`, `sse`, or `oauth`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+
+#### OAuth-gated servers
+
+A remote MCP server that requires OAuth 2.1 + PKCE (Vercel's, for example) registers with `type: "oauth"` instead of `"http"`. The plugin brokers the whole flow itself — discovery, Dynamic Client Registration, consent, token custody, refresh, and revocation — so neither Claude nor Codex needs any OAuth-specific code; both harnesses see the server as a plain authenticated HTTP endpoint behind a local per-server proxy.
+
+Connect one either way:
+
+- **Settings → MCP → Add MCP server → OAuth.** Fill in a name and the server's URL; scopes, a tool allow/deny filter, and `clientId`/`authorizationServerUrl` overrides are optional.
+- **Ask an agent** to call `mcp_register_server` with `type: "oauth"`.
+
+Both run the same flow and the same validation. Unlike the other transports it is asynchronous and interactive: discovery runs, the provider's consent screen opens in the host's Web Viewer, and the flow waits up to 5 minutes for you to finish signing in before exchanging the code for tokens and starting the proxy. Denying consent or letting the window lapse leaves no partial state behind. Because it needs a real consent screen, scheduled threads can't drive it — they get an `unavailable` result rather than a stalled dialog.
+
+Settings → **MCP → OAuth MCP servers** lists every connected server with a live status (connected + expiry countdown, expiring soon, needs re-authorization, or not configured) and a **Disconnect** button, which revokes the tokens upstream, clears the keychain, and stops the proxy. Changing a connected server means disconnecting and reconnecting rather than editing it in place, so the OAuth option appears only when adding. See [`docs/mcp-registration.md`](docs/mcp-registration.md#oauth-gated-servers-type-oauth) for the full field reference. Access and refresh tokens live only in the OS keychain, never in `data.json`.
+
+<p align="center">
+  <img src="docs/screenshot-mcp-oauth-servers.png" width="800" alt="Settings MCP tab: OAuth MCP servers section showing two connected servers with status dots and expiry countdowns, and a Disconnect button on each row" />
+</p>
 
 Use `${NAME}` for every credential and `request_secret` to save its value securely. Common credential fields are validated, but arbitrary argument strings cannot be reliably classified: all literal values must be nonsecret. Registration returns status and required variable names, never resolved credentials. Missing variables are checked when a future session initializes. See [agent registration details](docs/mcp-registration.md).
 
@@ -765,6 +784,7 @@ Control the current thread's session state.
 | Tool | Parameters | Description |
 |---|---|---|
 | `set_working_directory` | `path` | Changes the working directory for this session. Accepts an absolute path; `~` is expanded. Takes effect on the next turn. |
+| `EnterDesignMode` | `brief` | Creates or reuses the calling thread's static design artifact, opens its preview and controls, and returns paths and instructions for the current turn. Desktop only; requires write permission and no pending plan approval. |
 | `ScheduleWakeup` | `delaySeconds`, `prompt`, `reason` | Schedules a message to be injected into this thread after a delay. Useful for polling CI, waiting for a deploy, or self-pacing loop work. While the wake-up is pending the thread shows a waiting indicator — a "Waiting" group with a live countdown (`Resumes in 4m — <reason>`) in the Agents List and the [Agent Board](#kanban-board). In the thread composer, a compact `Resumes in …` pill opens scheduled activity with the wakeup reason, exact time, and an item-specific **Cancel** control. |
 | `EnterWorktree` | `branch?`, `baseBranch?`, `repoPath?` | Creates a git worktree for the current repo and switches the session cwd to it. Automatically routed to the plugin's MCP implementation, which tracks the in-session cwd correctly after `set_working_directory`. |
 | `ExitWorktree` | `worktreePath?`, `force?` | Removes the worktree and restores the session cwd to the original repo root. Defaults to the current effective cwd. Pass `force: true` to remove even if there are uncommitted changes. |

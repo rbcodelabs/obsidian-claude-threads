@@ -1,14 +1,19 @@
 import { App, Modal, Notice, Platform, PluginSettingTab, SecretComponent, Setting } from 'obsidian';
 import type ClaudeThreadsPlugin from './main';
 import { DEFAULT_VAULT_FOLDER } from './productIdentity';
-import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
+import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent, OAuthMcpState } from './types';
 import { serializeKey } from './stt';
-import { setDebugLogging } from './logger';
+import { debugLog, setDebugLogging } from './logger';
 import { telemetry } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
 import type { AgentDashboard } from './AgentDashboard';
 import type { McpServerEntry } from './mcpServerStore';
+// Value import is mobile-safe: mcpServerStore's only value dependency is zod
+// (pure JS, no Node built-ins), so this adds nothing to module-init that
+// Obsidian Mobile's require() interceptor would return null for.
+// See test/unit/bundle-safety.test.ts.
+import { mcpRegistrationSchema } from './mcpServerStore';
 import { classifyScheduledItems, describeScheduledExecution, formatNextOccurrence } from './scheduledWorkView';
 
 // View-type string constants, mirrored as local literals (see main.ts) so referencing
@@ -27,6 +32,25 @@ const AGENT_VIEW_TYPE = 'claude-threads:agents';
  * Returns true when the Web Viewer core plugin is enabled.
  * The Web Viewer's internal plugin ID in Obsidian's core plugin registry is "webviewer".
  */
+function formatOAuthDuration(ms: number): string {
+  const totalMinutes = Math.max(0, Math.round(ms / 60_000));
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}
+
+/** Status dot color + human-readable label for one OAuth MCP server row. */
+export function describeOAuthMcpStatus(state: OAuthMcpState | undefined): { label: string; tone: 'green' | 'yellow' | 'red' | 'grey' } {
+  if (!state) return { label: 'Not configured', tone: 'grey' };
+  if (state.status === 'connected') {
+    if (state.accessTokenExpiresAt !== undefined) {
+      const remaining = state.accessTokenExpiresAt - Date.now();
+      if (remaining < 15 * 60_000) return { label: 'Expires soon', tone: 'yellow' };
+      return { label: `Connected · expires in ${formatOAuthDuration(remaining)}`, tone: 'green' };
+    }
+    return { label: 'Connected', tone: 'green' };
+  }
+  return { label: 'Needs re-authorization', tone: 'red' };
+}
+
 export function isWebViewerEnabled(app: App): boolean {
   type InternalPlugins = { plugins: Record<string, { enabled: boolean }> };
   return (app as unknown as { internalPlugins: InternalPlugins })
@@ -52,6 +76,135 @@ function maskOpenAiKey(key: string | null | undefined): string {
   if (!key) return 'No key set';
   if (key.length <= 12) return '••••••••';
   return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/**
+ * How much protection the running host's `app.secretStorage` actually gives a
+ * stored secret.
+ *
+ *  - `encrypted`  — the host confirmed encrypted storage (Obsidian: the OS keychain).
+ *  - `plaintext`  — the host confirmed it has none. Under Geode today,
+ *                   `secretStorage` persists values as plaintext in
+ *                   `localStorage` and `isEncryptionAvailable()` returns false.
+ *  - `unknown`    — the host does not expose `isEncryptionAvailable` (it is newer
+ *                   than the `SecretStorage` typings the plugin builds against),
+ *                   or the call threw. Never treated as `encrypted`: the point of
+ *                   this is not to promise protection the host has not confirmed.
+ */
+export type SecretStorageProtection = 'encrypted' | 'plaintext' | 'unknown';
+
+/**
+ * The sentence shown under any setting that writes to `app.secretStorage`,
+ * describing where the value really lands on this host.
+ *
+ * The plugin used to say "Stored in your OS keychain." unconditionally, which is
+ * simply untrue on a host without encrypted secret storage. Accurate, not
+ * alarming: the non-`encrypted` wording says where the value goes and stops
+ * short of calling it a vulnerability, because for a local-first vault it is the
+ * same trust boundary as the vault's own files.
+ */
+export function describeSecretStorage(protection: SecretStorageProtection): string {
+  switch (protection) {
+    case 'encrypted':
+      return 'Stored in your OS keychain.';
+    case 'plaintext':
+      return 'This app has no encrypted secret storage, so the value is kept in its local app data rather than your OS keychain.';
+    default:
+      return 'Stored by this app’s secret storage; it could not confirm that your OS keychain is used.';
+  }
+}
+
+/**
+ * Write host-accurate secret-storage copy into `el`, then correct it in place
+ * once the host answers.
+ *
+ * Every caller renders synchronously (`PluginSettingTab.display`, `Modal.onOpen`)
+ * while the answer is async, so `compose` runs twice: first with the
+ * "could not confirm" wording, then with the truth. Starting pessimistic is the
+ * point — a slow or missing probe leaves an accurate description on screen, never
+ * a keychain promise the host does not keep.
+ *
+ * `compose` takes the storage sentence and returns the full string, so each site
+ * keeps its own surrounding claims (injection, data.json) while the keychain
+ * question itself is answered in exactly one place.
+ */
+export function applySecretStorageCopy(
+  app: App,
+  el: HTMLElement,
+  compose: (storageSentence: string) => string,
+): void {
+  el.textContent = compose(describeSecretStorage('unknown'));
+  void probeSecretStorageProtection(app).then((protection) => {
+    el.textContent = compose(describeSecretStorage(protection));
+  });
+}
+
+/**
+ * Open the host's secret picker and hand the chosen secret name to `onPicked`
+ * (empty string when the user picked nothing).
+ *
+ * `SecretComponent` has no "open" method, so the only way in is to render it
+ * into a hidden container and click the control it draws. That container is the
+ * caller's to clean up, and every failure path has to take it back down — which
+ * is why `opened` gates the `finally` rather than the happy path removing it
+ * inline (there the picker itself owns the container until `onChange` fires).
+ *
+ * The construction is wrapped because hosts disagree about the signature.
+ * Obsidian's is `(app, containerEl)`; Geode's shim currently takes the
+ * container alone, so `app` lands where the container is expected and the
+ * constructor dies on `container.appendChild is not a function` — synchronously,
+ * inside a click handler. Unguarded that is a dead button: no picker, no
+ * message, and a leaked hidden div, because the removal sat past the throw. A
+ * host mismatch now degrades to a Notice that points at the manual entry path,
+ * with the underlying error kept in the debug log.
+ */
+export function openSecretPicker(app: App, onPicked: (secretName: string) => void): void {
+  const tmp = document.body.createDiv();
+  tmp.style.display = 'none';
+  let opened = false;
+  try {
+    const picker = new SecretComponent(app, tmp);
+    picker.onChange((secretName: string) => {
+      tmp.remove();
+      onPicked(secretName);
+    });
+    // SecretComponent renders a button — click it immediately to open the picker
+    const inner = tmp.querySelector('button, input') as HTMLElement | null;
+    if (!inner) throw new Error('SecretComponent rendered no control to click');
+    inner.click();
+    opened = true;
+  } catch (err) {
+    debugLog('[ClaudeThreads] secret picker unavailable on this host:', String(err));
+    new Notice('The secret picker isn’t available on this host — use “Set key” to enter the key directly.');
+  } finally {
+    if (!opened) tmp.remove();
+  }
+}
+
+/**
+ * Ask the host whether its secret storage is encrypted.
+ *
+ * `isEncryptionAvailable` is duck-typed rather than called straight off the
+ * type: it is absent from the `SecretStorage` typings the plugin builds against
+ * and from older hosts at runtime, and "is this a function?" is the only safe
+ * test (same posture as AttachmentWriter's host-bridge detection). Both a
+ * missing method and a throwing one resolve to `unknown`, never `encrypted`.
+ */
+export async function probeSecretStorageProtection(app: App): Promise<SecretStorageProtection> {
+  type ProbedSecretStorage = { isEncryptionAvailable?: () => boolean | Promise<boolean> };
+  let probe: ProbedSecretStorage['isEncryptionAvailable'];
+  try {
+    probe = (app.secretStorage as unknown as ProbedSecretStorage | undefined)?.isEncryptionAvailable;
+  } catch {
+    return 'unknown';
+  }
+  if (typeof probe !== 'function') return 'unknown';
+  try {
+    return (await probe.call(app.secretStorage)) ? 'encrypted' : 'plaintext';
+  } catch (err) {
+    debugLog('[ClaudeThreads] secretStorage.isEncryptionAvailable failed:', String(err));
+    return 'unknown';
+  }
 }
 
 function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = false): string {
@@ -228,10 +381,14 @@ class SecretEnvModal extends Modal {
     contentEl.createEl('h2', { text: isNew ? 'Add secret variable' : `Change: ${this.varName}` });
 
     if (isNew) {
-      contentEl.createEl('p', {
-        text: 'The value is stored in the OS keychain and never written to disk.',
-        cls: 'setting-item-description',
-      });
+      // "never written to disk" was false on a host without encrypted storage —
+      // plaintext in localStorage is very much on disk. data.json is the
+      // invariant that actually holds everywhere, so that is what it claims now.
+      applySecretStorageCopy(
+        this.app,
+        contentEl.createEl('p', { cls: 'setting-item-description' }),
+        (storage) => `${storage} It is never written to data.json.`,
+      );
 
       contentEl.createEl('label', { text: 'Variable name', cls: 'ct-modal-label' });
       this.nameInput = contentEl.createEl('input', {
@@ -280,8 +437,9 @@ class SecretEnvModal extends Modal {
 /**
  * Modal opened when an agent calls the `request_secret` MCP tool.
  * Shows the secret name and the agent's reason for requesting it, collects
- * a password-type value, writes it to the OS keychain, and resolves the
- * promise with true (saved) or false (cancelled).
+ * a password-type value, writes it to `app.secretStorage` (the OS keychain on a
+ * host that has one), and resolves the promise with true (saved) or false
+ * (cancelled).
  */
 export class RequestSecretModal extends Modal {
   private valueInput: HTMLInputElement | null = null;
@@ -315,10 +473,11 @@ export class RequestSecretModal extends Modal {
       cls: 'setting-item-description',
     });
 
-    contentEl.createEl('p', {
-      text: 'The value will be stored in your OS keychain and injected into future sessions. It will never appear in the conversation.',
-      cls: 'setting-item-description',
-    });
+    applySecretStorageCopy(
+      this.app,
+      contentEl.createEl('p', { cls: 'setting-item-description' }),
+      (storage) => `${storage} It will be injected into future sessions and will never appear in the conversation.`,
+    );
 
     if (this.force) {
       contentEl.createEl('p', {
@@ -750,8 +909,8 @@ class AddSkillSourceModal extends Modal {
  * Pass `existing` (and it carries `previousName` implicitly via its `name`)
  * to pre-fill the form for an edit; pass `null` to add a new entry.
  */
-class McpServerModal extends Modal {
-  private serverType: 'stdio' | 'http';
+export class McpServerModal extends Modal {
+  private serverType: 'stdio' | 'http' | 'oauth';
   private contentEl2!: HTMLElement;
 
   constructor(
@@ -770,29 +929,32 @@ class McpServerModal extends Modal {
     contentEl.createEl('h2', { text: this.existing ? 'Edit MCP server' : 'Add MCP server' });
 
     const typeRow = contentEl.createEl('div', { cls: 'ct-modal-type-row' });
-    const stdioBtn = typeRow.createEl('button', {
-      cls: 'ct-modal-type-btn' + (this.serverType === 'stdio' ? ' ct-modal-type-btn--active' : ''),
-      text: 'Command (stdio)',
-    });
-    const httpBtn = typeRow.createEl('button', {
-      cls: 'ct-modal-type-btn' + (this.serverType === 'http' ? ' ct-modal-type-btn--active' : ''),
-      text: 'HTTP or SSE',
-    });
+    // OAuth is add-only: a connected server's credentials live in the keychain and
+    // its config in `oauthMcpServers`, so changing one means Disconnect + reconnect
+    // (a fresh consent round-trip), not editing fields in place. Offering the tab
+    // during an edit would imply an in-place edit this modal cannot perform.
+    const types: { id: 'stdio' | 'http' | 'oauth'; label: string }[] = [
+      { id: 'stdio', label: 'Command (stdio)' },
+      { id: 'http', label: 'HTTP or SSE' },
+      ...(this.existing ? [] : [{ id: 'oauth' as const, label: 'OAuth' }]),
+    ];
+    const buttons = new Map<string, HTMLElement>();
+    for (const { id, label } of types) {
+      const btn = typeRow.createEl('button', {
+        cls: 'ct-modal-type-btn' + (this.serverType === id ? ' ct-modal-type-btn--active' : ''),
+        text: label,
+      });
+      buttons.set(id, btn);
+      btn.addEventListener('click', () => {
+        this.serverType = id;
+        for (const [otherId, otherBtn] of buttons) {
+          otherBtn.toggleClass('ct-modal-type-btn--active', otherId === id);
+        }
+        this.renderTypeContent();
+      });
+    }
 
     this.contentEl2 = contentEl.createEl('div');
-
-    stdioBtn.addEventListener('click', () => {
-      this.serverType = 'stdio';
-      stdioBtn.addClass('ct-modal-type-btn--active');
-      httpBtn.removeClass('ct-modal-type-btn--active');
-      this.renderTypeContent();
-    });
-    httpBtn.addEventListener('click', () => {
-      this.serverType = 'http';
-      httpBtn.addClass('ct-modal-type-btn--active');
-      stdioBtn.removeClass('ct-modal-type-btn--active');
-      this.renderTypeContent();
-    });
 
     this.renderTypeContent();
   }
@@ -800,6 +962,7 @@ class McpServerModal extends Modal {
   private renderTypeContent(): void {
     this.contentEl2.empty();
     if (this.serverType === 'stdio') this.renderStdioForm();
+    else if (this.serverType === 'oauth') this.renderOAuthForm();
     else this.renderHttpForm();
   }
 
@@ -948,6 +1111,157 @@ class McpServerModal extends Modal {
     saveBtn.addEventListener('click', handleSave);
     nameInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
     urlInput.addEventListener('keydown', (e: KeyboardEvent) => { if (e.key === 'Enter') handleSave(); });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  /**
+   * Connect an OAuth-gated server (`type: "oauth"`). Unlike the stdio/HTTP forms
+   * this does not write settings directly: `OAuthMcpRegistry.registerServer()`
+   * owns the whole round-trip (discovery → DCR → consent in the Web Viewer →
+   * token exchange → proxy start → save), and only it knows how to unwind a
+   * half-finished attempt. So the modal's job is to collect fields, hand them
+   * over, and stay open across a wait that can legitimately run to the flow's
+   * 5-minute consent timeout.
+   */
+  private renderOAuthForm(): void {
+    const el = this.contentEl2;
+
+    el.createEl('p', {
+      cls: 'ct-modal-desc',
+      text:
+        'Connecting opens the provider\'s sign-in page in the Web Viewer. Tokens are stored ' +
+        'in the OS keychain, never in this plugin\'s data.json.',
+    });
+
+    el.createEl('label', { text: 'Name', cls: 'ct-modal-label' });
+    const nameInput = el.createEl('input', { type: 'text', placeholder: 'vercel', cls: 'ct-modal-input' });
+
+    el.createEl('label', { text: 'URL', cls: 'ct-modal-label' });
+    const urlInput = el.createEl('input', {
+      type: 'text',
+      placeholder: 'https://mcp.vercel.com/',
+      cls: 'ct-modal-input',
+    });
+
+    el.createEl('label', { text: 'Scopes (optional, space-separated)', cls: 'ct-modal-label' });
+    const scopesInput = el.createEl('input', {
+      type: 'text',
+      placeholder: 'openid profile email',
+      cls: 'ct-modal-input',
+    });
+
+    el.createEl('label', { text: 'Tool filter (optional)', cls: 'ct-modal-label' });
+    const filterModeSelect = el.createEl('select', { cls: 'ct-modal-input' });
+    filterModeSelect.createEl('option', { text: 'No filter', value: 'none' });
+    filterModeSelect.createEl('option', { text: 'Allow only these', value: 'allow' });
+    filterModeSelect.createEl('option', { text: 'Deny these', value: 'deny' });
+    const toolsInput = el.createEl('textarea', { cls: 'ct-modal-input ct-modal-textarea' });
+    toolsInput.placeholder = 'buy_pro\nbuy_credits';
+    toolsInput.style.display = 'none';
+    filterModeSelect.addEventListener('change', () => {
+      toolsInput.style.display = filterModeSelect.value === 'none' ? 'none' : '';
+    });
+
+    const advanced = el.createEl('details');
+    advanced.createEl('summary', { text: 'Advanced' });
+    advanced.createEl('label', { text: 'Client ID (skips Dynamic Client Registration)', cls: 'ct-modal-label' });
+    const clientIdInput = advanced.createEl('input', { type: 'text', cls: 'ct-modal-input' });
+    advanced.createEl('label', { text: 'Authorization server URL (skips discovery)', cls: 'ct-modal-label' });
+    const asUrlInput = advanced.createEl('input', { type: 'text', cls: 'ct-modal-input' });
+
+    const errorEl = el.createEl('p', { cls: 'ct-modal-error' });
+    errorEl.style.display = 'none';
+    const statusEl = el.createEl('p', { cls: 'ct-modal-desc' });
+    statusEl.style.display = 'none';
+
+    const buttonRow = el.createDiv('ct-modal-button-row');
+    const cancelBtn = buttonRow.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => this.close());
+    const saveBtn = buttonRow.createEl('button', { text: 'Connect', cls: 'mod-cta' });
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg;
+      errorEl.style.display = '';
+    };
+
+    let connecting = false;
+    const handleConnect = async () => {
+      if (connecting) return;
+      errorEl.style.display = 'none';
+
+      const registry = this.plugin.oauthMcpRegistry;
+      if (!registry) { showError('OAuth MCP registration is unavailable in this context.'); return; }
+
+      const mode = filterModeSelect.value;
+      const toolNames = toolsInput.value.split('\n').map(t => t.trim()).filter(Boolean);
+      const entry = {
+        name: nameInput.value.trim(),
+        type: 'oauth' as const,
+        url: urlInput.value.trim(),
+        ...(scopesInput.value.trim() ? { scopes: scopesInput.value.trim() } : {}),
+        ...(mode !== 'none' && toolNames.length > 0 ? { tools: { [mode]: toolNames } } : {}),
+        ...(clientIdInput.value.trim() ? { clientId: clientIdInput.value.trim() } : {}),
+        ...(asUrlInput.value.trim() ? { authorizationServerUrl: asUrlInput.value.trim() } : {}),
+      };
+
+      if (!entry.name) { showError('Name is required.'); return; }
+      if (!entry.url) { showError('URL is required.'); return; }
+
+      // Validate against the same schema the agent tool path uses, so the two
+      // entry points cannot drift on what counts as a valid OAuth server.
+      const parsed = mcpRegistrationSchema.safeParse(entry);
+      if (!parsed.success) {
+        showError(parsed.error.issues[0]?.message ?? 'Invalid OAuth MCP configuration.');
+        return;
+      }
+
+      connecting = true;
+      saveBtn.setAttribute('disabled', 'true');
+      cancelBtn.setAttribute('disabled', 'true');
+      saveBtn.textContent = 'Connecting…';
+      statusEl.textContent = 'Waiting for you to finish signing in…';
+      statusEl.style.display = '';
+
+      let result: { success: boolean; message: string };
+      try {
+        result = await registry.registerServer({
+          name: entry.name,
+          url: entry.url,
+          scopes: entry.scopes,
+          tools: entry.tools,
+          clientId: entry.clientId,
+          authorizationServerUrl: entry.authorizationServerUrl,
+        });
+      } catch (err) {
+        result = { success: false, message: err instanceof Error ? err.message : String(err) };
+      }
+
+      connecting = false;
+      statusEl.style.display = 'none';
+      saveBtn.removeAttribute('disabled');
+      cancelBtn.removeAttribute('disabled');
+      saveBtn.textContent = 'Connect';
+
+      if (!result.success) {
+        showError(result.message || 'Could not connect this OAuth MCP server.');
+        return;
+      }
+
+      new Notice(`Connected OAuth MCP server "${entry.name}".`);
+      this.close();
+      this.onSaved();
+    };
+
+    saveBtn.addEventListener('click', () => { void handleConnect(); });
+    // Enter-to-submit, matching the stdio and HTTP forms. This is why
+    // handleConnect keeps its own `connecting` guard: a keypress reaches the
+    // handler even while the Connect button is disabled, so the disabled
+    // attribute alone would not prevent a second consent round-trip.
+    const submitOnEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') void handleConnect(); };
+    nameInput.addEventListener('keydown', submitOnEnter);
+    urlInput.addEventListener('keydown', submitOnEnter);
+    scopesInput.addEventListener('keydown', submitOnEnter);
 
     setTimeout(() => nameInput.focus(), 50);
   }
@@ -1463,9 +1777,8 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       }
     };
 
-    new Setting(containerEl)
+    const secretsSetting = new Setting(containerEl)
       .setName('Secret environment variables')
-      .setDesc('API keys and tokens stored in the OS keychain (never in data.json), injected into every Claude session.')
       .addButton((btn) =>
         btn.setButtonText('Add secret').setCta().onClick(() => {
           new SecretEnvModal(this.app, '', async (val, varName) => {
@@ -1479,6 +1792,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }).open();
         }),
       );
+    applySecretStorageCopy(
+      this.app,
+      secretsSetting.descEl,
+      (storage) => `API keys and tokens injected into every Claude session, never into data.json. ${storage}`,
+    );
     containerEl.appendChild(secretsList);
     renderSecrets();
 
@@ -1934,7 +2252,15 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       const maskedKey = maskOpenAiKey(existingKey);
       const openAiSetting = new Setting(containerEl)
         .setName('OpenAI API key')
-        .setDesc('Used for Whisper speech-to-text. Stored in your OS keychain.');
+        .setDesc('Used for Whisper speech-to-text.');
+
+      // Its own span, because the masked key below is a sibling in the same
+      // descEl and must survive the async correction.
+      applySecretStorageCopy(
+        this.app,
+        openAiSetting.descEl.createEl('span'),
+        (storage) => ` ${storage}`,
+      );
 
       openAiSetting.descEl.createEl('br');
       openAiSetting.descEl.createEl('span', {
@@ -1951,11 +2277,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         })
         .addButton((btn) => {
           btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
-            const tmp = document.body.createDiv();
-            tmp.style.display = 'none';
-            const picker = new SecretComponent(this.app, tmp);
-            picker.onChange((secretName: string) => {
-              tmp.remove();
+            openSecretPicker(this.app, (secretName) => {
               if (!secretName) return;
               const actualValue = this.app.secretStorage.getSecret(secretName);
               if (actualValue) {
@@ -1966,14 +2288,6 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
                 new Notice('That secret has no value stored');
               }
             });
-            // SecretComponent renders a button — click it immediately to open the picker
-            const inner = tmp.querySelector('button, input') as HTMLElement | null;
-            if (inner) {
-              inner.click();
-            } else {
-              tmp.remove();
-              new Notice('Secret picker not available');
-            }
           });
         });
     }
@@ -2462,6 +2776,44 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           googleStatus.setText(this.plugin.googleWorkspaceMcp?.status() ?? 'Google Workspace requires desktop Google Docs Sync with a connected account.');
         }));
     }
+    containerEl.createEl('h3', { text: 'OAuth MCP servers' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Remote MCP servers that require their own OAuth sign-in. Connect one with "Add MCP server" ' +
+        'below (choose OAuth), or by asking an agent to call mcp_register_server. Either way the ' +
+        'provider\'s consent screen opens in the Web Viewer; tokens are kept in the OS keychain. ' +
+        'Disconnect revokes them and stops the local proxy.',
+    });
+    const oauthListEl = containerEl.createDiv({ cls: 'ct-oauth-mcp-servers-list' });
+    const renderOAuthList = () => {
+      oauthListEl.empty();
+      const entries = Object.entries(this.plugin.settings.oauthMcpServers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length === 0) {
+        oauthListEl.createEl('p', { text: 'No OAuth MCP servers connected yet.', cls: 'ct-settings-empty' });
+        return;
+      }
+      for (const [name, entry] of entries) {
+        const state = this.plugin.oauthMcpRegistry?.status(name);
+        const { label, tone } = describeOAuthMcpStatus(state);
+        const row = new Setting(oauthListEl).setName(name).setDesc(entry.url);
+        row.nameEl.createEl('span', { cls: `ct-oauth-status-dot ct-oauth-status-dot--${tone}` });
+        row.nameEl.createEl('span', { cls: 'ct-oauth-status-label', text: label });
+        if (state?.status === 'error' && state.errorMessage) {
+          row.descEl.createEl('br');
+          row.descEl.createEl('span', { cls: 'ct-mcp-server-warning', text: state.errorMessage });
+        }
+        row.addButton((btn) =>
+          btn.setButtonText('Disconnect').setWarning().onClick(async () => {
+            await this.plugin.oauthMcpRegistry?.disconnect(name);
+            new Notice(`Disconnected "${name}".`);
+            renderOAuthList();
+          }),
+        );
+      }
+    };
+    renderOAuthList();
+
     containerEl.createEl('h3', { text: 'Custom MCP servers' });
     containerEl.createEl('p', {
       cls: 'setting-item-description',
@@ -2565,7 +2917,12 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .addButton((btn) =>
         btn.setButtonText('Add MCP server').setCta().onClick(() => {
-          new McpServerModal(this.app, this.plugin, null, () => renderList()).open();
+          // Refresh both lists: the modal can now land an entry in either
+          // `mcpServers` (stdio/http/sse) or `oauthMcpServers` (oauth).
+          new McpServerModal(this.app, this.plugin, null, () => {
+            renderList();
+            renderOAuthList();
+          }).open();
         }),
       );
   }
