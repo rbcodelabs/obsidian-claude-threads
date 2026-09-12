@@ -3,14 +3,15 @@ import ClaudeThreadsPlugin from '../../src/main';
 
 const SKILLS_VIEW_TYPE = 'claude-threads:skills';
 
-function pluginWithWorkspace(workspace: unknown): ClaudeThreadsPlugin {
+function pluginWithWorkspace(workspace: unknown, conversationFirst = false): ClaudeThreadsPlugin {
   const plugin = Object.create(ClaudeThreadsPlugin.prototype) as ClaudeThreadsPlugin;
   Object.defineProperty(plugin, 'app', { value: { workspace } });
+  Object.defineProperty(plugin, 'isConversationFirst', { value: () => conversationFirst });
   return plugin;
 }
 
 describe('Skills Manager placement', () => {
-  it('opens a new Skills Manager in a main-area tab', async () => {
+  it('opens a new Skills Manager in a main-area tab in classic mode', async () => {
     const leaf = { setViewState: vi.fn().mockResolvedValue(undefined) };
     const workspace = {
       getLeavesOfType: vi.fn().mockReturnValue([]),
@@ -19,7 +20,7 @@ describe('Skills Manager placement', () => {
       revealLeaf: vi.fn(),
     };
 
-    await pluginWithWorkspace(workspace).activateSkillsView();
+    await pluginWithWorkspace(workspace, false).activateSkillsView();
 
     expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
     expect(workspace.getRightLeaf).not.toHaveBeenCalled();
@@ -30,20 +31,42 @@ describe('Skills Manager placement', () => {
     expect(workspace.revealLeaf).toHaveBeenCalledWith(leaf);
   });
 
-  it('reveals an existing Skills Manager without creating or relocating it', async () => {
-    const existingLeaf = { setViewState: vi.fn() };
+  it('opens a new Skills Manager in the right sidebar in conversation-first mode', async () => {
+    const leaf = { setViewState: vi.fn().mockResolvedValue(undefined) };
     const workspace = {
-      getLeavesOfType: vi.fn().mockReturnValue([existingLeaf]),
+      getLeavesOfType: vi.fn().mockReturnValue([]),
       getLeaf: vi.fn(),
-      getRightLeaf: vi.fn(),
+      getRightLeaf: vi.fn().mockReturnValue(leaf),
       revealLeaf: vi.fn(),
     };
 
-    await pluginWithWorkspace(workspace).activateSkillsView();
+    await pluginWithWorkspace(workspace, true).activateSkillsView();
 
+    expect(workspace.getRightLeaf).toHaveBeenCalledWith(false);
     expect(workspace.getLeaf).not.toHaveBeenCalled();
-    expect(workspace.getRightLeaf).not.toHaveBeenCalled();
-    expect(existingLeaf.setViewState).not.toHaveBeenCalled();
-    expect(workspace.revealLeaf).toHaveBeenCalledWith(existingLeaf);
+    expect(leaf.setViewState).toHaveBeenCalledWith({
+      type: SKILLS_VIEW_TYPE,
+      active: true,
+    });
+    expect(workspace.revealLeaf).toHaveBeenCalledWith(leaf);
+  });
+
+  it('reveals an existing Skills Manager without creating or relocating it, regardless of placement', async () => {
+    for (const conversationFirst of [false, true]) {
+      const existingLeaf = { setViewState: vi.fn() };
+      const workspace = {
+        getLeavesOfType: vi.fn().mockReturnValue([existingLeaf]),
+        getLeaf: vi.fn(),
+        getRightLeaf: vi.fn(),
+        revealLeaf: vi.fn(),
+      };
+
+      await pluginWithWorkspace(workspace, conversationFirst).activateSkillsView();
+
+      expect(workspace.getLeaf).not.toHaveBeenCalled();
+      expect(workspace.getRightLeaf).not.toHaveBeenCalled();
+      expect(existingLeaf.setViewState).not.toHaveBeenCalled();
+      expect(workspace.revealLeaf).toHaveBeenCalledWith(existingLeaf);
+    }
   });
 });

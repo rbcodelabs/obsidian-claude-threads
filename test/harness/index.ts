@@ -8,7 +8,13 @@ import { Platform } from 'obsidian';
 
 if (new URLSearchParams(window.location.search).has('mobile')) Platform.isMobile = true;
 
-const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude' };
+// threadViewPlacement is pinned explicitly rather than inherited from
+// DEFAULT_SETTINGS: this harness backs the large majority of screenshot/unit
+// fixtures that exercise ThreadsView rendering independent of placement, and
+// letting it silently follow whatever the production default is would churn
+// every one of those baselines whenever the default changes. Tests that need
+// conversation-first mode opt in explicitly via window.__setConversationFirst.
+const settings = { ...DEFAULT_SETTINGS, claudeBinaryPath: '/opt/homebrew/bin/claude', threadViewPlacement: 'classic' as const };
 const manager = new ThreadManager(settings);
 manager.loadThreads(fixtureThreads);
 
