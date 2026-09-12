@@ -11,6 +11,7 @@ import { legacyWorktreeRoot, resolveWorktreeRoot } from './worktreePaths';
 import { debugLog } from './logger';
 import { codexSkillRoots, buildSkillPlugins } from './skillManager';
 import { pluginSkillsRootFrom } from './skillPaths';
+import { resolveLocalSkillsRoot, externalSkillRoots } from './localSkills';
 import { selectCanonicalHarnessTools } from './mcpServerMerge';
 import { AgentRunStore } from './agentRuns/AgentRunStore';
 import { loadAgentProfiles, type AgentProfileMap } from './AgentProfiles';
@@ -232,6 +233,12 @@ export class ThreadManager {
   questionHandler: (threadId: string, questions: AskQuestion[]) => Promise<Record<string, string>> = async () => ({});
   openNewTabHandler: (title?: string, initialPrompt?: string) => Promise<{ threadId: string; title: string }> = async (title) => ({ threadId: '', title: title ?? 'New Thread' });
   vaultRoot = '';
+
+  private localSkillsRoot(): string {
+    if (!this.vaultRoot) return '';
+    try { return resolveLocalSkillsRoot(this.vaultRoot, this.settings.localSkillsFolder ?? 'Skills', externalSkillRoots(this.settings.skillSources)); }
+    catch (error) { console.warn('[ClaudeThreads] Local skills unavailable:', error); return ''; }
+  }
   /**
    * Obsidian App handle, set once from main.ts alongside `vaultRoot`. Needed by
    * AttachmentWriter to write image files through the vault API (so they
@@ -1757,6 +1764,7 @@ export class ThreadManager {
         sessionOptions: this.buildSessionOptions(thread, agentProfiles),
       },
       codex: {
+        localSkillsRoot: this.localSkillsRoot(),
         ...resolveCodexPermissions(thread.permissionMode ?? this.settings.permissionMode),
         ...(this.settings.codexEffort && this.settings.codexEffort !== 'default'
           ? { effort: this.settings.codexEffort }
@@ -1769,6 +1777,7 @@ export class ThreadManager {
           // Vault-installed skills. Codex discovers by parent root, so it gets
           // the skills dir itself rather than the generated plugin root Claude uses.
           pluginSkillsRootFrom(this.pluginResourceDir ?? ''),
+          this.localSkillsRoot(),
         ),
         dynamicTools: codexDynamicTools,
         mcpServers: codexMcpServers,
@@ -2389,6 +2398,7 @@ export class ThreadManager {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const path = require('path') as typeof import('path');
       const plugins = buildSkillPlugins({
+        localSkillsRoot: this.localSkillsRoot(),
         skillSources: s.skillSources ?? [],
         pluginSkillsRoot: pluginSkillsRootFrom(this.pluginResourceDir ?? ''),
         // Bundled thread-orchestrator skill — ships inside the plugin's own

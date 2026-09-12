@@ -64,6 +64,8 @@ export interface CodexHarnessOptions {
   effort?: Exclude<import('./types').PluginSettings['codexEffort'], 'default'>;
   /** Standalone skill roots registered for this app-server process. */
   skillRoots?: string[];
+  /** Authored skills use local:<name> commands and explicit path-based invocation. */
+  localSkillsRoot?: string;
   dynamicTools?: HarnessDynamicTool[];
   /** Serializable external MCP servers to mirror into Codex's thread config. */
   mcpServers?: Record<string, McpServerConfig>;

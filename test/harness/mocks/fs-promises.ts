@@ -18,3 +18,6 @@ export const rm = promises.rm;
 export const mkdir = promises.mkdir;
 export const cp = promises.cp;
 export const access = promises.access;
+export const copyFile = async () => { throw new Error('Filesystem authoring is not available in the visual harness'); };
+export const mkdtemp = async () => { throw new Error('Filesystem authoring is not available in the visual harness'); };
+export const rename = async () => { throw new Error('Filesystem authoring is not available in the visual harness'); };

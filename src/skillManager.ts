@@ -39,6 +39,7 @@ export function codexSkillRoots(
   skillSources: SkillSource[] = [],
   bundledSkillsRoot?: string,
   pluginSkillsRoot?: string,
+  localSkillsRoot?: string,
 ): string[] {
   const roots: string[] = [];
   for (const source of skillSources) {
@@ -50,6 +51,7 @@ export function codexSkillRoots(
   }
   if (bundledSkillsRoot) roots.push(bundledSkillsRoot);
   if (pluginSkillsRoot) roots.push(pluginSkillsRoot);
+  if (localSkillsRoot) roots.push(localSkillsRoot);
   return [...new Set(roots.map((root) => path.resolve(root)))];
 }
 
@@ -69,6 +71,7 @@ export function codexSkillRoots(
  *   registration.
  */
 export function buildSkillPlugins(options: {
+  localSkillsRoot?: string;
   skillSources?: SkillSource[];
   /** `<vault>/<plugin-dir>/skills`, or '' when unresolvable. */
   pluginSkillsRoot?: string;
@@ -102,6 +105,25 @@ export function buildSkillPlugins(options: {
   }
 
   // Bundled thread-orchestrator skill — ships inside the plugin's own dist/
+  if (options.localSkillsRoot && enumerateSkillDirs(options.localSkillsRoot, fsModule).length > 0) {
+    const root = options.localSkillsRoot;
+    const manifestDir = path.join(root, '.claude-plugin');
+    const manifestPath = path.join(manifestDir, 'plugin.json');
+    for (const candidate of [root, manifestDir, manifestPath]) {
+      try {
+        if (fsModule.lstatSync(candidate).isSymbolicLink()) throw new Error('Local skills manifest cannot use a symlink');
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
+    fsModule.mkdirSync(manifestDir, { recursive: true });
+    const expected = { name: 'local', version: '1.0.0', skills: './' };
+    if (fsModule.existsSync(manifestPath)) {
+      if (JSON.stringify(JSON.parse(fsModule.readFileSync(manifestPath, 'utf8'))) !== JSON.stringify(expected)) {
+        throw new Error('Local skills folder already contains a different plugin manifest; choose a dedicated folder');
+      }
+    } else fsModule.writeFileSync(manifestPath, JSON.stringify(expected) + '\n', { encoding: 'utf8', flag: 'wx' });
+    plugins.push({ type: 'local', path: root });
+  }
+
   // (copied there by esbuild.config.mjs from resources/skills/), so it is
   // discoverable in every session with nothing copied into ~/.claude/skills/.
   if (options.bundledSkillPath) {
@@ -165,9 +187,10 @@ export function parseFrontmatter(content: string): { name: string; description: 
 // ── Installed skills ──────────────────────────────────────────────────────────
 
 /** Which root a skill was found in. `'home'` entries are strictly read-only. */
-export type SkillOrigin = 'vault' | 'home';
+export type SkillOrigin = 'vault' | 'home' | 'local';
 
 export interface InstalledSkillInfo {
+  identifier?: string;
   name: string;
   description: string;
   /** Path inside the root it was found in (may be a symlink) */
@@ -210,6 +233,7 @@ async function scanSkillsRoot(
   const skills: InstalledSkillInfo[] = [];
 
   for (const entry of entries) {
+    if (origin === 'local' && (entry.name.startsWith('.') || !entry.isDirectory())) continue;
     const skillPath = path.join(root, entry.name);
 
     try {
@@ -237,6 +261,7 @@ async function scanSkillsRoot(
       }
 
       let content = '';
+      if (origin === 'local' && !fs.existsSync(skillMdPath)) continue;
       try {
         content = await fsp.readFile(skillMdPath, 'utf-8');
       } catch {
@@ -246,6 +271,7 @@ async function scanSkillsRoot(
       const { name, description } = parseFrontmatter(content);
 
       skills.push({
+        identifier: `${origin}:${entry.name.replace(/\.md$/, '')}`,
         name: name || entry.name.replace(/\.md$/, ''),
         description,
         skillPath,
@@ -279,12 +305,13 @@ export async function listInstalledSkills(
   skillSources: SkillSource[] = [],
   roots: SkillRoots = getSkillRoots(),
 ): Promise<InstalledSkillInfo[]> {
-  const [vaultSkills, homeSkills] = await Promise.all([
+  const [vaultSkills, homeSkills, localSkills] = await Promise.all([
     scanSkillsRoot(roots.pluginRoot, 'vault', roots),
     scanSkillsRoot(roots.homeRoot, 'home', roots),
+    scanSkillsRoot(roots.localRoot ?? '', 'local', roots),
   ]);
 
-  const skills = [...vaultSkills, ...homeSkills];
+  const skills = [...vaultSkills, ...homeSkills, ...localSkills];
 
   // Vault entries sort ahead of same-named home entries so that every
   // find-by-name lookup (detail, uninstall) resolves to the writable one.
@@ -348,7 +375,13 @@ export async function uninstallSkillByName(
   roots: SkillRoots = getSkillRoots(),
 ): Promise<{ skillPath: string }> {
   const installed = await listInstalledSkills(skillSources, roots);
-  const match = installed.find((s) => s.name === name && s.origin === 'vault')
+  const candidates = installed.filter(s => s.name === name || s.identifier === name);
+  if (candidates.some(s => s.origin === 'local') && candidates.length > 1) {
+    throw new Error(`Ambiguous skill name "${name}". Use a qualified identifier from skills_list_installed.`);
+  }
+  const match = installed.find(s => s.identifier === name)
+    ?? installed.find((s) => s.name === name && s.origin === 'local')
+    ?? installed.find((s) => s.name === name && s.origin === 'vault')
     ?? installed.find((s) => s.name === name);
   if (!match) {
     throw new Error(`No installed skill named "${name}"`);
@@ -502,7 +535,7 @@ export async function getSkillDetail(
   roots: SkillRoots = getSkillRoots(),
 ): Promise<SkillDetailResult> {
   const installed = await listInstalledSkills(skillSources, roots);
-  const matches = (s: InstalledSkillInfo) => s.name === identifier || path.basename(s.skillPath) === identifier;
+  const matches = (s: InstalledSkillInfo) => s.identifier === identifier || s.name === identifier || path.basename(s.skillPath) === identifier;
   // Vault copy wins on a cross-root name collision, matching uninstallSkillByName.
   const match = installed.find((s) => matches(s) && s.origin === 'vault') ?? installed.find(matches);
   if (match) {

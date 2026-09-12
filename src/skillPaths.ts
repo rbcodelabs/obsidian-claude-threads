@@ -31,6 +31,8 @@ const os = require('os') as typeof import('os');
 export const VAULT_SKILLS_PLUGIN_NAME = 'vault';
 
 export interface SkillRoots {
+  /** User-authored packages in the configured vault folder. */
+  localRoot?: string;
   /**
    * `<vault>/<plugin-dir>/skills` — the only place the plugin ever writes.
    * `''` when unresolvable (mobile, no `FileSystemAdapter`, or a test that
@@ -164,6 +166,9 @@ export function requirePluginRoot(roots: SkillRoots = getSkillRoots()): string {
  * so — that was the original `saveSkillContent` bug.
  */
 export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillRoots()): boolean {
+  if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
+    return skill.skillPath !== roots.localRoot && isInsideRoot(skill.realPath, roots.localRoot);
+  }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.realPath, roots.pluginRoot)
     && isInsideRoot(skill.skillPath, roots.pluginRoot);
@@ -176,6 +181,9 @@ export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillR
  * follow it, so removing a vault-local symlink never touches the target repo.
  */
 export function canRemoveSkill(skill: { skillPath: string }, roots: SkillRoots = getSkillRoots()): boolean {
+  if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
+    return path.dirname(path.resolve(skill.skillPath)) === path.resolve(roots.localRoot);
+  }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.skillPath, roots.pluginRoot);
 }
@@ -202,6 +210,7 @@ export function enumerateSkillDirs(
   }
   const dirs: string[] = [];
   for (const entry of entries) {
+    if (entry.startsWith('.')) continue;
     const entryPath = path.join(root, entry);
     try {
       if (!fsModule.statSync(entryPath).isDirectory()) continue;

@@ -219,6 +219,14 @@ Open the **Skills Manager** from the ribbon (puzzle icon) or command palette to 
 
 > **Where installs go.** Everything the Skills Manager installs or imports lands in `<vault>/.obsidian/plugins/claude-threads/skills/`, beside the plugin's `skill-sources/` clones — never in `~/.claude/`. That folder shares the plugin folder's fate: community-plugin *updates* leave unknown subdirectories alone, but manually uninstalling and reinstalling the plugin will delete your installed skills along with it.
 
+#### Authoring local skills
+
+Choose **New skill** in Skills Manager, enter a lowercase identifier such as `meeting-notes`, and edit the starter `SKILL.md`. Authored packages appear under **Local skills** and live in `<vault>/Skills/<identifier>/`. Set **Settings → Skills → Local skills folder** to another vault-relative folder. Changing it does not move files. Marketplace installs, imports, and GitHub source clones retain their existing locations; nothing is migrated.
+
+Agents can use `skills_create_local({ skillId, skillMd, files? })` and `skills_update_local({ skillId, files?, deleteFiles? })`. Each file is `{ path, encoding: "utf8" | "base64", content }`, relative to the package. Creation requires YAML frontmatter with a `name` matching the identifier and a nonempty `description`. Updates preserve omitted files and remove only explicitly listed paths; `SKILL.md` can be replaced but cannot be deleted. Paths cannot traverse outside the package or follow symlinks. Supporting files can be managed through these tools or the filesystem.
+
+Authored skills are available in newly started Claude and Codex sessions as `/local:<identifier>`. Active sessions are not restarted. Installed Claude skills retain `/vault:<name>`. Use qualified identifiers from `skills_list_installed`, such as `local:meeting-notes`, with `skills_get` and `skills_uninstall` to distinguish same-named packages. Ambiguous removal involving an authored skill is rejected. `skills_update` continues to pull configured GitHub sources.
+
 #### Declaring skill sources in config
 
 GitHub skill sources don't have to be added through the UI. A vault whose `data.json` is committed to a config repo can **declare** them, and the plugin materializes each one on load:

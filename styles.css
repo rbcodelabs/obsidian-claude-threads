@@ -8487,3 +8487,8 @@ button.ct-agent-crumb:focus-visible {
   flex-wrap: wrap;
 }
 .ct-mcp-registration-buttons button { min-height: 44px; }
+.ct-skills-availability {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}

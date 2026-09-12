@@ -1546,6 +1546,20 @@ test.describe('Agent Threads UI', () => {
 
   // ─── Skills Manager ──────────────────────────────────────────────────────
 
+  test('skills manager — create and edit an authored skill', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('file://' + path.resolve('test/harness/skills.html'));
+    await page.getByRole('button', { name: 'New skill', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Skill identifier' }).fill('meeting-notes');
+    await page.getByRole('button', { name: 'Create skill', exact: true }).click();
+    await expect(page.locator('.ct-skills-textarea')).toHaveValue(/name: meeting-notes/);
+    await expect(page.getByText('Available in new sessions.', { exact: true })).toBeVisible();
+    await page.locator('.ct-skills-textarea').fill('---\nname: meeting-notes\ndescription: Summarize meetings\n---\nUpdated instructions');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await shot(page, 'skills-manager-local-editor.png', { fullPage: true });
+  });
+
   test('skills manager — installed tab', async ({ page }) => {
     const skillsUrl = 'file://' + path.resolve('test/harness/skills.html');
     await page.setViewportSize({ width: 1000, height: 740 });

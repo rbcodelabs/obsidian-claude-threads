@@ -23,6 +23,10 @@ describe('local skill packages', () => {
     expect(() => resolveLocalSkillsRoot('', 'Skills')).toThrow();
     expect(() => resolveLocalSkillsRoot(vault, '.obsidian/plugins/test/skills')).toThrow();
   });
+  it('rejects an authored root overlapping an external source', () => {
+    expect(() => resolveLocalSkillsRoot(vault, 'Sources', [path.join(vault, 'Sources', 'team')])).toThrow(/source/i);
+    expect(() => resolveLocalSkillsRoot(vault, 'Sources/team/skills', [path.join(vault, 'Sources', 'team')])).toThrow(/source/i);
+  });
   it('creates complete packages including binary resources', async () => {
     const result = await createLocalSkill(root, { skillId: 'example', skillMd: manifest, files: [textFile('references/guide.md'), { path: 'assets/icon.bin', encoding: 'base64', content: 'AP+A' }] });
     expect(result).toEqual({ skillId: 'example', path: path.join(root, 'example'), availability: 'next-session' });

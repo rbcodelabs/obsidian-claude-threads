@@ -2,6 +2,13 @@ import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
 import { parseYaml } from 'obsidian';
+import os from 'os';
+import type { SkillSource } from './types';
+
+export function externalSkillRoots(sources: SkillSource[] = []): string[] {
+  return sources.map(source => source.type === 'github' ? source.clonePath : source.skillsPath)
+    .filter((value): value is string => !!value).map(value => value.replace(/^~(?=\/|$)/, os.homedir()));
+}
 
 export interface LocalSkillFile { path: string; encoding: 'utf8' | 'base64'; content: string }
 export interface CreateLocalSkillInput { skillId: string; skillMd: string; files?: LocalSkillFile[] }
@@ -33,13 +40,19 @@ function noSymlinks(base: string, target: string): void {
   }
 }
 
-export function resolveLocalSkillsRoot(vaultRoot: string, folder = 'Skills'): string {
+export function resolveLocalSkillsRoot(vaultRoot: string, folder = 'Skills', excludedRoots: string[] = []): string {
   if (!vaultRoot || !path.isAbsolute(vaultRoot)) throw new Error('A filesystem vault root is required');
   const relative = relativePath(folder.replace(/\/$/, ''));
   if (relative.split('/').some(part => part.startsWith('.'))) throw new Error('Local skills cannot use hidden configuration folders');
   const base = fs.realpathSync(vaultRoot);
   const root = path.resolve(base, relative);
   noSymlinks(base, root);
+  for (const excluded of excludedRoots) {
+    const source = exists(excluded) ? fs.realpathSync(excluded) : path.resolve(excluded);
+    if (root === source || root.startsWith(source + path.sep) || source.startsWith(root + path.sep)) {
+      throw new Error('Local skills folder overlaps a configured external source');
+    }
+  }
   return root;
 }
 

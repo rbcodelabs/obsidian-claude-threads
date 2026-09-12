@@ -825,6 +825,8 @@ export class ThreadsView extends ItemView {
         }
       }
       const vaultSkillsRoot = this.plugin.getPluginSkillsRoot();
+      const localSkillsRoot = this.plugin.getLocalSkillsRoot();
+      if (localSkillsRoot) extraSkillDirs.push({ dir: localSkillsRoot, prefix: 'local' });
       if (vaultSkillsRoot) {
         extraSkillDirs.push({ dir: vaultSkillsRoot, prefix: VAULT_SKILLS_PLUGIN_NAME });
       }

@@ -2507,6 +2507,17 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
   // ── Skills ───────────────────────────────────────────────────────────────
 
   private renderSkillsTab(containerEl: HTMLElement): void {
+    let localFolder = this.plugin.settings.localSkillsFolder ?? 'Skills';
+    new Setting(containerEl)
+      .setName('Local skills folder')
+      .setDesc('Vault-relative folder for authored skills. Changes apply to new sessions; existing files are not moved. Installs and imports keep their current location.')
+      .addText(text => text.setValue(localFolder).onChange(value => { localFolder = value; }))
+      .addButton(button => button.setButtonText('Apply').onClick(async () => {
+        try {
+          await this.plugin.setLocalSkillsFolder(localFolder);
+          new Notice('Local skills folder saved. Skills are available in new sessions.');
+        } catch (error) { new Notice(String(error)); }
+      }));
     containerEl.createEl('h2', { text: 'Skill Sources' });
     containerEl.createEl('p', {
       text: 'Register local skill collections to browse and install from within the Skills Manager.',
