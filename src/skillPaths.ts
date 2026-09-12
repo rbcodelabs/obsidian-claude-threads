@@ -157,6 +157,20 @@ export function requirePluginRoot(roots: SkillRoots = getSkillRoots()): string {
 
 // ── Edit / remove gates ───────────────────────────────────────────────────────
 
+/** Authored roots are canonical when configured; reject later symlink substitution. */
+export function isCurrentLocalRoot(root: string): boolean {
+  try {
+    return fs.lstatSync(root).isDirectory() && fs.realpathSync(root) === path.resolve(root);
+  } catch { return false; }
+}
+
+function isCurrentLocalPackage(skillPath: string, root: string): boolean {
+  if (!isCurrentLocalRoot(root) || path.dirname(path.resolve(skillPath)) !== path.resolve(root)) return false;
+  try {
+    return fs.lstatSync(skillPath).isDirectory() && fs.realpathSync(skillPath) === path.resolve(skillPath);
+  } catch { return false; }
+}
+
 /**
  * Whether the plugin may write to this skill's SKILL.md.
  *
@@ -167,7 +181,9 @@ export function requirePluginRoot(roots: SkillRoots = getSkillRoots()): string {
  */
 export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillRoots()): boolean {
   if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
-    return skill.skillPath !== roots.localRoot && isInsideRoot(skill.realPath, roots.localRoot);
+    if (!isCurrentLocalPackage(skill.skillPath, roots.localRoot)) return false;
+    try { return fs.lstatSync(path.join(skill.skillPath, 'SKILL.md')).isFile(); }
+    catch { return false; }
   }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.realPath, roots.pluginRoot)
@@ -182,7 +198,7 @@ export function canEditSkill(skill: SkillPathPair, roots: SkillRoots = getSkillR
  */
 export function canRemoveSkill(skill: { skillPath: string }, roots: SkillRoots = getSkillRoots()): boolean {
   if (roots.localRoot && isInsideRoot(skill.skillPath, roots.localRoot)) {
-    return path.dirname(path.resolve(skill.skillPath)) === path.resolve(roots.localRoot);
+    return isCurrentLocalPackage(skill.skillPath, roots.localRoot);
   }
   if (!roots.pluginRoot) return false;
   return isInsideRoot(skill.skillPath, roots.pluginRoot);

@@ -366,7 +366,7 @@ export class SkillsManagerView extends ItemView {
     if (this.activeTab !== 'installed') return;
 
     const canInstall = !!this.plugin.getPluginSkillsRoot();
-    const newBtn = this.tabActionsEl.createEl('button', { text: 'New skill', cls: 'ct-skills-btn' });
+    const newBtn = this.tabActionsEl.createEl('button', { text: 'New skill', cls: 'ct-skills-btn ct-skills-author-btn' });
     newBtn.disabled = !this.plugin.getLocalSkillsRoot?.();
     newBtn.addEventListener('click', () => this.renderNewSkill());
     const importBtn = this.tabActionsEl.createEl('button', { cls: 'clickable-icon ct-skills-tab-action' });
@@ -1621,7 +1621,7 @@ export class SkillsManagerView extends ItemView {
 
   async loadInstalledSkills(): Promise<void> {
     const skillSources = this.plugin.settings.skillSources ?? [];
-    this.installedSkills = await listInstalledSkills(skillSources);
+    this.installedSkills = await listInstalledSkills(skillSources, this.plugin.getManagedSkillRoots?.());
 
     // Keep selected skill in sync after reload. Matched on skillPath, not name:
     // a vault skill can legitimately shadow a same-named home skill, and
@@ -1728,7 +1728,7 @@ export class SkillsManagerView extends ItemView {
     this.detailEl.createEl('p', { text: `Create in ${this.plugin.getLocalSkillsRoot()}. Available in new sessions.`, cls: 'ct-skills-availability' });
     const input = this.detailEl.createEl('input', { type: 'text', placeholder: 'meeting-notes', attr: { 'aria-label': 'Skill identifier' } });
     const errorEl = this.detailEl.createEl('p', { attr: { role: 'alert' } });
-    const create = this.detailEl.createEl('button', { text: 'Create skill', cls: 'ct-skills-btn ct-skills-btn--primary' });
+    const create = this.detailEl.createEl('button', { text: 'Create skill', cls: 'ct-skills-btn ct-skills-btn--primary ct-skills-author-btn' });
     create.addEventListener('click', async () => {
       const skillId = input.value.trim();
       const content = `---\nname: ${skillId}\ndescription: Describe when to use this skill.\n---\n\n# ${skillId}\n\nWrite the instructions for this skill here.\n`;
@@ -1807,10 +1807,10 @@ export class SkillsManagerView extends ItemView {
 
   private async doUninstall(skill: InstalledSkill): Promise<void> {
     try {
-      await uninstallSkillByPath(skill.skillPath);
+      await uninstallSkillByPath(skill.skillPath, this.plugin.getManagedSkillRoots?.());
       new Notice(`Uninstalled ${skill.name}`);
-      this.installedSkills = this.installedSkills.filter((s) => s.name !== skill.name);
-      if (this.selectedInstalled?.name === skill.name) {
+      this.installedSkills = this.installedSkills.filter((s) => s.skillPath !== skill.skillPath);
+      if (this.selectedInstalled?.skillPath === skill.skillPath) {
         this.selectedInstalled = null;
         this.editContent = '';
         this.isDirty = false;

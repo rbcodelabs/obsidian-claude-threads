@@ -32,6 +32,7 @@ import {
   ensureVaultSkillsPluginManifest,
   expandHome,
   isInsideRoot,
+  isCurrentLocalRoot,
 } from './skillPaths';
 
 /** Resolve configured sources to roots containing Codex skill directories. */
@@ -232,6 +233,8 @@ async function scanSkillsRoot(
 
   const skills: InstalledSkillInfo[] = [];
 
+  if (origin === 'local' && !isCurrentLocalRoot(root)) return skills;
+
   for (const entry of entries) {
     if (origin === 'local' && (entry.name.startsWith('.') || !entry.isDirectory())) continue;
     const skillPath = path.join(root, entry.name);
@@ -261,7 +264,7 @@ async function scanSkillsRoot(
       }
 
       let content = '';
-      if (origin === 'local' && !fs.existsSync(skillMdPath)) continue;
+      if (origin === 'local' && (!fs.existsSync(skillMdPath) || !fs.lstatSync(skillMdPath).isFile())) continue;
       try {
         content = await fsp.readFile(skillMdPath, 'utf-8');
       } catch {
@@ -376,10 +379,11 @@ export async function uninstallSkillByName(
 ): Promise<{ skillPath: string }> {
   const installed = await listInstalledSkills(skillSources, roots);
   const candidates = installed.filter(s => s.name === name || s.identifier === name);
-  if (candidates.some(s => s.origin === 'local') && candidates.length > 1) {
+  const identified = installed.find(s => s.identifier === name);
+  if (!identified && candidates.some(s => s.origin === 'local') && candidates.length > 1) {
     throw new Error(`Ambiguous skill name "${name}". Use a qualified identifier from skills_list_installed.`);
   }
-  const match = installed.find(s => s.identifier === name)
+  const match = identified
     ?? installed.find((s) => s.name === name && s.origin === 'local')
     ?? installed.find((s) => s.name === name && s.origin === 'vault')
     ?? installed.find((s) => s.name === name);
@@ -537,7 +541,8 @@ export async function getSkillDetail(
   const installed = await listInstalledSkills(skillSources, roots);
   const matches = (s: InstalledSkillInfo) => s.identifier === identifier || s.name === identifier || path.basename(s.skillPath) === identifier;
   // Vault copy wins on a cross-root name collision, matching uninstallSkillByName.
-  const match = installed.find((s) => matches(s) && s.origin === 'vault') ?? installed.find(matches);
+  const match = installed.find(s => s.identifier === identifier)
+    ?? installed.find((s) => matches(s) && s.origin === 'vault') ?? installed.find(matches);
   if (match) {
     return {
       name: match.name,

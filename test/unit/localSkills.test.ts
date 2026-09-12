@@ -27,6 +27,12 @@ describe('local skill packages', () => {
     expect(() => resolveLocalSkillsRoot(vault, 'Sources', [path.join(vault, 'Sources', 'team')])).toThrow(/source/i);
     expect(() => resolveLocalSkillsRoot(vault, 'Sources/team/skills', [path.join(vault, 'Sources', 'team')])).toThrow(/source/i);
   });
+  it('resolves existing folder spelling before testing source overlap', () => {
+    const source = path.join(vault, 'Sources'); fs.mkdirSync(source);
+    const alias = path.join(vault, 'sources');
+    if (fs.existsSync(alias)) expect(() => resolveLocalSkillsRoot(vault, 'sources', [source])).toThrow(/source/i);
+    else expect(resolveLocalSkillsRoot(vault, 'sources', [source])).toBe(alias);
+  });
   it('creates complete packages including binary resources', async () => {
     const result = await createLocalSkill(root, { skillId: 'example', skillMd: manifest, files: [textFile('references/guide.md'), { path: 'assets/icon.bin', encoding: 'base64', content: 'AP+A' }] });
     expect(result).toEqual({ skillId: 'example', path: path.join(root, 'example'), availability: 'next-session' });

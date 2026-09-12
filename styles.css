@@ -8492,3 +8492,4 @@ button.ct-agent-crumb:focus-visible {
   font-size: var(--font-ui-small);
   overflow-wrap: anywhere;
 }
+.ct-skills-root .ct-skills-author-btn { min-height: 44px; min-width: 44px; }

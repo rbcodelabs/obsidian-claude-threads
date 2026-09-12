@@ -5,6 +5,9 @@
 export const HOME_SKILLS_DIR = '/Users/mock/.claude/skills';
 export const HOME_AGENTS_DIR = '/Users/mock/.claude/agents';
 export const VAULT_SKILLS_DIR = '/Users/mock/vault/.obsidian/plugins/claude-threads/skills';
+export const LOCAL_SKILLS_DIR = '/Users/mock/vault/Skills';
+const authoredSkills = new Map<string, string>();
+export function seedAuthoredSkill(id: string, content: string): void { authoredSkills.set(id, content); }
 
 const SKILLS: Array<{ name: string; description: string; content: string }> = [
   {
@@ -80,6 +83,7 @@ function fixtureFor(dirPath: string) {
 }
 
 function makeEntries(dirPath: string) {
+  if (dirPath === LOCAL_SKILLS_DIR) return [...authoredSkills.keys()].map(name => ({ name, isSymbolicLink: () => false, isDirectory: () => true }));
   return fixtureFor(dirPath).map((s) => ({
     name: `${s.name}.md`,
     isSymbolicLink: () => false,
@@ -138,6 +142,7 @@ export const VISUALIZE_FRAGMENT = `<div id="quarterly-revenue">
 const VISUALIZE_PATH_RE = /\/viz\/[^/]+\.html?$/i;
 
 function resolveContent(filePath: string): string {
+  if (filePath.startsWith(LOCAL_SKILLS_DIR + '/')) return authoredSkills.get(filePath.slice(LOCAL_SKILLS_DIR.length + 1).split('/')[0]) ?? '';
   if (VISUALIZE_PATH_RE.test(filePath)) return VISUALIZE_FRAGMENT;
   for (const s of [...SKILLS, ...VAULT_SKILLS, ...AGENTS]) {
     if (filePath.includes(s.name)) return s.content;
@@ -150,7 +155,11 @@ function resolveContent(filePath: string): string {
 // callers using require() get the namespace, not the default, so named exports
 // are required for dynamic require() calls in SkillsManagerView to work.)
 
-export const existsSync = (_p: string) => false;
+export const existsSync = (p: string) => p === LOCAL_SKILLS_DIR || (p.startsWith(LOCAL_SKILLS_DIR + '/') && authoredSkills.has(p.slice(LOCAL_SKILLS_DIR.length + 1).split('/')[0]));
+export const lstatSync = (p: string) => {
+  if (!existsSync(p)) throw Object.assign(new Error('Missing fixture'), { code: 'ENOENT' });
+  return { isDirectory: () => !p.endsWith('/SKILL.md'), isFile: () => p.endsWith('/SKILL.md'), isSymbolicLink: () => false };
+};
 export const readdirSync = (p: string) => fixtureFor(p).map((s) => `${s.name}.md`);
 export const readFileSync = (p: string, _enc: string): string => resolveContent(p);
 export const statSync = (_p: string) => ({ isDirectory: () => false });
@@ -172,7 +181,7 @@ export const promises = {
   // intermittent scroll-offset diffs in screenshots that have nothing to do
   // with visualizations.
   stat: async (p: string) =>
-    VISUALIZE_PATH_RE.test(p)
+    p.startsWith(LOCAL_SKILLS_DIR) ? lstatSync(p) : VISUALIZE_PATH_RE.test(p)
       ? {
           isDirectory: () => false,
           isFile: () => true,
@@ -195,6 +204,7 @@ export const promises = {
 
 // Also keep a default export for static `import fs from 'fs'` usage.
 export default {
+  lstatSync,
   existsSync,
   readdirSync,
   readFileSync,

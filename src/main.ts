@@ -736,14 +736,14 @@ export default class ClaudeThreadsPlugin extends Plugin {
           onCronUpdate: (id, patch) => this.scheduler.updateItem(id, patch),
           onCronDelete: (id) => this.scheduler.deleteItem(id),
           onSkillsListInstalled: async () => {
-            const skills = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            const skills = await skillManager.listInstalledSkills(this.settings.skillSources ?? [], this.getManagedSkillRoots());
             return skills.map(({ content: _content, ...rest }) => rest);
           },
           onSkillsSearch: async (query, limit) => {
-            const installed = await skillManager.listInstalledSkills(this.settings.skillSources ?? []);
+            const installed = await skillManager.listInstalledSkills(this.settings.skillSources ?? [], this.getManagedSkillRoots());
             return skillManager.searchMarketplaceSkills(query, limit ?? 15, installed);
           },
-          onSkillsGet: (identifier) => skillManager.getSkillDetail(identifier, this.settings.skillSources ?? []),
+          onSkillsGet: (identifier) => skillManager.getSkillDetail(identifier, this.settings.skillSources ?? [], this.getManagedSkillRoots()),
           onSkillsListSources: () => skillManager.listSkillSources(this.settings.skillSources ?? []),
           onSkillsCheckUpdates: async () => {
             const results = await skillManager.checkAllSourcesForUpdates(this.settings.skillSources ?? []);
@@ -773,7 +773,7 @@ export default class ClaudeThreadsPlugin extends Plugin {
             const { updateLocalSkill } = require('./localSkills') as typeof import('./localSkills');
             return updateLocalSkill(this.getLocalSkillsRoot(), params);
           },
-          onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? []),
+          onSkillsUninstall: (name) => skillManager.uninstallSkillByName(name, this.settings.skillSources ?? [], this.getManagedSkillRoots()),
           onSkillsUpdate: async (sourceId) => {
             const source = (this.settings.skillSources ?? []).find((s) => s.id === sourceId);
             if (!source) {
@@ -1891,6 +1891,11 @@ export default class ClaudeThreadsPlugin extends Plugin {
     catch (error) { console.warn('[ClaudeThreads] Local skills unavailable:', error); return ''; }
   }
 
+  getManagedSkillRoots(): import('./skillPaths').SkillRoots {
+    const { getSkillRoots } = require('./skillPaths') as typeof import('./skillPaths');
+    return { ...getSkillRoots(), localRoot: this.getLocalSkillsRoot() };
+  }
+
   createLocalSkill(params: import('./localSkills').CreateLocalSkillInput) {
     const { createLocalSkill } = require('./localSkills') as typeof import('./localSkills');
     return createLocalSkill(this.getLocalSkillsRoot(), params);
@@ -1906,8 +1911,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     if (!(adapter instanceof FileSystemAdapter)) throw new Error('Local skills require a desktop filesystem vault.');
     const { resolveLocalSkillsRoot, externalSkillRoots } = require('./localSkills') as typeof import('./localSkills');
     const localRoot = resolveLocalSkillsRoot(adapter.getBasePath(), folder, externalSkillRoots(this.settings.skillSources));
+    const previous = this.settings.localSkillsFolder;
     this.settings.localSkillsFolder = folder;
-    await this.saveSettings();
+    try { await this.saveSettings(); }
+    catch (error) { this.settings.localSkillsFolder = previous; throw error; }
     const { getSkillRoots, setSkillRoots } = require('./skillPaths') as typeof import('./skillPaths');
     setSkillRoots({ ...getSkillRoots(), localRoot });
   }

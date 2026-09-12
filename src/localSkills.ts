@@ -40,15 +40,22 @@ function noSymlinks(base: string, target: string): void {
   }
 }
 
+function canonicalFuturePath(value: string): string {
+  let ancestor = path.resolve(value);
+  while (!exists(ancestor)) ancestor = path.dirname(ancestor);
+  return path.join(fs.realpathSync(ancestor), path.relative(ancestor, path.resolve(value)));
+}
+
 export function resolveLocalSkillsRoot(vaultRoot: string, folder = 'Skills', excludedRoots: string[] = []): string {
   if (!vaultRoot || !path.isAbsolute(vaultRoot)) throw new Error('A filesystem vault root is required');
   const relative = relativePath(folder.replace(/\/$/, ''));
   if (relative.split('/').some(part => part.startsWith('.'))) throw new Error('Local skills cannot use hidden configuration folders');
   const base = fs.realpathSync(vaultRoot);
-  const root = path.resolve(base, relative);
-  noSymlinks(base, root);
+  const lexicalRoot = path.resolve(base, relative);
+  noSymlinks(base, lexicalRoot);
+  const root = canonicalFuturePath(lexicalRoot);
   for (const excluded of excludedRoots) {
-    const source = exists(excluded) ? fs.realpathSync(excluded) : path.resolve(excluded);
+    const source = canonicalFuturePath(excluded);
     if (root === source || root.startsWith(source + path.sep) || source.startsWith(root + path.sep)) {
       throw new Error('Local skills folder overlaps a configured external source');
     }
