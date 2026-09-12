@@ -6,6 +6,7 @@ import { buildMessageWithAttachment, deriveDispatchTitle } from './attachmentUti
 import { formatToolName } from './ClaudeSession';
 import { relativeTime, buildCwdLabel, isAwsSsoError, extractAwsProfile, resolveAwsBinary, awsExecEnv, formatWakeupCountdown } from './dashboardUtils';
 import { DispatchInput } from './DispatchInput';
+import { seedDocumentChatDraft } from './documentChat';
 import { DISPATCH_BUILTIN_COMMANDS, DISPATCH_ARG_COMPLETIONS, parseDispatchDirective, goalKickoffMessage, escalationCommand } from './slashCommands';
 import { partitionScheduledStacks, type ScheduledStack } from './scheduledStacks';
 import { appendOrchestratorBadge } from './orchestrator-badge';
@@ -886,6 +887,22 @@ export class AgentDashboard extends ItemView {
   /** Focus the dispatch input so the user can type a task immediately. */
   public focusDispatchInput(): void {
     this.dispatchComponent?.focus();
+  }
+
+  /**
+   * Seed the dispatch composer with a `@[[basename]]` mention for a document
+   * and focus it — the "Chat about this document" entry points land here.
+   *
+   * Only the draft is seeded: the thread is created when the user submits, so
+   * this always starts a *new* thread and never appends to an open one. The
+   * mention is resolved to the file's content by the dispatch handler's
+   * existing resolver.
+   */
+  public seedDocumentChat(basename: string): void {
+    if (!this.dispatchComponent) return;
+    this.dispatchComponent.setValueAndFocus(
+      seedDocumentChatDraft(this.dispatchComponent.getValue(), basename),
+    );
   }
 
   /** Open the most recently completed unreviewed thread and mark it reviewed.

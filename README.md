@@ -54,6 +54,7 @@ Agent Threads embeds Claude Code directly in your host workspace. Each tab is an
 - **Context compaction** — auto and manual compaction shown as persistent dividers in the conversation
 - **Permission dialogs** — Claude asks before writing files or running commands; you approve or deny inline
 - **@ file mentions** — type `@` in the input to search vault files by name; selecting one injects its full content into the prompt as context; type `@this` to reference the currently open file without searching
+- **Chat about this document** — right-click a note in the file explorer or inside the editor (or run the command from the palette) to start a new thread pre-seeded with an `@` mention of that note
 - **Push-to-talk voice input** — hold a configurable hotkey to dictate a message via speech-to-text (uses the Claude Code STT pipeline); transcript populates the input box ready to send or edit
 - **Projects** — group threads, choose their initial working directory, and inject shared context into every message (a context aid, not a tool or filesystem security boundary)
 - **Draft persistence** — input text and attachments auto-save when switching threads and survive plugin reloads
@@ -256,6 +257,18 @@ Type `@` anywhere in the input box to search vault files by name. A dropdown app
 Selecting a file inserts `@[[filename]]` into your message. When you send the message, the plugin resolves each mention and appends the file's full content as context for Claude — useful for asking Claude to work with a specific note, doc, or config file without copying and pasting.
 
 Type `@this` (no search needed) to instantly reference the currently active file in the host workspace. It resolves to the same `@[[filename]]` injection at send time.
+
+### Chat about this document
+
+To start from a note rather than from the composer, use **Chat about this document**. It is available from three places:
+
+- **Right-click a note in the file explorer**
+- **Right-click inside an open note** (editor context menu)
+- **Command palette** → *Chat about this document* (acts on the currently open note; hidden when the active file isn't a note)
+
+All three open the **Agents List** and seed its dispatch box with `@[[<note name>]] `, with the cursor after the mention — type your question and send. Because it seeds the dispatch box, submitting always starts a **new thread** rather than adding to an open one, and the mention resolves to the note's full content exactly like a manually typed `@` mention.
+
+The draft is appended to, never overwritten: if you had already typed something, the mention is added to the end, and triggering the action twice on the same note won't inline it twice. The action only appears on Markdown notes, since that's what the mention resolver can read back.
 
 ### Model switching
 

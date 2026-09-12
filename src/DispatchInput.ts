@@ -399,6 +399,22 @@ export class DispatchInput {
     this.maybeConvertCommandPill();
   }
 
+  /**
+   * Set the draft, then focus with the caret parked at the end.
+   *
+   * Plain `focus()` on a textarea restores the previous selection (usually
+   * offset 0), which would drop the caret *before* a seeded `@[[doc]]` mention.
+   * Used by "Chat about this document" so the user types straight after it.
+   */
+  setValueAndFocus(v: string): void {
+    if (!this.inputEl) return;
+    this.setValue(v);
+    this.autoGrow();
+    this.inputEl.focus();
+    const end = this.inputEl.value.length;
+    this.inputEl.setSelectionRange(end, end);
+  }
+
   setPlaceholder(placeholder: string): void {
     if (!this.inputEl) return;
     this.inputEl.placeholder = placeholder;

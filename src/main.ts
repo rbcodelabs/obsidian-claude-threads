@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile, Modal } from 'obsidian';
+import { Plugin, WorkspaceLeaf, App, FileSystemAdapter, addIcon, Notice, Platform, normalizePath, TFile, Modal, type Menu } from 'obsidian';
 import { createClaudeThreadsApiV1, type ClaudeThreadsApiService, type ClaudeThreadsApiV1, type CreateThreadInput, type OrchestratorSnapshot, type OrchestratorTarget } from './PublicApi';
 import { createConstrainedQueryRunner } from './ConstrainedRun';
 export { createClaudeThreadsApiV1 } from './PublicApi';
@@ -17,6 +17,7 @@ import type { WakeLockService } from './WakeLockService';
 import type { createClaudeThreadsMcpServers, ProjectSnapshot, ProjectUpdatePatch } from './ObsidianTools';
 import type { ContextPanelController } from './ContextPanelController';
 import { detectHostName } from './hostEnvironment';
+import { DOCUMENT_CHAT_LABEL, isChattableDocument } from './documentChat';
 import { mergeMcpServers } from './mcpServerMerge';
 import { createMcpRegistration, mcpRegistrationSchema } from './mcpServerStore';
 import { McpRegistrationModal } from './confirmModal';
@@ -1478,6 +1479,35 @@ export default class ClaudeThreadsPlugin extends Plugin {
       },
     });
 
+    // ── "Chat about this document" ──────────────────────────────────────────
+    // Three entry points, one handler: file-explorer right-click, in-editor
+    // right-click, and a command-palette entry gated on an active markdown file.
+    this.addCommand({
+      id: 'chat-about-active-document',
+      name: DOCUMENT_CHAT_LABEL,
+      checkCallback: (checking: boolean) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!isChattableDocument(file)) return false;
+        if (!checking) void this.startDocumentChat(file as TFile);
+        return true;
+      },
+    });
+
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file) => {
+        if (!(file instanceof TFile) || !isChattableDocument(file)) return;
+        this.addDocumentChatMenuItem(menu, file);
+      }),
+    );
+
+    this.registerEvent(
+      this.app.workspace.on('editor-menu', (menu, _editor, info) => {
+        const file = info.file;
+        if (!file || !isChattableDocument(file)) return;
+        this.addDocumentChatMenuItem(menu, file);
+      }),
+    );
+
     this.addCommand({
       id: 'open-thread-orchestrator',
       name: 'Open Portfolio Orchestrator',
@@ -2590,6 +2620,30 @@ export default class ClaudeThreadsPlugin extends Plugin {
     // workspace restore when the leaf exists but the view class hasn't fully loaded).
     if (!view || typeof (view as any).getActiveThreadId !== 'function') return null;
     return view as ThreadsView;
+  }
+
+  /** Add the shared "Chat about this document" item to a context menu. */
+  private addDocumentChatMenuItem(menu: Menu, file: TFile): void {
+    menu.addItem(item => item
+      .setTitle(DOCUMENT_CHAT_LABEL)
+      .setIcon('message-square')
+      .onClick(() => { void this.startDocumentChat(file); }));
+  }
+
+  /**
+   * Single handler behind all three "Chat about this document" entry points:
+   * open the Agents List and seed its dispatch composer with an `@[[doc]]`
+   * mention. Submitting the composer is what creates the new thread, so the
+   * user gets to type the actual question first.
+   */
+  async startDocumentChat(file: TFile): Promise<void> {
+    await this.activateAgentView();
+    const dashboard = this.getAgentDashboard();
+    if (!dashboard) {
+      new Notice('Could not open the Agents List to chat about this document.');
+      return;
+    }
+    dashboard.seedDocumentChat(file.basename);
   }
 
   getAgentDashboard(): AgentDashboard | null {
