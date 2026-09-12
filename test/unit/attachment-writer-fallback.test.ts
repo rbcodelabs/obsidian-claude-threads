@@ -322,6 +322,30 @@ describe('AttachmentWriter.removeThreadDir fallback ladder', () => {
     expect(fs.existsSync(outside)).toBe(true);
   });
 
+  it('removes exactly the directory write() wrote to when the folder setting is empty', async () => {
+    // The mismatch this pins: buildAttachmentPath defaulted an empty
+    // vaultFolder to 'Agent Threads' while removeThreadDir defaulted it to
+    // 'Claude', so cleanup deleted a directory that had never been written and
+    // the real attachments leaked. Both sides now derive from one helper, so
+    // this asserts the two paths against each other rather than against a
+    // literal that could drift again.
+    const root = makeTempVault();
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+    // Empty folder setting — the shared default has to apply on both sides.
+    const writer = new AttachmentWriter(() => app, () => '', () => ({}));
+
+    const written = await writer.write('thread-1', 'msg-1', 0, 'image/png', PNG_BASE64);
+    expect(written).toBe('Agent Threads/attachments/thread-1/msg-1-0.png');
+    const writtenAbs = path.join(root, written!);
+    expect(fs.existsSync(writtenAbs)).toBe(true);
+
+    await writer.removeThreadDir('thread-1');
+
+    expect(fs.existsSync(writtenAbs)).toBe(false);
+    expect(fs.existsSync(path.dirname(writtenAbs))).toBe(false);
+  });
+
   it('does not throw off desktop', async () => {
     const app = makeApp({ getAbstractFileByPath: () => null }, { getBasePath: () => '/x' });
     await expect(writerFor(app).removeThreadDir('thread-1')).resolves.toBeUndefined();

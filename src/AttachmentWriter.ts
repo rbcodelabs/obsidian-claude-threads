@@ -1,5 +1,5 @@
 import { App, FileSystemAdapter, TFile, base64ToArrayBuffer } from 'obsidian';
-import { buildAttachmentPath } from './imageExternalization';
+import { attachmentDirForThread, attachmentRoot, buildAttachmentPath } from './imageExternalization';
 import { debugLog } from './logger';
 
 /**
@@ -182,9 +182,13 @@ export class AttachmentWriter {
   async removeThreadDir(threadId: string): Promise<void> {
     const app = this.getApp();
     if (!app || !(app.vault.adapter instanceof FileSystemAdapter)) return;
-    const folder = this.getVaultFolder() || 'Claude';
-    const attachmentsRoot = `${folder}/attachments`;
-    const dir = `${attachmentsRoot}/${threadId}`;
+    // Derived from the same helpers `write` builds its paths with, so the
+    // directory removed here is by construction the directory written to —
+    // including when the vault-folder setting is empty and the shared default
+    // applies.
+    const vaultFolder = this.getVaultFolder();
+    const attachmentsRoot = attachmentRoot(vaultFolder);
+    const dir = attachmentDirForThread(vaultFolder, threadId);
 
     // A thread id is plugin-generated, but it lands in a path that both rungs
     // then delete recursively, so refuse traversal before either one runs
