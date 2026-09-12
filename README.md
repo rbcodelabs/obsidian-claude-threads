@@ -8,7 +8,7 @@ Direct child-agent messaging and single-agent interruption are capability-gated.
 
 A native Obsidian and Geode plugin for running multiple Claude Code sessions in parallel — with streaming markdown responses, tab management, and deep vault integration.
 
-![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.36.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
+![Agent Threads](https://img.shields.io/badge/Obsidian-Plugin-7C3AED) ![Version](https://img.shields.io/badge/version-0.37.0-blue) [![Roadmap](https://img.shields.io/badge/Roadmap-Compass-6366F1)](https://compass.rbcodelabs.com/portal/rbcodelabs/claude-threads/roadmap)
 
 <p align="center">
   <img src="docs/screenshot-main.png" width="800" alt="Main view: conversation panel with tool calls and Agents List showing thread summaries" />
@@ -516,7 +516,24 @@ A server whose `${VAR_NAME}` placeholders cannot be resolved is **skipped rather
 
 Agents can also call `mcp_register_server` to propose a server. A host dialog shows the unresolved configuration and asks you to **Register server** or **Cancel**, including when normal tool permissions are bypassed. Approval saves globally for newly initialized Claude and Codex sessions; it does not launch a command, contact an endpoint, or change the calling session's tools. Scheduled threads return an unavailable result instead of waiting for a dialog.
 
-The tool accepts a flat `name`, `type` (`stdio`, `http`, or `sse`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+The tool accepts a flat `name`, `type` (`stdio`, `http`, `sse`, or `oauth`), plus `command`/`args`/`env` for stdio or `url`/`headers` for remote servers. An identical retry is unchanged; a different configuration under an existing name is rejected. Built-in and prototype-related names are reserved. Remote URLs must use HTTP(S) and cannot contain embedded credentials.
+
+#### OAuth-gated servers
+
+A remote MCP server that requires OAuth 2.1 + PKCE (Vercel's, for example) registers with `type: "oauth"` instead of `"http"`. The plugin brokers the whole flow itself — discovery, Dynamic Client Registration, consent, token custody, refresh, and revocation — so neither Claude nor Codex needs any OAuth-specific code; both harnesses see the server as a plain authenticated HTTP endpoint behind a local per-server proxy.
+
+Connect one either way:
+
+- **Settings → MCP → Add MCP server → OAuth.** Fill in a name and the server's URL; scopes, a tool allow/deny filter, and `clientId`/`authorizationServerUrl` overrides are optional.
+- **Ask an agent** to call `mcp_register_server` with `type: "oauth"`.
+
+Both run the same flow and the same validation. Unlike the other transports it is asynchronous and interactive: discovery runs, the provider's consent screen opens in the host's Web Viewer, and the flow waits up to 5 minutes for you to finish signing in before exchanging the code for tokens and starting the proxy. Denying consent or letting the window lapse leaves no partial state behind. Because it needs a real consent screen, scheduled threads can't drive it — they get an `unavailable` result rather than a stalled dialog.
+
+Settings → **MCP → OAuth MCP servers** lists every connected server with a live status (connected + expiry countdown, expiring soon, needs re-authorization, or not configured) and a **Disconnect** button, which revokes the tokens upstream, clears the keychain, and stops the proxy. Changing a connected server means disconnecting and reconnecting rather than editing it in place, so the OAuth option appears only when adding. See [`docs/mcp-registration.md`](docs/mcp-registration.md#oauth-gated-servers-type-oauth) for the full field reference. Access and refresh tokens live only in the OS keychain, never in `data.json`.
+
+<p align="center">
+  <img src="docs/screenshot-mcp-oauth-servers.png" width="800" alt="Settings MCP tab: OAuth MCP servers section showing two connected servers with status dots and expiry countdowns, and a Disconnect button on each row" />
+</p>
 
 Use `${NAME}` for every credential and `request_secret` to save its value securely. Common credential fields are validated, but arbitrary argument strings cannot be reliably classified: all literal values must be nonsecret. Registration returns status and required variable names, never resolved credentials. Missing variables are checked when a future session initializes. See [agent registration details](docs/mcp-registration.md).
 
