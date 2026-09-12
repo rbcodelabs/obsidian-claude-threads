@@ -3,7 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import { DEFAULT_VAULT_FOLDER } from './productIdentity';
 import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent } from './types';
 import { serializeKey } from './stt';
-import { setDebugLogging } from './logger';
+import { debugLog, setDebugLogging } from './logger';
 import { telemetry } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
@@ -52,6 +52,68 @@ function maskOpenAiKey(key: string | null | undefined): string {
   if (!key) return 'No key set';
   if (key.length <= 12) return '••••••••';
   return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/**
+ * How much protection the running host's `app.secretStorage` actually gives a
+ * stored secret.
+ *
+ *  - `encrypted`  — the host confirmed encrypted storage (Obsidian: the OS keychain).
+ *  - `plaintext`  — the host confirmed it has none. Under Geode today,
+ *                   `secretStorage` persists values as plaintext in
+ *                   `localStorage` and `isEncryptionAvailable()` returns false.
+ *  - `unknown`    — the host does not expose `isEncryptionAvailable` (it is newer
+ *                   than the `SecretStorage` typings the plugin builds against),
+ *                   or the call threw. Never treated as `encrypted`: the point of
+ *                   this is not to promise protection the host has not confirmed.
+ */
+export type SecretStorageProtection = 'encrypted' | 'plaintext' | 'unknown';
+
+/**
+ * The sentence shown under any setting that writes to `app.secretStorage`,
+ * describing where the value really lands on this host.
+ *
+ * The plugin used to say "Stored in your OS keychain." unconditionally, which is
+ * simply untrue on a host without encrypted secret storage. Accurate, not
+ * alarming: the non-`encrypted` wording says where the value goes and stops
+ * short of calling it a vulnerability, because for a local-first vault it is the
+ * same trust boundary as the vault's own files.
+ */
+export function describeSecretStorage(protection: SecretStorageProtection): string {
+  switch (protection) {
+    case 'encrypted':
+      return 'Stored in your OS keychain.';
+    case 'plaintext':
+      return 'This app has no encrypted secret storage, so the value is kept in its local app data rather than your OS keychain.';
+    default:
+      return 'Stored by this app’s secret storage; it could not confirm that your OS keychain is used.';
+  }
+}
+
+/**
+ * Ask the host whether its secret storage is encrypted.
+ *
+ * `isEncryptionAvailable` is duck-typed rather than called straight off the
+ * type: it is absent from the `SecretStorage` typings the plugin builds against
+ * and from older hosts at runtime, and "is this a function?" is the only safe
+ * test (same posture as AttachmentWriter's host-bridge detection). Both a
+ * missing method and a throwing one resolve to `unknown`, never `encrypted`.
+ */
+export async function probeSecretStorageProtection(app: App): Promise<SecretStorageProtection> {
+  type ProbedSecretStorage = { isEncryptionAvailable?: () => boolean | Promise<boolean> };
+  let probe: ProbedSecretStorage['isEncryptionAvailable'];
+  try {
+    probe = (app.secretStorage as unknown as ProbedSecretStorage | undefined)?.isEncryptionAvailable;
+  } catch {
+    return 'unknown';
+  }
+  if (typeof probe !== 'function') return 'unknown';
+  try {
+    return (await probe.call(app.secretStorage)) ? 'encrypted' : 'plaintext';
+  } catch (err) {
+    debugLog('[ClaudeThreads] secretStorage.isEncryptionAvailable failed:', String(err));
+    return 'unknown';
+  }
 }
 
 function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = false): string {
@@ -1934,7 +1996,18 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       const maskedKey = maskOpenAiKey(existingKey);
       const openAiSetting = new Setting(containerEl)
         .setName('OpenAI API key')
-        .setDesc('Used for Whisper speech-to-text. Stored in your OS keychain.');
+        .setDesc('Used for Whisper speech-to-text.');
+
+      // Where the key actually lands depends on the host, and the answer only
+      // arrives asynchronously. Render the honest "unconfirmed" wording first
+      // and upgrade it in place, so a slow (or missing) probe can never leave a
+      // keychain promise on screen that the host does not keep.
+      const storageNote = openAiSetting.descEl.createEl('span', {
+        text: ` ${describeSecretStorage('unknown')}`,
+      });
+      void probeSecretStorageProtection(this.app).then((protection) => {
+        storageNote.textContent = ` ${describeSecretStorage(protection)}`;
+      });
 
       openAiSetting.descEl.createEl('br');
       openAiSetting.descEl.createEl('span', {
