@@ -220,3 +220,142 @@ describe('AttachmentWriter fallback ladder', () => {
       .toEqual(['Claude', 'Claude/attachments', 'Claude/attachments/thread-1']);
   });
 });
+
+/**
+ * Companion ladder for directory removal. Same root cause as the write ladder:
+ * Geode's `FileSystemAdapter` shim has no `rmdir` at all, so the old
+ * single-call implementation threw a TypeError into its own catch and turned
+ * every hard-delete into a silent no-op, leaving `attachments/<threadId>/`
+ * orphaned on disk forever.
+ */
+describe('AttachmentWriter.removeThreadDir fallback ladder', () => {
+  const THREAD_DIR = 'Claude/attachments/thread-1';
+
+  /** A populated `<vault>/Claude/attachments/thread-1` on a real temp disk. */
+  function seedThreadDir(): { root: string; abs: string } {
+    const root = makeTempVault();
+    const abs = path.join(root, THREAD_DIR);
+    fs.mkdirSync(abs, { recursive: true });
+    fs.writeFileSync(path.join(abs, 'msg-1-0.png'), Buffer.from(PNG_BASE64, 'base64'));
+    return { root, abs };
+  }
+
+  it('rung 1: uses adapter.rmdir when the host implements it', async () => {
+    const rmdir = vi.fn(async () => {});
+    const adapter = makeAdapter({ getBasePath: () => '/unused', exists: async () => true, rmdir });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await writerFor(app).removeThreadDir('thread-1');
+
+    expect(rmdir).toHaveBeenCalledWith(THREAD_DIR, true);
+  });
+
+  it('rung 2: falls back to fs when the host has no rmdir (the live Geode shape)', async () => {
+    const { root, abs } = seedThreadDir();
+    // Geode's real shim: exists() and getBasePath(), no rmdir.
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await writerFor(app).removeThreadDir('thread-1');
+
+    expect(fs.existsSync(abs)).toBe(false);
+    // Only the thread's own directory went away.
+    expect(fs.existsSync(path.join(root, 'Claude/attachments'))).toBe(true);
+  });
+
+  it('rung 2: also catches an adapter.rmdir that exists but throws', async () => {
+    const { root, abs } = seedThreadDir();
+    const rmdir = vi.fn(async () => { throw new Error('rmdir exploded'); });
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true, rmdir });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await writerFor(app).removeThreadDir('thread-1');
+
+    expect(rmdir).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(abs)).toBe(false);
+  });
+
+  it('skips both rungs when the directory does not exist', async () => {
+    const root = makeTempVault();
+    const rmdir = vi.fn(async () => {});
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => false, rmdir });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await writerFor(app).removeThreadDir('thread-1');
+
+    expect(rmdir).not.toHaveBeenCalled();
+  });
+
+  it('refuses a traversing thread id instead of deleting outside the attachments dir', async () => {
+    const root = makeTempVault();
+    const outside = path.join(root, 'Claude', 'logs');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'thread-1.jsonl'), 'keep me');
+    const rmdir = vi.fn(async () => {});
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true, rmdir });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await writerFor(app).removeThreadDir('../logs');
+
+    expect(rmdir).not.toHaveBeenCalled();
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+
+  it('rung 2 boundary guard: a vault folder that escapes the vault root removes nothing', async () => {
+    // A vault root nested one level down, so the escape target is still inside
+    // the throwaway temp tree rather than somewhere real on the machine.
+    const parent = makeTempVault();
+    const root = path.join(parent, 'vault');
+    fs.mkdirSync(root, { recursive: true });
+    const outside = path.join(parent, 'attachments', 'thread-1');
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, 'keep.png'), 'keep me');
+
+    // No rmdir, so rung 2 runs — and a vault folder of '..' resolves the
+    // attachments root outside the vault, which must throw rather than delete.
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+    const writer = new AttachmentWriter(() => app, () => '..', () => ({}));
+
+    await writer.removeThreadDir('thread-1');
+
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+
+  it('removes exactly the directory write() wrote to when the folder setting is empty', async () => {
+    // The mismatch this pins: buildAttachmentPath defaulted an empty
+    // vaultFolder to 'Agent Threads' while removeThreadDir defaulted it to
+    // 'Claude', so cleanup deleted a directory that had never been written and
+    // the real attachments leaked. Both sides now derive from one helper, so
+    // this asserts the two paths against each other rather than against a
+    // literal that could drift again.
+    const root = makeTempVault();
+    const adapter = makeAdapter({ getBasePath: () => root, exists: async () => true });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+    // Empty folder setting — the shared default has to apply on both sides.
+    const writer = new AttachmentWriter(() => app, () => '', () => ({}));
+
+    const written = await writer.write('thread-1', 'msg-1', 0, 'image/png', PNG_BASE64);
+    expect(written).toBe('Agent Threads/attachments/thread-1/msg-1-0.png');
+    const writtenAbs = path.join(root, written!);
+    expect(fs.existsSync(writtenAbs)).toBe(true);
+
+    await writer.removeThreadDir('thread-1');
+
+    expect(fs.existsSync(writtenAbs)).toBe(false);
+    expect(fs.existsSync(path.dirname(writtenAbs))).toBe(false);
+  });
+
+  it('does not throw off desktop', async () => {
+    const app = makeApp({ getAbstractFileByPath: () => null }, { getBasePath: () => '/x' });
+    await expect(writerFor(app).removeThreadDir('thread-1')).resolves.toBeUndefined();
+  });
+
+  it('does not throw when no rung is available', async () => {
+    // Neither rmdir nor a usable vault root.
+    const adapter = makeAdapter({ exists: async () => true });
+    const app = makeApp({ getAbstractFileByPath: () => null }, adapter);
+
+    await expect(writerFor(app).removeThreadDir('thread-1')).resolves.toBeUndefined();
+  });
+});

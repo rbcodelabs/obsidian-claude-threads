@@ -3,7 +3,7 @@ import type ClaudeThreadsPlugin from './main';
 import { DEFAULT_VAULT_FOLDER } from './productIdentity';
 import type { PluginSettings, Project, LayoutDensity, ProviderMode, ScheduledItem, ScheduledItemSchedule, SkillSource, RunEvent, OAuthMcpState } from './types';
 import { serializeKey } from './stt';
-import { setDebugLogging } from './logger';
+import { debugLog, setDebugLogging } from './logger';
 import { telemetry } from './telemetry';
 import { secretStorageKey } from './secretUtils';
 import type { KanbanView } from './KanbanView';
@@ -76,6 +76,135 @@ function maskOpenAiKey(key: string | null | undefined): string {
   if (!key) return 'No key set';
   if (key.length <= 12) return '••••••••';
   return key.slice(0, 8) + '…' + key.slice(-4);
+}
+
+/**
+ * How much protection the running host's `app.secretStorage` actually gives a
+ * stored secret.
+ *
+ *  - `encrypted`  — the host confirmed encrypted storage (Obsidian: the OS keychain).
+ *  - `plaintext`  — the host confirmed it has none. Under Geode today,
+ *                   `secretStorage` persists values as plaintext in
+ *                   `localStorage` and `isEncryptionAvailable()` returns false.
+ *  - `unknown`    — the host does not expose `isEncryptionAvailable` (it is newer
+ *                   than the `SecretStorage` typings the plugin builds against),
+ *                   or the call threw. Never treated as `encrypted`: the point of
+ *                   this is not to promise protection the host has not confirmed.
+ */
+export type SecretStorageProtection = 'encrypted' | 'plaintext' | 'unknown';
+
+/**
+ * The sentence shown under any setting that writes to `app.secretStorage`,
+ * describing where the value really lands on this host.
+ *
+ * The plugin used to say "Stored in your OS keychain." unconditionally, which is
+ * simply untrue on a host without encrypted secret storage. Accurate, not
+ * alarming: the non-`encrypted` wording says where the value goes and stops
+ * short of calling it a vulnerability, because for a local-first vault it is the
+ * same trust boundary as the vault's own files.
+ */
+export function describeSecretStorage(protection: SecretStorageProtection): string {
+  switch (protection) {
+    case 'encrypted':
+      return 'Stored in your OS keychain.';
+    case 'plaintext':
+      return 'This app has no encrypted secret storage, so the value is kept in its local app data rather than your OS keychain.';
+    default:
+      return 'Stored by this app’s secret storage; it could not confirm that your OS keychain is used.';
+  }
+}
+
+/**
+ * Write host-accurate secret-storage copy into `el`, then correct it in place
+ * once the host answers.
+ *
+ * Every caller renders synchronously (`PluginSettingTab.display`, `Modal.onOpen`)
+ * while the answer is async, so `compose` runs twice: first with the
+ * "could not confirm" wording, then with the truth. Starting pessimistic is the
+ * point — a slow or missing probe leaves an accurate description on screen, never
+ * a keychain promise the host does not keep.
+ *
+ * `compose` takes the storage sentence and returns the full string, so each site
+ * keeps its own surrounding claims (injection, data.json) while the keychain
+ * question itself is answered in exactly one place.
+ */
+export function applySecretStorageCopy(
+  app: App,
+  el: HTMLElement,
+  compose: (storageSentence: string) => string,
+): void {
+  el.textContent = compose(describeSecretStorage('unknown'));
+  void probeSecretStorageProtection(app).then((protection) => {
+    el.textContent = compose(describeSecretStorage(protection));
+  });
+}
+
+/**
+ * Open the host's secret picker and hand the chosen secret name to `onPicked`
+ * (empty string when the user picked nothing).
+ *
+ * `SecretComponent` has no "open" method, so the only way in is to render it
+ * into a hidden container and click the control it draws. That container is the
+ * caller's to clean up, and every failure path has to take it back down — which
+ * is why `opened` gates the `finally` rather than the happy path removing it
+ * inline (there the picker itself owns the container until `onChange` fires).
+ *
+ * The construction is wrapped because hosts disagree about the signature.
+ * Obsidian's is `(app, containerEl)`; Geode's shim currently takes the
+ * container alone, so `app` lands where the container is expected and the
+ * constructor dies on `container.appendChild is not a function` — synchronously,
+ * inside a click handler. Unguarded that is a dead button: no picker, no
+ * message, and a leaked hidden div, because the removal sat past the throw. A
+ * host mismatch now degrades to a Notice that points at the manual entry path,
+ * with the underlying error kept in the debug log.
+ */
+export function openSecretPicker(app: App, onPicked: (secretName: string) => void): void {
+  const tmp = document.body.createDiv();
+  tmp.style.display = 'none';
+  let opened = false;
+  try {
+    const picker = new SecretComponent(app, tmp);
+    picker.onChange((secretName: string) => {
+      tmp.remove();
+      onPicked(secretName);
+    });
+    // SecretComponent renders a button — click it immediately to open the picker
+    const inner = tmp.querySelector('button, input') as HTMLElement | null;
+    if (!inner) throw new Error('SecretComponent rendered no control to click');
+    inner.click();
+    opened = true;
+  } catch (err) {
+    debugLog('[ClaudeThreads] secret picker unavailable on this host:', String(err));
+    new Notice('The secret picker isn’t available on this host — use “Set key” to enter the key directly.');
+  } finally {
+    if (!opened) tmp.remove();
+  }
+}
+
+/**
+ * Ask the host whether its secret storage is encrypted.
+ *
+ * `isEncryptionAvailable` is duck-typed rather than called straight off the
+ * type: it is absent from the `SecretStorage` typings the plugin builds against
+ * and from older hosts at runtime, and "is this a function?" is the only safe
+ * test (same posture as AttachmentWriter's host-bridge detection). Both a
+ * missing method and a throwing one resolve to `unknown`, never `encrypted`.
+ */
+export async function probeSecretStorageProtection(app: App): Promise<SecretStorageProtection> {
+  type ProbedSecretStorage = { isEncryptionAvailable?: () => boolean | Promise<boolean> };
+  let probe: ProbedSecretStorage['isEncryptionAvailable'];
+  try {
+    probe = (app.secretStorage as unknown as ProbedSecretStorage | undefined)?.isEncryptionAvailable;
+  } catch {
+    return 'unknown';
+  }
+  if (typeof probe !== 'function') return 'unknown';
+  try {
+    return (await probe.call(app.secretStorage)) ? 'encrypted' : 'plaintext';
+  } catch (err) {
+    debugLog('[ClaudeThreads] secretStorage.isEncryptionAvailable failed:', String(err));
+    return 'unknown';
+  }
 }
 
 function formatScheduleDescription(schedule: ScheduledItemSchedule, gated = false): string {
@@ -252,10 +381,14 @@ class SecretEnvModal extends Modal {
     contentEl.createEl('h2', { text: isNew ? 'Add secret variable' : `Change: ${this.varName}` });
 
     if (isNew) {
-      contentEl.createEl('p', {
-        text: 'The value is stored in the OS keychain and never written to disk.',
-        cls: 'setting-item-description',
-      });
+      // "never written to disk" was false on a host without encrypted storage —
+      // plaintext in localStorage is very much on disk. data.json is the
+      // invariant that actually holds everywhere, so that is what it claims now.
+      applySecretStorageCopy(
+        this.app,
+        contentEl.createEl('p', { cls: 'setting-item-description' }),
+        (storage) => `${storage} It is never written to data.json.`,
+      );
 
       contentEl.createEl('label', { text: 'Variable name', cls: 'ct-modal-label' });
       this.nameInput = contentEl.createEl('input', {
@@ -304,8 +437,9 @@ class SecretEnvModal extends Modal {
 /**
  * Modal opened when an agent calls the `request_secret` MCP tool.
  * Shows the secret name and the agent's reason for requesting it, collects
- * a password-type value, writes it to the OS keychain, and resolves the
- * promise with true (saved) or false (cancelled).
+ * a password-type value, writes it to `app.secretStorage` (the OS keychain on a
+ * host that has one), and resolves the promise with true (saved) or false
+ * (cancelled).
  */
 export class RequestSecretModal extends Modal {
   private valueInput: HTMLInputElement | null = null;
@@ -339,10 +473,11 @@ export class RequestSecretModal extends Modal {
       cls: 'setting-item-description',
     });
 
-    contentEl.createEl('p', {
-      text: 'The value will be stored in your OS keychain and injected into future sessions. It will never appear in the conversation.',
-      cls: 'setting-item-description',
-    });
+    applySecretStorageCopy(
+      this.app,
+      contentEl.createEl('p', { cls: 'setting-item-description' }),
+      (storage) => `${storage} It will be injected into future sessions and will never appear in the conversation.`,
+    );
 
     if (this.force) {
       contentEl.createEl('p', {
@@ -1642,9 +1777,8 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       }
     };
 
-    new Setting(containerEl)
+    const secretsSetting = new Setting(containerEl)
       .setName('Secret environment variables')
-      .setDesc('API keys and tokens stored in the OS keychain (never in data.json), injected into every Claude session.')
       .addButton((btn) =>
         btn.setButtonText('Add secret').setCta().onClick(() => {
           new SecretEnvModal(this.app, '', async (val, varName) => {
@@ -1658,6 +1792,11 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
           }).open();
         }),
       );
+    applySecretStorageCopy(
+      this.app,
+      secretsSetting.descEl,
+      (storage) => `API keys and tokens injected into every Claude session, never into data.json. ${storage}`,
+    );
     containerEl.appendChild(secretsList);
     renderSecrets();
 
@@ -2113,7 +2252,15 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       const maskedKey = maskOpenAiKey(existingKey);
       const openAiSetting = new Setting(containerEl)
         .setName('OpenAI API key')
-        .setDesc('Used for Whisper speech-to-text. Stored in your OS keychain.');
+        .setDesc('Used for Whisper speech-to-text.');
+
+      // Its own span, because the masked key below is a sibling in the same
+      // descEl and must survive the async correction.
+      applySecretStorageCopy(
+        this.app,
+        openAiSetting.descEl.createEl('span'),
+        (storage) => ` ${storage}`,
+      );
 
       openAiSetting.descEl.createEl('br');
       openAiSetting.descEl.createEl('span', {
@@ -2130,11 +2277,7 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
         })
         .addButton((btn) => {
           btn.setButtonText('Link existing').setTooltip('Use a key already stored by another plugin').onClick(() => {
-            const tmp = document.body.createDiv();
-            tmp.style.display = 'none';
-            const picker = new SecretComponent(this.app, tmp);
-            picker.onChange((secretName: string) => {
-              tmp.remove();
+            openSecretPicker(this.app, (secretName) => {
               if (!secretName) return;
               const actualValue = this.app.secretStorage.getSecret(secretName);
               if (actualValue) {
@@ -2145,14 +2288,6 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
                 new Notice('That secret has no value stored');
               }
             });
-            // SecretComponent renders a button — click it immediately to open the picker
-            const inner = tmp.querySelector('button, input') as HTMLElement | null;
-            if (inner) {
-              inner.click();
-            } else {
-              tmp.remove();
-              new Notice('Secret picker not available');
-            }
           });
         });
     }

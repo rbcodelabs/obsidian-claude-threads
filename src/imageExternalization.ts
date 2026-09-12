@@ -1,4 +1,5 @@
 import type { Thread, ChatMessage, ImageAttachment } from './types';
+import { DEFAULT_VAULT_FOLDER } from './productIdentity';
 
 /**
  * Image externalization helpers (ADR-0003, PR 1).
@@ -43,6 +44,26 @@ export function extForMediaType(mediaType: string): string {
 }
 
 /**
+ * Vault-relative root every thread's attachments hang off.
+ *
+ * This and `attachmentDirForThread` exist so that writing and removing derive
+ * the same path from the same place. They used to be two sets of literals —
+ * `buildAttachmentPath` defaulted an empty `vaultFolder` to 'Agent Threads'
+ * while `AttachmentWriter.removeThreadDir` defaulted it to 'Claude' — so with
+ * the setting blank the writer put files in one directory and the remover
+ * confidently deleted another, which does not exist. Cleanup silently did
+ * nothing and the real files leaked.
+ */
+export function attachmentRoot(vaultFolder: string): string {
+  return `${vaultFolder || DEFAULT_VAULT_FOLDER}/attachments`;
+}
+
+/** The directory holding one thread's attachments. Also what cleanup removes. */
+export function attachmentDirForThread(vaultFolder: string, threadId: string): string {
+  return `${attachmentRoot(vaultFolder)}/${threadId}`;
+}
+
+/**
  * Vault-relative path for an externalized image. Mirrors the per-thread keying
  * of `RawLogWriter` (`<vaultFolder>/logs/<threadId>.jsonl`) so cleanup is a
  * single directory removal. Keyed by the stable message id + index so a retry
@@ -55,8 +76,7 @@ export function buildAttachmentPath(
   index: number,
   mediaType: string,
 ): string {
-  const folder = vaultFolder || 'Agent Threads';
-  return `${folder}/attachments/${threadId}/${messageId}-${index}.${extForMediaType(mediaType)}`;
+  return `${attachmentDirForThread(vaultFolder, threadId)}/${messageId}-${index}.${extForMediaType(mediaType)}`;
 }
 
 /**
