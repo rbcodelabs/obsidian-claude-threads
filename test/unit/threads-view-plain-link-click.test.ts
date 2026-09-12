@@ -12,8 +12,9 @@
  *  lookup silently failed and nothing happened. Fixed by resolving such
  *  hrefs through resolveAbsoluteVaultHref() before opening.
  *
- *  Root cause 2: in classic placement (the default — threadViewPlacement
- *  defaults to 'classic' in src/types.ts), no click listener was ever
+ *  Root cause 2: in classic placement (still the default for existing
+ *  installs — see conversation-first-placement.test.ts for why new installs
+ *  now default to conversation-first instead), no click listener was ever
  *  attached to plain `[label](path)` links at all — the handler bailed out
  *  immediately via `if (!this.plugin.isConversationFirst() || ...) return`.
  *  Only conversation-first mode got a working handler. Fixed by attaching

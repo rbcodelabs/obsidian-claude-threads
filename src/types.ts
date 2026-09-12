@@ -989,7 +989,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   createDraftPrMessage: '/create-pr --draft',
   debugLogging: false,
   telemetryEnabled: true,
-  threadViewPlacement: 'classic',
+  threadViewPlacement: 'conversation-first',
   hasSeenWelcome: false,
   imageExternalizationComplete: false,
   autoArchiveIdleDays: 14,

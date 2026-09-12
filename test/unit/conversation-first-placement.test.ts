@@ -8,7 +8,12 @@ function leaf(state: Record<string, unknown> = {}): WorkspaceLeaf {
 }
 
 describe('conversation-first placement', () => {
-  it('remains opt-in for existing installs', () => expect(DEFAULT_SETTINGS.threadViewPlacement).toBe('classic'));
+  // mergePersistedSettings (src/productIdentity.ts) is Object.assign({}, defaults, saved ?? {}),
+  // and saveSettings() persists the whole settings object — so any install that has ever
+  // saved settings since this field existed already has an explicit 'classic' (or
+  // 'conversation-first') value baked into its data.json, which always wins over this
+  // default. Only genuinely fresh installs (or ones that never persisted this key) see this.
+  it('defaults new installs to conversation-first', () => expect(DEFAULT_SETTINGS.threadViewPlacement).toBe('conversation-first'));
   it('never enables conversation-first placement on mobile', () => {
     expect(isConversationFirstPlacement('conversation-first', true)).toBe(false);
     expect(isConversationFirstPlacement('conversation-first', false)).toBe(true);

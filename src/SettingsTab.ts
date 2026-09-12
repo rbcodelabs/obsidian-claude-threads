@@ -1394,9 +1394,9 @@ export class ClaudeThreadsSettingTab extends PluginSettingTab {
       .setDesc('Keep chat in its classic sidebar, or use a main-area conversation with one reusable native companion panel.')
       .addDropdown((drop) =>
         drop
-          .addOption('classic', 'Classic sidebar (default)')
-          .addOption('conversation-first', 'Conversation first')
-          .setValue(this.plugin.settings.threadViewPlacement ?? 'classic')
+          .addOption('classic', 'Classic sidebar')
+          .addOption('conversation-first', 'Conversation first (default)')
+          .setValue(this.plugin.settings.threadViewPlacement ?? 'conversation-first')
           .onChange(async (value) => {
             const previous = this.plugin.settings.threadViewPlacement;
             const next = value as PluginSettings['threadViewPlacement'];

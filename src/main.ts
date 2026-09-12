@@ -2355,7 +2355,10 @@ export default class ClaudeThreadsPlugin extends Plugin {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(SKILLS_VIEW_TYPE)[0];
     if (!leaf) {
-      leaf = workspace.getLeaf('tab') as WorkspaceLeaf;
+      // In conversation-first mode the main area holds the conversation, so
+      // route to the right sidebar like activateAgentView(). In classic mode
+      // the main area is free for editing, so a tab still makes sense.
+      leaf = (this.isConversationFirst() ? workspace.getRightLeaf(false) : workspace.getLeaf('tab')) as WorkspaceLeaf;
       await leaf.setViewState({ type: SKILLS_VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
